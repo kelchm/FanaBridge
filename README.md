@@ -71,6 +71,10 @@ dotnet build FanaBridge\FanaBridge.csproj -p:InstallToSimHub=true
 
 The `SimHubDir` property defaults to `C:\Program Files (x86)\SimHub\`. Override it in `Directory.Build.props.user` if your install is elsewhere.
 
+## Disclaimer
+
+FanaBridge is an independent, open-source project and is not affiliated with, endorsed by, or sponsored by Fanatec, Endor AG, Corsair, or any of their affiliated companies. The name “Fanatec” is used solely to describe hardware compatibility. Product images are used only for device identification purposes and remain the property of their respective owners. All trademarks and copyrights are the property of their respective owners. This software is provided “as is,” without warranty of any kind.
+
 ## License
 
 [MIT](LICENSE)
