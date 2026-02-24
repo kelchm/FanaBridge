@@ -6,6 +6,9 @@
 # dotenv files
 .env
 
+# Local build configuration
+Directory.Build.props.user
+
 # User-specific files
 *.rsuser
 *.suo
@@ -482,3 +485,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Project-specific
+dist/
+FanaBridge/Resources/DeviceLogos/processed/

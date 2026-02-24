@@ -1,99 +1,76 @@
-# Fanatec M4 GT3 LED Control - C# PoC
+# FanaBridge
 
-A minimal proof-of-concept for controlling Fanatec M4 GT3 wheel LEDs via USB HID on Windows.
+> **This is beta software.** Expect rough edges. Bug reports and feedback are welcome via [Issues](../../issues).
 
-## Prerequisites
+A [SimHub](https://www.simhubdash.com/) plugin that provides native LED and display control for Fanatec steering wheels via HID.
 
-- **.NET 8 SDK** (or later)
-  - Download: https://dotnet.microsoft.com/download
-  - Or: `winget install Microsoft.DotNet.SDK.8`
+FanaBridge communicates directly with Fanatec wheel hardware, enabling SimHub to drive the RGB LEDs and basic OLED displays on supported wheels.
 
-## Project Setup
+## Features
 
-### 1. Install .NET SDK
+- **RGB button and encoder LEDs** — Full RGB color and 8-level intensity per LED
+- **Basic OLED display** — Wheels with a non-ITM OLED act as a 3-digit 7-segment style display (gear, speed, etc.)
+- **SimHub LED profiles** — Wheels appear in SimHub's Devices view with standard LED Editor support
+- **Compatible with LED profile plugins** — Works with [ATSR Hub EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO) and other SimHub LED profile plugins
+- **Automatic wheel detection** — Detects connected wheels via the Fanatec SDK and adapts to capabilities
+- **Hot-plug support** — Reconnects gracefully when devices are plugged/unplugged or wheels are swapped
 
-**Windows (via winget):**
+### Planned
+
+- Support for additional wheels and hub/module combinations
+- Customizable telemetry display and arbitrary text/messages (e.g., function layer activation)
+- Encoder mode configuration
+
+## Supported Wheels
+
+- **Podium Steering Wheel BMW M4 GT3** — 12 button LEDs, 3-digit display
+- **Podium Hub + Button Module Rally** — 9 button LEDs, 3 encoder LEDs, 3-digit display
+
+> The **Button Module Endurance** is a work in progress. Other Fanatec wheels do not work yet — support for additional wheels and hub/module combinations is planned.
+
+## Requirements
+
+- [SimHub](https://www.simhubdash.com/) (latest version recommended)
+- A Fanatec wheelbase connected via USB
+- A supported Fanatec steering wheel
+
+## Installation
+
+1. Download the latest release `.zip` from the [Releases](../../releases) page
+2. Close SimHub if it's running
+3. Extract the archive directly into your SimHub installation directory (e.g., `C:\Program Files (x86)\SimHub\`)
+   - `FanaBridge.dll` goes in the SimHub root
+   - `DevicesLogos\` files go into the `DevicesLogos\` subdirectory
+4. Start SimHub and enable the FanaBridge plugin
+
+## Usage
+
+1. In the Fanatec software, set **Fanatec App LED/Display output** to **Disabled** (otherwise the Fanatec driver and FanaBridge will fight over control of the LEDs and display)
+2. Connect your Fanatec wheelbase and attach a supported wheel
+3. In SimHub, go to **Devices**, click **Add** (+), then **Add New Device**, and choose your supported wheel or hub/module combo
+4. Configure LED profiles using SimHub's built-in LED Editor, or with a third-party LED profile plugin like [ATSR Hub EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO)
+
+## Building from Source
+
+### Prerequisites
+
+- .NET SDK (includes .NET Framework 4.8 targeting pack)
+- SimHub installed (the project references DLLs from the SimHub directory)
+
+### Build
+
 ```powershell
-winget install Microsoft.DotNet.SDK.8
+dotnet build FanaBridge\FanaBridge.csproj
 ```
 
-**Or download from:** https://dotnet.microsoft.com/download/dotnet/8.0
-
-Verify installation:
-```powershell
-dotnet --version
-```
-
-### 2. Restore dependencies
+To install directly to your local SimHub (for development):
 
 ```powershell
-cd c:\Users\kelchm\Development\simhub-fanatec-plugin
-dotnet restore
+dotnet build FanaBridge\FanaBridge.csproj -p:InstallToSimHub=true
 ```
 
-### 3. Build
+The `SimHubDir` property defaults to `C:\Program Files (x86)\SimHub\`. Override it in `Directory.Build.props.user` if your install is elsewhere.
 
-```powershell
-dotnet build
-```
+## License
 
-### 4. Run
-
-```powershell
-dotnet run
-```
-
-## Project Structure
-
-- **FanatecHidDevice.cs** – Core HID communication layer
-  - `Connect()` – Find and open the wheel device
-  - `SetIntensity()` – Control per-LED brightness (0-7 scale)
-  - `SetColors()` – Control per-LED colors (RGB565)
-  - `SetLed()` – Convenience method to set color + intensity together
-
-- **ColorHelper.cs** – Color utilities
-  - RGB → RGB565 conversion
-  - Predefined color constants
-
-- **Program.cs** – Demo code showing:
-  - Single LED control
-  - Multi-LED control
-  - Brightness sweeps
-  - Pulse effect
-
-## Key Protocol Details
-
-### Intensity Report (0xFF 0x01 0x03)
-- Offset 0–2: Command
-- Offset 3–18: 16 intensity values (I0–I15, scale 0-7)
-- Offset 18: Apply flag (0x00 = stage, 0x01 = commit)
-
-### Color Report (0xFF 0x01 0x02)
-- Offset 0–2: Command
-- Offset 3–26: 12 × RGB565 colors (S0–S11, big-endian)
-- Offset 27: Apply flag (0x00 = stage, 0x01 = commit)
-
-### Button → LED Mapping
-- Buttons 1–6: Left side (indices 0–5)
-- Buttons 7–12: Right side (indices 6–11)
-
-## Troubleshooting
-
-### Device not found
-- Verify wheel is connected and USB driver is installed
-- Check Device Manager: Look for "HID-compliant device"
-- Try replugging the USB
-
-### Permission denied
-- Run as Administrator (right-click PowerShell → Run as administrator)
-
-### Build errors
-- Ensure .NET 8 SDK is installed: `dotnet --version`
-- Clean and rebuild: `dotnet clean && dotnet build`
-
-## Next Steps
-
-- Integrate into SimHub plugin
-- Add animation engine
-- Add configuration UI
-- Handle device hotplug
+[MIT](LICENSE)

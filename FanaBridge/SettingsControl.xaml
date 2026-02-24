@@ -1,0 +1,52 @@
+<UserControl x:Class="FanaBridge.SettingsControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:styles="clr-namespace:SimHub.Plugins.Styles;assembly=SimHub.Plugins"
+             xmlns:ui="clr-namespace:SimHub.Plugins.UI;assembly=SimHub.Plugins"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d">
+    <ScrollViewer>
+        <StackPanel>
+
+            <!-- Connection Status -->
+            <styles:SHSection Title="DEVICE STATUS" ShowSeparator="True">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock Text="Status: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
+                        <TextBlock x:Name="txtStatus" Text="Checking..." VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock Text="Wheel: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
+                        <TextBlock x:Name="txtWheelName" Text="—" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock Text="Capabilities: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
+                        <TextBlock x:Name="txtCapabilities" Text="—" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <styles:SHButtonPrimary x:Name="btnReconnect" Click="BtnReconnect_Click" HorizontalAlignment="Left" Margin="0,8">
+                        Reconnect
+                    </styles:SHButtonPrimary>
+                </StackPanel>
+            </styles:SHSection>
+
+            <!-- Quick Display Test -->
+            <styles:SHSection Title="DISPLAY TEST" ShowSeparator="True">
+                <StackPanel>
+                    <TextBlock Text="Send a string to the 3-digit 7-segment display. Longer strings scroll automatically." Margin="0,0,0,6" />
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBox x:Name="txtDisplayTest" Width="200" VerticalContentAlignment="Center" Margin="0,0,8,0" />
+                        <styles:SHButtonPrimary x:Name="btnSendDisplay" Click="BtnSendDisplay_Click" Content="Send" VerticalAlignment="Center" />
+                        <styles:SHButtonPrimary x:Name="btnStopScroll" Click="BtnStopScroll_Click" Margin="8,0,0,0" Visibility="Collapsed" Content="Stop" VerticalAlignment="Center" />
+                        <styles:SHButtonPrimary x:Name="btnClearDisplay" Click="BtnClearDisplay_Click" Margin="8,0,0,0" Content="Clear" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Scroll speed (ms): " VerticalAlignment="Center" />
+                        <TextBox x:Name="txtScrollSpeed" Width="50" Text="250" VerticalContentAlignment="Center" LostFocus="TxtScrollSpeed_LostFocus" />
+                    </StackPanel>
+                </StackPanel>
+            </styles:SHSection>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

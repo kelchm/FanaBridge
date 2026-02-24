@@ -1,0 +1,115 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>FanaBridge</RootNamespace>
+    <AssemblyName>FanaBridge</AssemblyName>
+    <LangVersion>8.0</LangVersion>
+    <ProjectGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <UseWPF>true</UseWPF>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Provides .NET Framework 4.8 reference assemblies for builds without VS -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SimHub references (from install directory) -->
+    <Reference Include="GameReaderCommon">
+      <HintPath>$(SimHubDir)GameReaderCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SimHub.Logging">
+      <HintPath>$(SimHubDir)SimHub.Logging.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SimHub.Plugins">
+      <HintPath>$(SimHubDir)SimHub.Plugins.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="WoteverCommon">
+      <HintPath>$(SimHubDir)WoteverCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="MahApps.Metro">
+      <HintPath>$(SimHubDir)MahApps.Metro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="MahApps.Metro.IconPacks.Material">
+      <HintPath>$(SimHubDir)MahApps.Metro.IconPacks.Material.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="log4net">
+      <HintPath>$(SimHubDir)log4net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(SimHubDir)Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="HidSharp">
+      <HintPath>$(SimHubDir)HidSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SimHub.FanatecManaged">
+      <HintPath>$(SimHubDir)SimHub.FanatecManaged.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BA63Driver">
+      <HintPath>$(SimHubDir)BA63Driver.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\Images\plugin-icon.png" />
+  </ItemGroup>
+
+  <!-- ── Device logo processing ──────────────────────────────────────
+       Automatically runs process-device-logos.ps1 when source images
+       are newer than processed output. Skips if ImageMagick isn't
+       available (uses source images as-is via fallback copy). -->
+  <ItemGroup>
+    <SourceDeviceLogos Include="Resources\DeviceLogos\*.png" />
+  </ItemGroup>
+
+  <Target Name="ProcessDeviceLogos" BeforeTargets="CopyDeviceLogos;Build"
+          Inputs="@(SourceDeviceLogos)"
+          Outputs="@(SourceDeviceLogos->'Resources\DeviceLogos\processed\%(Filename)%(Extension)')">
+    <Exec Command="magick --version" IgnoreExitCode="true" StandardOutputImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="MagickExitCode" />
+    </Exec>
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)..\process-device-logos.ps1&quot;"
+          Condition="'$(MagickExitCode)' == '0'" />
+    <!-- Fallback: if no ImageMagick, just copy source images to processed/ -->
+    <MakeDir Directories="Resources\DeviceLogos\processed" Condition="'$(MagickExitCode)' != '0'" />
+    <Copy SourceFiles="@(SourceDeviceLogos)" DestinationFolder="Resources\DeviceLogos\processed"
+          SkipUnchangedFiles="true" Condition="'$(MagickExitCode)' != '0'" />
+  </Target>
+
+  <!-- ── Local dev install ─────────────────────────────────────────────
+       Copies the plugin DLL, PDB, and device logos into the local SimHub
+       installation. Only runs when InstallToSimHub=true:
+
+         dotnet build -p:InstallToSimHub=true
+
+       Default builds just compile — no file locking issues. -->
+  <Target Name="CopyDeviceLogos" AfterTargets="Build" Condition="'$(InstallToSimHub)' == 'true'"
+          DependsOnTargets="ProcessDeviceLogos">
+    <ItemGroup>
+      <DeviceLogoFiles Include="Resources\DeviceLogos\processed\*.png" />
+    </ItemGroup>
+    <Copy SourceFiles="@(DeviceLogoFiles)" DestinationFolder="$(SimHubDir)DevicesLogos" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyToSimHub" AfterTargets="Build" Condition="'$(InstallToSimHub)' == 'true'">
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(SimHubDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

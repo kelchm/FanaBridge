@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <!-- Default SimHub install path. Override in Directory.Build.props.user for your machine. -->
+    <SimHubDir Condition="'$(SimHubDir)' == ''">C:\Program Files (x86)\SimHub\</SimHubDir>
+  </PropertyGroup>
+
+  <Import Project="Directory.Build.props.user" Condition="Exists('Directory.Build.props.user')" />
+</Project>
