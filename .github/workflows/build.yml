@@ -1,0 +1,158 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      configuration:
+        description: 'Build configuration (Debug or Release)'
+        type: string
+        default: 'Release'
+    outputs:
+      artifact-name:
+        description: 'Name of the uploaded build artifact'
+        value: ${{ jobs.build.outputs.artifact-name }}
+
+env:
+  SIMHUB_VERSION: '9.11.3'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      artifact-name: ${{ steps.package.outputs.artifact-name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SimHub dependencies
+        id: cache-simhub
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/simhub-deps
+          key: simhub-${{ env.SIMHUB_VERSION }}
+
+      - name: Download and extract SimHub dependencies
+        if: steps.cache-simhub.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $version  = $env:SIMHUB_VERSION
+          $url      = "https://github.com/SHWotever/SimHub/releases/download/$version/SimHub.$version.zip"
+          $zipPath  = "$env:RUNNER_TEMP\SimHub.zip"
+          $depsDir  = "$env:RUNNER_TEMP\simhub-deps"
+          $tmpDir   = "$env:RUNNER_TEMP\simhub-extract"
+
+          Write-Host "Downloading SimHub $version from $url ..."
+          Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+
+          Write-Host "Extracting ZIP ..."
+          Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
+          Remove-Item $zipPath
+
+          # Case 1: ZIP is a portable distribution — DLLs are directly inside.
+          $dll = Get-ChildItem $tmpDir -Filter 'SimHub.Plugins.dll' -Recurse -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+          if ($dll) {
+            Write-Host "Portable ZIP detected. Copying DLLs to $depsDir ..."
+            New-Item -ItemType Directory -Force $depsDir | Out-Null
+            Copy-Item "$($dll.DirectoryName)\*" $depsDir -Recurse -Force
+          } else {
+            # Case 2: ZIP contains an NSIS setup EXE — run it silently.
+            $installer = Get-ChildItem $tmpDir -Filter '*.exe' -Recurse -ErrorAction SilentlyContinue |
+                         Select-Object -First 1
+            if (-not $installer) {
+              Write-Error "No DLLs or setup EXE found in the SimHub release ZIP."
+              exit 1
+            }
+            Write-Host "Installer detected: $($installer.Name). Running silent install to $depsDir ..."
+            New-Item -ItemType Directory -Force $depsDir | Out-Null
+            # NSIS: /S = silent; /D= must be last and use an absolute path without quotes.
+            $proc = Start-Process -Wait -PassThru -FilePath $installer.FullName `
+                      -ArgumentList "/S", "/D=$depsDir"
+            if ($proc.ExitCode -ne 0) {
+              Write-Error "Installer exited with code $($proc.ExitCode)."
+              exit 1
+            }
+          }
+
+          Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Verify the key DLL is present before caching.
+          if (-not (Get-Item "$depsDir\SimHub.Plugins.dll" -ErrorAction SilentlyContinue)) {
+            Write-Error "SimHub.Plugins.dll not found in $depsDir after staging."
+            exit 1
+          }
+          Write-Host "SimHub DLLs staged at: $depsDir"
+
+      - name: Configure SimHub dependency path
+        shell: pwsh
+        run: |
+          $depsDir = "$env:RUNNER_TEMP\simhub-deps"
+
+          # Locate the directory that contains the SimHub plugin DLLs.
+          # The installer may place files in a subdirectory.
+          $probe = Get-ChildItem $depsDir -Filter 'SimHub.Plugins.dll' -Recurse -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+          if (-not $probe) {
+            Write-Error "SimHub.Plugins.dll not found under $depsDir"
+            exit 1
+          }
+          $simhubDir = $probe.DirectoryName
+          Write-Host "SimHub DLLs located at: $simhubDir"
+
+          # Write Directory.Build.props.user so MSBuild picks up the staged DLLs.
+          Set-Content -Path "$env:GITHUB_WORKSPACE\Directory.Build.props.user" -Value (
+            '<Project>',
+            '  <PropertyGroup>',
+            "    <SimHubDir>$simhubDir\</SimHubDir>",
+            '  </PropertyGroup>',
+            '</Project>'
+          )
+
+      - name: Restore NuGet packages
+        run: dotnet restore FanaBridge\FanaBridge.csproj
+
+      - name: Build
+        run: dotnet build FanaBridge\FanaBridge.csproj -c ${{ inputs.configuration }} --no-restore
+
+      - name: Test
+        run: dotnet test FanaBridge.sln --no-build --verbosity normal
+        continue-on-error: true
+
+      - name: Package artifact
+        id: package
+        shell: pwsh
+        run: |
+          $config   = '${{ inputs.configuration }}'
+          $binDir   = "FanaBridge\bin\$config"
+          $dist     = 'dist'
+          $staging  = "$dist\staging"
+
+          New-Item $staging                      -ItemType Directory -Force | Out-Null
+          New-Item "$staging\DevicesLogos"       -ItemType Directory -Force | Out-Null
+
+          Copy-Item "$binDir\FanaBridge.dll" $staging
+
+          $processedLogos = 'FanaBridge\Resources\DeviceLogos\processed'
+          if (Test-Path $processedLogos) {
+            Get-ChildItem "$processedLogos\*.png" -ErrorAction SilentlyContinue | ForEach-Object {
+              Copy-Item $_.FullName "$staging\DevicesLogos\$($_.Name)"
+            }
+          }
+
+          $fileVersion = (Get-Item "$staging\FanaBridge.dll").VersionInfo.FileVersion
+          if ([string]::IsNullOrWhiteSpace($fileVersion)) { $fileVersion = 'dev' }
+          $archiveName = "FanaBridge-$fileVersion-$config.zip"
+          $archivePath = "$dist\$archiveName"
+
+          Compress-Archive -Path "$staging\*" -DestinationPath $archivePath -Force
+          Remove-Item $staging -Recurse -Force
+
+          "artifact-name=$archiveName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Packaged: $archivePath"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.artifact-name }}
+          path: dist/*.zip
+          if-no-files-found: error
