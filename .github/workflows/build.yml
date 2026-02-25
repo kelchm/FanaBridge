@@ -35,40 +35,78 @@ jobs:
         if: steps.cache-simhub.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $version = $env:SIMHUB_VERSION
-          $url = "https://github.com/SHWotever/SimHub/releases/download/$version/SimHub.$version.zip"
-          $zipPath = "$env:RUNNER_TEMP\SimHub.zip"
+          $version  = $env:SIMHUB_VERSION
+          $url      = "https://github.com/SHWotever/SimHub/releases/download/$version/SimHub.$version.zip"
+          $zipPath  = "$env:RUNNER_TEMP\SimHub.zip"
+          $depsDir  = "$env:RUNNER_TEMP\simhub-deps"
+          $tmpDir   = "$env:RUNNER_TEMP\simhub-extract"
+
           Write-Host "Downloading SimHub $version from $url ..."
           Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
-          Write-Host "Extracting to $env:RUNNER_TEMP\simhub-deps ..."
-          Expand-Archive -Path $zipPath -DestinationPath "$env:RUNNER_TEMP\simhub-deps" -Force
+
+          Write-Host "Extracting ZIP ..."
+          Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
           Remove-Item $zipPath
+
+          # Case 1: ZIP is a portable distribution — DLLs are directly inside.
+          $dll = Get-ChildItem $tmpDir -Filter 'SimHub.Plugins.dll' -Recurse -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+          if ($dll) {
+            Write-Host "Portable ZIP detected. Copying DLLs to $depsDir ..."
+            New-Item -ItemType Directory -Force $depsDir | Out-Null
+            Copy-Item "$($dll.DirectoryName)\*" $depsDir -Recurse -Force
+          } else {
+            # Case 2: ZIP contains an NSIS setup EXE — run it silently.
+            $installer = Get-ChildItem $tmpDir -Filter '*.exe' -Recurse -ErrorAction SilentlyContinue |
+                         Select-Object -First 1
+            if (-not $installer) {
+              Write-Error "No DLLs or setup EXE found in the SimHub release ZIP."
+              exit 1
+            }
+            Write-Host "Installer detected: $($installer.Name). Running silent install to $depsDir ..."
+            New-Item -ItemType Directory -Force $depsDir | Out-Null
+            # NSIS: /S = silent; /D= must be last and use an absolute path without quotes.
+            $proc = Start-Process -Wait -PassThru -FilePath $installer.FullName `
+                      -ArgumentList "/S", "/D=$depsDir"
+            if ($proc.ExitCode -ne 0) {
+              Write-Error "Installer exited with code $($proc.ExitCode)."
+              exit 1
+            }
+          }
+
+          Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Verify the key DLL is present before caching.
+          if (-not (Get-Item "$depsDir\SimHub.Plugins.dll" -ErrorAction SilentlyContinue)) {
+            Write-Error "SimHub.Plugins.dll not found in $depsDir after staging."
+            exit 1
+          }
+          Write-Host "SimHub DLLs staged at: $depsDir"
 
       - name: Configure SimHub dependency path
         shell: pwsh
         run: |
-          $extractPath = "$env:RUNNER_TEMP\simhub-deps"
+          $depsDir = "$env:RUNNER_TEMP\simhub-deps"
 
           # Locate the directory that contains the SimHub plugin DLLs.
-          # The ZIP may place files at the root or inside a single sub-folder.
-          $probe = Get-ChildItem $extractPath -Filter 'SimHub.Plugins.dll' -Recurse -ErrorAction SilentlyContinue |
+          # The installer may place files in a subdirectory.
+          $probe = Get-ChildItem $depsDir -Filter 'SimHub.Plugins.dll' -Recurse -ErrorAction SilentlyContinue |
                    Select-Object -First 1
           if (-not $probe) {
-            Write-Error "SimHub.Plugins.dll not found under $extractPath"
+            Write-Error "SimHub.Plugins.dll not found under $depsDir"
             exit 1
           }
           $simhubDir = $probe.DirectoryName
           Write-Host "SimHub DLLs located at: $simhubDir"
 
           # Write Directory.Build.props.user so MSBuild picks up the staged DLLs.
-          $xml = @"
-          <Project>
-            <PropertyGroup>
-              <SimHubDir>$simhubDir\</SimHubDir>
-            </PropertyGroup>
-          </Project>
-          "@
-          $xml | Set-Content "$env:GITHUB_WORKSPACE\Directory.Build.props.user"
+          Set-Content -Path "$env:GITHUB_WORKSPACE\Directory.Build.props.user" -Value (
+            '<Project>',
+            '  <PropertyGroup>',
+            "    <SimHubDir>$simhubDir\</SimHubDir>",
+            '  </PropertyGroup>',
+            '</Project>'
+          )
 
       - name: Restore NuGet packages
         run: dotnet restore FanaBridge\FanaBridge.csproj
