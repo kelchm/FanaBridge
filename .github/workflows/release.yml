@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — build and package without creating a GitHub Release'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -27,6 +33,7 @@ jobs:
           path: dist/
 
       - name: Create GitHub Release
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
