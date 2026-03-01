@@ -216,6 +216,10 @@ namespace FanaBridge
         {
             if (data.Length != DISPLAY_REPORT_LENGTH) return false;
 
+            SimHub.Logging.Current.Info(
+                "FanatecDevice: SendDisplayReport => " +
+                BitConverter.ToString(data));
+
             if (_displayStream != null)
             {
                 try
@@ -465,6 +469,163 @@ namespace FanaBridge
         }
 
         // =====================================================================
+        // REV LED CONTROL (col03 LED interface)
+        // =====================================================================
+        //
+        // Rev LEDs are controlled via the col03 (64-byte) LED interface using
+        // per-LED RGB565 color, the same HID collection used by button LEDs.
+        //
+        // Report format:
+        //   byte[0]     = 0xFF  (report ID)
+        //   byte[1]     = 0x01  (command type)
+        //   byte[2]     = 0x00  (subcmd: Rev LED colors — vs 0x02 for button LEDs)
+        //   byte[3..20] = 9 × big-endian RGB565 (LED 0..8, 2 bytes each)
+        //   byte[21..63]= 0x00  (padding)
+        //
+        // An LED with color 0x0000 is off; any non-zero RGB565 value turns it
+        // on with that color.  No separate bitmask or override mode is needed.
+        //
+        // Verified via USB packet capture of the official Fanatec application
+        // sending per-LED Rev LED colors through the col03 interrupt OUT endpoint.
+
+        public const int REV_LED_COUNT = 9;
+
+        private readonly ushort[] _lastRevColors = new ushort[REV_LED_COUNT];
+        private bool _revColorsDirty = true;
+
+        /// <summary>
+        /// Sets all 9 Rev LEDs to the given RGB565 colors via col03.
+        /// Color 0x0000 = off; non-zero = on with that color.
+        /// Skips HID write if the colors haven't changed since last send.
+        /// </summary>
+        public bool SetRevLedState(ushort[] colors)
+        {
+            if (colors == null || colors.Length != REV_LED_COUNT) return false;
+
+            bool changed = _revColorsDirty;
+            if (!changed)
+            {
+                for (int i = 0; i < REV_LED_COUNT; i++)
+                {
+                    if (colors[i] != _lastRevColors[i])
+                    {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!changed) return true;
+
+            var report = new byte[LED_REPORT_LENGTH];
+            report[0] = 0xFF;
+            report[1] = 0x01;
+            report[2] = 0x00;  // subcmd: Rev LED colors
+
+            for (int i = 0; i < REV_LED_COUNT; i++)
+            {
+                int offset = 3 + (i * 2);
+                report[offset]     = (byte)((colors[i] >> 8) & 0xFF);
+                report[offset + 1] = (byte)(colors[i] & 0xFF);
+            }
+
+            bool ok = SendLedReport(report);
+            if (ok)
+            {
+                Array.Copy(colors, _lastRevColors, REV_LED_COUNT);
+                _revColorsDirty = false;
+            }
+            return ok;
+        }
+
+        /// <summary>
+        /// Turn off all Rev LEDs.
+        /// </summary>
+        public bool ClearRevLeds()
+        {
+            return SetRevLedState(new ushort[REV_LED_COUNT]);
+        }
+
+        // =====================================================================
+        // FLAG LED CONTROL (col03 LED interface)
+        // =====================================================================
+        //
+        // Flag LEDs are controlled via the col03 (64-byte) LED interface using
+        // per-LED RGB565 color, the same HID collection used by button LEDs
+        // and Rev LEDs.
+        //
+        // Report format:
+        //   byte[0]     = 0xFF  (report ID)
+        //   byte[1]     = 0x01  (command type)
+        //   byte[2]     = 0x01  (subcmd: Flag LED colors — vs 0x00 for Rev LEDs)
+        //   byte[3..14] = 6 × big-endian RGB565 (LED 0..5, 2 bytes each)
+        //   byte[15..63]= 0x00  (padding)
+        //
+        // An LED with color 0x0000 is off; any non-zero RGB565 value turns it
+        // on with that color.
+        //
+        // Verified via USB packet capture of the official Fanatec application
+        // sending per-LED Flag LED colors through the col03 interrupt OUT endpoint.
+
+        public const int FLAG_LED_COUNT = 6;
+
+        private readonly ushort[] _lastFlagColors = new ushort[FLAG_LED_COUNT];
+        private bool _flagColorsDirty = true;
+
+        /// <summary>
+        /// Sets all 6 Flag LEDs to the given RGB565 colors via col03.
+        /// Color 0x0000 = off; non-zero = on with that color.
+        /// Skips HID write if the colors haven't changed since last send.
+        /// </summary>
+        public bool SetFlagLedState(ushort[] colors)
+        {
+            if (colors == null || colors.Length != FLAG_LED_COUNT) return false;
+
+            bool changed = _flagColorsDirty;
+            if (!changed)
+            {
+                for (int i = 0; i < FLAG_LED_COUNT; i++)
+                {
+                    if (colors[i] != _lastFlagColors[i])
+                    {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!changed) return true;
+
+            var report = new byte[LED_REPORT_LENGTH];
+            report[0] = 0xFF;
+            report[1] = 0x01;
+            report[2] = 0x01;  // subcmd: Flag LED colors
+
+            for (int i = 0; i < FLAG_LED_COUNT; i++)
+            {
+                int offset = 3 + (i * 2);
+                report[offset]     = (byte)((colors[i] >> 8) & 0xFF);
+                report[offset + 1] = (byte)(colors[i] & 0xFF);
+            }
+
+            bool ok = SendLedReport(report);
+            if (ok)
+            {
+                Array.Copy(colors, _lastFlagColors, FLAG_LED_COUNT);
+                _flagColorsDirty = false;
+            }
+            return ok;
+        }
+
+        /// <summary>
+        /// Turn off all Flag LEDs.
+        /// </summary>
+        public bool ClearFlagLeds()
+        {
+            return SetFlagLedState(new ushort[FLAG_LED_COUNT]);
+        }
+
+        // =====================================================================
         // LIFECYCLE
         // =====================================================================
 
@@ -491,6 +652,8 @@ namespace FanaBridge
             // Force resend on next connect
             _colorsDirty = true;
             _intensitiesDirty = true;
+            _revColorsDirty = true;
+            _flagColorsDirty = true;
         }
 
         /// <summary>
@@ -504,6 +667,8 @@ namespace FanaBridge
         {
             _colorsDirty = true;
             _intensitiesDirty = true;
+            _revColorsDirty = true;
+            _flagColorsDirty = true;
         }
     }
 }
