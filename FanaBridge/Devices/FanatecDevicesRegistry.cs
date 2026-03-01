@@ -59,9 +59,15 @@ namespace FanaBridge
     /// <summary>
     /// DeviceInstance for a specific Fanatec wheel type.
     ///
-    /// Owns a <c>LedModuleSettings&lt;FanatecLedManager&gt;</c> which provides
-    /// the native SimHub LED profile editor, settings persistence, brightness
-    /// controls, and the full .shdevice export structure.
+    /// Owns a single <c>LedModuleSettings</c> whose driver type depends on
+    /// the wheel's capabilities:
+    ///   • Wheels with button/encoder LEDs → <c>FanatecLedManager</c> (col03)
+    ///   • Wheels with Rev/Flag LEDs       → <c>FanatecRevFlagLedManager</c> (col03)
+    ///
+    /// Both LED types appear under a single "LEDs" tab in SimHub's LED Editor.
+    ///
+    /// Provides the native SimHub LED profile editor, settings persistence,
+    /// brightness controls, and the full .shdevice export structure.
     ///
     /// Does NOT own hardware — delegates to the shared FanatecPlugin singleton
     /// for all SDK/HID access. Reports Connected only when the singleton's
@@ -72,8 +78,12 @@ namespace FanaBridge
         private readonly DeviceConfig _config;
         private JObject _customSettings = new JObject();
 
-        // Native LED module — provides RGBLedsDrivers, settings, and UI.
+        // Button LED module (col03) — null when wheel has no button/encoder LEDs.
         private LedModuleSettings<FanatecLedManager> _ledModule;
+
+        // Rev/Flag LED module (col03) — null when wheel has no rev/flag LEDs.
+        private LedModuleSettings<FanatecRevFlagLedManager> _revFlagModule;
+
         private bool _ledModuleInitialized;
 
         // Display manager — null when the wheel has no display.
@@ -90,8 +100,9 @@ namespace FanaBridge
         // ── LED module setup ─────────────────────────────────────────────
 
         /// <summary>
-        /// Lazily creates the LedModuleSettings with a pre-configured
-        /// FanatecLedManager for this wheel's capabilities.
+        /// Lazily creates the appropriate LedModuleSettings based on the
+        /// wheel's capabilities (button LEDs via col03, or Rev/Flag LEDs
+        /// via col03).  Only one LED module is active per device.
         /// </summary>
         private void EnsureLedModuleInitialized()
         {
@@ -100,36 +111,62 @@ namespace FanaBridge
             _ledModuleInitialized = true;
 
             var caps = _config.Capabilities;
-            if (caps.TotalLedCount == 0)
-                return;
 
-            var manager = new FanatecLedManager(caps);
-            var options = new LedModuleOptions
+            // ── Button LEDs (col03) ──────────────────────────────────
+            if (caps.TotalLedCount > 0)
             {
-                DeviceName = caps.ShortName ?? caps.Name,
-                LedCount = 0,            // no RPM/telemetry LEDs
-                // Combine button + encoder LEDs into ButtonsCount (matches native devices)
-                ButtonsCount = caps.TotalLedCount,
-                EncodersCount = 0,       // not using separate encoder section
-                RawLedCount = caps.TotalLedCount,
-                LedDriver = manager,
-                EnableBrightnessSection = true,
-                ShowConnectionStatus = true,
-                VID = FanatecSdkManager.FANATEC_VENDOR_ID,
-            };
+                var manager = new FanatecLedManager(caps);
+                var options = new LedModuleOptions
+                {
+                    DeviceName = caps.ShortName ?? caps.Name,
+                    LedCount = 0,
+                    ButtonsCount = caps.TotalLedCount,
+                    EncodersCount = 0,
+                    RawLedCount = caps.TotalLedCount,
+                    LedDriver = manager,
+                    EnableBrightnessSection = true,
+                    ShowConnectionStatus = true,
+                    VID = FanatecSdkManager.FANATEC_VENDOR_ID,
+                };
 
-            _ledModule = new LedModuleSettings<FanatecLedManager>(options);
+                _ledModule = new LedModuleSettings<FanatecLedManager>(options);
+                _ledModule.IsEmbedded = true;
+                _ledModule.IsEnabled = true;
+                _ledModule.IndividualLEDsMode = IndividualLEDsMode.Combined;
 
-            // Mark as embedded so the standalone device-enable checkbox is hidden —
-            // enable/disable is handled by the parent DeviceInstance's Connected toggle.
-            _ledModule.IsEmbedded = true;
-            _ledModule.IsEnabled = true;  // Required for UI to be interactive
-            _ledModule.IndividualLEDsMode = IndividualLEDsMode.Combined;  // Show raw profile by default
+                SimHub.Logging.Current.Info(
+                    "FanatecWheelDeviceInstance[" + caps.Name + "]: Button LED module created (" +
+                    "buttons=" + caps.ButtonLedCount + ", encoders=" + caps.EncoderLedCount +
+                    ", raw=" + caps.TotalLedCount + ")");
+            }
 
-            SimHub.Logging.Current.Info(
-                "FanatecWheelDeviceInstance[" + caps.Name + "]: LedModuleSettings created (" +
-                "buttons=" + caps.ButtonLedCount + ", encoders=" + caps.EncoderLedCount +
-                ", raw=" + caps.TotalLedCount + ")");
+            // ── Rev/Flag LEDs (col03) ────────────────────────────────
+            if (caps.HasRevLeds || caps.HasFlagLeds)
+            {
+                int revFlagTotal = caps.RevLedCount + caps.FlagLedCount;
+                var rfManager = new FanatecRevFlagLedManager(caps);
+                var rfOptions = new LedModuleOptions
+                {
+                    DeviceName = (caps.ShortName ?? caps.Name) + " Rev/Flag",
+                    LedCount = revFlagTotal,
+                    ButtonsCount = 0,
+                    EncodersCount = 0,
+                    RawLedCount = revFlagTotal,
+                    LedDriver = rfManager,
+                    EnableBrightnessSection = true,
+                    ShowConnectionStatus = true,
+                    VID = FanatecSdkManager.FANATEC_VENDOR_ID,
+                };
+
+                _revFlagModule = new LedModuleSettings<FanatecRevFlagLedManager>(rfOptions);
+                _revFlagModule.IsEmbedded = true;
+                _revFlagModule.IsEnabled = true;
+                _revFlagModule.IndividualLEDsMode = IndividualLEDsMode.Combined;
+
+                SimHub.Logging.Current.Info(
+                    "FanatecWheelDeviceInstance[" + caps.Name + "]: Rev/Flag LED module created (" +
+                    "rev=" + caps.RevLedCount + ", flag=" + caps.FlagLedCount + ")");
+            }
         }
 
         // ── DeviceInstance overrides ─────────────────────────────────────
@@ -150,6 +187,8 @@ namespace FanaBridge
 
             if (_ledModule != null)
                 _ledModule.LoadDefaults();
+            if (_revFlagModule != null)
+                _revFlagModule.LoadDefaults();
         }
 
         public override DeviceState GetDeviceState()
@@ -198,6 +237,27 @@ namespace FanaBridge
                 }
             }
 
+            // Rev/Flag LED module settings (same key space — only one LED module active per device)
+            if (_revFlagModule != null)
+            {
+                try
+                {
+                    var rfDict = _revFlagModule.GetSettings(forTemplate, forDefaultSettings);
+                    if (rfDict != null)
+                    {
+                        foreach (var kvp in rfDict)
+                        {
+                            result[kvp.Key] = kvp.Value ?? JValue.CreateNull();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    SimHub.Logging.Current.Warn(
+                        "FanatecWheelDeviceInstance: GetSettings(RevFlag) failed: " + ex.Message);
+                }
+            }
+
             // Custom settings (display mode, wheel/module identity)
             if (_customSettings != null)
             {
@@ -230,7 +290,6 @@ namespace FanaBridge
             {
                 try
                 {
-                    // LedModuleSettings.SetSettings expects Dictionary<string, JToken>
                     var dict = new Dictionary<string, JToken>();
                     foreach (var prop in obj.Properties())
                     {
@@ -242,6 +301,25 @@ namespace FanaBridge
                 {
                     SimHub.Logging.Current.Warn(
                         "FanatecWheelDeviceInstance: SetSettings(LED) failed: " + ex.Message);
+                }
+            }
+
+            // Pass LED settings to Rev/Flag module (same key space — only one LED module active)
+            if (_revFlagModule != null)
+            {
+                try
+                {
+                    var dict = new Dictionary<string, JToken>();
+                    foreach (var prop in obj.Properties())
+                    {
+                        dict[prop.Name] = prop.Value;
+                    }
+                    _revFlagModule.SetSettings(dict, isDefault);
+                }
+                catch (Exception ex)
+                {
+                    SimHub.Logging.Current.Warn(
+                        "FanatecWheelDeviceInstance: SetSettings(RevFlag) failed: " + ex.Message);
                 }
             }
 
@@ -292,6 +370,9 @@ namespace FanaBridge
             // builds LedDeviceState, and routes through the FanatecLedManager
             // → FanatecLedButtonsDriver → FanatecDevice.SetLedState().
             _ledModule?.Display();
+
+            // Rev/Flag LEDs via col03 interface
+            _revFlagModule?.Display();
         }
 
         public override void End()
@@ -311,6 +392,16 @@ namespace FanaBridge
                 SimHub.Logging.Current.Warn(
                     "FanatecWheelDeviceInstance: LedModule dispose failed: " + ex.Message);
             }
+
+            try
+            {
+                (_revFlagModule as IDisposable)?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn(
+                    "FanatecWheelDeviceInstance: RevFlagModule dispose failed: " + ex.Message);
+            }
         }
 
         public override IEnumerable<DynamicButtonAction> GetDynamicButtonActions()
@@ -322,19 +413,16 @@ namespace FanaBridge
         {
             EnsureLedModuleInitialized();
 
-            // LED settings tab — native LedModuleSettings UI
-            if (_ledModule != null)
+            // LED settings tab — button LEDs (col03) or Rev/Flag LEDs (col03)
+            var ledEditControl = (_ledModule?.EditControl) ?? (_revFlagModule?.EditControl);
+            if (ledEditControl != null)
             {
-                var editControl = _ledModule.EditControl;
-                if (editControl != null)
-                {
-                    yield return new DeviceSettingControl(
-                        editControl,
-                        0,
-                        "LEDs",
-                        DeviceSettingControlKind.None,
-                        true);
-                }
+                yield return new DeviceSettingControl(
+                    ledEditControl,
+                    0,
+                    "LEDs",
+                    DeviceSettingControlKind.None,
+                    true);
             }
 
             // Screen settings tab (only for wheels with a display)

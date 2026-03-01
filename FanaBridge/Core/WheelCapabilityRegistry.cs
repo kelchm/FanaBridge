@@ -225,13 +225,16 @@ namespace FanaBridge
 
                 case M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_PBME:
                     // Button Module Endurance: larger OLED with ITM support.
-                    // TODO: fill in actual LED counts when known.
+                    // No button LEDs — Rev/Flag LEDs are on col03.
+                    // 9 Rev LEDs (RPM indicator), 6 Flag LEDs (status indicators).
                     return new WheelCapabilities
                     {
                         Name = "Fanatec Podium Hub + Button Module Endurance",
                         ShortName = "Fanatec Podium Hub + BME",
                         ButtonLedCount = 0,
                         EncoderLedCount = 0,
+                        RevLedCount = 9,
+                        FlagLedCount = 6,
                         Display = DisplayType.Itm,
                     };
 
