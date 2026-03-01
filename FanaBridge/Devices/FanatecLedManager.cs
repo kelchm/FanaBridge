@@ -3,7 +3,7 @@ using SimHub.Plugins.OutputPlugins.GraphicalDash.PSE;
 namespace FanaBridge
 {
     /// <summary>
-    /// Bridges <see cref="FanatecLedButtonsDriver"/> into SimHub's
+    /// Bridges <see cref="FanatecLedDriver"/> into SimHub's
     /// <c>ILedDeviceManager</c> pipeline via <c>LedsGenericManager&lt;T&gt;</c>.
     ///
     /// Each <see cref="FanatecWheelDeviceInstance"/> creates one of these with
@@ -17,10 +17,10 @@ namespace FanaBridge
     ///   • Connection/reconnection lifecycle and events
     ///   • Force-refresh timers
     /// </summary>
-    public class FanatecLedManager : LedsGenericManager<FanatecLedButtonsDriver>
+    public class FanatecLedManager : LedsGenericManager<FanatecLedDriver>
     {
         private readonly WheelCapabilities _caps;
-        private FanatecLedButtonsDriver _driver;
+        private FanatecLedDriver _driver;
 
         /// <summary>
         /// Parameterless constructor required by the <c>new()</c> constraint on
@@ -30,7 +30,6 @@ namespace FanaBridge
         /// </summary>
         public FanatecLedManager()
         {
-            // Fallback: use empty caps.  The real constructor below is preferred.
             _caps = WheelCapabilities.None;
         }
 
@@ -46,15 +45,16 @@ namespace FanaBridge
 
         /// <summary>
         /// Called by the base class when a connection is needed.
-        /// Creates the BA63-compatible driver with the wheel's capabilities.
+        /// Creates the unified BA63-compatible driver with the wheel's capabilities.
         /// </summary>
-        public override FanatecLedButtonsDriver GetDriver()
+        public override FanatecLedDriver GetDriver()
         {
-            _driver = new FanatecLedButtonsDriver(_caps);
+            _driver = new FanatecLedDriver(_caps);
 
             SimHub.Logging.Current.Info(
                 "FanatecLedManager: Created driver for " + (_caps.Name ?? "unknown") +
-                " (" + _caps.TotalLedCount + " LEDs)");
+                " (" + _caps.AllLedCount + " LEDs: rev=" + _caps.RevLedCount +
+                ", flag=" + _caps.FlagLedCount + ", button=" + _caps.TotalLedCount + ")");
 
             return _driver;
         }

@@ -13,17 +13,32 @@ namespace FanaBridge
     /// </summary>
     public class FanatecDevice
     {
-        public const int LED_COUNT = 12;
-        public const int INTENSITY_COUNT = 16;
+        // ── LED counts ───────────────────────────────────────────────────
+        public const int LED_COUNT = 12;           // Button/encoder LEDs
+        public const int INTENSITY_COUNT = 16;     // Button intensity channels
+        public const int REV_LED_COUNT = 9;        // Rev (RPM) LEDs
+        public const int FLAG_LED_COUNT = 6;       // Flag (status) LEDs
 
         private const int LED_REPORT_LENGTH = 64;
         private const int DISPLAY_REPORT_LENGTH = 8;
 
-        // Dirty tracking — skip redundant HID writes
+        // Col03 LED report sub-commands
+        private const byte SUBCMD_REV_COLORS = 0x00;
+        private const byte SUBCMD_FLAG_COLORS = 0x01;
+        private const byte SUBCMD_BUTTON_COLORS = 0x02;
+        private const byte SUBCMD_BUTTON_INTENSITIES = 0x03;
+
+        // ── Dirty tracking — skip redundant HID writes ───────────────────
         private readonly ushort[] _lastColors = new ushort[LED_COUNT];
         private readonly byte[] _lastIntensities = new byte[INTENSITY_COUNT];
         private bool _colorsDirty = true;
         private bool _intensitiesDirty = true;
+
+        private readonly ushort[] _lastRevColors = new ushort[REV_LED_COUNT];
+        private bool _revColorsDirty = true;
+
+        private readonly ushort[] _lastFlagColors = new ushort[FLAG_LED_COUNT];
+        private bool _flagColorsDirty = true;
 
         private HidDevice _ledDevice;       // col03: 64-byte LED control
         private HidStream _ledStream;
@@ -216,10 +231,6 @@ namespace FanaBridge
         {
             if (data.Length != DISPLAY_REPORT_LENGTH) return false;
 
-            SimHub.Logging.Current.Info(
-                "FanatecDevice: SendDisplayReport => " +
-                BitConverter.ToString(data));
-
             if (_displayStream != null)
             {
                 try
@@ -344,7 +355,7 @@ namespace FanaBridge
             var report = new byte[LED_REPORT_LENGTH];
             report[0] = 0xFF;
             report[1] = 0x01;
-            report[2] = 0x02;
+            report[2] = SUBCMD_BUTTON_COLORS;
 
             for (int i = 0; i < LED_COUNT; i++)
             {
@@ -362,11 +373,57 @@ namespace FanaBridge
             var report = new byte[LED_REPORT_LENGTH];
             report[0] = 0xFF;
             report[1] = 0x01;
-            report[2] = 0x03;
+            report[2] = SUBCMD_BUTTON_INTENSITIES;
 
             Array.Copy(intensities, 0, report, 3, INTENSITY_COUNT);
             report[18] = commit ? (byte)0x01 : (byte)0x00;
             return SendLedReport(report);
+        }
+
+        /// <summary>
+        /// Sends a simple LED color report (Rev or Flag — no staging/commit).
+        /// Builds a 64-byte col03 report: [0xFF, 0x01, subcmd, ...RGB565 big-endian...].
+        /// Skips the HID write if colors haven't changed since the last send.
+        /// </summary>
+        private bool SendSimpleLedColors(byte subcmd, ushort[] colors, int count,
+                                          ushort[] lastColors, ref bool dirty)
+        {
+            if (colors == null || colors.Length != count) return false;
+
+            bool changed = dirty;
+            if (!changed)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    if (colors[i] != lastColors[i])
+                    {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!changed) return true;
+
+            var report = new byte[LED_REPORT_LENGTH];
+            report[0] = 0xFF;
+            report[1] = 0x01;
+            report[2] = subcmd;
+
+            for (int i = 0; i < count; i++)
+            {
+                int offset = 3 + (i * 2);
+                report[offset]     = (byte)((colors[i] >> 8) & 0xFF);
+                report[offset + 1] = (byte)(colors[i] & 0xFF);
+            }
+
+            bool ok = SendLedReport(report);
+            if (ok)
+            {
+                Array.Copy(colors, lastColors, count);
+                dirty = false;
+            }
+            return ok;
         }
 
         // =====================================================================
@@ -469,157 +526,40 @@ namespace FanaBridge
         }
 
         // =====================================================================
-        // REV LED CONTROL (col03 LED interface)
+        // REV LED CONTROL (col03 — subcmd 0x00, 9 × RGB565)
         // =====================================================================
-        //
-        // Rev LEDs are controlled via the col03 (64-byte) LED interface using
-        // per-LED RGB565 color, the same HID collection used by button LEDs.
-        //
-        // Report format:
-        //   byte[0]     = 0xFF  (report ID)
-        //   byte[1]     = 0x01  (command type)
-        //   byte[2]     = 0x00  (subcmd: Rev LED colors — vs 0x02 for button LEDs)
-        //   byte[3..20] = 9 × big-endian RGB565 (LED 0..8, 2 bytes each)
-        //   byte[21..63]= 0x00  (padding)
-        //
-        // An LED with color 0x0000 is off; any non-zero RGB565 value turns it
-        // on with that color.  No separate bitmask or override mode is needed.
-        //
-        // Verified via USB packet capture of the official Fanatec application
-        // sending per-LED Rev LED colors through the col03 interrupt OUT endpoint.
-
-        public const int REV_LED_COUNT = 9;
-
-        private readonly ushort[] _lastRevColors = new ushort[REV_LED_COUNT];
-        private bool _revColorsDirty = true;
 
         /// <summary>
         /// Sets all 9 Rev LEDs to the given RGB565 colors via col03.
         /// Color 0x0000 = off; non-zero = on with that color.
-        /// Skips HID write if the colors haven't changed since last send.
         /// </summary>
         public bool SetRevLedState(ushort[] colors)
         {
-            if (colors == null || colors.Length != REV_LED_COUNT) return false;
-
-            bool changed = _revColorsDirty;
-            if (!changed)
-            {
-                for (int i = 0; i < REV_LED_COUNT; i++)
-                {
-                    if (colors[i] != _lastRevColors[i])
-                    {
-                        changed = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!changed) return true;
-
-            var report = new byte[LED_REPORT_LENGTH];
-            report[0] = 0xFF;
-            report[1] = 0x01;
-            report[2] = 0x00;  // subcmd: Rev LED colors
-
-            for (int i = 0; i < REV_LED_COUNT; i++)
-            {
-                int offset = 3 + (i * 2);
-                report[offset]     = (byte)((colors[i] >> 8) & 0xFF);
-                report[offset + 1] = (byte)(colors[i] & 0xFF);
-            }
-
-            bool ok = SendLedReport(report);
-            if (ok)
-            {
-                Array.Copy(colors, _lastRevColors, REV_LED_COUNT);
-                _revColorsDirty = false;
-            }
-            return ok;
+            return SendSimpleLedColors(SUBCMD_REV_COLORS, colors, REV_LED_COUNT,
+                                        _lastRevColors, ref _revColorsDirty);
         }
 
-        /// <summary>
-        /// Turn off all Rev LEDs.
-        /// </summary>
+        /// <summary>Turn off all Rev LEDs.</summary>
         public bool ClearRevLeds()
         {
             return SetRevLedState(new ushort[REV_LED_COUNT]);
         }
 
         // =====================================================================
-        // FLAG LED CONTROL (col03 LED interface)
+        // FLAG LED CONTROL (col03 — subcmd 0x01, 6 × RGB565)
         // =====================================================================
-        //
-        // Flag LEDs are controlled via the col03 (64-byte) LED interface using
-        // per-LED RGB565 color, the same HID collection used by button LEDs
-        // and Rev LEDs.
-        //
-        // Report format:
-        //   byte[0]     = 0xFF  (report ID)
-        //   byte[1]     = 0x01  (command type)
-        //   byte[2]     = 0x01  (subcmd: Flag LED colors — vs 0x00 for Rev LEDs)
-        //   byte[3..14] = 6 × big-endian RGB565 (LED 0..5, 2 bytes each)
-        //   byte[15..63]= 0x00  (padding)
-        //
-        // An LED with color 0x0000 is off; any non-zero RGB565 value turns it
-        // on with that color.
-        //
-        // Verified via USB packet capture of the official Fanatec application
-        // sending per-LED Flag LED colors through the col03 interrupt OUT endpoint.
-
-        public const int FLAG_LED_COUNT = 6;
-
-        private readonly ushort[] _lastFlagColors = new ushort[FLAG_LED_COUNT];
-        private bool _flagColorsDirty = true;
 
         /// <summary>
         /// Sets all 6 Flag LEDs to the given RGB565 colors via col03.
         /// Color 0x0000 = off; non-zero = on with that color.
-        /// Skips HID write if the colors haven't changed since last send.
         /// </summary>
         public bool SetFlagLedState(ushort[] colors)
         {
-            if (colors == null || colors.Length != FLAG_LED_COUNT) return false;
-
-            bool changed = _flagColorsDirty;
-            if (!changed)
-            {
-                for (int i = 0; i < FLAG_LED_COUNT; i++)
-                {
-                    if (colors[i] != _lastFlagColors[i])
-                    {
-                        changed = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!changed) return true;
-
-            var report = new byte[LED_REPORT_LENGTH];
-            report[0] = 0xFF;
-            report[1] = 0x01;
-            report[2] = 0x01;  // subcmd: Flag LED colors
-
-            for (int i = 0; i < FLAG_LED_COUNT; i++)
-            {
-                int offset = 3 + (i * 2);
-                report[offset]     = (byte)((colors[i] >> 8) & 0xFF);
-                report[offset + 1] = (byte)(colors[i] & 0xFF);
-            }
-
-            bool ok = SendLedReport(report);
-            if (ok)
-            {
-                Array.Copy(colors, _lastFlagColors, FLAG_LED_COUNT);
-                _flagColorsDirty = false;
-            }
-            return ok;
+            return SendSimpleLedColors(SUBCMD_FLAG_COLORS, colors, FLAG_LED_COUNT,
+                                        _lastFlagColors, ref _flagColorsDirty);
         }
 
-        /// <summary>
-        /// Turn off all Flag LEDs.
-        /// </summary>
+        /// <summary>Turn off all Flag LEDs.</summary>
         public bool ClearFlagLeds()
         {
             return SetFlagLedState(new ushort[FLAG_LED_COUNT]);
