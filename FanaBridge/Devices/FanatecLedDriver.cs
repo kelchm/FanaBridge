@@ -34,10 +34,11 @@ namespace FanaBridge
         private readonly int _buttonStart;
 
         // Reusable frame buffers — avoid per-frame heap allocations.
-        private readonly ushort[] _revColors = new ushort[FanatecDevice.REV_LED_COUNT];
-        private readonly ushort[] _flagColors = new ushort[FanatecDevice.FLAG_LED_COUNT];
-        private readonly ushort[] _buttonColors = new ushort[FanatecDevice.LED_COUNT];
-        private readonly byte[] _buttonIntensities = new byte[FanatecDevice.LED_COUNT];
+        // Sizes come from WheelCapabilities, not hardcoded protocol constants.
+        private readonly ushort[] _revColors;
+        private readonly ushort[] _flagColors;
+        private readonly ushort[] _buttonColors;
+        private readonly byte[] _buttonIntensities;
 
         public FanatecLedDriver(WheelCapabilities caps)
         {
@@ -45,6 +46,11 @@ namespace FanaBridge
             _revStart = 0;
             _flagStart = caps.RevLedCount;
             _buttonStart = caps.RevLedCount + caps.FlagLedCount;
+
+            _revColors = new ushort[caps.RevLedCount];
+            _flagColors = new ushort[caps.FlagLedCount];
+            _buttonColors = new ushort[caps.TotalLedCount];
+            _buttonIntensities = new byte[caps.TotalLedCount];
 
             _mapper = BuildMapper(caps);
         }
@@ -79,11 +85,13 @@ namespace FanaBridge
                 var device = FanatecPlugin.Instance?.Device;
                 if (device == null) return;
 
-                if (_caps.HasRevLeds) device.ClearRevLeds();
-                if (_caps.HasFlagLeds) device.ClearFlagLeds();
+                if (_caps.HasRevLeds)
+                    device.SetRevLedColors(new ushort[_caps.RevLedCount]);
+                if (_caps.HasFlagLeds)
+                    device.SetFlagLedColors(new ushort[_caps.FlagLedCount]);
                 if (_caps.TotalLedCount > 0)
-                    device.SetLedState(new ushort[FanatecDevice.LED_COUNT],
-                                       new byte[FanatecDevice.LED_COUNT]);
+                    device.SetButtonLedState(new ushort[_caps.TotalLedCount],
+                                              new byte[_caps.TotalLedCount]);
             }
             catch (Exception ex)
             {
@@ -102,9 +110,9 @@ namespace FanaBridge
         /// Called every frame by <c>LedsGenericManager</c>.  Resolves each
         /// physical LED through the mapper, packs to premultiplied-alpha
         /// RGB565, then routes each region to the hardware:
-        ///   Rev LEDs    → FanatecDevice.SetRevLedState  (subcmd 0x00)
-        ///   Flag LEDs   → FanatecDevice.SetFlagLedState (subcmd 0x01)
-        ///   Button LEDs → FanatecDevice.SetLedState     (subcmd 0x02 + 0x03)
+        ///   Rev LEDs    → FanatecDevice.SetRevLedColors  (subcmd 0x00)
+        ///   Flag LEDs   → FanatecDevice.SetFlagLedColors (subcmd 0x01)
+        ///   Button LEDs → FanatecDevice.SetButtonLedState (subcmd 0x02 + 0x03)
         /// </summary>
         public bool SendLeds(LedDeviceState state, bool forceRefresh)
         {
@@ -125,7 +133,7 @@ namespace FanaBridge
                     _revColors[i] = ColorHelper.ToRgb565Premultiplied(color);
                 }
 
-                ok = device.SetRevLedState(_revColors) && ok;
+                ok = device.SetRevLedColors(_revColors) && ok;
             }
 
             // ── Flag LEDs ────────────────────────────────────────────
@@ -139,7 +147,7 @@ namespace FanaBridge
                     _flagColors[i] = ColorHelper.ToRgb565Premultiplied(color);
                 }
 
-                ok = device.SetFlagLedState(_flagColors) && ok;
+                ok = device.SetFlagLedColors(_flagColors) && ok;
             }
 
             // ── Button/Encoder LEDs ──────────────────────────────────
@@ -148,14 +156,14 @@ namespace FanaBridge
                 Array.Clear(_buttonColors, 0, _buttonColors.Length);
                 Array.Clear(_buttonIntensities, 0, _buttonIntensities.Length);
 
-                for (int i = 0; i < _caps.TotalLedCount && i < FanatecDevice.LED_COUNT; i++)
+                for (int i = 0; i < _caps.TotalLedCount; i++)
                 {
                     Color color = _mapper.GetColor(_buttonStart + i, state, ignoreBrightness: false);
                     _buttonColors[i] = ColorHelper.ToRgb565Premultiplied(color);
                     _buttonIntensities[i] = 7; // Max intensity — brightness is in the color
                 }
 
-                ok = device.SetLedState(_buttonColors, _buttonIntensities) && ok;
+                ok = device.SetButtonLedState(_buttonColors, _buttonIntensities) && ok;
             }
 
             return ok;

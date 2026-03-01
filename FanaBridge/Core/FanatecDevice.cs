@@ -13,14 +13,11 @@ namespace FanaBridge
     /// </summary>
     public class FanatecDevice
     {
-        // ── LED counts ───────────────────────────────────────────────────
-        public const int LED_COUNT = 12;           // Button/encoder LEDs
-        public const int INTENSITY_COUNT = 16;     // Button intensity channels
-        public const int REV_LED_COUNT = 9;        // Rev (RPM) LEDs
-        public const int FLAG_LED_COUNT = 6;       // Flag (status) LEDs
-
+        // ── Protocol constants (col03 report format) ─────────────────────
         private const int LED_REPORT_LENGTH = 64;
         private const int DISPLAY_REPORT_LENGTH = 8;
+        private const int REPORT_HEADER_SIZE = 3;   // [0xFF, 0x01, subcmd]
+        private const int MAX_RGB565_PER_REPORT = (LED_REPORT_LENGTH - REPORT_HEADER_SIZE) / 2;  // 30
 
         // Col03 LED report sub-commands
         private const byte SUBCMD_REV_COLORS = 0x00;
@@ -28,17 +25,19 @@ namespace FanaBridge
         private const byte SUBCMD_BUTTON_COLORS = 0x02;
         private const byte SUBCMD_BUTTON_INTENSITIES = 0x03;
 
+        // Button LED staging protocol — fixed byte offsets in the 64-byte report.
+        // The commit-byte position limits button LEDs to MAX_BUTTON_LEDS.
+        private const int BUTTON_COLOR_COMMIT_OFFSET = 27;
+        private const int BUTTON_INTENSITY_COMMIT_OFFSET = 18;
+        private const int MAX_BUTTON_LEDS = (BUTTON_COLOR_COMMIT_OFFSET - REPORT_HEADER_SIZE) / 2;  // 12
+        private const int BUTTON_GLOBAL_INTENSITY_START = 12;   // Indices 12-15 are global channels
+        private const int BUTTON_INTENSITY_PAYLOAD_SIZE = 16;   // 12 per-LED + 4 global
+
         // ── Dirty tracking — skip redundant HID writes ───────────────────
-        private readonly ushort[] _lastColors = new ushort[LED_COUNT];
-        private readonly byte[] _lastIntensities = new byte[INTENSITY_COUNT];
-        private bool _colorsDirty = true;
-        private bool _intensitiesDirty = true;
-
-        private readonly ushort[] _lastRevColors = new ushort[REV_LED_COUNT];
-        private bool _revColorsDirty = true;
-
-        private readonly ushort[] _lastFlagColors = new ushort[FLAG_LED_COUNT];
-        private bool _flagColorsDirty = true;
+        // Color tracking keyed by subcmd; missing entry = dirty (forces send).
+        private readonly Dictionary<byte, ushort[]> _lastColors = new Dictionary<byte, ushort[]>();
+        // Button intensity tracking (separate: unique staging protocol, byte[] payload)
+        private byte[] _lastIntensities;
 
         private HidDevice _ledDevice;       // col03: 64-byte LED control
         private HidStream _ledStream;
@@ -261,149 +260,128 @@ namespace FanaBridge
         // =====================================================================
 
         /// <summary>
-        /// Atomically updates LED colors and intensities in a single
-        /// commit cycle.  Skips HID writes entirely when neither array
-        /// has changed since the last successful send.
-        ///
-        /// This is the primary API that callers (DeviceInstance) should use
-        /// every frame.  It solves two problems with the old separate
-        /// SetColors/SetIntensities approach:
-        ///   1. Dirty tracking was broken for the commit=true call
-        ///      (it always sent even when nothing changed).
-        ///   2. The staging + commit protocol requires coordination
-        ///      across both reports which the caller shouldn't manage.
+        /// Sets button/encoder LED colors and intensities using the staged
+        /// commit protocol (subcmd 0x02 colors + subcmd 0x03 intensities).
+        /// Skips HID writes when neither array has changed.
         /// </summary>
-        /// <param name="colors">LED_COUNT-element array of RGB565 values</param>
-        /// <param name="ledIntensities">LED_COUNT-element array of per-LED intensity values (0-7).
-        /// Global intensity channels are always set to max internally.</param>
-        /// <returns>True if hardware was updated (or already up-to-date).</returns>
-        public bool SetLedState(ushort[] colors, byte[] ledIntensities)
+        /// <param name="colors">Per-LED RGB565 values (max <see cref="MAX_BUTTON_LEDS"/>).</param>
+        /// <param name="ledIntensities">Per-LED intensity values (0-7), same length as colors.
+        /// Global intensity channels (indices 12-15) are set to max internally.</param>
+        public bool SetButtonLedState(ushort[] colors, byte[] ledIntensities)
         {
-            if (colors == null || colors.Length != LED_COUNT) return false;
-            if (ledIntensities == null || ledIntensities.Length != LED_COUNT) return false;
+            if (colors == null || colors.Length == 0 || colors.Length > MAX_BUTTON_LEDS) return false;
+            if (ledIntensities == null || ledIntensities.Length != colors.Length) return false;
 
-            // Build full intensity array: per-LED values + global channels at max
-            var intensities = new byte[INTENSITY_COUNT];
-            Array.Copy(ledIntensities, intensities, LED_COUNT);
-            for (int i = LED_COUNT; i < INTENSITY_COUNT; i++)
+            int ledCount = colors.Length;
+
+            // Build full intensity payload: per-LED values + global channels at max
+            var intensities = new byte[BUTTON_INTENSITY_PAYLOAD_SIZE];
+            int copyCount = Math.Min(ledCount, BUTTON_GLOBAL_INTENSITY_START);
+            Array.Copy(ledIntensities, intensities, copyCount);
+            for (int i = BUTTON_GLOBAL_INTENSITY_START; i < BUTTON_INTENSITY_PAYLOAD_SIZE; i++)
                 intensities[i] = 7;
 
-            bool colorsChanged = _colorsDirty;
-            bool intensitiesChanged = _intensitiesDirty;
-
-            if (!colorsChanged)
+            // Check color changes via dictionary-based tracking
+            ushort[] lastC;
+            bool colorsChanged = true;
+            if (_lastColors.TryGetValue(SUBCMD_BUTTON_COLORS, out lastC) && lastC.Length == ledCount)
             {
-                for (int i = 0; i < LED_COUNT; i++)
+                colorsChanged = false;
+                for (int i = 0; i < ledCount; i++)
                 {
-                    if (colors[i] != _lastColors[i])
-                    {
-                        colorsChanged = true;
-                        break;
-                    }
+                    if (colors[i] != lastC[i]) { colorsChanged = true; break; }
                 }
             }
 
-            if (!intensitiesChanged)
+            // Check intensity changes
+            bool intensitiesChanged = true;
+            if (_lastIntensities != null && _lastIntensities.Length == BUTTON_INTENSITY_PAYLOAD_SIZE)
             {
-                for (int i = 0; i < INTENSITY_COUNT; i++)
+                intensitiesChanged = false;
+                for (int i = 0; i < BUTTON_INTENSITY_PAYLOAD_SIZE; i++)
                 {
-                    if (intensities[i] != _lastIntensities[i])
-                    {
-                        intensitiesChanged = true;
-                        break;
-                    }
+                    if (intensities[i] != _lastIntensities[i]) { intensitiesChanged = true; break; }
                 }
             }
 
-            // Nothing to do — hardware is already showing this state
             if (!colorsChanged && !intensitiesChanged)
                 return true;
 
             // Stage whichever reports changed, then commit with the last one.
-            // If only one changed we can send it directly with commit=true.
             bool ok = true;
 
             if (colorsChanged && intensitiesChanged)
             {
-                ok = SendColorReport(colors, commit: false);
-                ok = SendIntensityReport(intensities, commit: true) && ok;
+                ok = SendButtonColorReport(colors, commit: false);
+                ok = SendButtonIntensityReport(intensities, commit: true) && ok;
             }
             else if (colorsChanged)
             {
-                ok = SendColorReport(colors, commit: true);
+                ok = SendButtonColorReport(colors, commit: true);
             }
-            else // intensitiesChanged
+            else
             {
-                ok = SendIntensityReport(intensities, commit: true);
+                ok = SendButtonIntensityReport(intensities, commit: true);
             }
 
             if (ok)
             {
-                Array.Copy(colors, _lastColors, LED_COUNT);
-                Array.Copy(intensities, _lastIntensities, INTENSITY_COUNT);
-                _colorsDirty = false;
-                _intensitiesDirty = false;
+                if (lastC == null || lastC.Length != ledCount)
+                {
+                    lastC = new ushort[ledCount];
+                    _lastColors[SUBCMD_BUTTON_COLORS] = lastC;
+                }
+                Array.Copy(colors, lastC, ledCount);
+
+                if (_lastIntensities == null)
+                    _lastIntensities = new byte[BUTTON_INTENSITY_PAYLOAD_SIZE];
+                Array.Copy(intensities, _lastIntensities, BUTTON_INTENSITY_PAYLOAD_SIZE);
             }
 
             return ok;
         }
 
-        // ── Low-level report senders (private) ───────────────────────────
-
-        private bool SendColorReport(ushort[] colors, bool commit)
+        /// <summary>
+        /// Sets Rev LED colors via col03 (subcmd 0x00, per-LED RGB565).
+        /// Color 0x0000 = off; non-zero = on with that color.
+        /// Array length defines the LED count; dirty tracking is automatic.
+        /// </summary>
+        public bool SetRevLedColors(ushort[] colors)
         {
-            var report = new byte[LED_REPORT_LENGTH];
-            report[0] = 0xFF;
-            report[1] = 0x01;
-            report[2] = SUBCMD_BUTTON_COLORS;
-
-            for (int i = 0; i < LED_COUNT; i++)
-            {
-                int offset = 3 + (i * 2);
-                report[offset] = (byte)((colors[i] >> 8) & 0xFF);
-                report[offset + 1] = (byte)(colors[i] & 0xFF);
-            }
-
-            report[27] = commit ? (byte)0x01 : (byte)0x00;
-            return SendLedReport(report);
-        }
-
-        private bool SendIntensityReport(byte[] intensities, bool commit)
-        {
-            var report = new byte[LED_REPORT_LENGTH];
-            report[0] = 0xFF;
-            report[1] = 0x01;
-            report[2] = SUBCMD_BUTTON_INTENSITIES;
-
-            Array.Copy(intensities, 0, report, 3, INTENSITY_COUNT);
-            report[18] = commit ? (byte)0x01 : (byte)0x00;
-            return SendLedReport(report);
+            return colors != null && SendSimpleLedColors(SUBCMD_REV_COLORS, colors);
         }
 
         /// <summary>
-        /// Sends a simple LED color report (Rev or Flag — no staging/commit).
-        /// Builds a 64-byte col03 report: [0xFF, 0x01, subcmd, ...RGB565 big-endian...].
-        /// Skips the HID write if colors haven't changed since the last send.
+        /// Sets Flag LED colors via col03 (subcmd 0x01, per-LED RGB565).
         /// </summary>
-        private bool SendSimpleLedColors(byte subcmd, ushort[] colors, int count,
-                                          ushort[] lastColors, ref bool dirty)
+        public bool SetFlagLedColors(ushort[] colors)
         {
-            if (colors == null || colors.Length != count) return false;
+            return colors != null && SendSimpleLedColors(SUBCMD_FLAG_COLORS, colors);
+        }
 
-            bool changed = dirty;
-            if (!changed)
+        // ── Low-level report senders ─────────────────────────────────────
+
+        /// <summary>
+        /// Sends a simple (non-staged) LED color report.
+        /// Builds a col03 report: [0xFF, 0x01, subcmd, ...RGB565 big-endian...].
+        /// Skips the HID write when colors haven't changed since the last send.
+        /// </summary>
+        private bool SendSimpleLedColors(byte subcmd, ushort[] colors)
+        {
+            int count = colors.Length;
+            if (count == 0 || count > MAX_RGB565_PER_REPORT) return false;
+
+            // Dirty check: missing entry or size mismatch forces a send
+            ushort[] last;
+            if (_lastColors.TryGetValue(subcmd, out last) && last.Length == count)
             {
+                bool changed = false;
                 for (int i = 0; i < count; i++)
                 {
-                    if (colors[i] != lastColors[i])
-                    {
-                        changed = true;
-                        break;
-                    }
+                    if (colors[i] != last[i]) { changed = true; break; }
                 }
+                if (!changed) return true;
             }
-
-            if (!changed) return true;
 
             var report = new byte[LED_REPORT_LENGTH];
             report[0] = 0xFF;
@@ -412,7 +390,7 @@ namespace FanaBridge
 
             for (int i = 0; i < count; i++)
             {
-                int offset = 3 + (i * 2);
+                int offset = REPORT_HEADER_SIZE + (i * 2);
                 report[offset]     = (byte)((colors[i] >> 8) & 0xFF);
                 report[offset + 1] = (byte)(colors[i] & 0xFF);
             }
@@ -420,10 +398,44 @@ namespace FanaBridge
             bool ok = SendLedReport(report);
             if (ok)
             {
-                Array.Copy(colors, lastColors, count);
-                dirty = false;
+                if (last == null || last.Length != count)
+                {
+                    last = new ushort[count];
+                    _lastColors[subcmd] = last;
+                }
+                Array.Copy(colors, last, count);
             }
             return ok;
+        }
+
+        private bool SendButtonColorReport(ushort[] colors, bool commit)
+        {
+            var report = new byte[LED_REPORT_LENGTH];
+            report[0] = 0xFF;
+            report[1] = 0x01;
+            report[2] = SUBCMD_BUTTON_COLORS;
+
+            for (int i = 0; i < colors.Length; i++)
+            {
+                int offset = REPORT_HEADER_SIZE + (i * 2);
+                report[offset]     = (byte)((colors[i] >> 8) & 0xFF);
+                report[offset + 1] = (byte)(colors[i] & 0xFF);
+            }
+
+            report[BUTTON_COLOR_COMMIT_OFFSET] = commit ? (byte)0x01 : (byte)0x00;
+            return SendLedReport(report);
+        }
+
+        private bool SendButtonIntensityReport(byte[] intensities, bool commit)
+        {
+            var report = new byte[LED_REPORT_LENGTH];
+            report[0] = 0xFF;
+            report[1] = 0x01;
+            report[2] = SUBCMD_BUTTON_INTENSITIES;
+
+            Array.Copy(intensities, 0, report, REPORT_HEADER_SIZE, intensities.Length);
+            report[BUTTON_INTENSITY_COMMIT_OFFSET] = commit ? (byte)0x01 : (byte)0x00;
+            return SendLedReport(report);
         }
 
         // =====================================================================
@@ -526,46 +538,6 @@ namespace FanaBridge
         }
 
         // =====================================================================
-        // REV LED CONTROL (col03 — subcmd 0x00, 9 × RGB565)
-        // =====================================================================
-
-        /// <summary>
-        /// Sets all 9 Rev LEDs to the given RGB565 colors via col03.
-        /// Color 0x0000 = off; non-zero = on with that color.
-        /// </summary>
-        public bool SetRevLedState(ushort[] colors)
-        {
-            return SendSimpleLedColors(SUBCMD_REV_COLORS, colors, REV_LED_COUNT,
-                                        _lastRevColors, ref _revColorsDirty);
-        }
-
-        /// <summary>Turn off all Rev LEDs.</summary>
-        public bool ClearRevLeds()
-        {
-            return SetRevLedState(new ushort[REV_LED_COUNT]);
-        }
-
-        // =====================================================================
-        // FLAG LED CONTROL (col03 — subcmd 0x01, 6 × RGB565)
-        // =====================================================================
-
-        /// <summary>
-        /// Sets all 6 Flag LEDs to the given RGB565 colors via col03.
-        /// Color 0x0000 = off; non-zero = on with that color.
-        /// </summary>
-        public bool SetFlagLedState(ushort[] colors)
-        {
-            return SendSimpleLedColors(SUBCMD_FLAG_COLORS, colors, FLAG_LED_COUNT,
-                                        _lastFlagColors, ref _flagColorsDirty);
-        }
-
-        /// <summary>Turn off all Flag LEDs.</summary>
-        public bool ClearFlagLeds()
-        {
-            return SetFlagLedState(new ushort[FLAG_LED_COUNT]);
-        }
-
-        // =====================================================================
         // LIFECYCLE
         // =====================================================================
 
@@ -590,10 +562,8 @@ namespace FanaBridge
             ProductName = null;
 
             // Force resend on next connect
-            _colorsDirty = true;
-            _intensitiesDirty = true;
-            _revColorsDirty = true;
-            _flagColorsDirty = true;
+            _lastColors.Clear();
+            _lastIntensities = null;
         }
 
         /// <summary>
@@ -605,10 +575,8 @@ namespace FanaBridge
         /// </summary>
         public void ForceDirty()
         {
-            _colorsDirty = true;
-            _intensitiesDirty = true;
-            _revColorsDirty = true;
-            _flagColorsDirty = true;
+            _lastColors.Clear();
+            _lastIntensities = null;
         }
     }
 }
