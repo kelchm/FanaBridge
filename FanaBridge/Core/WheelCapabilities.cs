@@ -39,6 +39,9 @@ namespace FanaBridge
         /// <summary>Total addressable col03 LEDs (buttons + encoders). Used for the raw/individual LED module.</summary>
         public int TotalLedCount => ButtonLedCount + EncoderLedCount;
 
+        /// <summary>Total of all addressable LEDs across all types (rev + flag + button + encoder).</summary>
+        public int AllLedCount => RevLedCount + FlagLedCount + ButtonLedCount + EncoderLedCount;
+
         /// <summary>
         /// Number of Rev (RPM indicator) LEDs controlled via col03 LED interface.
         /// Each LED has independent RGB565 color (subcmd 0x00 on col03).
