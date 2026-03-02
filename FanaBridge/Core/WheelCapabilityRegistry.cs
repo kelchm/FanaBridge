@@ -77,7 +77,8 @@ namespace FanaBridge
                 Name = "Fanatec Podium Steering Wheel BMW M4 GT3",
                 ShortName = "Fanatec BMW M4 GT3",
                 ButtonLedCount = 12,
-                EncoderLedCount = 0,
+                EncoderLedCount = 3,
+                EncoderIntensityOffset = 12, // intensity payload[12]=middle, [13]=left, [14]=right
                 Display = DisplayType.Basic,
             });
 

@@ -116,7 +116,7 @@ namespace FanaBridge
                 DeviceName = caps.ShortName ?? caps.Name,
                 LedCount = revFlagCount,
                 ButtonsCount = caps.TotalLedCount,
-                EncodersCount = 0,
+                EncodersCount = caps.EncoderLedCount,
                 RawLedCount = allLeds,
                 LedDriver = manager,
                 EnableBrightnessSection = true,
