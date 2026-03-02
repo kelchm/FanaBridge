@@ -36,6 +36,15 @@ namespace FanaBridge
         /// <summary>Number of individually-addressable RGB encoder LEDs (col03 protocol).</summary>
         public int EncoderLedCount { get; set; }
 
+        /// <summary>
+        /// Starting byte index of encoder intensity values within the subcmd 0x03
+        /// intensity payload (<see cref="FanatecDevice.INTENSITY_PAYLOAD_SIZE"/> bytes).
+        /// Encoder intensities are placed at payload[offset .. offset+EncoderLedCount-1].
+        /// Wheel-specific — e.g. 12 for M4 GT3 (after 12 button intensity slots).
+        /// Ignored when <see cref="EncoderLedCount"/> is 0.
+        /// </summary>
+        public int EncoderIntensityOffset { get; set; }
+
         /// <summary>Total addressable col03 LEDs (buttons + encoders). Used for the raw/individual LED module.</summary>
         public int TotalLedCount => ButtonLedCount + EncoderLedCount;
 
@@ -59,6 +68,9 @@ namespace FanaBridge
 
         /// <summary>True if this device has Flag LEDs.</summary>
         public bool HasFlagLeds => FlagLedCount > 0;
+
+        /// <summary>True if this device has monochrome encoder indicator LEDs.</summary>
+        public bool HasEncoderLeds => EncoderLedCount > 0;
 
         /// <summary>The type of display available on this wheel/module.</summary>
         public DisplayType Display { get; set; }

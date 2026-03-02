@@ -30,8 +30,13 @@ namespace FanaBridge
         private const int BUTTON_COLOR_COMMIT_OFFSET = 27;
         private const int BUTTON_INTENSITY_COMMIT_OFFSET = 18;
         private const int MAX_BUTTON_LEDS = (BUTTON_COLOR_COMMIT_OFFSET - REPORT_HEADER_SIZE) / 2;  // 12
-        private const int BUTTON_GLOBAL_INTENSITY_START = 12;   // Indices 12-15 are global channels
-        private const int BUTTON_INTENSITY_PAYLOAD_SIZE = 16;   // 12 per-LED + 4 global
+
+        /// <summary>
+        /// Total bytes in the subcmd 0x03 intensity payload.
+        /// Includes per-button intensity slots plus additional slots whose
+        /// meaning varies by wheel (e.g. encoder indicator LEDs).
+        /// </summary>
+        public const int INTENSITY_PAYLOAD_SIZE = 16;
 
         // ── Dirty tracking — skip redundant HID writes ───────────────────
         // Color tracking keyed by subcmd; missing entry = dirty (forces send).
@@ -260,26 +265,21 @@ namespace FanaBridge
         // =====================================================================
 
         /// <summary>
-        /// Sets button/encoder LED colors and intensities using the staged
+        /// Sets button LED colors and the full intensity report using the staged
         /// commit protocol (subcmd 0x02 colors + subcmd 0x03 intensities).
         /// Skips HID writes when neither array has changed.
         /// </summary>
-        /// <param name="colors">Per-LED RGB565 values (max <see cref="MAX_BUTTON_LEDS"/>).</param>
-        /// <param name="ledIntensities">Per-LED intensity values (0-7), same length as colors.
-        /// Global intensity channels (indices 12-15) are set to max internally.</param>
-        public bool SetButtonLedState(ushort[] colors, byte[] ledIntensities)
+        /// <param name="colors">Per-button RGB565 values (max <see cref="MAX_BUTTON_LEDS"/>).</param>
+        /// <param name="intensityPayload">Pre-composed intensity payload, exactly
+        /// <see cref="INTENSITY_PAYLOAD_SIZE"/> bytes. The caller is responsible for
+        /// placing button intensities, encoder intensities, etc. at the correct
+        /// offsets for the current wheel configuration.</param>
+        public bool SetButtonLedState(ushort[] colors, byte[] intensityPayload)
         {
             if (colors == null || colors.Length == 0 || colors.Length > MAX_BUTTON_LEDS) return false;
-            if (ledIntensities == null || ledIntensities.Length != colors.Length) return false;
+            if (intensityPayload == null || intensityPayload.Length != INTENSITY_PAYLOAD_SIZE) return false;
 
             int ledCount = colors.Length;
-
-            // Build full intensity payload: per-LED values + global channels at max
-            var intensities = new byte[BUTTON_INTENSITY_PAYLOAD_SIZE];
-            int copyCount = Math.Min(ledCount, BUTTON_GLOBAL_INTENSITY_START);
-            Array.Copy(ledIntensities, intensities, copyCount);
-            for (int i = BUTTON_GLOBAL_INTENSITY_START; i < BUTTON_INTENSITY_PAYLOAD_SIZE; i++)
-                intensities[i] = 7;
 
             // Check color changes via dictionary-based tracking
             ushort[] lastC;
@@ -295,12 +295,12 @@ namespace FanaBridge
 
             // Check intensity changes
             bool intensitiesChanged = true;
-            if (_lastIntensities != null && _lastIntensities.Length == BUTTON_INTENSITY_PAYLOAD_SIZE)
+            if (_lastIntensities != null && _lastIntensities.Length == INTENSITY_PAYLOAD_SIZE)
             {
                 intensitiesChanged = false;
-                for (int i = 0; i < BUTTON_INTENSITY_PAYLOAD_SIZE; i++)
+                for (int i = 0; i < INTENSITY_PAYLOAD_SIZE; i++)
                 {
-                    if (intensities[i] != _lastIntensities[i]) { intensitiesChanged = true; break; }
+                    if (intensityPayload[i] != _lastIntensities[i]) { intensitiesChanged = true; break; }
                 }
             }
 
@@ -313,7 +313,7 @@ namespace FanaBridge
             if (colorsChanged && intensitiesChanged)
             {
                 ok = SendButtonColorReport(colors, commit: false);
-                ok = SendButtonIntensityReport(intensities, commit: true) && ok;
+                ok = SendButtonIntensityReport(intensityPayload, commit: true) && ok;
             }
             else if (colorsChanged)
             {
@@ -321,7 +321,7 @@ namespace FanaBridge
             }
             else
             {
-                ok = SendButtonIntensityReport(intensities, commit: true);
+                ok = SendButtonIntensityReport(intensityPayload, commit: true);
             }
 
             if (ok)
@@ -334,8 +334,8 @@ namespace FanaBridge
                 Array.Copy(colors, lastC, ledCount);
 
                 if (_lastIntensities == null)
-                    _lastIntensities = new byte[BUTTON_INTENSITY_PAYLOAD_SIZE];
-                Array.Copy(intensities, _lastIntensities, BUTTON_INTENSITY_PAYLOAD_SIZE);
+                    _lastIntensities = new byte[INTENSITY_PAYLOAD_SIZE];
+                Array.Copy(intensityPayload, _lastIntensities, INTENSITY_PAYLOAD_SIZE);
             }
 
             return ok;
