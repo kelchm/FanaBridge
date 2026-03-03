@@ -116,9 +116,11 @@ namespace FanaBridge
 
             txtStatus.Text = "Connected";
             txtWheelName.Text = Plugin.WheelName;
-            txtCapabilities.Text = string.Format("{0} button LEDs, {1} encoder LEDs, Display: {2}",
-                caps.ButtonLedCount,
-                caps.EncoderLedCount,
+            txtCapabilities.Text = string.Format("{0} color LEDs, {1} mono LEDs, {2} rev, {3} flag, Display: {4}",
+                caps.ColorLedCount,
+                caps.MonoLedCount,
+                caps.RevLedCount,
+                caps.FlagLedCount,
                 caps.Display);
         }
 

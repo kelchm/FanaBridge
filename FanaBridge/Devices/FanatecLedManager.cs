@@ -54,7 +54,8 @@ namespace FanaBridge
             SimHub.Logging.Current.Info(
                 "FanatecLedManager: Created driver for " + (_caps.Name ?? "unknown") +
                 " (" + _caps.AllLedCount + " LEDs: rev=" + _caps.RevLedCount +
-                ", flag=" + _caps.FlagLedCount + ", button=" + _caps.TotalLedCount + ")");
+                ", flag=" + _caps.FlagLedCount + ", color=" + _caps.ColorLedCount +
+                ", mono=" + _caps.MonoLedCount + ")");
 
             return _driver;
         }
