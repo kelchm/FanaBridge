@@ -214,13 +214,15 @@ namespace FanaBridge
             {
                 case M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_PBMR:
                     // Button Module Rally: small 1” OLED (basic 3-char).
-                    // 9 RGB button LEDs, 3 encoders each with an RGB LED.
+                    // 12 RGB LEDs on col03 subcmd 0x02: 9 button + 3 encoder,
+                    // interleaved at hardware indices 1 (right), 8 (left), 11 (middle).
                     return new WheelCapabilities
                     {
                         Name = "Fanatec Podium Hub + Button Module Rally",
                         ShortName = "Fanatec Podium Hub + BMR",
                         ButtonLedCount = 9,
                         EncoderLedCount = 3,
+                        EncoderColorIndices = new[] { 1, 8, 11 },
                         Display = DisplayType.Basic,
                     };
 
