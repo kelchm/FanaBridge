@@ -71,6 +71,13 @@
     <Resource Include="Resources\Images\plugin-icon.png" />
   </ItemGroup>
 
+  <!-- ── Wheel profile JSON files ──────────────────────────────────────
+       Embedded in the DLL as assembly resources.  Immutable at runtime.
+       User-created profiles are loaded from a separate directory. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Profiles\*.json" />
+  </ItemGroup>
+
   <!-- ── Device logo processing ──────────────────────────────────────
        Automatically runs process-device-logos.ps1 when source images
        are newer than processed output. Skips if ImageMagick isn't

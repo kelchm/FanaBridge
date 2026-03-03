@@ -219,8 +219,15 @@ namespace FanaBridge
             {
                 if (WheelDetected)
                 {
-                    CurrentCapabilities = WheelCapabilityRegistry.GetCapabilities(
-                        SteeringWheelType, SubModuleType);
+                    string wheelCode = WheelProfileStore.StripWheelPrefix(SteeringWheelType.ToString());
+                    string moduleCode = SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
+                        ? null
+                        : WheelProfileStore.StripModulePrefix(SubModuleType.ToString());
+
+                    var profile = WheelProfileStore.FindByWheelType(wheelCode, moduleCode);
+                    CurrentCapabilities = profile != null
+                        ? new WheelCapabilities(profile)
+                        : WheelCapabilities.None;
                 }
                 else
                 {
@@ -228,13 +235,15 @@ namespace FanaBridge
                 }
 
                 SimHub.Logging.Current.Info(string.Format(
-                    "FanatecSdkManager: Wheel changed — Detected={0}, Type={1}, Module={2}, Caps={3} (ButtonLEDs={4}, EncoderLEDs={5}, Display={6})",
+                    "FanatecSdkManager: Wheel changed — Detected={0}, Type={1}, Module={2}, Caps={3} (Color={4}, Mono={5}, Rev={6}, Flag={7}, Display={8})",
                     WheelDetected,
                     SteeringWheelType,
                     SubModuleType,
                     CurrentCapabilities.Name ?? "(none)",
-                    CurrentCapabilities.ButtonLedCount,
-                    CurrentCapabilities.EncoderLedCount,
+                    CurrentCapabilities.ColorLedCount,
+                    CurrentCapabilities.MonoLedCount,
+                    CurrentCapabilities.RevLedCount,
+                    CurrentCapabilities.FlagLedCount,
                     CurrentCapabilities.Display));
 
                 WheelChanged?.Invoke(this);
