@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System.Linq;
+
 namespace FanaBridge
 {
     /// <summary>
@@ -33,15 +36,39 @@ namespace FanaBridge
         /// <summary>Number of individually-addressable RGB button LEDs (col03 protocol).</summary>
         public int ButtonLedCount { get; set; }
 
-        /// <summary>Number of individually-addressable RGB encoder LEDs (col03 protocol).</summary>
+        /// <summary>Number of encoder-mounted LEDs exposed in SimHub's Encoders section.</summary>
+        /// <remarks>
+        /// The LED type depends on the wheel hardware:
+        ///   • RGB encoder LEDs (e.g. BMR): share the button color protocol (subcmd 0x02)
+        ///     but are interleaved with button LEDs at specific hardware indices.
+        ///     Set <see cref="EncoderColorIndices"/> to declare their positions.
+        ///   • Monochrome encoder LEDs (e.g. M4 GT3): intensity-only (0-7),
+        ///     placed in the subcmd 0x03 intensity payload at <see cref="EncoderIntensityOffset"/>.
+        /// </remarks>
         public int EncoderLedCount { get; set; }
+
+        /// <summary>
+        /// Hardware indices within the subcmd 0x02 color array where RGB encoder
+        /// LEDs reside.  Length must match <see cref="EncoderLedCount"/> when set.
+        /// Used when encoder LEDs share the button color protocol but are
+        /// interleaved at non-contiguous positions (e.g. BMR: {1, 8, 11}).
+        ///
+        /// Null when encoders are monochrome (use <see cref="EncoderIntensityOffset"/>
+        /// instead) or when the wheel has no encoder LEDs.
+        /// </summary>
+        public int[] EncoderColorIndices { get; set; }
 
         /// <summary>
         /// Starting byte index of encoder intensity values within the subcmd 0x03
         /// intensity payload (<see cref="FanatecDevice.INTENSITY_PAYLOAD_SIZE"/> bytes).
-        /// Encoder intensities are placed at payload[offset .. offset+EncoderLedCount-1].
-        /// Wheel-specific — e.g. 12 for M4 GT3 (after 12 button intensity slots).
-        /// Ignored when <see cref="EncoderLedCount"/> is 0.
+        /// Only meaningful when encoder LEDs are monochrome (intensity-only).
+        ///
+        /// When 0 (default): encoder LEDs are full RGB and share the button color
+        /// protocol — their colors are appended to the button color array.
+        /// When > 0: encoder LEDs are monochrome; luminance is extracted from the
+        /// SimHub Color and placed at payload[offset .. offset+EncoderLedCount-1].
+        ///
+        /// Example: M4 GT3 has offset 12 (after 12 button intensity slots).
         /// </summary>
         public int EncoderIntensityOffset { get; set; }
 
@@ -69,8 +96,37 @@ namespace FanaBridge
         /// <summary>True if this device has Flag LEDs.</summary>
         public bool HasFlagLeds => FlagLedCount > 0;
 
-        /// <summary>True if this device has monochrome encoder indicator LEDs.</summary>
+        /// <summary>True if this device has encoder indicator LEDs (RGB or monochrome).</summary>
         public bool HasEncoderLeds => EncoderLedCount > 0;
+
+        /// <summary>True if encoder LEDs are monochrome (intensity-only, not RGB).</summary>
+        public bool HasMonochromeEncoders => EncoderLedCount > 0 && EncoderIntensityOffset > 0;
+
+        /// <summary>True if encoder LEDs are RGB and share the button color protocol.</summary>
+        public bool HasRgbEncoders => EncoderColorIndices != null && EncoderColorIndices.Length > 0;
+
+        /// <summary>
+        /// Total slots in the subcmd 0x02 color array.
+        /// Includes both button and interleaved RGB encoder LEDs.
+        /// </summary>
+        public int ButtonColorLedCount => HasRgbEncoders
+            ? ButtonLedCount + EncoderLedCount
+            : ButtonLedCount;
+
+        /// <summary>
+        /// Builds an ordered array of hardware indices in the subcmd 0x02 color
+        /// array that correspond to button (non-encoder) LEDs.
+        /// Only meaningful when <see cref="HasRgbEncoders"/> is true.
+        /// </summary>
+        public int[] BuildButtonColorIndices()
+        {
+            if (!HasRgbEncoders)
+                return null;
+            var encoderSet = new HashSet<int>(EncoderColorIndices);
+            return Enumerable.Range(0, ButtonColorLedCount)
+                             .Where(i => !encoderSet.Contains(i))
+                             .ToArray();
+        }
 
         /// <summary>The type of display available on this wheel/module.</summary>
         public DisplayType Display { get; set; }

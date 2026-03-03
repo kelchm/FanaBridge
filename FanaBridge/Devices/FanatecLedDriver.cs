@@ -14,16 +14,19 @@ namespace FanaBridge
     /// every frame; this driver splits the physical LED range into regions
     /// and routes each to the appropriate <see cref="FanatecDevice"/> method.
     ///
-    /// Physical layout (contiguous):
-    ///   [0 .. RevCount-1]                                      Rev LEDs
-    ///   [RevCount .. RevCount+FlagCount-1]                     Flag LEDs
+    /// SimHub physical layout (contiguous, for mapper addressing):
+    ///   [0 .. RevCount-1]                                         Rev LEDs
+    ///   [RevCount .. RevCount+FlagCount-1]                        Flag LEDs
     ///   [RevCount+FlagCount .. RevCount+FlagCount+ButtonCount-1]  Button LEDs
-    ///   [RevCount+FlagCount+ButtonCount .. AllLedCount-1]      Encoder LEDs
+    ///   [RevCount+FlagCount+ButtonCount .. AllLedCount-1]         Encoder LEDs
     ///
-    /// Rev/Flag/Button LEDs use premultiplied-alpha RGB565 so brightness is
-    /// encoded directly in the 16-bit color value with full 5-6-5 resolution.
-    /// Encoder LEDs are monochrome (intensity-only, 0-7); the driver extracts
-    /// luminance from the Color the framework provides.
+    /// Hardware color array mapping:
+    ///   For wheels with RGB encoder LEDs (e.g. BMR), both button and encoder
+    ///   colors are placed into a single subcmd 0x02 color array using
+    ///   per-wheel index maps (<see cref="WheelCapabilities.EncoderColorIndices"/>
+    ///   and <see cref="WheelCapabilities.BuildButtonColorIndices"/>).
+    ///   For wheels with monochrome encoders (e.g. M4 GT3), encoder brightness
+    ///   is placed at a config-driven offset in the subcmd 0x03 intensity payload.
     /// </summary>
     public class FanatecLedDriver : ILedButtonsDriver
     {
@@ -36,16 +39,16 @@ namespace FanaBridge
         private readonly int _buttonStart;
         private readonly int _encoderStart;
 
+        // Hardware index maps for interleaved RGB LEDs — built once from
+        // WheelCapabilities.  null when encoders are monochrome or absent.
+        private readonly int[] _buttonHwIndices;
+        private readonly int[] _encoderHwIndices;
+
         // Reusable frame buffers — avoid per-frame heap allocations.
-        // Sizes come from WheelCapabilities, not hardcoded protocol constants.
         private readonly ushort[] _revColors;
         private readonly ushort[] _flagColors;
-        private readonly ushort[] _buttonColors;
+        private readonly ushort[] _buttonColors;   // sized to ButtonColorLedCount
         private readonly byte[] _encoderIntensities;
-
-        // Pre-composed intensity payload for subcmd 0x03 — covers button
-        // intensities, encoder intensities, and any reserved slots.
-        // Laid out according to the wheel's capability config.
         private readonly byte[] _intensityPayload;
 
         public FanatecLedDriver(WheelCapabilities caps)
@@ -58,9 +61,13 @@ namespace FanaBridge
 
             _revColors = new ushort[caps.RevLedCount];
             _flagColors = new ushort[caps.FlagLedCount];
-            _buttonColors = new ushort[caps.ButtonLedCount];
-            _encoderIntensities = new byte[caps.EncoderLedCount];
+            _buttonColors = new ushort[caps.ButtonColorLedCount];
+            _encoderIntensities = new byte[caps.HasMonochromeEncoders ? caps.EncoderLedCount : 0];
             _intensityPayload = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+
+            // Pre-compute hardware index maps for interleaved encoders
+            _buttonHwIndices = caps.BuildButtonColorIndices();  // null when not needed
+            _encoderHwIndices = caps.EncoderColorIndices;       // null when monochrome/absent
 
             _mapper = BuildMapper(caps);
         }
@@ -99,8 +106,8 @@ namespace FanaBridge
                     device.SetRevLedColors(new ushort[_caps.RevLedCount]);
                 if (_caps.HasFlagLeds)
                     device.SetFlagLedColors(new ushort[_caps.FlagLedCount]);
-                if (_caps.ButtonLedCount > 0 || _caps.HasEncoderLeds)
-                    device.SetButtonLedState(new ushort[_caps.ButtonLedCount],
+                if (_caps.ButtonColorLedCount > 0 || _caps.HasMonochromeEncoders)
+                    device.SetButtonLedState(new ushort[_caps.ButtonColorLedCount],
                                               new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE]);
             }
             catch (Exception ex)
@@ -162,7 +169,9 @@ namespace FanaBridge
             }
 
             // ── Encoder LEDs (monochrome intensity-only) ─────────────
-            if (_caps.HasEncoderLeds)
+            // Only for wheels with monochrome encoders (EncoderIntensityOffset > 0).
+            // RGB encoder LEDs are handled in the button section below.
+            if (_caps.HasMonochromeEncoders)
             {
                 Array.Clear(_encoderIntensities, 0, _encoderIntensities.Length);
 
@@ -174,22 +183,46 @@ namespace FanaBridge
             }
 
             // ── Button LEDs + intensity payload ──────────────────────
-            // Compose the full intensity payload from button intensities
-            // (at indices 0..ButtonLedCount-1) and encoder intensities
-            // (at the config-driven EncoderIntensityOffset).
-            if (_caps.ButtonLedCount > 0 || _caps.HasEncoderLeds)
+            // The color array covers both button and RGB encoder LEDs,
+            // placed at their correct hardware indices via the index maps.
+            if (_caps.ButtonColorLedCount > 0 || _caps.HasMonochromeEncoders)
             {
                 Array.Clear(_buttonColors, 0, _buttonColors.Length);
                 Array.Clear(_intensityPayload, 0, _intensityPayload.Length);
 
-                for (int i = 0; i < _caps.ButtonLedCount; i++)
+                if (_caps.HasRgbEncoders)
                 {
-                    Color color = _mapper.GetColor(_buttonStart + i, state, ignoreBrightness: false);
-                    _buttonColors[i] = ColorHelper.ToRgb565Premultiplied(color);
-                    _intensityPayload[i] = 7; // Max intensity — brightness is in the color
+                    // Interleaved layout — use hardware index maps.
+                    // Button colors → mapped hardware positions
+                    for (int i = 0; i < _caps.ButtonLedCount; i++)
+                    {
+                        int hw = _buttonHwIndices[i];
+                        Color color = _mapper.GetColor(_buttonStart + i, state, ignoreBrightness: false);
+                        _buttonColors[hw] = ColorHelper.ToRgb565Premultiplied(color);
+                        _intensityPayload[hw] = 7;
+                    }
+                    // RGB encoder colors → mapped hardware positions
+                    for (int i = 0; i < _caps.EncoderLedCount; i++)
+                    {
+                        int hw = _encoderHwIndices[i];
+                        Color color = _mapper.GetColor(_encoderStart + i, state, ignoreBrightness: false);
+                        _buttonColors[hw] = ColorHelper.ToRgb565Premultiplied(color);
+                        _intensityPayload[hw] = 7;
+                    }
+                }
+                else
+                {
+                    // Simple contiguous layout — no interleaving.
+                    for (int i = 0; i < _caps.ButtonLedCount; i++)
+                    {
+                        Color color = _mapper.GetColor(_buttonStart + i, state, ignoreBrightness: false);
+                        _buttonColors[i] = ColorHelper.ToRgb565Premultiplied(color);
+                        _intensityPayload[i] = 7;
+                    }
                 }
 
-                if (_caps.HasEncoderLeds)
+                // Monochrome encoder intensities — placed at config-driven offset
+                if (_caps.HasMonochromeEncoders)
                 {
                     int offset = _caps.EncoderIntensityOffset;
                     for (int i = 0; i < _caps.EncoderLedCount; i++)
