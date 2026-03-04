@@ -9,6 +9,17 @@ namespace FanaBridge
     // ── JSON-serializable model ──────────────────────────────────────────
 
     /// <summary>
+    /// Indicates whether a profile was shipped with the plugin or created by the user.
+    /// </summary>
+    public enum ProfileSource
+    {
+        /// <summary>Embedded in the plugin assembly — immutable.</summary>
+        BuiltIn,
+        /// <summary>Loaded from the user profile directory on disk.</summary>
+        User,
+    }
+
+    /// <summary>
     /// Pixel encoding for the Color LED channel (subcmd 0x02).
     /// Most Fanatec hardware uses standard RGB565 (5-6-5 bit layout),
     /// but some modules only read 5 green bits (RGB555).
@@ -214,6 +225,22 @@ namespace FanaBridge
         /// <summary>True if this device has any LEDs at all.</summary>
         [JsonIgnore]
         public bool HasLeds => Leds.Count > 0;
+
+        // ── Runtime metadata (set by WheelProfileStore, not serialized) ──
+
+        /// <summary>
+        /// Whether this profile is built-in (embedded resource) or user-created.
+        /// Set by <see cref="WheelProfileStore"/> during loading.
+        /// </summary>
+        [JsonIgnore]
+        public ProfileSource Source { get; set; }
+
+        /// <summary>
+        /// Disk path for user profiles, or the embedded resource name for
+        /// built-in profiles.  Useful for diagnostics and UI display.
+        /// </summary>
+        [JsonIgnore]
+        public string SourcePath { get; set; }
     }
 
     // ── Profile loader ───────────────────────────────────────────────────
@@ -328,6 +355,8 @@ namespace FanaBridge
                             }
 
                             _byId[profile.Id] = profile;
+                            profile.Source = ProfileSource.BuiltIn;
+                            profile.SourcePath = resourceName;
                             SimHub.Logging.Current.Info(
                                 "WheelProfileStore: Loaded built-in profile '" + profile.Id +
                                 "' (" + profile.Name + ")");
@@ -365,7 +394,29 @@ namespace FanaBridge
                         continue;
                     }
 
+                    profile.Source = ProfileSource.User;
+                    profile.SourcePath = file;
+
+                    bool wasBuiltIn = _byId.TryGetValue(profile.Id, out var existing)
+                        && existing.Source == ProfileSource.BuiltIn;
+                    bool wasUser = _byId.TryGetValue(profile.Id, out var existingUser)
+                        && existingUser.Source == ProfileSource.User;
+
                     _byId[profile.Id] = profile;
+
+                    if (wasUser)
+                    {
+                        SimHub.Logging.Current.Warn(
+                            "WheelProfileStore: Duplicate user profile '" + profile.Id +
+                            "' — " + Path.GetFileName(file) + " overrides earlier file");
+                    }
+                    else if (wasBuiltIn)
+                    {
+                        SimHub.Logging.Current.Info(
+                            "WheelProfileStore: User profile '" + profile.Id +
+                            "' overrides built-in profile");
+                    }
+
                     SimHub.Logging.Current.Info(
                         "WheelProfileStore: Loaded user profile '" + profile.Id +
                         "' (" + profile.Name + ") from " + Path.GetFileName(file));

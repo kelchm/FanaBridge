@@ -40,6 +40,15 @@ namespace FanaBridge
         /// <summary>The source profile this was built from (null for the None sentinel).</summary>
         public WheelProfile Profile { get; }
 
+        /// <summary>Whether the active profile is built-in or user-created.</summary>
+        public ProfileSource? ProfileSource { get; }
+
+        /// <summary>
+        /// For user profiles, the disk file path.  For built-in profiles,
+        /// the embedded resource name.  Null for the None sentinel.
+        /// </summary>
+        public string ProfileSourcePath { get; }
+
         // ── Derived LED counts ───────────────────────────────────────────
 
         /// <summary>Number of Rev (RPM) LEDs — subcmd 0x00.</summary>
@@ -86,6 +95,8 @@ namespace FanaBridge
             Name = profile.Name;
             ShortName = profile.ShortName;
             Display = profile.DisplayType;
+            ProfileSource = profile.Source;
+            ProfileSourcePath = profile.SourcePath;
 
             RevLedCount = profile.RevLedCount;
             FlagLedCount = profile.FlagLedCount;

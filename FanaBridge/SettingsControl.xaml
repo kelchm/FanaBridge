@@ -24,6 +24,10 @@
                         <TextBlock Text="Capabilities: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
                         <TextBlock x:Name="txtCapabilities" Text="—" VerticalAlignment="Center" TextWrapping="Wrap" />
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock Text="Profile: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
+                        <TextBlock x:Name="txtProfileSource" Text="—" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    </StackPanel>
                     <styles:SHButtonPrimary x:Name="btnReconnect" Click="BtnReconnect_Click" HorizontalAlignment="Left" Margin="0,8">
                         Reconnect
                     </styles:SHButtonPrimary>

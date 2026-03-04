@@ -99,6 +99,7 @@ namespace FanaBridge
                 txtStatus.Text = "Disconnected";
                 txtWheelName.Text = "—";
                 txtCapabilities.Text = "—";
+                txtProfileSource.Text = "—";
                 return;
             }
 
@@ -111,6 +112,7 @@ namespace FanaBridge
                 txtStatus.Text = "Connected — " + Plugin.WheelName;
                 txtWheelName.Text = "—";
                 txtCapabilities.Text = "—";
+                txtProfileSource.Text = "—";
                 return;
             }
 
@@ -122,6 +124,23 @@ namespace FanaBridge
                 caps.RevLedCount,
                 caps.FlagLedCount,
                 caps.Display);
+
+            // Profile source indicator
+            if (caps.ProfileSource == FanaBridge.ProfileSource.User)
+            {
+                string fileName = caps.ProfileSourcePath != null
+                    ? System.IO.Path.GetFileName(caps.ProfileSourcePath)
+                    : "(unknown)";
+                txtProfileSource.Text = "\ud83d\udcdd Custom — " + fileName;
+            }
+            else if (caps.ProfileSource == FanaBridge.ProfileSource.BuiltIn)
+            {
+                txtProfileSource.Text = "\ud83d\udce6 Built-in";
+            }
+            else
+            {
+                txtProfileSource.Text = "—";
+            }
         }
 
         private void BtnReconnect_Click(object sender, RoutedEventArgs e)
