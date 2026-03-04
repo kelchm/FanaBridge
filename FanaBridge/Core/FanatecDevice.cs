@@ -11,7 +11,7 @@ namespace FanaBridge
     /// HID communication layer for Fanatec wheel LED and display control.
     /// Ported from the standalone PoC to .NET Framework 4.8.
     /// </summary>
-    public class FanatecDevice
+    public class FanatecDevice : IDisposable
     {
         // ── Protocol constants (col03 report format) ─────────────────────
         private const int LED_REPORT_LENGTH = 64;
@@ -43,6 +43,11 @@ namespace FanaBridge
         private readonly Dictionary<byte, ushort[]> _lastColors = new Dictionary<byte, ushort[]>();
         // Button intensity tracking (separate: unique staging protocol, byte[] payload)
         private byte[] _lastIntensities;
+
+        // ── Pooled report buffers — avoid per-frame heap allocations ─────
+        private readonly byte[] _ledReportBuf = new byte[LED_REPORT_LENGTH];
+        private readonly byte[] _displayReportBuf = new byte[DISPLAY_REPORT_LENGTH];
+        private readonly byte[] _displayTextSegs = new byte[3];  // reusable for DisplayText
 
         private HidDevice _ledDevice;       // col03: 64-byte LED control
         private HidStream _ledStream;
@@ -121,6 +126,9 @@ namespace FanaBridge
         /// </summary>
         public bool Connect(int productId)
         {
+            // Release any previous connection to prevent resource leaks
+            Disconnect();
+
             try
             {
                 var devices = DeviceList.Local.GetHidDevices()
@@ -365,6 +373,7 @@ namespace FanaBridge
         /// Sends a simple (non-staged) LED color report.
         /// Builds a col03 report: [0xFF, 0x01, subcmd, ...RGB565 big-endian...].
         /// Skips the HID write when colors haven't changed since the last send.
+        /// Uses the pooled _ledReportBuf to avoid per-frame allocations.
         /// </summary>
         private bool SendSimpleLedColors(byte subcmd, ushort[] colors)
         {
@@ -383,19 +392,20 @@ namespace FanaBridge
                 if (!changed) return true;
             }
 
-            var report = new byte[LED_REPORT_LENGTH];
-            report[0] = 0xFF;
-            report[1] = 0x01;
-            report[2] = subcmd;
+            // Reuse pooled buffer — zero the payload region then fill
+            Array.Clear(_ledReportBuf, 0, LED_REPORT_LENGTH);
+            _ledReportBuf[0] = 0xFF;
+            _ledReportBuf[1] = 0x01;
+            _ledReportBuf[2] = subcmd;
 
             for (int i = 0; i < count; i++)
             {
                 int offset = REPORT_HEADER_SIZE + (i * 2);
-                report[offset]     = (byte)((colors[i] >> 8) & 0xFF);
-                report[offset + 1] = (byte)(colors[i] & 0xFF);
+                _ledReportBuf[offset]     = (byte)((colors[i] >> 8) & 0xFF);
+                _ledReportBuf[offset + 1] = (byte)(colors[i] & 0xFF);
             }
 
-            bool ok = SendLedReport(report);
+            bool ok = SendLedReport(_ledReportBuf);
             if (ok)
             {
                 if (last == null || last.Length != count)
@@ -410,32 +420,32 @@ namespace FanaBridge
 
         private bool SendButtonColorReport(ushort[] colors, bool commit)
         {
-            var report = new byte[LED_REPORT_LENGTH];
-            report[0] = 0xFF;
-            report[1] = 0x01;
-            report[2] = SUBCMD_BUTTON_COLORS;
+            Array.Clear(_ledReportBuf, 0, LED_REPORT_LENGTH);
+            _ledReportBuf[0] = 0xFF;
+            _ledReportBuf[1] = 0x01;
+            _ledReportBuf[2] = SUBCMD_BUTTON_COLORS;
 
             for (int i = 0; i < colors.Length; i++)
             {
                 int offset = REPORT_HEADER_SIZE + (i * 2);
-                report[offset]     = (byte)((colors[i] >> 8) & 0xFF);
-                report[offset + 1] = (byte)(colors[i] & 0xFF);
+                _ledReportBuf[offset]     = (byte)((colors[i] >> 8) & 0xFF);
+                _ledReportBuf[offset + 1] = (byte)(colors[i] & 0xFF);
             }
 
-            report[BUTTON_COLOR_COMMIT_OFFSET] = commit ? (byte)0x01 : (byte)0x00;
-            return SendLedReport(report);
+            _ledReportBuf[BUTTON_COLOR_COMMIT_OFFSET] = commit ? (byte)0x01 : (byte)0x00;
+            return SendLedReport(_ledReportBuf);
         }
 
         private bool SendButtonIntensityReport(byte[] intensities, bool commit)
         {
-            var report = new byte[LED_REPORT_LENGTH];
-            report[0] = 0xFF;
-            report[1] = 0x01;
-            report[2] = SUBCMD_BUTTON_INTENSITIES;
+            Array.Clear(_ledReportBuf, 0, LED_REPORT_LENGTH);
+            _ledReportBuf[0] = 0xFF;
+            _ledReportBuf[1] = 0x01;
+            _ledReportBuf[2] = SUBCMD_BUTTON_INTENSITIES;
 
-            Array.Copy(intensities, 0, report, REPORT_HEADER_SIZE, intensities.Length);
-            report[BUTTON_INTENSITY_COMMIT_OFFSET] = commit ? (byte)0x01 : (byte)0x00;
-            return SendLedReport(report);
+            Array.Copy(intensities, 0, _ledReportBuf, REPORT_HEADER_SIZE, intensities.Length);
+            _ledReportBuf[BUTTON_INTENSITY_COMMIT_OFFSET] = commit ? (byte)0x01 : (byte)0x00;
+            return SendLedReport(_ledReportBuf);
         }
 
         // =====================================================================
@@ -448,17 +458,16 @@ namespace FanaBridge
         /// </summary>
         public bool SetDisplay(byte seg1, byte seg2, byte seg3)
         {
-            var report = new byte[DISPLAY_REPORT_LENGTH];
-            report[0] = 0x01;  // Report ID
-            report[1] = 0xF8;
-            report[2] = 0x09;
-            report[3] = 0x01;
-            report[4] = 0x02;
-            report[5] = seg1;
-            report[6] = seg2;
-            report[7] = seg3;
+            _displayReportBuf[0] = 0x01;  // Report ID
+            _displayReportBuf[1] = 0xF8;
+            _displayReportBuf[2] = 0x09;
+            _displayReportBuf[3] = 0x01;
+            _displayReportBuf[4] = 0x02;
+            _displayReportBuf[5] = seg1;
+            _displayReportBuf[6] = seg2;
+            _displayReportBuf[7] = seg3;
 
-            return SendDisplayReport(report);
+            return SendDisplayReport(_displayReportBuf);
         }
 
         /// <summary>
@@ -510,31 +519,34 @@ namespace FanaBridge
 
         /// <summary>
         /// Display up to 3 characters of text. Dots/commas are folded onto predecessor.
+        /// Uses a pooled buffer to avoid per-call allocations.
         /// </summary>
         public bool DisplayText(string text)
         {
             if (string.IsNullOrEmpty(text))
                 return ClearDisplay();
 
-            var segs = new List<byte>();
+            int segCount = 0;
+            _displayTextSegs[0] = SevenSegment.Blank;
+            _displayTextSegs[1] = SevenSegment.Blank;
+            _displayTextSegs[2] = SevenSegment.Blank;
+
             foreach (char ch in text)
             {
-                if ((ch == '.' || ch == ',') && segs.Count > 0)
+                if ((ch == '.' || ch == ',') && segCount > 0)
                 {
-                    segs[segs.Count - 1] |= SevenSegment.Dot;
+                    _displayTextSegs[segCount - 1] |= SevenSegment.Dot;
                 }
                 else
                 {
-                    segs.Add(SevenSegment.CharToSegment(ch));
+                    _displayTextSegs[segCount] = SevenSegment.CharToSegment(ch);
+                    segCount++;
                 }
 
-                if (segs.Count >= 3) break;
+                if (segCount >= 3) break;
             }
 
-            while (segs.Count < 3)
-                segs.Add(SevenSegment.Blank);
-
-            return SetDisplay(segs[0], segs[1], segs[2]);
+            return SetDisplay(_displayTextSegs[0], _displayTextSegs[1], _displayTextSegs[2]);
         }
 
         // =====================================================================
@@ -577,6 +589,11 @@ namespace FanaBridge
         {
             _lastColors.Clear();
             _lastIntensities = null;
+        }
+
+        public void Dispose()
+        {
+            Disconnect();
         }
     }
 }
