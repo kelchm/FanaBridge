@@ -193,6 +193,14 @@ namespace FanaBridge
         // ── Polling ──────────────────────────────────────────────────────
 
         /// <summary>
+        /// Optional callback that returns a profile override ID for a given
+        /// wheel match key (e.g. "PHUB_PBMR").  Set by the plugin to integrate
+        /// with <see cref="FanatecPluginSettings.ProfileOverrides"/>.
+        /// Return null or empty to use default auto-resolution.
+        /// </summary>
+        public Func<string, string> ProfileOverrideResolver { get; set; }
+
+        /// <summary>
         /// Polls the SDK for current wheel identity. Call periodically (not every frame).
         /// Returns true if the wheel type changed since last poll.
         /// </summary>
@@ -217,35 +225,7 @@ namespace FanaBridge
 
             if (changed)
             {
-                if (WheelDetected)
-                {
-                    string wheelCode = WheelProfileStore.StripWheelPrefix(SteeringWheelType.ToString());
-                    string moduleCode = SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
-                        ? null
-                        : WheelProfileStore.StripModulePrefix(SubModuleType.ToString());
-
-                    var profile = WheelProfileStore.FindByWheelType(wheelCode, moduleCode);
-                    CurrentCapabilities = profile != null
-                        ? new WheelCapabilities(profile)
-                        : WheelCapabilities.None;
-                }
-                else
-                {
-                    CurrentCapabilities = WheelCapabilities.None;
-                }
-
-                SimHub.Logging.Current.Info(string.Format(
-                    "FanatecSdkManager: Wheel changed — Detected={0}, Type={1}, Module={2}, Caps={3} (Color={4}, Mono={5}, Rev={6}, Flag={7}, Display={8})",
-                    WheelDetected,
-                    SteeringWheelType,
-                    SubModuleType,
-                    CurrentCapabilities.Name ?? "(none)",
-                    CurrentCapabilities.ColorLedCount,
-                    CurrentCapabilities.MonoLedCount,
-                    CurrentCapabilities.RevLedCount,
-                    CurrentCapabilities.FlagLedCount,
-                    CurrentCapabilities.Display));
-
+                ResolveCapabilities("Wheel changed");
                 WheelChanged?.Invoke(this);
             }
 
@@ -263,26 +243,53 @@ namespace FanaBridge
             if (!WheelDetected)
                 return;
 
+            ResolveCapabilities("RefreshCapabilities");
+            WheelChanged?.Invoke(this);
+        }
+
+        /// <summary>
+        /// Shared implementation: resolves the best profile for the current
+        /// wheel, respecting any user override from the plugin settings.
+        /// </summary>
+        private void ResolveCapabilities(string logContext)
+        {
+            if (!WheelDetected)
+            {
+                CurrentCapabilities = WheelCapabilities.None;
+                return;
+            }
+
             string wheelCode = WheelProfileStore.StripWheelPrefix(SteeringWheelType.ToString());
             string moduleCode = SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
                 ? null
                 : WheelProfileStore.StripModulePrefix(SubModuleType.ToString());
 
-            var profile = WheelProfileStore.FindByWheelType(wheelCode, moduleCode);
+            // Build the match key the same way profiles build their IDs
+            string matchKey = wheelCode;
+            if (moduleCode != null)
+                matchKey += "_" + moduleCode;
+
+            // Check for a user override
+            string overrideId = ProfileOverrideResolver?.Invoke(matchKey);
+
+            var profile = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId);
             CurrentCapabilities = profile != null
                 ? new WheelCapabilities(profile)
                 : WheelCapabilities.None;
 
             SimHub.Logging.Current.Info(string.Format(
-                "FanatecSdkManager: RefreshCapabilities — Caps={0} (Color={1}, Mono={2}, Rev={3}, Flag={4}, Display={5})",
+                "FanatecSdkManager: {0} — Detected={1}, Type={2}, Module={3}, Override={4}, Caps={5} (Color={6}, Mono={7}, Rev={8}, Flag={9}, Display={10})",
+                logContext,
+                WheelDetected,
+                SteeringWheelType,
+                SubModuleType,
+                overrideId ?? "(auto)",
                 CurrentCapabilities.Name ?? "(none)",
                 CurrentCapabilities.ColorLedCount,
                 CurrentCapabilities.MonoLedCount,
                 CurrentCapabilities.RevLedCount,
                 CurrentCapabilities.FlagLedCount,
                 CurrentCapabilities.Display));
-
-            WheelChanged?.Invoke(this);
         }
 
         // ── Lifecycle ────────────────────────────────────────────────────

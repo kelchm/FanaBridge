@@ -78,6 +78,15 @@ namespace FanaBridge
             _reconnectCooldown = 0;
             _wheelPollCooldown = 0;
 
+            // Wire up profile override resolution from plugin settings
+            _sdk.ProfileOverrideResolver = (matchKey) =>
+            {
+                if (Settings.ProfileOverrides != null
+                    && Settings.ProfileOverrides.TryGetValue(matchKey, out var overrideId))
+                    return overrideId;
+                return null;
+            };
+
             // Attempt initial connection
             _connected = TryConnect();
 
@@ -236,6 +245,15 @@ namespace FanaBridge
             _reconnectCooldown = 0;
             _connected = TryConnect();
             StateChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// Persists the current <see cref="Settings"/> to SimHub's storage.
+        /// Called from the settings UI when profile overrides change.
+        /// </summary>
+        public void SaveSettings()
+        {
+            this.SaveCommonSettings("FanaBridgeSettings", Settings);
         }
 
         public System.Windows.Controls.Control GetWPFSettingsControl(PluginManager pluginManager)

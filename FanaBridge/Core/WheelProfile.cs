@@ -257,6 +257,14 @@ namespace FanaBridge
     /// </summary>
     public static class WheelProfileStore
     {
+        /// <summary>All loaded profiles (may contain multiple entries for the same wheel).</summary>
+        private static readonly List<WheelProfile> _all = new List<WheelProfile>();
+
+        /// <summary>
+        /// Auto-resolution lookup: maps profile ID to the "winning" entry.
+        /// When a user profile has the same ID as a built-in, the user version
+        /// wins here, but the built-in remains in <see cref="_all"/>.
+        /// </summary>
         private static readonly Dictionary<string, WheelProfile> _byId
             = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
 
@@ -280,7 +288,7 @@ namespace FanaBridge
                 LoadFromDirectory(userDir);
 
             SimHub.Logging.Current.Info(
-                "WheelProfileStore: Loaded " + _byId.Count + " profile(s)");
+                "WheelProfileStore: Loaded " + _all.Count + " profile(s) (" + _byId.Count + " unique IDs)");
         }
 
         /// <summary>
@@ -290,11 +298,12 @@ namespace FanaBridge
         /// </summary>
         public static void Reload()
         {
+            _all.Clear();
             _byId.Clear();
             _loaded = false;
             EnsureLoaded();
             SimHub.Logging.Current.Info(
-                "WheelProfileStore: Reloaded — " + _byId.Count + " profile(s)");
+                "WheelProfileStore: Reloaded — " + _all.Count + " profile(s)");
         }
 
         /// <summary>
@@ -355,6 +364,7 @@ namespace FanaBridge
                             }
 
                             _byId[profile.Id] = profile;
+                            _all.Add(profile);
                             profile.Source = ProfileSource.BuiltIn;
                             profile.SourcePath = resourceName;
                             SimHub.Logging.Current.Info(
@@ -402,7 +412,10 @@ namespace FanaBridge
                     bool wasUser = _byId.TryGetValue(profile.Id, out var existingUser)
                         && existingUser.Source == ProfileSource.User;
 
+                    // User profile wins in the auto-resolution dictionary,
+                    // but the built-in remains in _all for the profile picker.
                     _byId[profile.Id] = profile;
+                    _all.Add(profile);
 
                     if (wasUser)
                     {
@@ -430,12 +443,27 @@ namespace FanaBridge
         }
 
         /// <summary>
-        /// Looks up a profile by its ID.
+        /// Looks up a profile by its ID.  When multiple profiles share the
+        /// same ID (built-in + user), returns the auto-resolution winner.
+        /// Use <see cref="FindAllForWheel"/> to get all candidates.
         /// </summary>
         public static WheelProfile GetById(string id)
         {
             EnsureLoaded();
             return _byId.TryGetValue(id, out var profile) ? profile : null;
+        }
+
+        /// <summary>
+        /// Looks up a specific profile by ID and source.  This allows
+        /// retrieving a built-in profile even when a user profile with the
+        /// same ID exists.
+        /// </summary>
+        public static WheelProfile GetById(string id, ProfileSource source)
+        {
+            EnsureLoaded();
+            return _all.FirstOrDefault(p =>
+                string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase)
+                && p.Source == source);
         }
 
         /// <summary>
@@ -446,9 +474,35 @@ namespace FanaBridge
         /// </summary>
         public static WheelProfile FindByWheelType(string wheelType, string moduleType = null)
         {
+            return FindByWheelType(wheelType, moduleType, overrideId: null);
+        }
+
+        /// <summary>
+        /// Finds a profile for the given SDK wheel/module type, optionally
+        /// respecting an explicit user override.
+        /// </summary>
+        /// <param name="overrideId">
+        /// When non-null, look up this specific profile ID first.  If the
+        /// profile no longer exists (deleted file, etc.), fall through to
+        /// normal auto-resolution.
+        /// </param>
+        public static WheelProfile FindByWheelType(
+            string wheelType, string moduleType, string overrideId)
+        {
             EnsureLoaded();
 
-            // Try compound key first (hub + module)
+            // 0. Explicit user override (from plugin settings).
+            //    An override key is "ID:source" (e.g. "PHUB_PBMR:BuiltIn")
+            //    to disambiguate built-in vs. user profiles with the same ID.
+            if (!string.IsNullOrEmpty(overrideId))
+            {
+                var overridden = ResolveOverrideKey(overrideId);
+                if (overridden != null)
+                    return overridden;
+                // Override didn't resolve — fall through to auto
+            }
+
+            // 1. Try compound key first (hub + module)
             if (!string.IsNullOrEmpty(moduleType))
             {
                 string compoundId = wheelType + "_" + moduleType;
@@ -491,7 +545,138 @@ namespace FanaBridge
         public static IEnumerable<WheelProfile> GetAll()
         {
             EnsureLoaded();
-            return _byId.Values;
+            return _all;
+        }
+
+        /// <summary>
+        /// Returns every profile that would match the given wheel/module type,
+        /// regardless of priority.  Used by the settings UI to populate the
+        /// profile picker ComboBox.  Results may include both built-in and
+        /// user profiles — even when they share the same ID.
+        /// </summary>
+        public static List<WheelProfile> FindAllForWheel(
+            string wheelType, string moduleType = null)
+        {
+            EnsureLoaded();
+            var results = new List<WheelProfile>();
+
+            foreach (var p in _all)
+            {
+                if (p.Match == null) continue;
+
+                bool wheelMatch = string.Equals(
+                    p.Match.WheelType, wheelType, StringComparison.OrdinalIgnoreCase);
+                if (!wheelMatch) continue;
+
+                // For module-capable wheels, include profiles that either
+                // match the specific module or have no module requirement.
+                if (!string.IsNullOrEmpty(moduleType))
+                {
+                    bool moduleMatch = string.IsNullOrEmpty(p.Match.ModuleType)
+                        || string.Equals(p.Match.ModuleType, moduleType, StringComparison.OrdinalIgnoreCase);
+                    if (moduleMatch)
+                        results.Add(p);
+                }
+                else
+                {
+                    if (string.IsNullOrEmpty(p.Match.ModuleType))
+                        results.Add(p);
+                }
+            }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Deletes a user-created profile from disk and removes it from the
+        /// in-memory store.  Returns true if the file was deleted.
+        /// Built-in profiles cannot be deleted.  If a built-in profile with
+        /// the same ID exists, it is restored as the auto-resolution winner.
+        /// </summary>
+        public static bool DeleteUserProfile(string profileId)
+        {
+            EnsureLoaded();
+
+            // Find the user entry in _all
+            var userProfile = _all.FirstOrDefault(p =>
+                string.Equals(p.Id, profileId, StringComparison.OrdinalIgnoreCase)
+                && p.Source == ProfileSource.User);
+
+            if (userProfile == null)
+            {
+                SimHub.Logging.Current.Warn(
+                    "WheelProfileStore: No user profile found with ID '" + profileId + "'");
+                return false;
+            }
+
+            try
+            {
+                if (!string.IsNullOrEmpty(userProfile.SourcePath) && File.Exists(userProfile.SourcePath))
+                    File.Delete(userProfile.SourcePath);
+
+                _all.Remove(userProfile);
+
+                // If the auto-resolution winner was this user profile, restore
+                // the built-in (if any) or remove the entry.
+                if (_byId.TryGetValue(profileId, out var winner) && winner == userProfile)
+                {
+                    var builtIn = _all.FirstOrDefault(p =>
+                        string.Equals(p.Id, profileId, StringComparison.OrdinalIgnoreCase)
+                        && p.Source == ProfileSource.BuiltIn);
+
+                    if (builtIn != null)
+                        _byId[profileId] = builtIn;
+                    else
+                        _byId.Remove(profileId);
+                }
+
+                SimHub.Logging.Current.Info(
+                    "WheelProfileStore: Deleted user profile '" + profileId + "'");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn(
+                    "WheelProfileStore: Failed to delete profile '" + profileId + "': " + ex.Message);
+                return false;
+            }
+        }
+
+        // ── Override key helpers ─────────────────────────────────────────
+
+        /// <summary>
+        /// Builds a stable key for storing profile overrides in settings.
+        /// Format: "ProfileId:Source" (e.g. "PHUB_PBMR:BuiltIn").
+        /// This disambiguates built-in vs. user profiles that share an ID.
+        /// </summary>
+        public static string MakeOverrideKey(WheelProfile profile)
+        {
+            return profile.Id + ":" + profile.Source;
+        }
+
+        /// <summary>
+        /// Resolves an override key (from <see cref="MakeOverrideKey"/>) back
+        /// to a profile instance.  Returns null if not found.
+        /// </summary>
+        public static WheelProfile ResolveOverrideKey(string overrideKey)
+        {
+            if (string.IsNullOrEmpty(overrideKey))
+                return null;
+
+            EnsureLoaded();
+
+            int sep = overrideKey.LastIndexOf(':');
+            if (sep > 0 && sep < overrideKey.Length - 1)
+            {
+                string id = overrideKey.Substring(0, sep);
+                string sourceStr = overrideKey.Substring(sep + 1);
+
+                if (Enum.TryParse(sourceStr, true, out ProfileSource source))
+                    return GetById(id, source);
+            }
+
+            // Legacy / simple key — fall back to _byId lookup
+            return _byId.TryGetValue(overrideKey, out var p) ? p : null;
         }
 
         /// <summary>

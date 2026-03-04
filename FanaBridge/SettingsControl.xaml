@@ -24,13 +24,37 @@
                         <TextBlock Text="Capabilities: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
                         <TextBlock x:Name="txtCapabilities" Text="—" VerticalAlignment="Center" TextWrapping="Wrap" />
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                        <TextBlock Text="Profile: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
-                        <TextBlock x:Name="txtProfileSource" Text="—" VerticalAlignment="Center" TextWrapping="Wrap" />
-                    </StackPanel>
                     <styles:SHButtonPrimary x:Name="btnReconnect" Click="BtnReconnect_Click" HorizontalAlignment="Left" Margin="0,8">
                         Reconnect
                     </styles:SHButtonPrimary>
+                </StackPanel>
+            </styles:SHSection>
+
+            <!-- Active Profile -->
+            <styles:SHSection Title="WHEEL PROFILE" ShowSeparator="True">
+                <StackPanel>
+                    <TextBlock x:Name="txtProfileHint" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Connect a wheel to manage profiles." />
+                    <StackPanel x:Name="panelProfilePicker" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="Active: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
+                            <ComboBox x:Name="cboProfile" Width="320" SelectionChanged="CboProfile_SelectionChanged" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="Source: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
+                            <TextBlock x:Name="txtProfileSource" Text="—" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <styles:SHButtonPrimary x:Name="btnDeleteProfile" Click="BtnDeleteProfile_Click"
+                                                    IsEnabled="False" ToolTip="Delete the selected user profile from disk">
+                                Delete Custom Profile
+                            </styles:SHButtonPrimary>
+                        </StackPanel>
+                        <TextBlock x:Name="txtRestartNotice" Visibility="Collapsed"
+                                   TextWrapping="Wrap" Margin="0,8,0,0"
+                                   Foreground="#FFDDAA" FontStyle="Italic"
+                                   Text="&#x26A0;  Profile changed. Restart SimHub for the device name to update in the Devices list. LED and display output uses the new profile immediately." />
+                    </StackPanel>
                 </StackPanel>
             </styles:SHSection>
 

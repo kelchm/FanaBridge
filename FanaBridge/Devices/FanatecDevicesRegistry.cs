@@ -107,6 +107,13 @@ namespace FanaBridge
             // Ensure profiles are loaded from disk
             WheelProfileStore.EnsureLoaded();
 
+            // De-duplicate by DeviceTypeId so that a user profile with the
+            // same match criteria as a built-in profile doesn't produce two
+            // descriptors with the same DeviceTypeID (which SimHub rejects).
+            // GetAll() returns built-in first, then user, so last-wins gives
+            // user profiles priority — matching the auto-resolution behaviour.
+            var configs = new Dictionary<string, DeviceConfig>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var profile in WheelProfileStore.GetAll())
             {
                 // Skip bare hub profiles (no LEDs, no display)
@@ -123,6 +130,19 @@ namespace FanaBridge
                     Capabilities = new WheelCapabilities(profile),
                 };
 
+                if (configs.ContainsKey(config.DeviceTypeId))
+                {
+                    SimHub.Logging.Current.Info(
+                        "FanatecDevicesRegistry: Profile '" + profile.Id +
+                        "' (" + profile.Source + ") supersedes earlier entry for " +
+                        config.DeviceTypeId);
+                }
+
+                configs[config.DeviceTypeId] = config;
+            }
+
+            foreach (var config in configs.Values)
+            {
                 SimHub.Logging.Current.Info(
                     "FanatecDevicesRegistry: Registering " + config.Capabilities.Name +
                     " (" + config.DeviceTypeId + ")");
