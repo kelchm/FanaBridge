@@ -208,7 +208,7 @@ namespace FanaBridge
             }
 
             _sdk?.Dispose();
-            _device?.Disconnect();
+            _device?.Dispose();
         }
 
         /// <summary>
