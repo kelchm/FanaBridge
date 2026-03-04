@@ -68,6 +68,14 @@
       <HintPath>$(SimHubDir)BA63Driver.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="SharpDX">
+      <HintPath>$(SimHubDir)SharpDX.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SharpDX.DirectInput">
+      <HintPath>$(SimHubDir)SharpDX.DirectInput.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>

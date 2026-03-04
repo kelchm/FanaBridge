@@ -233,7 +233,48 @@
                            Margin="0,12,0,0" FontWeight="Bold" TextWrapping="Wrap" />
             </StackPanel>
 
-            <!-- Step 7: Summary -->
+            <!-- Step 7: Input Mapping -->
+            <StackPanel x:Name="stepInputMapping" Visibility="Collapsed">
+                <TextBlock TextWrapping="Wrap" Margin="0,0,0,8">
+                    Let's map each button/encoder LED to its physical input.
+                    One LED is lit at a time — press the button or rotate the
+                    encoder next to the glowing LED.
+                </TextBlock>
+                <TextBlock x:Name="txtInputProgress" FontWeight="Bold" Margin="0,0,0,12"
+                           Foreground="#FFCC00" />
+
+                <!-- Current LED indicator -->
+                <Border Background="#FF333333" CornerRadius="6" Padding="16,12"
+                        Margin="0,0,0,12" HorizontalAlignment="Center">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock x:Name="txtInputLedLabel" FontSize="16"
+                                   FontWeight="Bold" HorizontalAlignment="Center" />
+                        <TextBlock x:Name="txtInputLedDetail" Foreground="#AAAAAA"
+                                   FontSize="12" Margin="0,4,0,0"
+                                   HorizontalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Detected input display -->
+                <TextBlock x:Name="txtDetectedInput" FontWeight="Bold"
+                           HorizontalAlignment="Center" Margin="0,0,0,12"
+                           Foreground="#44DD44" FontSize="14" />
+
+                <!-- Action buttons -->
+                <StackPanel HorizontalAlignment="Center" Margin="0,4,0,0">
+                    <Button x:Name="btnInputConfirm" Content="&#x2714;  Confirm this mapping"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            Click="InputConfirm_Click" IsEnabled="False" />
+                    <Button x:Name="btnInputSkip" Content="&#x23ED;  Skip — no input near this LED"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            Click="InputSkip_Click" />
+                    <Button x:Name="btnInputRetry" Content="&#x1F504;  Retry detection"
+                            HorizontalAlignment="Stretch"
+                            Click="InputRetry_Click" />
+                </StackPanel>
+            </StackPanel>
+
+            <!-- Step 8: Summary -->
             <StackPanel x:Name="stepSummary" Visibility="Collapsed">
                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,12">
                     Review the detected capabilities.  Click Save to write the profile.

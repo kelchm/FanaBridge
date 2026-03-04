@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using FanatecManaged;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
@@ -33,6 +36,15 @@ namespace FanaBridge
         private ColorFormat _colorFormat = ColorFormat.Rgb565;
         private int _monoCount;
 
+        // ── Input mapping ────────────────────────────────────────────────
+        // Built during the input-mapping step: LED hwIndex → detected input id.
+        // Uses SimHub's PluginManager.InputPressed event for reliable detection.
+        private List<InputMappingEntry> _inputMappingLeds;
+        private int _inputMappingIndex;
+        private volatile CancellationTokenSource _blinkCts;
+        private string _detectedInputId;
+        private bool _listeningForInput;
+
         // ── Identity (from SDK) ──────────────────────────────────────────
         private readonly string _wheelType;
         private readonly string _moduleType;
@@ -46,6 +58,7 @@ namespace FanaBridge
             "Button Colour LED Detection",
             "Green Channel Test",
             "Monochrome LED Detection",
+            "Input Mapping",
             "Summary",
         };
 
@@ -58,6 +71,7 @@ namespace FanaBridge
             "Testing subcmd 0x02 — button backlight LEDs",
             "Determining the colour encoding format",
             "Testing subcmd 0x03 — intensity-only LEDs",
+            "Map each LED to its physical button or encoder",
             "Review and save your new wheel profile",
         };
 
@@ -78,6 +92,7 @@ namespace FanaBridge
                 stepColorLeds,
                 stepColorFormat,
                 stepMonoLeds,
+                stepInputMapping,
                 stepSummary,
             };
 
@@ -119,9 +134,14 @@ namespace FanaBridge
             txtStepSubtitle.Text = StepSubtitles[step];
 
             btnBack.IsEnabled = step > 0;
-            btnNext.Visibility = step < _steps.Length - 1
+
+            // Hide Next during input-mapping step (user advances per-LED via
+            // Confirm/Skip) and on the final summary step.
+            bool isInputStep = step == 7;
+            bool isFinalStep = step == _steps.Length - 1;
+            btnNext.Visibility = (!isInputStep && !isFinalStep)
                 ? Visibility.Visible : Visibility.Collapsed;
-            btnSave.Visibility = step == _steps.Length - 1
+            btnSave.Visibility = isFinalStep
                 ? Visibility.Visible : Visibility.Collapsed;
 
             RunProbe(step);
@@ -134,6 +154,9 @@ namespace FanaBridge
             // Skip colour-format step when there are no colour LEDs
             if (next == 5 && _colorCount == 0)
                 next = 6;
+            // Skip input-mapping step when there are no button/encoder LEDs
+            if (next == 7 && _colorCount + _monoCount == 0)
+                next = 8;
             return next;
         }
 
@@ -141,6 +164,8 @@ namespace FanaBridge
         private int PrevStep(int current)
         {
             int prev = current - 1;
+            if (prev == 7 && _colorCount + _monoCount == 0)
+                prev = 6;
             if (prev == 5 && _colorCount == 0)
                 prev = 4;
             return prev;
@@ -209,7 +234,8 @@ namespace FanaBridge
                 case 4: ProbeColorLeds();  break;
                 case 5: ProbeColorFormat(); break;
                 case 6: ProbeMonoLeds();   break;
-                case 7: BuildSummary();    break;
+                case 7: BeginInputMapping(); break;
+                case 8: BuildSummary();    break;
             }
         }
 
@@ -443,6 +469,308 @@ namespace FanaBridge
         }
 
         // =====================================================================
+        // Input Mapping (step 7)
+        // =====================================================================
+        //
+        // For each colour + mono button/encoder LED we:
+        //   1. Light ONLY that LED (distinctive colour).
+        //   2. Subscribe to SimHub's PluginManager.InputPressed event.
+        //   3. Wait for any button press or encoder rotation.
+        //   4. Record the mapping as the LedDefinition.Input string.
+        //
+        // This data enables downstream ASTR profile generation and future
+        // custom lighting / visualization features.
+
+        /// <summary>Tracks one LED that needs an input mapping.</summary>
+        private class InputMappingEntry
+        {
+            public LedChannel Channel;
+            public int HwIndex;
+            public string Label;
+            /// <summary>Detected input ID, or null if skipped.</summary>
+            public string InputId;
+        }
+
+        /// <summary>
+        /// Builds the list of LEDs that need mapping and starts the
+        /// per-LED flow.
+        /// </summary>
+        private void BeginInputMapping()
+        {
+            // Capture counts from previous steps
+            ReadStepInput(6); // mono count
+
+            _inputMappingLeds = new List<InputMappingEntry>();
+
+            for (int i = 0; i < _colorCount; i++)
+            {
+                _inputMappingLeds.Add(new InputMappingEntry
+                {
+                    Channel = LedChannel.Color,
+                    HwIndex = i,
+                    Label = "Colour LED " + (i + 1),
+                });
+            }
+
+            int monoStart = _colorCount;
+            for (int i = 0; i < _monoCount; i++)
+            {
+                _inputMappingLeds.Add(new InputMappingEntry
+                {
+                    Channel = LedChannel.Mono,
+                    HwIndex = monoStart + i,
+                    Label = "Mono LED " + (i + 1),
+                });
+            }
+
+            if (_inputMappingLeds.Count == 0)
+            {
+                // Nothing to map — jump straight to summary
+                ShowStep(NextStep(7));
+                return;
+            }
+
+            _inputMappingIndex = 0;
+            ShowInputMappingLed();
+        }
+
+        /// <summary>
+        /// Subscribe to SimHub's InputPressed event for reliable input detection.
+        /// SimHub's JoystickPlugin already polls all devices every frame.
+        /// </summary>
+        private void StartListeningForInput()
+        {
+            StopListeningForInput();
+            var pm = _plugin.PluginManager;
+            if (pm == null) return;
+            pm.InputPressed += OnInputPressed;
+            _listeningForInput = true;
+        }
+
+        private void StopListeningForInput()
+        {
+            if (!_listeningForInput) return;
+            var pm = _plugin.PluginManager;
+            if (pm != null)
+                pm.InputPressed -= OnInputPressed;
+            _listeningForInput = false;
+        }
+
+        /// <summary>
+        /// Called by SimHub on ANY button/encoder press across all devices.
+        /// The input string is e.g. "JoystickPlugin.FANATEC_Wheel.Button3".
+        /// We marshal to the UI thread and display it.
+        /// Returns true to indicate the event was handled.
+        /// </summary>
+        private bool OnInputPressed(string input)
+        {
+            if (!_listeningForInput) return false;
+
+            // Only accept inputs from a Fanatec device
+            if (input == null ||
+                input.IndexOf("FANATEC", StringComparison.OrdinalIgnoreCase) < 0)
+                return false;
+
+            // Marshal to UI thread
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!_listeningForInput) return;
+                StopListeningForInput();
+                SetDetectedInput(input);
+            }));
+
+            return true;
+        }
+
+        private void CancelBlink()
+        {
+            var cts = _blinkCts;
+            if (cts != null)
+            {
+                cts.Cancel();
+                _blinkCts = null;
+            }
+        }
+
+        /// <summary>
+        /// Lights the current LED, waits for state to settle, then
+        /// captures a baseline and starts polling for input changes.
+        /// </summary>
+        private void ShowInputMappingLed()
+        {
+            if (_inputMappingIndex >= _inputMappingLeds.Count)
+            {
+                // All LEDs mapped — move to summary
+                StopListeningForInput();
+                ShowStep(NextStep(7));
+                return;
+            }
+
+            var entry = _inputMappingLeds[_inputMappingIndex];
+
+            // Update UI
+            txtInputProgress.Text = string.Format(
+                "LED {0} of {1}", _inputMappingIndex + 1, _inputMappingLeds.Count);
+            txtInputLedLabel.Text = entry.Label;
+            txtInputLedDetail.Text = string.Format(
+                "{0} channel, hardware index {1}", entry.Channel, entry.HwIndex);
+            txtDetectedInput.Text = "Press a button or turn an encoder…";
+            txtDetectedInput.Foreground = System.Windows.Media.Brushes.Gray;
+            btnInputConfirm.IsEnabled = false;
+            _detectedInputId = null;
+
+            // Light only this LED
+            ClearAllLeds();
+            LightSingleLed(entry);
+
+            // Start listening via SimHub
+            StartListeningForInput();
+        }
+
+        /// <summary>Lights a single LED with a distinctive colour.</summary>
+        private void LightSingleLed(InputMappingEntry entry)
+        {
+            try
+            {
+                if (entry.Channel == LedChannel.Color)
+                {
+                    var colors = new ushort[12];
+                    var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+                    colors[entry.HwIndex] = ColorHelper.Colors.Cyan;
+                    intensities[entry.HwIndex] = 7;
+                    Device?.SetButtonLedState(colors, intensities);
+                }
+                else if (entry.Channel == LedChannel.Mono)
+                {
+                    var colors = new ushort[12];
+                    var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+                    intensities[entry.HwIndex] = 7;
+                    Device?.SetButtonLedState(colors, intensities);
+                }
+            }
+            catch { /* best-effort */ }
+        }
+
+        private void StartInputPoll()
+        {
+            StartListeningForInput();
+        }
+
+        private void StopInputPoll()
+        {
+            StopListeningForInput();
+        }
+
+        private void SetDetectedInput(string inputId)
+        {
+            _detectedInputId = inputId;
+
+            // Show a friendly label: strip the plugin prefix for display
+            // e.g. "JoystickPlugin.FANATEC_Wheel.Button3" -> "FANATEC_Wheel.Button3"
+            string display = inputId;
+            int dot = inputId.IndexOf('.');
+            if (dot >= 0 && dot < inputId.Length - 1)
+                display = inputId.Substring(dot + 1);
+
+            txtDetectedInput.Text = "\u2714 " + display;
+            txtDetectedInput.Foreground = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44));
+            btnInputConfirm.IsEnabled = true;
+
+            // Blink the LED on a thread-pool thread for consistent timing.
+            // The initial OFF happens immediately on that thread, not here,
+            // so the first visible change is near-instant.
+            BlinkCurrentLed();
+        }
+
+        /// <summary>
+        /// Turns off only the button LED for the current mapping entry.
+        /// Much cheaper than <see cref="ClearAllLeds"/> because it skips
+        /// rev LEDs, flag LEDs, and the display.
+        /// </summary>
+        private void ClearButtonLed()
+        {
+            try
+            {
+                Device?.SetButtonLedState(
+                    new ushort[12],
+                    new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE]);
+            }
+            catch { /* best-effort */ }
+        }
+
+        /// <summary>
+        /// Blinks the current LED on/off 3 times to confirm detection.
+        /// Runs entirely on a thread-pool thread using Thread.Sleep for
+        /// precise, UI-independent timing.  WizardActive is already true
+        /// so the normal LED update loop won't interfere.
+        /// Pattern: OFF, ON, OFF, ON, OFF, ON — ends with LED on.
+        /// </summary>
+        private void BlinkCurrentLed()
+        {
+            CancelBlink();
+
+            if (_inputMappingIndex >= _inputMappingLeds.Count) return;
+            var entry = _inputMappingLeds[_inputMappingIndex];
+
+            var cts = new CancellationTokenSource();
+            _blinkCts = cts;
+            var token = cts.Token;
+
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    // 3 blink cycles: OFF-ON, OFF-ON, OFF-ON
+                    for (int i = 0; i < 3 && !token.IsCancellationRequested; i++)
+                    {
+                        ClearButtonLed();
+                        Thread.Sleep(100);
+                        if (token.IsCancellationRequested) break;
+
+                        LightSingleLed(entry);
+                        Thread.Sleep(100);
+                    }
+                }
+                catch { /* device may have disconnected */ }
+            });
+        }
+
+        private void InputConfirm_Click(object sender, RoutedEventArgs e)
+        {
+            if (_detectedInputId == null) return;
+
+            _inputMappingLeds[_inputMappingIndex].InputId = _detectedInputId;
+            StopInputPoll();
+
+            _inputMappingIndex++;
+            ShowInputMappingLed();
+        }
+
+        private void InputSkip_Click(object sender, RoutedEventArgs e)
+        {
+            _inputMappingLeds[_inputMappingIndex].InputId = null;
+            StopInputPoll();
+
+            _inputMappingIndex++;
+            ShowInputMappingLed();
+        }
+
+        private void InputRetry_Click(object sender, RoutedEventArgs e)
+        {
+            _detectedInputId = null;
+            txtDetectedInput.Text = "Press a button or turn an encoder\u2026";
+            txtDetectedInput.Foreground = System.Windows.Media.Brushes.Gray;
+            btnInputConfirm.IsEnabled = false;
+
+            // Re-light the LED and start listening again
+            var entry = _inputMappingLeds[_inputMappingIndex];
+            ClearAllLeds();
+            LightSingleLed(entry);
+            StartListeningForInput();
+        }
+
+        // =====================================================================
         // Summary & Save
         // =====================================================================
 
@@ -451,6 +779,10 @@ namespace FanaBridge
             ClearAllLeds();
 
             int total = _revCount + _flagCount + _colorCount + _monoCount;
+            int mapped = 0;
+            if (_inputMappingLeds != null)
+                mapped = _inputMappingLeds.Count(m => m.InputId != null);
+
             string fmt =
                 "Profile:       {0}\n" +
                 "Wheel:         {1}\n" +
@@ -461,7 +793,8 @@ namespace FanaBridge
                 "Colour LEDs:   {6}\n" +
                 "Colour Format: {7}\n" +
                 "Mono LEDs:     {8}\n\n" +
-                "Total LEDs:    {9}";
+                "Total LEDs:    {9}\n" +
+                "Input mapped:  {10} of {11}";
 
             txtSummary.Text = string.Format(fmt,
                 txtProfileName.Text,
@@ -473,7 +806,20 @@ namespace FanaBridge
                 _colorCount,
                 _colorCount > 0 ? _colorFormat.ToString() : "N/A",
                 _monoCount,
-                total);
+                total,
+                mapped,
+                _colorCount + _monoCount);
+
+            // Append mapping details
+            if (_inputMappingLeds != null && mapped > 0)
+            {
+                txtSummary.Text += "\n\nMappings:";
+                foreach (var m in _inputMappingLeds)
+                {
+                    if (m.InputId != null)
+                        txtSummary.Text += "\n  " + m.Label + " → " + m.InputId;
+                }
+            }
         }
 
         private void BtnSave_Click(object sender, RoutedEventArgs e)
@@ -518,6 +864,8 @@ namespace FanaBridge
         protected override void OnClosed(EventArgs e)
         {
             ClearAllLeds();
+            StopListeningForInput();
+            CancelBlink();
 
             // Re-enable normal SimHub LED output and force a full resend
             // so the device instance picks up where it left off.
@@ -583,26 +931,41 @@ namespace FanaBridge
             // Colour LEDs — hwIndex 0..N-1
             for (int i = 0; i < _colorCount; i++)
             {
-                profile.Leds.Add(new LedDefinition
+                var led = new LedDefinition
                 {
                     Channel = LedChannel.Color,
                     HwIndex = i,
                     Role = LedRole.Button,
                     Label = "Button LED " + (i + 1),
-                });
+                };
+
+                // Apply input mapping if available
+                var mapping = _inputMappingLeds?.FirstOrDefault(
+                    m => m.Channel == LedChannel.Color && m.HwIndex == i);
+                if (mapping?.InputId != null)
+                    led.Input = mapping.InputId;
+
+                profile.Leds.Add(led);
             }
 
             // Mono LEDs — hw indices start after the colour slots
             int monoStart = _colorCount;
             for (int i = 0; i < _monoCount; i++)
             {
-                profile.Leds.Add(new LedDefinition
+                var led = new LedDefinition
                 {
                     Channel = LedChannel.Mono,
                     HwIndex = monoStart + i,
                     Role = LedRole.Indicator,
                     Label = "Mono LED " + (i + 1),
-                });
+                };
+
+                var mapping = _inputMappingLeds?.FirstOrDefault(
+                    m => m.Channel == LedChannel.Mono && m.HwIndex == monoStart + i);
+                if (mapping?.InputId != null)
+                    led.Input = mapping.InputId;
+
+                profile.Leds.Add(led);
             }
 
             return profile;
