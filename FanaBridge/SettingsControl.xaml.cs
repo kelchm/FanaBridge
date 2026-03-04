@@ -148,6 +148,27 @@ namespace FanaBridge
         }
 
         // =====================================================================
+        // WHEEL PROFILE WIZARD
+        // =====================================================================
+
+        private void BtnCreateProfile_Click(object sender, RoutedEventArgs e)
+        {
+            if (Plugin == null || !Plugin.IsDeviceConnected)
+            {
+                MessageBox.Show(
+                    "Please connect a Fanatec device first.",
+                    "Not Connected",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            var dialog = new WheelProfileWizardDialog(Plugin);
+            dialog.Owner = Window.GetWindow(this);
+            dialog.ShowDialog();
+        }
+
+        // =====================================================================
         // DISPLAY TEST — scroll support
         // =====================================================================
 

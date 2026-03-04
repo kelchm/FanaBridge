@@ -47,6 +47,17 @@
                 </StackPanel>
             </styles:SHSection>
 
+            <!-- Wheel Profile Wizard -->
+            <styles:SHSection Title="NEW WHEEL PROFILE" ShowSeparator="True">
+                <StackPanel>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Create a profile for an unsupported wheel. The wizard probes your hardware to detect LED and display capabilities, then saves a reusable JSON profile." />
+                    <styles:SHButtonPrimary x:Name="btnCreateProfile" Click="BtnCreateProfile_Click" HorizontalAlignment="Left">
+                        Launch Profile Wizard
+                    </styles:SHButtonPrimary>
+                </StackPanel>
+            </styles:SHSection>
+
             <!-- About -->
             <styles:SHSection Title="ABOUT" ShowSeparator="False">
                 <StackPanel>

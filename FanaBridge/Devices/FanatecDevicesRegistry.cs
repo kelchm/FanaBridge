@@ -370,6 +370,11 @@ namespace FanaBridge
             if (device == null || !device.IsConnected)
                 return;
 
+            // While the wizard is probing hardware, suspend all output so
+            // SimHub's per-frame LED writes don't overwrite the test signals.
+            if (plugin.WizardActive)
+                return;
+
             // ── Display ──────────────────────────────────────────────────
             if (_config.Capabilities.Display != DisplayType.None)
             {

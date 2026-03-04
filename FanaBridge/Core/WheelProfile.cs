@@ -257,6 +257,20 @@ namespace FanaBridge
         }
 
         /// <summary>
+        /// Reloads all profiles from scratch (embedded + user directory).
+        /// Called after the wizard saves a new profile so the change takes
+        /// effect immediately without restarting SimHub.
+        /// </summary>
+        public static void Reload()
+        {
+            _byId.Clear();
+            _loaded = false;
+            EnsureLoaded();
+            SimHub.Logging.Current.Info(
+                "WheelProfileStore: Reloaded — " + _byId.Count + " profile(s)");
+        }
+
+        /// <summary>
         /// Returns the user-writable directory for custom wheel profiles.
         /// Creates it if it doesn't exist.  Located alongside the plugin DLL.
         /// </summary>

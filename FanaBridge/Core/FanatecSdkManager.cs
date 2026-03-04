@@ -252,6 +252,39 @@ namespace FanaBridge
             return changed;
         }
 
+        /// <summary>
+        /// Forces a re-evaluation of wheel capabilities against the current
+        /// profile store.  Call after <see cref="WheelProfileStore.Reload"/>
+        /// to pick up newly-saved profiles without requiring a SimHub restart
+        /// or a physical wheel type change.
+        /// </summary>
+        public void RefreshCapabilities()
+        {
+            if (!WheelDetected)
+                return;
+
+            string wheelCode = WheelProfileStore.StripWheelPrefix(SteeringWheelType.ToString());
+            string moduleCode = SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
+                ? null
+                : WheelProfileStore.StripModulePrefix(SubModuleType.ToString());
+
+            var profile = WheelProfileStore.FindByWheelType(wheelCode, moduleCode);
+            CurrentCapabilities = profile != null
+                ? new WheelCapabilities(profile)
+                : WheelCapabilities.None;
+
+            SimHub.Logging.Current.Info(string.Format(
+                "FanatecSdkManager: RefreshCapabilities — Caps={0} (Color={1}, Mono={2}, Rev={3}, Flag={4}, Display={5})",
+                CurrentCapabilities.Name ?? "(none)",
+                CurrentCapabilities.ColorLedCount,
+                CurrentCapabilities.MonoLedCount,
+                CurrentCapabilities.RevLedCount,
+                CurrentCapabilities.FlagLedCount,
+                CurrentCapabilities.Display));
+
+            WheelChanged?.Invoke(this);
+        }
+
         // ── Lifecycle ────────────────────────────────────────────────────
 
         /// <summary>

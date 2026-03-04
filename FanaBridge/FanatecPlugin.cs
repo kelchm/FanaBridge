@@ -31,6 +31,13 @@ namespace FanaBridge
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
         public event Action StateChanged;
 
+        /// <summary>
+        /// When true, device instances skip all LED and display output so the
+        /// profile wizard can send probe signals without being overwritten by
+        /// SimHub's frame-by-frame updates.  Set by the wizard dialog.
+        /// </summary>
+        public bool WizardActive { get; set; }
+
         /// <summary>Whether the Fanatec device is currently connected (for UI binding).</summary>
         public bool IsDeviceConnected => _connected;
 
