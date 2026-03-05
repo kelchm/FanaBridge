@@ -286,6 +286,15 @@
                             Click="InputTypeEncoder_Click" />
                 </StackPanel>
 
+                <!-- Encoder mode banner — shows the detected hardware mode -->
+                <Border x:Name="panelEncoderModeBanner" Visibility="Collapsed"
+                        Background="#FF2A2A3A" CornerRadius="4" Padding="12,8"
+                        Margin="0,0,0,12" HorizontalAlignment="Center">
+                    <TextBlock x:Name="txtEncoderMode" TextWrapping="Wrap"
+                               HorizontalAlignment="Center" FontSize="12"
+                               Foreground="#FFCC00" />
+                </Border>
+
                 <!-- Phase 3a: Relative encoder — capture CW then CCW -->
                 <StackPanel x:Name="panelRelativeCapture" Visibility="Collapsed"
                             HorizontalAlignment="Center" Margin="0,4,0,0">
@@ -298,9 +307,6 @@
                     <Button x:Name="btnRelativeConfirm" Content="&#x2714;  Confirm"
                             HorizontalAlignment="Stretch" Margin="0,0,0,8"
                             Click="RelativeConfirm_Click" IsEnabled="False" />
-                    <Button Content="&#x23ED;  Skip relative mode"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            Click="RelativeSkip_Click" />
                     <Button Content="&#x1F504;  Start over for this LED"
                             HorizontalAlignment="Stretch"
                             Click="InputRetry_Click" />
@@ -310,22 +316,19 @@
                 <StackPanel x:Name="panelAbsoluteCapture" Visibility="Collapsed"
                             HorizontalAlignment="Center" Margin="0,4,0,0">
                     <TextBlock x:Name="txtAbsolutePrompt" TextWrapping="Wrap"
-                               HorizontalAlignment="Center" Margin="0,0,0,8">
-                        Slowly rotate through ALL positions, then click Done.
-                    </TextBlock>
+                               HorizontalAlignment="Center" Margin="0,0,0,8" />
                     <TextBlock x:Name="txtAbsoluteCount" FontWeight="Bold"
                                HorizontalAlignment="Center" Margin="0,0,0,12"
                                Foreground="#44DD44" FontSize="14" />
                     <Button x:Name="btnAbsoluteDone" Content="&#x2714;  Done — all positions captured"
                             HorizontalAlignment="Stretch" Margin="0,0,0,8"
                             Click="AbsoluteDone_Click" IsEnabled="False" />
-                    <Button Content="&#x23ED;  Skip absolute mode"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            Click="AbsoluteSkip_Click" />
                     <Button Content="&#x1F504;  Start over for this LED"
                             HorizontalAlignment="Stretch"
                             Click="InputRetry_Click" />
                 </StackPanel>
+
+
             </StackPanel>
 
             <!-- Step 8: Summary -->

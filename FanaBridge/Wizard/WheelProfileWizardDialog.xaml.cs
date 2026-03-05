@@ -46,6 +46,8 @@ namespace FanaBridge
         private bool _listeningForInput;
         /// <summary>Callback invoked on the UI thread when an input is detected.</summary>
         private Action<string> _inputHandler;
+        /// <summary>Encoder mode read from the device at the start of input mapping.</summary>
+        private EncoderMode? _encoderMode;
 
         // ── Identity (from SDK) ──────────────────────────────────────────
         private readonly string _wheelType;
@@ -226,10 +228,9 @@ namespace FanaBridge
         /// <summary>Sends the test signal appropriate for the given step.</summary>
         private void RunProbe(int step)
         {
-            ClearAllLeds();
-
             switch (step)
             {
+                case 0: SetAllLedsOff();   break;
                 case 1: ProbeDisplay();    break;
                 case 2: ProbeRevLeds();    break;
                 case 3: ProbeFlagLeds();   break;
@@ -241,24 +242,57 @@ namespace FanaBridge
             }
         }
 
-        /// <summary>Turns off every LED channel and clears the display.</summary>
-        private void ClearAllLeds()
+        /// <summary>
+        /// Sets all LED channels to the desired state in one pass, mirroring
+        /// the production frame loop.  Null parameters default to all-off.
+        /// Dirty tracking skips unchanged channels automatically.
+        /// </summary>
+        /// <remarks>
+        /// HACK: The 1 ms sleeps between writes work around a firmware timing
+        /// issue — back-to-back col03 reports sent without any gap are
+        /// intermittently dropped by the device.  In production this never
+        /// occurs because writes are spaced by the ~16 ms frame interval.
+        /// A proper fix would be a rate-limited serial write queue in
+        /// <see cref="FanatecDevice"/>, but that's overkill while only the
+        /// wizard triggers rapid multi-channel writes.
+        /// </remarks>
+        private void SetAllLeds(
+            ushort[] revColors = null,
+            ushort[] flagColors = null,
+            ushort[] buttonColors = null,
+            byte[] buttonIntensities = null)
         {
             try
             {
                 if (Device == null || !Device.IsConnected) return;
-                Device.SetRevLedColors(new ushort[9]);
-                Device.SetFlagLedColors(new ushort[6]);
+                Device.SetRevLedColors(revColors ?? new ushort[9]);
+                Thread.Sleep(1);
+                Device.SetFlagLedColors(flagColors ?? new ushort[6]);
+                Thread.Sleep(1);
                 Device.SetButtonLedState(
-                    new ushort[12],
-                    new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE]);
-                Device.ClearDisplay();
+                    buttonColors ?? new ushort[12],
+                    buttonIntensities ?? new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE]);
             }
             catch { /* best-effort */ }
         }
 
+        /// <summary>Turns off every LED channel and clears the display.</summary>
+        private void SetAllLedsOff()
+        {
+            SetAllLeds();
+            try { Device?.ClearDisplay(); } catch { }
+        }
+
+        /// <summary>Turns off every LED channel and clears the display.
+        /// Used for cleanup on cancel/close/summary.</summary>
+        private void ClearAllLeds()
+        {
+            SetAllLedsOff();
+        }
+
         private void ProbeDisplay()
         {
+            SetAllLeds(); // all LEDs off
             try
             {
                 Device?.SetDisplay(
@@ -271,57 +305,40 @@ namespace FanaBridge
 
         private void ProbeRevLeds()
         {
-            try
-            {
-                var colors = new ushort[9];
-                for (int i = 0; i < colors.Length; i++)
-                    colors[i] = ColorHelper.Colors.Red;
-                Device?.SetRevLedColors(colors);
-            }
-            catch { }
+            var colors = new ushort[9];
+            for (int i = 0; i < colors.Length; i++)
+                colors[i] = ColorHelper.Colors.Red;
+            SetAllLeds(revColors: colors);
         }
 
         private void ProbeFlagLeds()
         {
-            try
-            {
-                var colors = new ushort[6];
-                for (int i = 0; i < colors.Length; i++)
-                    colors[i] = ColorHelper.Colors.Blue;
-                Device?.SetFlagLedColors(colors);
-            }
-            catch { }
+            var colors = new ushort[6];
+            for (int i = 0; i < colors.Length; i++)
+                colors[i] = ColorHelper.Colors.Blue;
+            SetAllLeds(flagColors: colors);
         }
 
         private void ProbeColorLeds()
         {
-            try
+            var colors = new ushort[12];
+            var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+            for (int i = 0; i < 12; i++)
             {
-                var colors = new ushort[12];
-                var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
-                for (int i = 0; i < 12; i++)
-                {
-                    colors[i] = ColorHelper.Colors.Green;
-                    intensities[i] = 7;
-                }
-                Device?.SetButtonLedState(colors, intensities);
+                colors[i] = ColorHelper.Colors.Green;
+                intensities[i] = 7;
             }
-            catch { }
+            SetAllLeds(buttonColors: colors, buttonIntensities: intensities);
         }
 
         private void ProbeMonoLeds()
         {
-            try
-            {
-                // Colours all black → colour LEDs stay dark.
-                // Intensity max on every slot → mono-only LEDs light up.
-                var colors = new ushort[12]; // all 0x0000
-                var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
-                for (int i = 0; i < intensities.Length; i++)
-                    intensities[i] = 7;
-                Device?.SetButtonLedState(colors, intensities);
-            }
-            catch { }
+            // Colours all black → colour LEDs stay dark.
+            // Intensity max on every slot → mono-only LEDs light up.
+            var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+            for (int i = 0; i < intensities.Length; i++)
+                intensities[i] = 7;
+            SetAllLeds(buttonIntensities: intensities);
         }
 
         // ── Colour-format sub-test ───────────────────────────────────────
@@ -344,7 +361,7 @@ namespace FanaBridge
             {
                 // Green = 128 → g6 = 32 (0x20).  Only bit 10 is set.
                 int count = Math.Max(_colorCount, 1);
-                var colors = new ushort[count];
+                var colors = new ushort[12];
                 var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
                 ushort test = ColorHelper.RgbToRgb565(0, 128, 0);
                 for (int i = 0; i < count; i++)
@@ -352,7 +369,7 @@ namespace FanaBridge
                     colors[i] = test;
                     intensities[i] = 7;
                 }
-                Device?.SetButtonLedState(colors, intensities);
+                SetAllLeds(buttonColors: colors, buttonIntensities: intensities);
             }
             catch { }
         }
@@ -548,6 +565,12 @@ namespace FanaBridge
                 return;
             }
 
+            // Read the current encoder mode from the device (best-effort).
+            // This informs which capture flow we show for encoder LEDs.
+            _encoderMode = Device?.ReadEncoderMode();
+            SimHub.Logging.Current.Info(
+                "WheelProfileWizard: Encoder mode = " + (_encoderMode?.ToString() ?? "unknown"));
+
             _inputMappingIndex = 0;
             ShowInputMappingLed();
         }
@@ -640,11 +663,16 @@ namespace FanaBridge
             // Show Phase 1 panels, hide others
             panelInputActions.Visibility = Visibility.Visible;
             panelInputType.Visibility = Visibility.Collapsed;
+            panelEncoderModeBanner.Visibility = Visibility.Collapsed;
             panelRelativeCapture.Visibility = Visibility.Collapsed;
             panelAbsoluteCapture.Visibility = Visibility.Collapsed;
 
-            // Light only this LED
-            ClearAllLeds();
+            // Cancel any running blink to prevent ThreadPool race on
+            // the shared HID report buffer.
+            CancelBlink();
+
+            // Set ALL channels in one pass — mirrors the production frame
+            // loop.  Rev/flag go off, button lights the target LED only.
             LightSingleLed(entry);
 
             // Listen — Phase 1: first detection shows type-choice panel
@@ -671,26 +699,26 @@ namespace FanaBridge
             panelInputType.Visibility = Visibility.Visible;
         }
 
-        /// <summary>Lights a single LED with a distinctive colour.</summary>
+        /// <summary>Lights a single LED with a distinctive colour.
+        /// Sets ALL channels (rev/flag off) to mirror production pattern.</summary>
         private void LightSingleLed(InputMappingEntry entry)
         {
             try
             {
+                var colors = new ushort[12];
+                var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+
                 if (entry.Channel == LedChannel.Color)
                 {
-                    var colors = new ushort[12];
-                    var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
                     colors[entry.HwIndex] = ColorHelper.Colors.Cyan;
                     intensities[entry.HwIndex] = 7;
-                    Device?.SetButtonLedState(colors, intensities);
                 }
                 else if (entry.Channel == LedChannel.Mono)
                 {
-                    var colors = new ushort[12];
-                    var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
                     intensities[entry.HwIndex] = 7;
-                    Device?.SetButtonLedState(colors, intensities);
                 }
+
+                SetAllLeds(buttonColors: colors, buttonIntensities: intensities);
             }
             catch { /* best-effort */ }
         }
@@ -731,9 +759,41 @@ namespace FanaBridge
         {
             var entry = _inputMappingLeds[_inputMappingIndex];
             entry.IsEncoder = true;
-            // The first detected input was the first relative direction.
-            // Move to relative capture phase to get the second direction.
-            BeginRelativeCapture(entry, _detectedInputId);
+
+            // Show the encoder mode banner
+            ShowEncoderModeBanner();
+
+            // Route to the appropriate capture flow based on the
+            // device's current encoder mode.
+            bool isAbsolute = _encoderMode == EncoderMode.Pulse ||
+                              _encoderMode == EncoderMode.Constant;
+
+            if (isAbsolute)
+            {
+                // First detected input is one absolute position
+                entry.AbsoluteInputs = new List<string> { _detectedInputId };
+                BeginAbsoluteCapture();
+            }
+            else
+            {
+                // Relative / Encoder / Auto / unknown — capture CW then CCW
+                BeginRelativeCapture(entry, _detectedInputId);
+            }
+        }
+
+        private void ShowEncoderModeBanner()
+        {
+            string modeLabel;
+            switch (_encoderMode)
+            {
+                case EncoderMode.Encoder:  modeLabel = "Relative (Encoder)"; break;
+                case EncoderMode.Pulse:    modeLabel = "Absolute (Pulse)"; break;
+                case EncoderMode.Constant: modeLabel = "Absolute (Constant)"; break;
+                case EncoderMode.Auto:     modeLabel = "Auto"; break;
+                default:                   modeLabel = "Unknown"; break;
+            }
+            txtEncoderMode.Text = "\u2699 Encoder mode: " + modeLabel;
+            panelEncoderModeBanner.Visibility = Visibility.Visible;
         }
 
         // -----------------------------------------------------------------
@@ -769,17 +829,8 @@ namespace FanaBridge
 
         private void RelativeConfirm_Click(object sender, RoutedEventArgs e)
         {
-            // Relative done — move to absolute capture
-            BeginAbsoluteCapture();
-        }
-
-        private void RelativeSkip_Click(object sender, RoutedEventArgs e)
-        {
-            var entry = _inputMappingLeds[_inputMappingIndex];
-            entry.RelativeCW = null;
-            entry.RelativeCCW = null;
-            // Skip straight to absolute
-            BeginAbsoluteCapture();
+            // Relative capture done — advance to next LED
+            AdvanceToNextLed();
         }
 
         // -----------------------------------------------------------------
@@ -789,17 +840,23 @@ namespace FanaBridge
         private void BeginAbsoluteCapture()
         {
             var entry = _inputMappingLeds[_inputMappingIndex];
-            entry.AbsoluteInputs = new List<string>();
+            if (entry.AbsoluteInputs == null)
+                entry.AbsoluteInputs = new List<string>();
 
+            panelInputType.Visibility = Visibility.Collapsed;
             panelRelativeCapture.Visibility = Visibility.Collapsed;
             panelAbsoluteCapture.Visibility = Visibility.Visible;
 
-            txtAbsolutePrompt.Text = entry.RelativeCW != null
-                ? "Now switch to absolute mode if available, and rotate through ALL positions."
-                : "Slowly rotate through ALL positions, then click Done.";
-            txtAbsoluteCount.Text = "0 positions detected";
-            txtAbsoluteCount.Foreground = System.Windows.Media.Brushes.Gray;
-            btnAbsoluteDone.IsEnabled = false;
+            int already = entry.AbsoluteInputs.Count;
+            txtAbsolutePrompt.Text = "Slowly rotate through ALL positions, then click Done.";
+            txtAbsoluteCount.Text = already > 0
+                ? already + " position" + (already == 1 ? "" : "s") + " detected"
+                : "0 positions detected";
+            txtAbsoluteCount.Foreground = already > 0
+                ? new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44))
+                : System.Windows.Media.Brushes.Gray;
+            btnAbsoluteDone.IsEnabled = already > 0;
 
             _inputHandler = input =>
             {
@@ -824,13 +881,7 @@ namespace FanaBridge
             AdvanceToNextLed();
         }
 
-        private void AbsoluteSkip_Click(object sender, RoutedEventArgs e)
-        {
-            StopListeningForInput();
-            var entry = _inputMappingLeds[_inputMappingIndex];
-            entry.AbsoluteInputs = null;
-            AdvanceToNextLed();
-        }
+
 
         // -----------------------------------------------------------------
         // Navigation helpers
