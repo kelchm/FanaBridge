@@ -469,6 +469,24 @@ namespace FanaBridge
                     DeviceSettingControlKind.None,
                     true);
             }
+
+            // Tuning settings tab (only for wheels with encoders)
+            if (_config.Capabilities.HasEncoders)
+            {
+                var tuningPanel = new TuningSettingsPanel();
+                tuningPanel.Bind(_customSettings);
+                tuningPanel.SettingsChanged += () =>
+                {
+                    // Persist settings on change (handled by SimHub)
+                };
+
+                yield return new DeviceSettingControl(
+                    tuningPanel,
+                    2,
+                    "Tuning",
+                    DeviceSettingControlKind.None,
+                    true);
+            }
         }
     }
 }

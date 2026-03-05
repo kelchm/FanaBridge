@@ -44,6 +44,8 @@ namespace FanaBridge
         private volatile CancellationTokenSource _blinkCts;
         private string _detectedInputId;
         private bool _listeningForInput;
+        /// <summary>Callback invoked on the UI thread when an input is detected.</summary>
+        private Action<string> _inputHandler;
 
         // ── Identity (from SDK) ──────────────────────────────────────────
         private readonly string _wheelType;
@@ -487,8 +489,24 @@ namespace FanaBridge
             public LedChannel Channel;
             public int HwIndex;
             public string Label;
-            /// <summary>Detected input ID, or null if skipped.</summary>
-            public string InputId;
+
+            // --- Captured data ---
+            /// <summary>True if user classified this as an encoder.</summary>
+            public bool IsEncoder;
+            /// <summary>Button input ID (non-encoder), or null.</summary>
+            public string ButtonInputId;
+            /// <summary>Relative encoder CW input, or null.</summary>
+            public string RelativeCW;
+            /// <summary>Relative encoder CCW input, or null.</summary>
+            public string RelativeCCW;
+            /// <summary>Absolute encoder position inputs, or null.</summary>
+            public List<string> AbsoluteInputs;
+
+            /// <summary>True when at least one input has been captured.</summary>
+            public bool HasAny =>
+                ButtonInputId != null ||
+                RelativeCW != null ||
+                (AbsoluteInputs != null && AbsoluteInputs.Count > 0);
         }
 
         /// <summary>
@@ -559,7 +577,7 @@ namespace FanaBridge
         /// <summary>
         /// Called by SimHub on ANY button/encoder press across all devices.
         /// The input string is e.g. "JoystickPlugin.FANATEC_Wheel.Button3".
-        /// We marshal to the UI thread and display it.
+        /// We marshal to the UI thread and dispatch to the current _inputHandler.
         /// Returns true to indicate the event was handled.
         /// </summary>
         private bool OnInputPressed(string input)
@@ -575,8 +593,7 @@ namespace FanaBridge
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 if (!_listeningForInput) return;
-                StopListeningForInput();
-                SetDetectedInput(input);
+                _inputHandler?.Invoke(input);
             }));
 
             return true;
@@ -593,8 +610,8 @@ namespace FanaBridge
         }
 
         /// <summary>
-        /// Lights the current LED, waits for state to settle, then
-        /// captures a baseline and starts polling for input changes.
+        /// Lights the current LED and enters Phase 1: waiting for the
+        /// first input to arrive so we can classify it.
         /// </summary>
         private void ShowInputMappingLed()
         {
@@ -614,17 +631,44 @@ namespace FanaBridge
             txtInputLedLabel.Text = entry.Label;
             txtInputLedDetail.Text = string.Format(
                 "{0} channel, hardware index {1}", entry.Channel, entry.HwIndex);
-            txtDetectedInput.Text = "Press a button or turn an encoder…";
+
+            // Reset detection state
+            txtDetectedInput.Text = "Press a button or turn an encoder\u2026";
             txtDetectedInput.Foreground = System.Windows.Media.Brushes.Gray;
-            btnInputConfirm.IsEnabled = false;
             _detectedInputId = null;
+
+            // Show Phase 1 panels, hide others
+            panelInputActions.Visibility = Visibility.Visible;
+            panelInputType.Visibility = Visibility.Collapsed;
+            panelRelativeCapture.Visibility = Visibility.Collapsed;
+            panelAbsoluteCapture.Visibility = Visibility.Collapsed;
 
             // Light only this LED
             ClearAllLeds();
             LightSingleLed(entry);
 
-            // Start listening via SimHub
+            // Listen — Phase 1: first detection shows type-choice panel
+            _inputHandler = OnFirstInputDetected;
             StartListeningForInput();
+        }
+
+        /// <summary>
+        /// Phase 1 handler: first input detected — show it and ask for type.
+        /// </summary>
+        private void OnFirstInputDetected(string input)
+        {
+            StopListeningForInput();
+            _detectedInputId = input;
+
+            txtDetectedInput.Text = "\u2714 " + FormatInputDisplay(input);
+            txtDetectedInput.Foreground = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44));
+
+            BlinkCurrentLed();
+
+            // Show type classification, hide Phase 1 buttons
+            panelInputActions.Visibility = Visibility.Collapsed;
+            panelInputType.Visibility = Visibility.Visible;
         }
 
         /// <summary>Lights a single LED with a distinctive colour.</summary>
@@ -661,25 +705,151 @@ namespace FanaBridge
             StopListeningForInput();
         }
 
+        /// <summary>Strips the JoystickPlugin prefix for display.</summary>
+        private static string FormatInputDisplay(string inputId)
+        {
+            if (inputId == null) return "";
+            int dot = inputId.IndexOf('.');
+            return (dot >= 0 && dot < inputId.Length - 1)
+                ? inputId.Substring(dot + 1)
+                : inputId;
+        }
+
+        // -----------------------------------------------------------------
+        // Phase 2: Type classification handlers
+        // -----------------------------------------------------------------
+
+        private void InputTypeButton_Click(object sender, RoutedEventArgs e)
+        {
+            var entry = _inputMappingLeds[_inputMappingIndex];
+            entry.IsEncoder = false;
+            entry.ButtonInputId = _detectedInputId;
+            AdvanceToNextLed();
+        }
+
+        private void InputTypeEncoder_Click(object sender, RoutedEventArgs e)
+        {
+            var entry = _inputMappingLeds[_inputMappingIndex];
+            entry.IsEncoder = true;
+            // The first detected input was the first relative direction.
+            // Move to relative capture phase to get the second direction.
+            BeginRelativeCapture(entry, _detectedInputId);
+        }
+
+        // -----------------------------------------------------------------
+        // Phase 3a: Relative encoder capture (CW then CCW)
+        // -----------------------------------------------------------------
+
+        private void BeginRelativeCapture(InputMappingEntry entry, string firstInput)
+        {
+            entry.RelativeCW = firstInput;
+            entry.RelativeCCW = null;
+
+            panelInputType.Visibility = Visibility.Collapsed;
+            panelRelativeCapture.Visibility = Visibility.Visible;
+
+            txtRelativePrompt.Text = "CW detected: " + FormatInputDisplay(firstInput) +
+                "\nNow rotate the OTHER direction.";
+            txtRelativeStatus.Text = "Waiting for counter-clockwise input\u2026";
+            txtRelativeStatus.Foreground = System.Windows.Media.Brushes.Gray;
+            btnRelativeConfirm.IsEnabled = false;
+
+            _inputHandler = input =>
+            {
+                StopListeningForInput();
+                entry.RelativeCCW = input;
+                txtRelativeStatus.Text = "\u2714 CCW: " + FormatInputDisplay(input);
+                txtRelativeStatus.Foreground = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44));
+                btnRelativeConfirm.IsEnabled = true;
+                BlinkCurrentLed();
+            };
+            StartListeningForInput();
+        }
+
+        private void RelativeConfirm_Click(object sender, RoutedEventArgs e)
+        {
+            // Relative done — move to absolute capture
+            BeginAbsoluteCapture();
+        }
+
+        private void RelativeSkip_Click(object sender, RoutedEventArgs e)
+        {
+            var entry = _inputMappingLeds[_inputMappingIndex];
+            entry.RelativeCW = null;
+            entry.RelativeCCW = null;
+            // Skip straight to absolute
+            BeginAbsoluteCapture();
+        }
+
+        // -----------------------------------------------------------------
+        // Phase 3b: Absolute encoder capture (all positions)
+        // -----------------------------------------------------------------
+
+        private void BeginAbsoluteCapture()
+        {
+            var entry = _inputMappingLeds[_inputMappingIndex];
+            entry.AbsoluteInputs = new List<string>();
+
+            panelRelativeCapture.Visibility = Visibility.Collapsed;
+            panelAbsoluteCapture.Visibility = Visibility.Visible;
+
+            txtAbsolutePrompt.Text = entry.RelativeCW != null
+                ? "Now switch to absolute mode if available, and rotate through ALL positions."
+                : "Slowly rotate through ALL positions, then click Done.";
+            txtAbsoluteCount.Text = "0 positions detected";
+            txtAbsoluteCount.Foreground = System.Windows.Media.Brushes.Gray;
+            btnAbsoluteDone.IsEnabled = false;
+
+            _inputHandler = input =>
+            {
+                // Accumulate unique inputs in detection order
+                if (!entry.AbsoluteInputs.Contains(input))
+                {
+                    entry.AbsoluteInputs.Add(input);
+                    int n = entry.AbsoluteInputs.Count;
+                    txtAbsoluteCount.Text = n + " position" + (n == 1 ? "" : "s") + " detected";
+                    txtAbsoluteCount.Foreground = new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44));
+                    btnAbsoluteDone.IsEnabled = true;
+                }
+                // Keep listening for more positions (don't stop)
+            };
+            StartListeningForInput();
+        }
+
+        private void AbsoluteDone_Click(object sender, RoutedEventArgs e)
+        {
+            StopListeningForInput();
+            AdvanceToNextLed();
+        }
+
+        private void AbsoluteSkip_Click(object sender, RoutedEventArgs e)
+        {
+            StopListeningForInput();
+            var entry = _inputMappingLeds[_inputMappingIndex];
+            entry.AbsoluteInputs = null;
+            AdvanceToNextLed();
+        }
+
+        // -----------------------------------------------------------------
+        // Navigation helpers
+        // -----------------------------------------------------------------
+
+        private void AdvanceToNextLed()
+        {
+            StopInputPoll();
+            _inputMappingIndex++;
+            ShowInputMappingLed();
+        }
+
         private void SetDetectedInput(string inputId)
         {
+            // Legacy helper kept for backward compat in case anything calls it
             _detectedInputId = inputId;
-
-            // Show a friendly label: strip the plugin prefix for display
-            // e.g. "JoystickPlugin.FANATEC_Wheel.Button3" -> "FANATEC_Wheel.Button3"
-            string display = inputId;
-            int dot = inputId.IndexOf('.');
-            if (dot >= 0 && dot < inputId.Length - 1)
-                display = inputId.Substring(dot + 1);
-
-            txtDetectedInput.Text = "\u2714 " + display;
+            txtDetectedInput.Text = "\u2714 " + FormatInputDisplay(inputId);
             txtDetectedInput.Foreground = new System.Windows.Media.SolidColorBrush(
                 System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44));
-            btnInputConfirm.IsEnabled = true;
-
-            // Blink the LED on a thread-pool thread for consistent timing.
-            // The initial OFF happens immediately on that thread, not here,
-            // so the first visible change is near-instant.
             BlinkCurrentLed();
         }
 
@@ -738,36 +908,33 @@ namespace FanaBridge
 
         private void InputConfirm_Click(object sender, RoutedEventArgs e)
         {
-            if (_detectedInputId == null) return;
-
-            _inputMappingLeds[_inputMappingIndex].InputId = _detectedInputId;
-            StopInputPoll();
-
-            _inputMappingIndex++;
-            ShowInputMappingLed();
+            // Currently unused — type-specific buttons handle confirmation.
+            // Kept in case XAML still references it.
+            AdvanceToNextLed();
         }
 
         private void InputSkip_Click(object sender, RoutedEventArgs e)
         {
-            _inputMappingLeds[_inputMappingIndex].InputId = null;
             StopInputPoll();
-
             _inputMappingIndex++;
             ShowInputMappingLed();
         }
 
         private void InputRetry_Click(object sender, RoutedEventArgs e)
         {
+            StopListeningForInput();
             _detectedInputId = null;
-            txtDetectedInput.Text = "Press a button or turn an encoder\u2026";
-            txtDetectedInput.Foreground = System.Windows.Media.Brushes.Gray;
-            btnInputConfirm.IsEnabled = false;
 
-            // Re-light the LED and start listening again
+            // Reset the current entry
             var entry = _inputMappingLeds[_inputMappingIndex];
-            ClearAllLeds();
-            LightSingleLed(entry);
-            StartListeningForInput();
+            entry.ButtonInputId = null;
+            entry.RelativeCW = null;
+            entry.RelativeCCW = null;
+            entry.AbsoluteInputs = null;
+            entry.IsEncoder = false;
+
+            // Re-show from Phase 1
+            ShowInputMappingLed();
         }
 
         // =====================================================================
@@ -781,7 +948,7 @@ namespace FanaBridge
             int total = _revCount + _flagCount + _colorCount + _monoCount;
             int mapped = 0;
             if (_inputMappingLeds != null)
-                mapped = _inputMappingLeds.Count(m => m.InputId != null);
+                mapped = _inputMappingLeds.Count(m => m.HasAny);
 
             string fmt =
                 "Profile:       {0}\n" +
@@ -816,8 +983,16 @@ namespace FanaBridge
                 txtSummary.Text += "\n\nMappings:";
                 foreach (var m in _inputMappingLeds)
                 {
-                    if (m.InputId != null)
-                        txtSummary.Text += "\n  " + m.Label + " → " + m.InputId;
+                    if (!m.HasAny) continue;
+                    txtSummary.Text += "\n  " + m.Label;
+                    if (m.ButtonInputId != null)
+                        txtSummary.Text += " → " + FormatInputDisplay(m.ButtonInputId);
+                    if (m.RelativeCW != null || m.RelativeCCW != null)
+                        txtSummary.Text += " [rel: " +
+                            FormatInputDisplay(m.RelativeCW) + " / " +
+                            FormatInputDisplay(m.RelativeCCW) + "]";
+                    if (m.AbsoluteInputs != null && m.AbsoluteInputs.Count > 0)
+                        txtSummary.Text += " [abs: " + m.AbsoluteInputs.Count + " pos]";
                 }
             }
         }
@@ -939,12 +1114,7 @@ namespace FanaBridge
                     Label = "Button LED " + (i + 1),
                 };
 
-                // Apply input mapping if available
-                var mapping = _inputMappingLeds?.FirstOrDefault(
-                    m => m.Channel == LedChannel.Color && m.HwIndex == i);
-                if (mapping?.InputId != null)
-                    led.Input = mapping.InputId;
-
+                ApplyInputMapping(led, LedChannel.Color, i);
                 profile.Leds.Add(led);
             }
 
@@ -960,15 +1130,52 @@ namespace FanaBridge
                     Label = "Mono LED " + (i + 1),
                 };
 
-                var mapping = _inputMappingLeds?.FirstOrDefault(
-                    m => m.Channel == LedChannel.Mono && m.HwIndex == monoStart + i);
-                if (mapping?.InputId != null)
-                    led.Input = mapping.InputId;
-
+                ApplyInputMapping(led, LedChannel.Mono, monoStart + i);
                 profile.Leds.Add(led);
             }
 
             return profile;
+        }
+
+        /// <summary>
+        /// Copies wizard-captured input data into a <see cref="LedDefinition"/>.
+        /// Produces an <see cref="InputMapping"/> when any inputs were captured,
+        /// and also sets the legacy <see cref="LedDefinition.Input"/> for backward compat.
+        /// </summary>
+        private void ApplyInputMapping(LedDefinition led, LedChannel channel, int hwIndex)
+        {
+            var entry = _inputMappingLeds?.FirstOrDefault(
+                m => m.Channel == channel && m.HwIndex == hwIndex);
+            if (entry == null || !entry.HasAny) return;
+
+            // Update role if we learned this is an encoder
+            if (entry.IsEncoder)
+                led.Role = LedRole.Encoder;
+
+            var mapping = new InputMapping();
+
+            if (!entry.IsEncoder && entry.ButtonInputId != null)
+            {
+                mapping.Button = entry.ButtonInputId;
+                led.Input = entry.ButtonInputId; // legacy compat
+            }
+
+            if (entry.RelativeCW != null || entry.RelativeCCW != null)
+            {
+                mapping.Relative = new List<string>();
+                if (entry.RelativeCW != null) mapping.Relative.Add(entry.RelativeCW);
+                if (entry.RelativeCCW != null) mapping.Relative.Add(entry.RelativeCCW);
+                led.Input = led.Input ?? entry.RelativeCW; // legacy compat
+            }
+
+            if (entry.AbsoluteInputs != null && entry.AbsoluteInputs.Count > 0)
+            {
+                mapping.Absolute = entry.AbsoluteInputs;
+                led.Input = led.Input ?? entry.AbsoluteInputs[0]; // legacy compat
+            }
+
+            if (mapping.HasAny)
+                led.InputMapping = mapping;
         }
 
         private static void SaveProfile(WheelProfile profile)

@@ -99,6 +99,18 @@
                 </StackPanel>
             </styles:SHSection>
 
+            <!-- Experimental Features -->
+            <styles:SHSection Title="EXPERIMENTAL FEATURES" ShowSeparator="True">
+                <StackPanel>
+                    <CheckBox x:Name="chkEnableTuning"
+                              Content="Enable tuning features (encoder mode, etc.)"
+                              IsChecked="{Binding EnableTuning}"
+                              Checked="ChkEnableTuning_Changed" Unchecked="ChkEnableTuning_Changed" />
+                    <TextBlock Text="Tuning writes directly to device firmware settings via USB HID. Disabled by default."
+                               TextWrapping="Wrap" Margin="20,4,0,0" Opacity="0.6" FontSize="11" />
+                </StackPanel>
+            </styles:SHSection>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

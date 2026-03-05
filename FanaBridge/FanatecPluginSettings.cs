@@ -31,5 +31,13 @@ namespace FanaBridge
         /// </summary>
         public Dictionary<string, string> ProfileOverrides { get; set; }
             = new Dictionary<string, string>();
+
+        // ---- Feature flags ----
+
+        /// <summary>
+        /// Enable tuning features (encoder mode, etc.).  These write directly
+        /// to device firmware settings via USB HID and are disabled by default.
+        /// </summary>
+        public bool EnableTuning { get; set; } = false;
     }
 }

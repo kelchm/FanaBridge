@@ -263,15 +263,66 @@
                            HorizontalAlignment="Center" Margin="0,0,0,12"
                            Foreground="#44DD44" FontSize="14" />
 
-                <!-- Action buttons -->
-                <StackPanel HorizontalAlignment="Center" Margin="0,4,0,0">
-                    <Button x:Name="btnInputConfirm" Content="&#x2714;  Confirm this mapping"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            Click="InputConfirm_Click" IsEnabled="False" />
+                <!-- Phase 1: Waiting / first detection — shows standard action buttons -->
+                <StackPanel x:Name="panelInputActions" HorizontalAlignment="Center" Margin="0,4,0,0">
                     <Button x:Name="btnInputSkip" Content="&#x23ED;  Skip — no input near this LED"
                             HorizontalAlignment="Stretch" Margin="0,0,0,8"
                             Click="InputSkip_Click" />
                     <Button x:Name="btnInputRetry" Content="&#x1F504;  Retry detection"
+                            HorizontalAlignment="Stretch"
+                            Click="InputRetry_Click" />
+                </StackPanel>
+
+                <!-- Phase 2: Input type classification (shown after first detection) -->
+                <StackPanel x:Name="panelInputType" Visibility="Collapsed"
+                            HorizontalAlignment="Center" Margin="0,4,0,0">
+                    <TextBlock Text="What kind of control is this?"
+                               HorizontalAlignment="Center" Margin="0,0,0,8" />
+                    <Button Content="&#x1F518;  Button (momentary press)"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            Click="InputTypeButton_Click" />
+                    <Button Content="&#x1F504;  Encoder (rotary knob)"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            Click="InputTypeEncoder_Click" />
+                </StackPanel>
+
+                <!-- Phase 3a: Relative encoder — capture CW then CCW -->
+                <StackPanel x:Name="panelRelativeCapture" Visibility="Collapsed"
+                            HorizontalAlignment="Center" Margin="0,4,0,0">
+                    <TextBlock x:Name="txtRelativePrompt"
+                               TextWrapping="Wrap" HorizontalAlignment="Center"
+                               Margin="0,0,0,8" />
+                    <TextBlock x:Name="txtRelativeStatus" FontWeight="Bold"
+                               HorizontalAlignment="Center" Margin="0,0,0,12"
+                               Foreground="#44DD44" FontSize="14" />
+                    <Button x:Name="btnRelativeConfirm" Content="&#x2714;  Confirm"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            Click="RelativeConfirm_Click" IsEnabled="False" />
+                    <Button Content="&#x23ED;  Skip relative mode"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            Click="RelativeSkip_Click" />
+                    <Button Content="&#x1F504;  Start over for this LED"
+                            HorizontalAlignment="Stretch"
+                            Click="InputRetry_Click" />
+                </StackPanel>
+
+                <!-- Phase 3b: Absolute encoder — collect all positions -->
+                <StackPanel x:Name="panelAbsoluteCapture" Visibility="Collapsed"
+                            HorizontalAlignment="Center" Margin="0,4,0,0">
+                    <TextBlock x:Name="txtAbsolutePrompt" TextWrapping="Wrap"
+                               HorizontalAlignment="Center" Margin="0,0,0,8">
+                        Slowly rotate through ALL positions, then click Done.
+                    </TextBlock>
+                    <TextBlock x:Name="txtAbsoluteCount" FontWeight="Bold"
+                               HorizontalAlignment="Center" Margin="0,0,0,12"
+                               Foreground="#44DD44" FontSize="14" />
+                    <Button x:Name="btnAbsoluteDone" Content="&#x2714;  Done — all positions captured"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            Click="AbsoluteDone_Click" IsEnabled="False" />
+                    <Button Content="&#x23ED;  Skip absolute mode"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            Click="AbsoluteSkip_Click" />
+                    <Button Content="&#x1F504;  Start over for this LED"
                             HorizontalAlignment="Stretch"
                             Click="InputRetry_Click" />
                 </StackPanel>

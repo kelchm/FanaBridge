@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace FanaBridge
 {
     /// <summary>
@@ -83,6 +85,7 @@ namespace FanaBridge
         public bool HasRevLeds => RevLedCount > 0;
         public bool HasFlagLeds => FlagLedCount > 0;
         public bool HasLeds => AllLedCount > 0;
+        public bool HasEncoders { get; }
 
         // ── Constructors ─────────────────────────────────────────────────
 
@@ -106,6 +109,7 @@ namespace FanaBridge
             ButtonLedCount = profile.ButtonLedCount;
             AllLedCount = profile.TotalLedCount;
             ColorFormat = profile.ColorFormat;
+            HasEncoders = profile.Leds.Any(l => l.Role == LedRole.Encoder);
         }
 
         /// <summary>Private constructor for the None sentinel.</summary>

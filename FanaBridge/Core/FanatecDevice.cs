@@ -2,11 +2,27 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using HidSharp;
 using Microsoft.Win32.SafeHandles;
 
 namespace FanaBridge
 {
+    /// <summary>
+    /// Encoder operating mode for Fanatec button modules.
+    /// Sent as byte 19 in the col03 tuning configuration report (cmd 0x03).
+    /// </summary>
+    public enum EncoderMode : byte
+    {
+        /// <summary>Relative / incremental — sends CW/CCW pulses.</summary>
+        Encoder = 0x00,
+        /// <summary>Absolute — sends position as individual button presses (pulse).</summary>
+        Pulse = 0x01,
+        /// <summary>Absolute — holds button for current position (constant).</summary>
+        Constant = 0x02,
+        /// <summary>Firmware auto-selects between modes based on interaction.</summary>
+        Auto = 0x03,
+    }
     /// <summary>
     /// HID communication layer for Fanatec wheel LED and display control.
     /// Ported from the standalone PoC to .NET Framework 4.8.
@@ -37,6 +53,41 @@ namespace FanaBridge
         /// meaning varies by wheel (e.g. encoder indicator LEDs).
         /// </summary>
         public const int INTENSITY_PAYLOAD_SIZE = 16;
+
+        // ── Tuning configuration report (col03, cmd class 0x03) ──────────
+        // Byte layout differs between READ response and WRITE command:
+        //   READ  response: [ff 03] [deviceId] [payload 0..60]  — 64 bytes
+        //   WRITE command:  [ff 03] [subcmd=00] [deviceId] [payload 0..59] — 64 bytes
+        // The WRITE format inserts the subcode at byte[2], shifting the
+        // device-ID and payload right by one position.
+        //
+        // Subcodes (byte[2] in WRITE, or implicit in READ):
+        //   0x00 = WRITE,  0x02 = READ,  0x03 = SAVE,
+        //   0x04 = RESET,  0x06 = TOGGLE (standard/simplified mode).
+        private const int TUNING_REPORT_LENGTH = LED_REPORT_LENGTH;  // 64 bytes, same interface
+        private const byte TUNING_CMD_CLASS = 0x03;
+        private const byte TUNING_SUBCMD_WRITE = 0x00;
+        private const byte TUNING_SUBCMD_READ  = 0x02;
+        private const byte TUNING_DEVICE_ID_BMR = 0x02;  // sub-device: Button Module Rally
+        private const int TUNING_READ_TIMEOUT_MS = 1000;
+
+        // Encoder mode byte position in the READ response (0-indexed).
+        // In the WRITE buffer this shifts to READ offset + 1 due to the
+        // inserted subcode byte.
+        private const int TUNING_READ_ENCODER_MODE_OFFSET = 18;
+        private const int TUNING_WRITE_ENCODER_MODE_OFFSET = 19;
+
+        // Write buffer offsets 26/27/28 are unknown tuning params
+        // (SDK normalizes 0→1, valid range 1–3).  Tested as per-encoder
+        // mode selectors and apply-masks — neither hypothesis panned out.
+        // They do NOT control per-encoder mode; encoder mode is global.
+
+        // Col01 sub-command 0x06 — sent as a burst after tuning writes.
+        // Purpose not fully understood; may be required for firmware to
+        // acknowledge the configuration change.
+        private const byte COL01_SUBCMD_TUNING_ACK = 0x06;
+        private const int TUNING_ACK_BURST_COUNT = 4;
+        private const int TUNING_ACK_BURST_DELAY_MS = 1;
 
         // ── Dirty tracking — skip redundant HID writes ───────────────────
         // Color tracking keyed by subcmd; missing entry = dirty (forces send).
@@ -446,6 +497,233 @@ namespace FanaBridge
             Array.Copy(intensities, 0, _ledReportBuf, REPORT_HEADER_SIZE, intensities.Length);
             _ledReportBuf[BUTTON_INTENSITY_COMMIT_OFFSET] = commit ? (byte)0x01 : (byte)0x00;
             return SendLedReport(_ledReportBuf);
+        }
+
+        // =====================================================================
+        // ENCODER / TUNING CONFIGURATION
+        // =====================================================================
+
+        /// <summary>
+        /// Reads the current tuning state from the device.
+        /// Sends an <c>ff 03 &lt;deviceId&gt; 00...00</c> request on col03
+        /// and waits for the device's response on the col03 input endpoint.
+        /// </summary>
+        /// <returns>The 64-byte tuning state, or null on failure.</returns>
+        private byte[] ReadTuningState(byte deviceId)
+        {
+            if (_ledStream == null) return null;
+
+            var request = new byte[TUNING_REPORT_LENGTH];
+            request[0] = 0xFF;
+            request[1] = TUNING_CMD_CLASS;
+            request[2] = TUNING_SUBCMD_READ;
+            // bytes 3-63 are zero = "give me the current state"
+
+            try
+            {
+                int savedTimeout = _ledStream.ReadTimeout;
+                _ledStream.ReadTimeout = TUNING_READ_TIMEOUT_MS;
+
+                try
+                {
+                    int maxInputLen = _ledDevice.GetMaxInputReportLength();
+                    if (maxInputLen <= 0) maxInputLen = TUNING_REPORT_LENGTH;
+                    var buf = new byte[maxInputLen];
+
+                    // Drain any stale input reports before sending the read
+                    // request.  After a write+ack cycle the device may have
+                    // queued confirmation reports that would otherwise be
+                    // mistaken for the fresh response.
+                    int savedDrainTimeout = _ledStream.ReadTimeout;
+                    _ledStream.ReadTimeout = 50;   // short timeout — just drain
+                    try
+                    {
+                        while (true)
+                            _ledStream.Read(buf, 0, buf.Length);
+                    }
+                    catch (TimeoutException) { /* buffer drained */ }
+                    finally
+                    {
+                        _ledStream.ReadTimeout = savedDrainTimeout;
+                    }
+
+                    // Send the read request on col03
+                    _ledStream.Write(request);
+
+                    // Read responses until we get the matching tuning state
+                    // (skip any unrelated input reports)
+                    var deadline = DateTime.UtcNow.AddMilliseconds(TUNING_READ_TIMEOUT_MS);
+
+                    while (DateTime.UtcNow < deadline)
+                    {
+                        int bytesRead = _ledStream.Read(buf, 0, buf.Length);
+                        if (bytesRead >= 3 &&
+                            buf[0] == 0xFF &&
+                            buf[1] == TUNING_CMD_CLASS &&
+                            buf[2] == deviceId)
+                        {
+                            var result = new byte[TUNING_REPORT_LENGTH];
+                            Array.Copy(buf, result, Math.Min(bytesRead, TUNING_REPORT_LENGTH));
+                            return result;
+                        }
+                    }
+
+                    SimHub.Logging.Current.Warn("FanatecDevice: Tuning read — no matching response within timeout");
+                    return null;
+                }
+                finally
+                {
+                    _ledStream.ReadTimeout = savedTimeout;
+                }
+            }
+            catch (TimeoutException)
+            {
+                SimHub.Logging.Current.Warn("FanatecDevice: Tuning read timed out");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanatecDevice: Tuning read error: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Sets the encoder operating mode on the connected button module.
+        /// Uses a read-modify-write cycle: reads the device's current tuning
+        /// state, modifies the encoder mode byte, and writes it back.
+        ///
+        /// EXPERIMENTAL: Only the encoder mode byte is changed; all other
+        /// tuning parameters are preserved from the current device state.
+        /// </summary>
+        /// <returns>True if the HID writes succeeded.</returns>
+        public bool SetEncoderMode(EncoderMode mode)
+        {
+            // Feature flag gate — refuse to write if tuning is disabled
+            var settings = FanatecPlugin.Instance?.Settings;
+            if (settings == null || !settings.EnableTuning)
+            {
+                SimHub.Logging.Current.Warn(
+                    "FanatecDevice: SetEncoderMode blocked — tuning feature is disabled");
+                return false;
+            }
+
+            SimHub.Logging.Current.Info(
+                "FanatecDevice: Setting encoder mode to " + mode + " (0x" + ((byte)mode).ToString("X2") + ")");
+
+            // 1. Read current tuning state
+            var readBuf = ReadTuningState(TUNING_DEVICE_ID_BMR);
+            if (readBuf == null)
+            {
+                SimHub.Logging.Current.Warn(
+                    "FanatecDevice: Cannot set encoder mode — failed to read current tuning state");
+                return false;
+            }
+
+            SimHub.Logging.Current.Info(
+                "FanatecDevice: Current tuning state read OK (byte[" + TUNING_READ_ENCODER_MODE_OFFSET + "]=0x"
+                + readBuf[TUNING_READ_ENCODER_MODE_OFFSET].ToString("X2") + ")");
+
+            // 2. Build the WRITE buffer.
+            //    READ response:  [ff 03] [deviceId] [payload...]
+            //    WRITE command:  [ff 03] [00]       [deviceId] [payload...]
+            //    Shift bytes 2..62 of the read response into bytes 3..63 of
+            //    the write buffer, inserting the WRITE subcode at byte[2].
+            var writeBuf = new byte[TUNING_REPORT_LENGTH];
+            writeBuf[0] = 0xFF;
+            writeBuf[1] = TUNING_CMD_CLASS;
+            writeBuf[2] = TUNING_SUBCMD_WRITE;
+            Array.Copy(readBuf, 2, writeBuf, 3, TUNING_REPORT_LENGTH - 3);
+
+            // 3. Set the encoder mode in the WRITE buffer
+            writeBuf[TUNING_WRITE_ENCODER_MODE_OFFSET] = (byte)mode;
+
+            // 4. Write the buffer
+            bool ok = SendLedReport(writeBuf);
+            if (!ok)
+            {
+                SimHub.Logging.Current.Warn("FanatecDevice: Failed to send tuning config report");
+                return false;
+            }
+
+            // 5. Send col01 0x06 acknowledgement burst
+            ok = SendTuningAckBurst();
+            if (!ok)
+                SimHub.Logging.Current.Warn("FanatecDevice: Tuning ack burst failed (mode may still have been set)");
+
+            return ok;
+        }
+
+        /// <summary>
+        /// Reads the current encoder mode from the connected button module.
+        /// Does NOT require the tuning feature flag — read-only operation.
+        /// </summary>
+        /// <returns>The current encoder mode, or null if the read fails.</returns>
+        public EncoderMode? ReadEncoderMode()
+        {
+            var readBuf = ReadTuningState(TUNING_DEVICE_ID_BMR);
+            if (readBuf == null)
+            {
+                SimHub.Logging.Current.Warn(
+                    "FanatecDevice: ReadEncoderMode — failed to read tuning state");
+                return null;
+            }
+
+            byte raw = readBuf[TUNING_READ_ENCODER_MODE_OFFSET];
+            if (Enum.IsDefined(typeof(EncoderMode), raw))
+                return (EncoderMode)raw;
+
+            SimHub.Logging.Current.Warn(
+                "FanatecDevice: ReadEncoderMode — unknown mode byte 0x" + raw.ToString("X2"));
+            return null;
+        }
+
+        /// <summary>
+        /// Returns the raw 64-byte tuning state from the button module,
+        /// or null on failure.  Read-only, no feature flag required.
+        /// </summary>
+        public byte[] ReadTuningStateRaw()
+        {
+            return ReadTuningState(TUNING_DEVICE_ID_BMR);
+        }
+
+        /// <summary>
+        /// Sends the col01 sub-command 0x06 burst pattern observed after every
+        /// tuning configuration write.  The burst consists of alternating
+        /// "on" (ff 02 00) and "off" (00 00 00) packets.
+        /// </summary>
+        private bool SendTuningAckBurst()
+        {
+            var onPacket = new byte[DISPLAY_REPORT_LENGTH];
+            onPacket[0] = 0x01;  // Report ID
+            onPacket[1] = 0xF8;
+            onPacket[2] = 0x09;
+            onPacket[3] = 0x01;
+            onPacket[4] = COL01_SUBCMD_TUNING_ACK;
+            onPacket[5] = 0xFF;
+            onPacket[6] = 0x02;
+            onPacket[7] = 0x00;
+
+            var offPacket = new byte[DISPLAY_REPORT_LENGTH];
+            offPacket[0] = 0x01;
+            offPacket[1] = 0xF8;
+            offPacket[2] = 0x09;
+            offPacket[3] = 0x01;
+            offPacket[4] = COL01_SUBCMD_TUNING_ACK;
+            offPacket[5] = 0x00;
+            offPacket[6] = 0x00;
+            offPacket[7] = 0x00;
+
+            bool ok = true;
+            for (int i = 0; i < TUNING_ACK_BURST_COUNT; i++)
+            {
+                ok = SendDisplayReport(onPacket) && ok;
+                Thread.Sleep(TUNING_ACK_BURST_DELAY_MS);
+                ok = SendDisplayReport(offPacket) && ok;
+                Thread.Sleep(TUNING_ACK_BURST_DELAY_MS);
+            }
+
+            return ok;
         }
 
         // =====================================================================
