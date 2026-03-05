@@ -246,7 +246,7 @@ namespace FanaBridge
             {
                 if (Device == null || !Device.IsConnected) return;
                 Device.SetRevLedColors(new ushort[9]);
-                Device.SetFlagLedColors(new ushort[3]);
+                Device.SetFlagLedColors(new ushort[6]);
                 Device.SetButtonLedState(
                     new ushort[12],
                     new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE]);
@@ -283,7 +283,7 @@ namespace FanaBridge
         {
             try
             {
-                var colors = new ushort[3];
+                var colors = new ushort[6];
                 for (int i = 0; i < colors.Length; i++)
                     colors[i] = ColorHelper.Colors.Blue;
                 Device?.SetFlagLedColors(colors);

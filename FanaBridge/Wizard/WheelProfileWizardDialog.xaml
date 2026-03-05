@@ -133,11 +133,14 @@
                 </StackPanel>
                 <StackPanel x:Name="panelFlagCount" Orientation="Horizontal"
                             HorizontalAlignment="Center" Margin="0,12,0,0" Visibility="Collapsed">
-                    <TextBlock Text="How many lit up?" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Text="Total count (both sides):" VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <ComboBox x:Name="cboFlagCount" SelectedIndex="0">
                         <ComboBoxItem Content="1"/>
                         <ComboBoxItem Content="2"/>
                         <ComboBoxItem Content="3"/>
+                        <ComboBoxItem Content="4"/>
+                        <ComboBoxItem Content="5"/>
+                        <ComboBoxItem Content="6"/>
                     </ComboBox>
                 </StackPanel>
                 <TextBlock x:Name="txtFlagResult" HorizontalAlignment="Center"
