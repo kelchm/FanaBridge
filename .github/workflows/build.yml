@@ -40,7 +40,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/simhub-install
-          key: simhub-install-${{ env.SIMHUB_VERSION }}-v1
+          key: ${{ runner.os }}-simhub-install-${{ env.SIMHUB_VERSION }}
 
       - name: Stage SimHub install directory
         if: steps.cache-simhub-install.outputs.cache-hit != 'true'
