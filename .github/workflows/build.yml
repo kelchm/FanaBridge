@@ -7,6 +7,14 @@ on:
         description: 'Build configuration (Debug or Release)'
         type: string
         default: 'Release'
+      version-suffix:
+        description: 'Optional SemVer prerelease suffix (for example: preview.pr42)'
+        type: string
+        default: ''
+      artifact-label:
+        description: 'Optional artifact context label (for example: pr42, ci). Empty for release artifacts.'
+        type: string
+        default: ''
     outputs:
       artifact-name:
         description: 'Name of the uploaded build artifact'
@@ -14,6 +22,9 @@ on:
 
 env:
   SIMHUB_VERSION: '9.11.3'
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -24,21 +35,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache SimHub dependencies
-        id: cache-simhub
+      - name: Cache SimHub install directory
+        id: cache-simhub-install
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/simhub-deps
-          key: simhub-${{ env.SIMHUB_VERSION }}-full-v1
+          path: ${{ runner.temp }}/simhub-install
+          key: simhub-install-${{ env.SIMHUB_VERSION }}-v1
 
-      - name: Download and extract SimHub dependencies
-        if: steps.cache-simhub.outputs.cache-hit != 'true'
+      - name: Stage SimHub install directory
+        if: steps.cache-simhub-install.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $version  = $env:SIMHUB_VERSION
           $url      = "https://github.com/SHWotever/SimHub/releases/download/$version/SimHub.$version.zip"
           $zipPath  = "$env:RUNNER_TEMP\SimHub.zip"
-          $simhubDir  = "$env:RUNNER_TEMP\simhub-deps"
+          $simhubDir  = "$env:RUNNER_TEMP\simhub-install"
           $tmpDir   = "$env:RUNNER_TEMP\simhub-extract"
           $logPath  = "$env:RUNNER_TEMP\simhub-installer.log"
           $timeoutSec = 900
@@ -114,10 +125,10 @@ jobs:
           $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
           Write-Host "SimHub full install staged at $simhubDir ($sizeMB MB)"
 
-      - name: Configure SimHub dependency path
+      - name: Configure SimHub path for build
         shell: pwsh
         run: |
-          $simhubDir = "$env:RUNNER_TEMP\simhub-deps"
+          $simhubDir = "$env:RUNNER_TEMP\simhub-install"
 
           if (-not (Test-Path "$simhubDir\SimHub.Plugins.dll")) {
             Write-Error "SimHub.Plugins.dll not found under $simhubDir"
@@ -135,23 +146,42 @@ jobs:
           )
 
       - name: Restore NuGet packages
-        run: dotnet restore FanaBridge\FanaBridge.csproj
+        run: dotnet restore FanaBridge.sln
 
       - name: Build
-        run: dotnet build FanaBridge\FanaBridge.csproj -c ${{ inputs.configuration }} --no-restore
+        shell: pwsh
+        run: |
+          $versionSuffix = '${{ inputs.version-suffix }}'
+          $cmd = @(
+            'dotnet',
+            'build',
+            'FanaBridge.sln',
+            '-c',
+            '${{ inputs.configuration }}',
+            '--no-restore'
+          )
+
+          if (-not [string]::IsNullOrWhiteSpace($versionSuffix)) {
+            $cmd += "-p:VersionSuffix=$versionSuffix"
+          }
+
+          Write-Host "Running: $($cmd -join ' ')"
+          $exe = $cmd[0]
+          $args = @($cmd[1..($cmd.Count - 1)])
+          & $exe @args
 
       - name: Test
-        run: dotnet test FanaBridge.sln --no-build --verbosity normal
-        continue-on-error: true
+        run: dotnet test FanaBridge.Tests\FanaBridge.Tests.csproj --no-build -c ${{ inputs.configuration }} --verbosity normal
 
       - name: Package artifact
         id: package
         shell: pwsh
         run: |
-          $config   = '${{ inputs.configuration }}'
-          $binDir   = "FanaBridge\bin\$config"
-          $dist     = 'dist'
-          $staging  = "$dist\staging"
+          $artifactLabel = '${{ inputs.artifact-label }}'
+          $binDir        = "FanaBridge\bin\${{ inputs.configuration }}"
+          $dist          = 'dist'
+          $staging       = "$dist\staging"
+          $shortSha      = $env:GITHUB_SHA.Substring(0, 7)
 
           New-Item $staging                      -ItemType Directory -Force | Out-Null
           New-Item "$staging\DevicesLogos"       -ItemType Directory -Force | Out-Null
@@ -165,9 +195,21 @@ jobs:
             }
           }
 
-          $fileVersion = (Get-Item "$staging\FanaBridge.dll").VersionInfo.FileVersion
-          if ([string]::IsNullOrWhiteSpace($fileVersion)) { $fileVersion = 'dev' }
-          $archiveName = "FanaBridge-$fileVersion-$config.zip"
+          # ProductVersion (InformationalVersion) may include +<sha> build metadata — strip it
+          # so filenames stay clean: "0.1.0" or "0.1.0-preview", not "0.1.0+abc123...".
+          $artifactVersion = (Get-Item "$staging\FanaBridge.dll").VersionInfo.ProductVersion -replace '\+.*$', ''
+          if ([string]::IsNullOrWhiteSpace($artifactVersion)) {
+            $artifactVersion = (Get-Item "$staging\FanaBridge.dll").VersionInfo.FileVersion -replace '\+.*$', ''
+          }
+          if ([string]::IsNullOrWhiteSpace($artifactVersion)) { $artifactVersion = 'dev' }
+
+          if ([string]::IsNullOrWhiteSpace($artifactLabel)) {
+            $archiveName = "FanaBridge-$artifactVersion.zip"
+          }
+          else {
+            $archiveName = "FanaBridge-$artifactVersion-$artifactLabel-$shortSha.zip"
+          }
+
           $archivePath = "$dist\$archiveName"
 
           Compress-Archive -Path "$staging\*" -DestinationPath $archivePath -Force
@@ -179,6 +221,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.package.outputs.artifact-name }}
+          name: FanaBridge
           path: dist/*.zip
           if-no-files-found: error

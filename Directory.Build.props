@@ -1,5 +1,14 @@
 <Project>
   <PropertyGroup>
+    <!-- Single source of truth for product versioning. -->
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Version Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)</Version>
+    <Version Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</Version>
+
+    <!-- Early-development policy: keep assembly and file versions in sync with VersionPrefix. -->
+    <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
+    <FileVersion>$(VersionPrefix).0</FileVersion>
+
     <!-- Default SimHub install path. Override in Directory.Build.props.user for your machine. -->
     <SimHubDir Condition="'$(SimHubDir)' == ''">C:\Program Files (x86)\SimHub\</SimHubDir>
   </PropertyGroup>

@@ -69,9 +69,13 @@ Get-ChildItem "$processedDir\*.png" -ErrorAction SilentlyContinue | ForEach-Obje
 }
 
 # ── 3. Create archive ─────────────────────────────────────────────────────────
-$version = (Get-Item (Join-Path $staging 'FanaBridge.dll')).VersionInfo.FileVersion
+# Use ProductVersion (InformationalVersion) for naming — strip +<sha> build metadata.
+$version = (Get-Item (Join-Path $staging 'FanaBridge.dll')).VersionInfo.ProductVersion -replace '\+.*$', ''
+if ([string]::IsNullOrWhiteSpace($version)) {
+    $version = (Get-Item (Join-Path $staging 'FanaBridge.dll')).VersionInfo.FileVersion -replace '\+.*$', ''
+}
 if ([string]::IsNullOrWhiteSpace($version)) { $version = 'dev' }
-$archiveName = "FanaBridge-$version-$Configuration.zip"
+$archiveName = "FanaBridge-$version.zip"
 $archivePath = Join-Path $OutputPath $archiveName
 
 if (Test-Path $archivePath) { Remove-Item $archivePath -Force }
