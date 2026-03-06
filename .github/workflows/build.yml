@@ -46,101 +46,101 @@ jobs:
         if: steps.cache-simhub-install.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $version  = $env:SIMHUB_VERSION
-          $url      = "https://github.com/SHWotever/SimHub/releases/download/$version/SimHub.$version.zip"
-          $zipPath  = "$env:RUNNER_TEMP\SimHub.zip"
-          $simhubDir  = "$env:RUNNER_TEMP\simhub-install"
-          $tmpDir   = "$env:RUNNER_TEMP\simhub-extract"
-          $logPath  = "$env:RUNNER_TEMP\simhub-installer.log"
-          $timeoutSec = 900
+          $Version  = $env:SIMHUB_VERSION
+          $Url      = "https://github.com/SHWotever/SimHub/releases/download/$Version/SimHub.$Version.zip"
+          $ZipPath  = "$env:RUNNER_TEMP\SimHub.zip"
+          $SimHubDir  = "$env:RUNNER_TEMP\simhub-install"
+          $TmpDir   = "$env:RUNNER_TEMP\simhub-extract"
+          $LogPath  = "$env:RUNNER_TEMP\simhub-installer.log"
+          $TimeoutSec = 900
 
-          Write-Host "Downloading SimHub $version from $url ..."
-          Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+          Write-Host "Downloading SimHub $Version from $Url ..."
+          Invoke-WebRequest -Uri $Url -OutFile $ZipPath -UseBasicParsing
 
           Write-Host "Extracting ZIP ..."
-          Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
-          Remove-Item $zipPath
+          Expand-Archive -Path $ZipPath -DestinationPath $TmpDir -Force
+          Remove-Item $ZipPath
 
-          $installer = Get-ChildItem $tmpDir -Filter 'SimHubSetup*.exe' -Recurse -ErrorAction SilentlyContinue |
+          $Installer = Get-ChildItem $TmpDir -Filter 'SimHubSetup*.exe' -Recurse -ErrorAction SilentlyContinue |
                        Select-Object -First 1
-          if (-not $installer) {
+          if (-not $Installer) {
             Write-Error "No SimHub setup EXE found in release ZIP."
             exit 1
           }
 
-          Write-Host "Installer detected: $($installer.Name). Running silent install to $simhubDir ..."
-          Remove-Item $simhubDir -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force $simhubDir | Out-Null
+          Write-Host "Installer detected: $($Installer.Name). Running silent install to $SimHubDir ..."
+          Remove-Item $SimHubDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $SimHubDir | Out-Null
 
           # Inno Setup flags chosen for CI safety:
           # /VERYSILENT hides UI, /SP- suppresses startup prompt,
           # /SUPPRESSMSGBOXES avoids hidden modal blocks,
           # /NORESTART prevents reboot prompts, /LOG enables diagnostics.
-          $args = @(
+          $Args = @(
             '/VERYSILENT'
             '/SP-'
             '/SUPPRESSMSGBOXES'
             '/NORESTART'
-            "/DIR=$simhubDir"
-            "/LOG=$logPath"
+            "/DIR=$SimHubDir"
+            "/LOG=$LogPath"
           )
 
-          $proc = Start-Process -FilePath $installer.FullName -ArgumentList $args -PassThru
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          while (-not $proc.HasExited) {
-            if ($sw.Elapsed.TotalSeconds -ge $timeoutSec) {
-              try { Stop-Process -Id $proc.Id -Force } catch {}
-              Write-Error "Installer timed out after $timeoutSec seconds."
-              if (Test-Path $logPath) {
+          $Proc = Start-Process -FilePath $Installer.FullName -ArgumentList $Args -PassThru
+          $Sw = [Diagnostics.Stopwatch]::StartNew()
+          while (-not $Proc.HasExited) {
+            if ($Sw.Elapsed.TotalSeconds -ge $TimeoutSec) {
+              try { Stop-Process -Id $Proc.Id -Force } catch {}
+              Write-Error "Installer timed out after $TimeoutSec seconds."
+              if (Test-Path $LogPath) {
                 Write-Host 'Installer log tail:'
-                Get-Content $logPath -Tail 120
+                Get-Content $LogPath -Tail 120
               }
               exit 1
             }
 
-            Write-Host ("Installer running... elapsed {0:n0}s" -f $sw.Elapsed.TotalSeconds)
+            Write-Host ("Installer running... elapsed {0:n0}s" -f $Sw.Elapsed.TotalSeconds)
             Start-Sleep -Seconds 15
-            $proc.Refresh()
+            $Proc.Refresh()
           }
 
-          Write-Host "Installer exited with code $($proc.ExitCode)"
-          if (Test-Path $logPath) {
+          Write-Host "Installer exited with code $($Proc.ExitCode)"
+          if (Test-Path $LogPath) {
             Write-Host 'Installer log tail:'
-            Get-Content $logPath -Tail 80
+            Get-Content $LogPath -Tail 80
           }
-          if ($proc.ExitCode -ne 0) {
-            Write-Error "Installer exited with code $($proc.ExitCode)."
+          if ($Proc.ExitCode -ne 0) {
+            Write-Error "Installer exited with code $($Proc.ExitCode)."
             exit 1
           }
 
-          Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item $TmpDir -Recurse -Force -ErrorAction SilentlyContinue
 
           # Verify key plugin assembly exists before caching full install.
-          if (-not (Test-Path (Join-Path $simhubDir 'SimHub.Plugins.dll'))) {
-            Write-Error "SimHub.Plugins.dll not found under $simhubDir after install."
+          if (-not (Test-Path (Join-Path $SimHubDir 'SimHub.Plugins.dll'))) {
+            Write-Error "SimHub.Plugins.dll not found under $SimHubDir after install."
             exit 1
           }
 
-          $sizeBytes = (Get-ChildItem $simhubDir -Recurse -File | Measure-Object Length -Sum).Sum
-          $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
-          Write-Host "SimHub full install staged at $simhubDir ($sizeMB MB)"
+          $SizeBytes = (Get-ChildItem $SimHubDir -Recurse -File | Measure-Object Length -Sum).Sum
+          $SizeMB = [math]::Round($SizeBytes / 1MB, 2)
+          Write-Host "SimHub full install staged at $SimHubDir ($SizeMB MB)"
 
       - name: Configure SimHub path for build
         shell: pwsh
         run: |
-          $simhubDir = "$env:RUNNER_TEMP\simhub-install"
+          $SimHubDir = "$env:RUNNER_TEMP\simhub-install"
 
-          if (-not (Test-Path "$simhubDir\SimHub.Plugins.dll")) {
-            Write-Error "SimHub.Plugins.dll not found under $simhubDir"
+          if (-not (Test-Path "$SimHubDir\SimHub.Plugins.dll")) {
+            Write-Error "SimHub.Plugins.dll not found under $SimHubDir"
             exit 1
           }
-          Write-Host "SimHub DLLs located at: $simhubDir"
+          Write-Host "SimHub DLLs located at: $SimHubDir"
 
           # Write Directory.Build.props.user so MSBuild picks up the staged DLLs.
           Set-Content -Path "$env:GITHUB_WORKSPACE\Directory.Build.props.user" -Value (
             '<Project>',
             '  <PropertyGroup>',
-            "    <SimHubDir>$simhubDir\</SimHubDir>",
+            "    <SimHubDir>$SimHubDir\</SimHubDir>",
             '  </PropertyGroup>',
             '</Project>'
           )
@@ -151,8 +151,8 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          $versionSuffix = '${{ inputs.version-suffix }}'
-          $cmd = @(
+          $VersionSuffix = '${{ inputs.version-suffix }}'
+          $Cmd = @(
             'dotnet',
             'build',
             'FanaBridge.sln',
@@ -161,14 +161,14 @@ jobs:
             '--no-restore'
           )
 
-          if (-not [string]::IsNullOrWhiteSpace($versionSuffix)) {
-            $cmd += "-p:VersionSuffix=$versionSuffix"
+          if (-not [string]::IsNullOrWhiteSpace($VersionSuffix)) {
+            $Cmd += "-p:VersionSuffix=$VersionSuffix"
           }
 
-          Write-Host "Running: $($cmd -join ' ')"
-          $exe = $cmd[0]
-          $args = @($cmd[1..($cmd.Count - 1)])
-          & $exe @args
+          Write-Host "Running: $($Cmd -join ' ')"
+          $Exe = $Cmd[0]
+          $Args = @($Cmd[1..($Cmd.Count - 1)])
+          & $Exe @Args
 
       - name: Test
         run: dotnet test FanaBridge.Tests\FanaBridge.Tests.csproj --no-build -c ${{ inputs.configuration }} --verbosity normal
@@ -177,41 +177,41 @@ jobs:
         id: package
         shell: pwsh
         run: |
-          $artifactLabel = '${{ inputs.artifact-label }}'
-          $binDir        = "FanaBridge\bin\${{ inputs.configuration }}"
-          $dist          = 'dist'
-          $shortSha      = $env:GITHUB_SHA.Substring(0, 7)
+          $ArtifactLabel = '${{ inputs.artifact-label }}'
+          $BinDir        = "FanaBridge\bin\${{ inputs.configuration }}"
+          $Dist          = 'dist'
+          $ShortSha      = $env:GITHUB_SHA.Substring(0, 7)
 
-          New-Item $dist                         -ItemType Directory -Force | Out-Null
-          New-Item "$dist\DevicesLogos"           -ItemType Directory -Force | Out-Null
+          New-Item $Dist                         -ItemType Directory -Force | Out-Null
+          New-Item "$Dist\DevicesLogos"           -ItemType Directory -Force | Out-Null
 
-          Copy-Item "$binDir\FanaBridge.dll" $dist
+          Copy-Item "$BinDir\FanaBridge.dll" $Dist
 
-          $processedLogos = 'FanaBridge\Resources\DeviceLogos\processed'
-          if (Test-Path $processedLogos) {
-            Get-ChildItem "$processedLogos\*.png" -ErrorAction SilentlyContinue | ForEach-Object {
-              Copy-Item $_.FullName "$dist\DevicesLogos\$($_.Name)"
+          $ProcessedLogos = 'FanaBridge\Resources\DeviceLogos\processed'
+          if (Test-Path $ProcessedLogos) {
+            Get-ChildItem "$ProcessedLogos\*.png" -ErrorAction SilentlyContinue | ForEach-Object {
+              Copy-Item $_.FullName "$Dist\DevicesLogos\$($_.Name)"
             }
           }
 
           # ProductVersion (InformationalVersion) may include +<sha> build metadata — strip it
           # so filenames stay clean: "0.1.0" or "0.1.0-preview", not "0.1.0+abc123...".
-          $artifactVersion = (Get-Item "$dist\FanaBridge.dll").VersionInfo.ProductVersion -replace '\+.*$', ''
-          if ([string]::IsNullOrWhiteSpace($artifactVersion)) {
-            $artifactVersion = (Get-Item "$dist\FanaBridge.dll").VersionInfo.FileVersion -replace '\+.*$', ''
+          $ArtifactVersion = (Get-Item "$Dist\FanaBridge.dll").VersionInfo.ProductVersion -replace '\+.*$', ''
+          if ([string]::IsNullOrWhiteSpace($ArtifactVersion)) {
+            $ArtifactVersion = (Get-Item "$Dist\FanaBridge.dll").VersionInfo.FileVersion -replace '\+.*$', ''
           }
-          if ([string]::IsNullOrWhiteSpace($artifactVersion)) { $artifactVersion = 'dev' }
+          if ([string]::IsNullOrWhiteSpace($ArtifactVersion)) { $ArtifactVersion = 'dev' }
 
-          if ([string]::IsNullOrWhiteSpace($artifactLabel)) {
-            $artifactName = "FanaBridge-$artifactVersion"
+          if ([string]::IsNullOrWhiteSpace($ArtifactLabel)) {
+            $ArtifactName = "FanaBridge-$ArtifactVersion"
           }
           else {
-            $artifactName = "FanaBridge-$artifactVersion-$artifactLabel-$shortSha"
+            $ArtifactName = "FanaBridge-$ArtifactVersion-$ArtifactLabel-$ShortSha"
           }
 
-          "artifact-name=$artifactName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "artifact-version=$artifactVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Artifact: $artifactName"
+          "artifact-name=$ArtifactName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "artifact-version=$ArtifactVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Artifact: $ArtifactName"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
