@@ -28,33 +28,33 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$projectDir = Join-Path $PSScriptRoot 'FanaBridge'
-$buildOutput = Join-Path $projectDir "bin\$Configuration"
+$ProjectDir = Join-Path $PSScriptRoot 'FanaBridge'
+$BuildOutput = Join-Path $ProjectDir "bin\$Configuration"
 
 # ── 1. Build ──────────────────────────────────────────────────────────────────
 Write-Host "Building $Configuration..." -ForegroundColor Cyan
-dotnet build "$projectDir\FanaBridge.csproj" -c $Configuration --no-restore
+dotnet build "$ProjectDir\FanaBridge.csproj" -c $Configuration --no-restore
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Build failed."
     exit 1
 }
 
 # ── 2. Stage files ────────────────────────────────────────────────────────────
-$staging = Join-Path $OutputPath 'staging'
-if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
-New-Item $staging -ItemType Directory -Force | Out-Null
-New-Item (Join-Path $staging 'DevicesLogos') -ItemType Directory -Force | Out-Null
+$Staging = Join-Path $OutputPath 'staging'
+if (Test-Path $Staging) { Remove-Item $Staging -Recurse -Force }
+New-Item $Staging -ItemType Directory -Force | Out-Null
+New-Item (Join-Path $Staging 'DevicesLogos') -ItemType Directory -Force | Out-Null
 
 # Plugin DLL (debug symbols are embedded)
-Copy-Item (Join-Path $buildOutput 'FanaBridge.dll') $staging
+Copy-Item (Join-Path $BuildOutput 'FanaBridge.dll') $Staging
 
 # ── Device logo images ────────────────────────────────────────────────────────
 # Copy pre-processed images from Resources/DeviceLogos/processed/.
 # Run process-device-logos.ps1 first if source images have changed.
-$processedDir = Join-Path (Join-Path (Join-Path $projectDir 'Resources') 'DeviceLogos') 'processed'
-$destLogos = Join-Path $staging 'DevicesLogos'
+$ProcessedDir = Join-Path (Join-Path (Join-Path $ProjectDir 'Resources') 'DeviceLogos') 'processed'
+$DestLogos = Join-Path $Staging 'DevicesLogos'
 
-if (-not (Test-Path $processedDir) -or (Get-ChildItem "$processedDir\*.png" -ErrorAction SilentlyContinue).Count -eq 0) {
+if (-not (Test-Path $ProcessedDir) -or (Get-ChildItem "$ProcessedDir\*.png" -ErrorAction SilentlyContinue).Count -eq 0) {
     Write-Warning "No processed logos found. Running process-device-logos.ps1..."
     & (Join-Path $PSScriptRoot 'process-device-logos.ps1')
     if ($LASTEXITCODE -ne 0) {
@@ -63,23 +63,31 @@ if (-not (Test-Path $processedDir) -or (Get-ChildItem "$processedDir\*.png" -Err
     }
 }
 
-Get-ChildItem "$processedDir\*.png" -ErrorAction SilentlyContinue | ForEach-Object {
-    Copy-Item $_.FullName (Join-Path $destLogos $_.Name)
+Get-ChildItem "$ProcessedDir\*.png" -ErrorAction SilentlyContinue | ForEach-Object {
+    Copy-Item $_.FullName (Join-Path $DestLogos $_.Name)
     Write-Host "  $($_.Name) -> DevicesLogos\$($_.Name)" -ForegroundColor DarkGray
 }
 
 # ── 3. Create archive ─────────────────────────────────────────────────────────
-$version = (Get-Item (Join-Path $staging 'FanaBridge.dll')).VersionInfo.FileVersion
-if ([string]::IsNullOrWhiteSpace($version)) { $version = 'dev' }
-$archiveName = "FanaBridge-$version-$Configuration.zip"
-$archivePath = Join-Path $OutputPath $archiveName
+# Use ProductVersion (InformationalVersion) for naming — strip +<sha> build metadata.
+$Version = (Get-Item (Join-Path $Staging 'FanaBridge.dll')).VersionInfo.ProductVersion -replace '\+.*$', ''
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = (Get-Item (Join-Path $Staging 'FanaBridge.dll')).VersionInfo.FileVersion -replace '\+.*$', ''
+}
+if ([string]::IsNullOrWhiteSpace($Version)) { $Version = 'dev' }
+if ($Configuration -eq 'Release') {
+    $ArchiveName = "FanaBridge-$Version.zip"
+} else {
+    $ArchiveName = "FanaBridge-$Version-$Configuration.zip"
+}
+$ArchivePath = Join-Path $OutputPath $ArchiveName
 
-if (Test-Path $archivePath) { Remove-Item $archivePath -Force }
-Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archivePath -Force
+if (Test-Path $ArchivePath) { Remove-Item $ArchivePath -Force }
+Compress-Archive -Path (Join-Path $Staging '*') -DestinationPath $ArchivePath -Force
 
 Write-Host ""
-Write-Host "Archive created: $archivePath" -ForegroundColor Green
+Write-Host "Archive created: $ArchivePath" -ForegroundColor Green
 Write-Host "Install: extract directly into your SimHub directory." -ForegroundColor Green
 
 # ── 4. Cleanup staging ────────────────────────────────────────────────────────
-Remove-Item $staging -Recurse -Force
+Remove-Item $Staging -Recurse -Force

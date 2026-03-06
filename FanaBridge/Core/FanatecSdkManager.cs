@@ -100,7 +100,7 @@ namespace FanaBridge
 
                 if (fanatecPids.Count == 0)
                 {
-                    SimHub.Logging.Current.Info("FanatecSdkManager: No Fanatec devices found on HID bus");
+                    SimHub.Logging.Current.Debug("FanatecSdkManager: No Fanatec devices found on HID bus");
                     return false;
                 }
 

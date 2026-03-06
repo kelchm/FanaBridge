@@ -5,9 +5,12 @@
     <OutputType>Library</OutputType>
     <RootNamespace>FanaBridge</RootNamespace>
     <AssemblyName>FanaBridge</AssemblyName>
+    <Description>Fanatec wheel LED and display control plugin for SimHub</Description>
+    <Product>FanaBridge</Product>
+    <Copyright>Copyright (c) 2026</Copyright>
     <LangVersion>8.0</LangVersion>
-    <ProjectGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ProjectGuid>{77D40755-B5B5-4C53-BD35-1CDEF35AF422}</ProjectGuid>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
     <UseWPF>true</UseWPF>

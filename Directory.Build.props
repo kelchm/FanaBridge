@@ -1,8 +1,54 @@
 <Project>
   <PropertyGroup>
+    <!-- Single source of truth for product versioning. -->
+    <VersionPrefix>0.1.1</VersionPrefix>
+    <Version Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)</Version>
+    <Version Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</Version>
+
+    <!-- Early-development policy: keep assembly and file versions in sync with VersionPrefix. -->
+    <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
+    <FileVersion>$(VersionPrefix).0</FileVersion>
+    <!-- Keep informational version user-friendly (e.g. "0.1.0" or "0.1.0-preview")
+         instead of appending +gitsha automatically. The commit hash is embedded
+         separately below as AssemblyMetadata so the About panel can show both. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+
     <!-- Default SimHub install path. Override in Directory.Build.props.user for your machine. -->
     <SimHubDir Condition="'$(SimHubDir)' == ''">C:\Program Files (x86)\SimHub\</SimHubDir>
   </PropertyGroup>
+
+  <!-- ── Build metadata ──────────────────────────────────────────────
+       Embedded as [AssemblyMetadata] attributes so the plugin About
+       panel can display version, configuration, and commit at runtime. -->
+
+  <!-- Configuration is always known statically. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>BuildConfiguration</_Parameter1>
+      <_Parameter2>$(Configuration)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <!-- Resolve short commit hash from git and emit as [AssemblyMetadata].
+       Uses a single target before GetAssemblyAttributes so the item is
+       visible when GenerateAssemblyInfo runs. -->
+  <Target Name="EmbedCommitHash" BeforeTargets="GetAssemblyAttributes"
+          Condition="'$(CommitHash)' == ''">
+    <Exec Command="git rev-parse --short HEAD" ConsoleToMsBuild="true"
+          IgnoreExitCode="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="CommitHash" />
+      <Output TaskParameter="ExitCode" PropertyName="_GitExitCode" />
+    </Exec>
+    <PropertyGroup Condition="'$(_GitExitCode)' != '0'">
+      <CommitHash></CommitHash>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(CommitHash)' != ''">
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>CommitHash</_Parameter1>
+        <_Parameter2>$(CommitHash)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
 
   <Import Project="Directory.Build.props.user" Condition="Exists('Directory.Build.props.user')" />
 </Project>

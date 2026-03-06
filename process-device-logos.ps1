@@ -17,8 +17,8 @@
 #>
 $ErrorActionPreference = 'Stop'
 
-$sourceDir = Join-Path (Join-Path (Join-Path $PSScriptRoot 'FanaBridge') 'Resources') 'DeviceLogos'
-$processedDir = Join-Path $sourceDir 'processed'
+$SourceDir = Join-Path (Join-Path (Join-Path $PSScriptRoot 'FanaBridge') 'Resources') 'DeviceLogos'
+$ProcessedDir = Join-Path $SourceDir 'processed'
 
 # Verify ImageMagick is available
 if (-not (Get-Command magick -ErrorAction SilentlyContinue)) {
@@ -27,32 +27,32 @@ if (-not (Get-Command magick -ErrorAction SilentlyContinue)) {
 }
 
 # Clean and recreate output folder
-if (Test-Path $processedDir) { Remove-Item $processedDir -Recurse -Force }
-New-Item $processedDir -ItemType Directory -Force | Out-Null
+if (Test-Path $ProcessedDir) { Remove-Item $ProcessedDir -Recurse -Force }
+New-Item $ProcessedDir -ItemType Directory -Force | Out-Null
 
-$sources = Get-ChildItem "$sourceDir\*.png" -ErrorAction SilentlyContinue
-if ($sources.Count -eq 0) {
-    Write-Warning "No source images found in $sourceDir"
+$Sources = Get-ChildItem "$SourceDir\*.png" -ErrorAction SilentlyContinue
+if ($Sources.Count -eq 0) {
+    Write-Warning "No source images found in $SourceDir"
     exit 0
 }
 
-foreach ($src in $sources) {
-    $dest = Join-Path $processedDir $src.Name
+foreach ($Src in $Sources) {
+    $Dest = Join-Path $ProcessedDir $Src.Name
 
     # Trim transparent borders, resize to 512px wide (only shrinks), keep transparency
-    & magick $src.FullName -trim +repage -resize '512x>' $dest
+    & magick $Src.FullName -trim +repage -resize '512x>' $Dest
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to process $($src.Name)"
+        Write-Error "Failed to process $($Src.Name)"
         exit 1
     }
 
     # Report size change
-    $srcSize = $src.Length
-    $destSize = (Get-Item $dest).Length
-    $srcDim = & magick identify -format '%wx%h' $src.FullName
-    $destDim = & magick identify -format '%wx%h' $dest
-    Write-Host "  $($src.Name): $srcDim ($([math]::Round($srcSize/1KB))KB) -> $destDim ($([math]::Round($destSize/1KB))KB)" -ForegroundColor DarkGray
+    $SrcSize = $Src.Length
+    $DestSize = (Get-Item $Dest).Length
+    $SrcDim = & magick identify -format '%wx%h' $Src.FullName
+    $DestDim = & magick identify -format '%wx%h' $Dest
+    Write-Host "  $($Src.Name): $SrcDim ($([math]::Round($SrcSize/1KB))KB) -> $DestDim ($([math]::Round($DestSize/1KB))KB)" -ForegroundColor DarkGray
 }
 
 Write-Host ""
-Write-Host "Processed $($sources.Count) image(s) to $processedDir" -ForegroundColor Green
+Write-Host "Processed $($Sources.Count) image(s) to $ProcessedDir" -ForegroundColor Green

@@ -487,5 +487,7 @@ $RECYCLE.BIN/
 *.swp
 
 # Project-specific
+tmp/
 dist/
 FanaBridge/Resources/DeviceLogos/processed/
+

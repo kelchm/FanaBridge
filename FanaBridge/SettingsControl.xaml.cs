@@ -1,7 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Navigation;
 using System.Windows.Threading;
 using Timer = System.Timers.Timer;
 
@@ -20,10 +24,51 @@ namespace FanaBridge
         {
             Plugin = plugin;
             DataContext = plugin.Settings;
+            SetAboutInfo();
 
             // Subscribe/unsubscribe symmetrically so tab switches don't lose the handler
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
+        }
+
+        private void SetAboutInfo()
+        {
+            var assembly = typeof(FanatecPlugin).Assembly;
+
+            var version = assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                ?.InformationalVersion
+                ?? assembly.GetName().Version?.ToString()
+                ?? "Unknown";
+
+            var config = GetAssemblyMetadata(assembly, "BuildConfiguration");
+            var commit = GetAssemblyMetadata(assembly, "CommitHash");
+
+            var versionText = FindName("txtPluginVersion") as TextBlock;
+            if (versionText != null)
+                versionText.Text = $"FanaBridge {version}";
+
+            var buildText = FindName("txtBuildInfo") as TextBlock;
+            if (buildText != null)
+                buildText.Text = FormatBuildInfo(config, commit);
+        }
+
+        private static string FormatBuildInfo(string config, string commit)
+        {
+            if (config != null && commit != null)
+                return $"{config} \u00b7 {commit}";
+            if (config != null)
+                return config;
+            if (commit != null)
+                return commit;
+            return "\u2014";
+        }
+
+        private static string GetAssemblyMetadata(Assembly assembly, string key)
+        {
+            return assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+                .FirstOrDefault(a => string.Equals(a.Key, key, StringComparison.OrdinalIgnoreCase))
+                ?.Value;
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -81,6 +126,23 @@ namespace FanaBridge
         {
             Plugin?.ForceReconnect();
             UpdateStatus(); // immediate since we're already on UI thread
+        }
+
+        private void RepoLink_RequestNavigate(object sender, RequestNavigateEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri)
+                {
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn($"FanaBridge: Failed to open repository link: {ex.Message}");
+            }
+
+            e.Handled = true;
         }
 
         // =====================================================================
