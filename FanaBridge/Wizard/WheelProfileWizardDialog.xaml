@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="FanaBridge — New Wheel Profile"
-        Width="560" Height="500"
+        Width="560" Height="600"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         Background="#FF252525"
@@ -238,107 +238,93 @@
 
             <!-- Step 7: Input Mapping -->
             <StackPanel x:Name="stepInputMapping" Visibility="Collapsed">
-                <TextBlock TextWrapping="Wrap" Margin="0,0,0,8">
-                    Let's map each button/encoder LED to its physical input.
-                    One LED is lit at a time — press the button or rotate the
-                    encoder next to the glowing LED.
+                <TextBlock TextWrapping="Wrap" Margin="0,0,0,6">
+                    One LED is lit at a time — press the button or wiggle the
+                    encoder back and forth next to the glowing LED.
                 </TextBlock>
-                <TextBlock x:Name="txtInputProgress" FontWeight="Bold" Margin="0,0,0,12"
+                <TextBlock x:Name="txtInputProgress" FontWeight="Bold" Margin="0,0,0,8"
                            Foreground="#FFCC00" />
 
                 <!-- Current LED indicator -->
-                <Border Background="#FF333333" CornerRadius="6" Padding="16,12"
-                        Margin="0,0,0,12" HorizontalAlignment="Center">
+                <Border Background="#FF333333" CornerRadius="6" Padding="12,10"
+                        Margin="0,0,0,8" HorizontalAlignment="Center">
                     <StackPanel HorizontalAlignment="Center">
-                        <TextBlock x:Name="txtInputLedLabel" FontSize="16"
+                        <TextBlock x:Name="txtInputLedLabel" FontSize="15"
                                    FontWeight="Bold" HorizontalAlignment="Center" />
                         <TextBlock x:Name="txtInputLedDetail" Foreground="#AAAAAA"
-                                   FontSize="12" Margin="0,4,0,0"
+                                   FontSize="11" Margin="0,2,0,0"
                                    HorizontalAlignment="Center" />
                     </StackPanel>
                 </Border>
 
                 <!-- Detected input display -->
                 <TextBlock x:Name="txtDetectedInput" FontWeight="Bold"
-                           HorizontalAlignment="Center" Margin="0,0,0,12"
+                           HorizontalAlignment="Center" Margin="0,0,0,8"
                            Foreground="#44DD44" FontSize="14" />
-
-                <!-- Phase 1: Waiting / first detection — shows standard action buttons -->
-                <StackPanel x:Name="panelInputActions" HorizontalAlignment="Center" Margin="0,4,0,0">
-                    <Button x:Name="btnInputSkip" Content="&#x23ED;  Skip — no input near this LED"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            Click="InputSkip_Click" />
-                    <Button x:Name="btnInputRetry" Content="&#x1F504;  Retry detection"
-                            HorizontalAlignment="Stretch"
-                            Click="InputRetry_Click" />
-                </StackPanel>
-
-                <!-- Phase 2: Input type classification (shown after first detection) -->
-                <StackPanel x:Name="panelInputType" Visibility="Collapsed"
-                            HorizontalAlignment="Center" Margin="0,4,0,0">
-                    <TextBlock Text="What kind of control is this?"
-                               HorizontalAlignment="Center" Margin="0,0,0,8" />
-                    <Button Content="&#x1F518;  Button (momentary press)"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            Click="InputTypeButton_Click" />
-                    <Button Content="&#x1F504;  Encoder (rotary knob)"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            Click="InputTypeEncoder_Click" />
-                </StackPanel>
 
                 <!-- Encoder mode banner — shows the detected hardware mode -->
                 <Border x:Name="panelEncoderModeBanner" Visibility="Collapsed"
-                        Background="#FF2A2A3A" CornerRadius="4" Padding="12,8"
-                        Margin="0,0,0,12" HorizontalAlignment="Center">
+                        Background="#FF2A2A3A" CornerRadius="4" Padding="10,6"
+                        Margin="0,0,0,8" HorizontalAlignment="Center">
                     <TextBlock x:Name="txtEncoderMode" TextWrapping="Wrap"
                                HorizontalAlignment="Center" FontSize="12"
                                Foreground="#FFCC00" />
                 </Border>
 
-                <!-- Phase 3a: Relative encoder — capture CW then CCW -->
+                <!-- Relative encoder confirmation (auto-detected both directions) -->
                 <StackPanel x:Name="panelRelativeCapture" Visibility="Collapsed"
                             HorizontalAlignment="Center" Margin="0,4,0,0">
                     <TextBlock x:Name="txtRelativePrompt"
                                TextWrapping="Wrap" HorizontalAlignment="Center"
-                               Margin="0,0,0,8" />
+                               Margin="0,0,0,4" />
                     <TextBlock x:Name="txtRelativeStatus" FontWeight="Bold"
-                               HorizontalAlignment="Center" Margin="0,0,0,12"
+                               HorizontalAlignment="Center" Margin="0,0,0,8"
                                Foreground="#44DD44" FontSize="14" />
                     <Button x:Name="btnRelativeConfirm" Content="&#x2714;  Confirm"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            Click="RelativeConfirm_Click" IsEnabled="False" />
-                    <Button Content="&#x1F504;  Start over for this LED"
                             HorizontalAlignment="Stretch"
-                            Click="InputRetry_Click" />
+                            Click="RelativeConfirm_Click" IsEnabled="False" />
                 </StackPanel>
 
-                <!-- Phase 3b: Absolute encoder — collect all positions -->
+                <!-- Absolute encoder capture — collect all positions -->
                 <StackPanel x:Name="panelAbsoluteCapture" Visibility="Collapsed"
                             HorizontalAlignment="Center" Margin="0,4,0,0">
                     <TextBlock x:Name="txtAbsolutePrompt" TextWrapping="Wrap"
-                               HorizontalAlignment="Center" Margin="0,0,0,8" />
+                               HorizontalAlignment="Center" Margin="0,0,0,4" />
                     <TextBlock x:Name="txtAbsoluteCount" FontWeight="Bold"
-                               HorizontalAlignment="Center" Margin="0,0,0,12"
+                               HorizontalAlignment="Center" Margin="0,0,0,8"
                                Foreground="#44DD44" FontSize="14" />
                     <Button x:Name="btnAbsoluteDone" Content="&#x2714;  Done — all positions captured"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            Click="AbsoluteDone_Click" IsEnabled="False" />
-                    <Button Content="&#x1F504;  Start over for this LED"
                             HorizontalAlignment="Stretch"
-                            Click="InputRetry_Click" />
+                            Click="AbsoluteDone_Click" IsEnabled="False" />
                 </StackPanel>
 
-
+                <!-- LED-level navigation (always visible during input mapping) -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center"
+                            Margin="0,12,0,0">
+                    <Button x:Name="btnInputPrev" Content="&#x25C0; Prev"
+                            Margin="0,0,8,0" Click="InputPrev_Click"
+                            IsEnabled="False" />
+                    <Button Content="&#x21BA; Reset"
+                            Margin="0,0,8,0" Click="InputRetry_Click" />
+                    <Button Content="Skip &#x25B6;"
+                            Click="InputSkip_Click" />
+                </StackPanel>
             </StackPanel>
 
             <!-- Step 8: Summary -->
-            <StackPanel x:Name="stepSummary" Visibility="Collapsed">
-                <TextBlock TextWrapping="Wrap" Margin="0,0,0,12">
+            <Grid x:Name="stepSummary" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,12">
                     Review the detected capabilities.  Click Save to write the profile.
                 </TextBlock>
-                <TextBlock x:Name="txtSummary" TextWrapping="Wrap"
-                           FontFamily="Consolas" FontSize="13" LineHeight="22" />
-            </StackPanel>
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="txtSummary" TextWrapping="Wrap"
+                               FontFamily="Consolas" FontSize="13" LineHeight="22" />
+                </ScrollViewer>
+            </Grid>
 
         </Grid>
 
