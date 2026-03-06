@@ -180,47 +180,42 @@ jobs:
           $artifactLabel = '${{ inputs.artifact-label }}'
           $binDir        = "FanaBridge\bin\${{ inputs.configuration }}"
           $dist          = 'dist'
-          $staging       = "$dist\staging"
           $shortSha      = $env:GITHUB_SHA.Substring(0, 7)
 
-          New-Item $staging                      -ItemType Directory -Force | Out-Null
-          New-Item "$staging\DevicesLogos"       -ItemType Directory -Force | Out-Null
+          New-Item $dist                         -ItemType Directory -Force | Out-Null
+          New-Item "$dist\DevicesLogos"           -ItemType Directory -Force | Out-Null
 
-          Copy-Item "$binDir\FanaBridge.dll" $staging
+          Copy-Item "$binDir\FanaBridge.dll" $dist
 
           $processedLogos = 'FanaBridge\Resources\DeviceLogos\processed'
           if (Test-Path $processedLogos) {
             Get-ChildItem "$processedLogos\*.png" -ErrorAction SilentlyContinue | ForEach-Object {
-              Copy-Item $_.FullName "$staging\DevicesLogos\$($_.Name)"
+              Copy-Item $_.FullName "$dist\DevicesLogos\$($_.Name)"
             }
           }
 
           # ProductVersion (InformationalVersion) may include +<sha> build metadata — strip it
           # so filenames stay clean: "0.1.0" or "0.1.0-preview", not "0.1.0+abc123...".
-          $artifactVersion = (Get-Item "$staging\FanaBridge.dll").VersionInfo.ProductVersion -replace '\+.*$', ''
+          $artifactVersion = (Get-Item "$dist\FanaBridge.dll").VersionInfo.ProductVersion -replace '\+.*$', ''
           if ([string]::IsNullOrWhiteSpace($artifactVersion)) {
-            $artifactVersion = (Get-Item "$staging\FanaBridge.dll").VersionInfo.FileVersion -replace '\+.*$', ''
+            $artifactVersion = (Get-Item "$dist\FanaBridge.dll").VersionInfo.FileVersion -replace '\+.*$', ''
           }
           if ([string]::IsNullOrWhiteSpace($artifactVersion)) { $artifactVersion = 'dev' }
 
           if ([string]::IsNullOrWhiteSpace($artifactLabel)) {
-            $archiveName = "FanaBridge-$artifactVersion.zip"
+            $artifactName = "FanaBridge-$artifactVersion"
           }
           else {
-            $archiveName = "FanaBridge-$artifactVersion-$artifactLabel-$shortSha.zip"
+            $artifactName = "FanaBridge-$artifactVersion-$artifactLabel-$shortSha"
           }
 
-          $archivePath = "$dist\$archiveName"
-
-          Compress-Archive -Path "$staging\*" -DestinationPath $archivePath -Force
-          Remove-Item $staging -Recurse -Force
-
-          "artifact-name=$archiveName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Packaged: $archivePath"
+          "artifact-name=$artifactName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "artifact-version=$artifactVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Artifact: $artifactName"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FanaBridge
-          path: dist/*.zip
+          name: ${{ steps.package.outputs.artifact-name }}
+          path: dist/
           if-no-files-found: error

@@ -31,17 +31,16 @@ jobs:
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: FanaBridge
-          path: dist/
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: staging/
 
       - name: Verify tag matches artifact version
         # Only meaningful on tag-triggered runs; skip on manual workflow_dispatch (no tag available).
         if: github.event_name != 'workflow_dispatch'
         run: |
-          zip_name=$(ls dist/FanaBridge-*.zip | head -1 | xargs basename)
-          # Extract version from filename: FanaBridge-0.1.0.zip -> 0.1.0
-          artifact_version="${zip_name#FanaBridge-}"
-          artifact_version="${artifact_version%.zip}"
+          artifact_name="${{ needs.build.outputs.artifact-name }}"
+          # Extract version from artifact name: FanaBridge-0.1.0 -> 0.1.0
+          artifact_version="${artifact_name#FanaBridge-}"
           # Expected version is the tag without the leading 'v'
           tag_version="${{ github.ref_name }}"
           tag_version="${tag_version#v}"
@@ -50,6 +49,15 @@ jobs:
             exit 1
           fi
           echo "Version check passed: $artifact_version"
+
+      - name: Create release zip
+        run: |
+          artifact_name="${{ needs.build.outputs.artifact-name }}"
+          mkdir -p dist
+          cd staging
+          zip -r "../dist/${artifact_name}.zip" .
+          echo "Created dist/${artifact_name}.zip"
+          ls -lh "../dist/${artifact_name}.zip"
 
       - name: Create GitHub Release
         if: ${{ !inputs.dry_run }}
