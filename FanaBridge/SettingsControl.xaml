@@ -47,6 +47,28 @@
                 </StackPanel>
             </styles:SHSection>
 
+            <!-- About -->
+            <styles:SHSection Title="ABOUT" ShowSeparator="False">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock Text="Version: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
+                        <TextBlock x:Name="txtPluginVersion" Text="—" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock Text="Build: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
+                        <TextBlock x:Name="txtBuildInfo" Text="—" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                        <TextBlock Text="Repo: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
+                        <TextBlock VerticalAlignment="Center">
+                            <Hyperlink NavigateUri="https://github.com/kelchm/FanaBridge" RequestNavigate="RepoLink_RequestNavigate">
+                                github.com/kelchm/FanaBridge
+                            </Hyperlink>
+                        </TextBlock>
+                    </StackPanel>
+                </StackPanel>
+            </styles:SHSection>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>
