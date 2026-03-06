@@ -29,7 +29,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/simhub-deps
-          key: simhub-${{ env.SIMHUB_VERSION }}
+          key: simhub-${{ env.SIMHUB_VERSION }}-full-v1
 
       - name: Download and extract SimHub dependencies
         if: steps.cache-simhub.outputs.cache-hit != 'true'
@@ -38,8 +38,10 @@ jobs:
           $version  = $env:SIMHUB_VERSION
           $url      = "https://github.com/SHWotever/SimHub/releases/download/$version/SimHub.$version.zip"
           $zipPath  = "$env:RUNNER_TEMP\SimHub.zip"
-          $depsDir  = "$env:RUNNER_TEMP\simhub-deps"
+          $simhubDir  = "$env:RUNNER_TEMP\simhub-deps"
           $tmpDir   = "$env:RUNNER_TEMP\simhub-extract"
+          $logPath  = "$env:RUNNER_TEMP\simhub-installer.log"
+          $timeoutSec = 900
 
           Write-Host "Downloading SimHub $version from $url ..."
           Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
@@ -48,55 +50,79 @@ jobs:
           Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
           Remove-Item $zipPath
 
-          # Case 1: ZIP is a portable distribution — DLLs are directly inside.
-          $dll = Get-ChildItem $tmpDir -Filter 'SimHub.Plugins.dll' -Recurse -ErrorAction SilentlyContinue |
-                 Select-Object -First 1
-          if ($dll) {
-            Write-Host "Portable ZIP detected. Copying DLLs to $depsDir ..."
-            New-Item -ItemType Directory -Force $depsDir | Out-Null
-            Copy-Item "$($dll.DirectoryName)\*" $depsDir -Recurse -Force
-          } else {
-            # Case 2: ZIP contains an NSIS setup EXE — run it silently.
-            $installer = Get-ChildItem $tmpDir -Filter '*.exe' -Recurse -ErrorAction SilentlyContinue |
-                         Select-Object -First 1
-            if (-not $installer) {
-              Write-Error "No DLLs or setup EXE found in the SimHub release ZIP."
+          $installer = Get-ChildItem $tmpDir -Filter 'SimHubSetup*.exe' -Recurse -ErrorAction SilentlyContinue |
+                       Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "No SimHub setup EXE found in release ZIP."
+            exit 1
+          }
+
+          Write-Host "Installer detected: $($installer.Name). Running silent install to $simhubDir ..."
+          Remove-Item $simhubDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $simhubDir | Out-Null
+
+          # Inno Setup flags chosen for CI safety:
+          # /VERYSILENT hides UI, /SP- suppresses startup prompt,
+          # /SUPPRESSMSGBOXES avoids hidden modal blocks,
+          # /NORESTART prevents reboot prompts, /LOG enables diagnostics.
+          $args = @(
+            '/VERYSILENT'
+            '/SP-'
+            '/SUPPRESSMSGBOXES'
+            '/NORESTART'
+            "/DIR=$simhubDir"
+            "/LOG=$logPath"
+          )
+
+          $proc = Start-Process -FilePath $installer.FullName -ArgumentList $args -PassThru
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          while (-not $proc.HasExited) {
+            if ($sw.Elapsed.TotalSeconds -ge $timeoutSec) {
+              try { Stop-Process -Id $proc.Id -Force } catch {}
+              Write-Error "Installer timed out after $timeoutSec seconds."
+              if (Test-Path $logPath) {
+                Write-Host 'Installer log tail:'
+                Get-Content $logPath -Tail 120
+              }
               exit 1
             }
-            Write-Host "Installer detected: $($installer.Name). Running silent install to $depsDir ..."
-            New-Item -ItemType Directory -Force $depsDir | Out-Null
-            # NSIS: /S = silent; /D= must be last and use an absolute path without quotes.
-            $proc = Start-Process -Wait -PassThru -FilePath $installer.FullName `
-                      -ArgumentList "/S", "/D=$depsDir"
-            if ($proc.ExitCode -ne 0) {
-              Write-Error "Installer exited with code $($proc.ExitCode)."
-              exit 1
-            }
+
+            Write-Host ("Installer running... elapsed {0:n0}s" -f $sw.Elapsed.TotalSeconds)
+            Start-Sleep -Seconds 15
+            $proc.Refresh()
+          }
+
+          Write-Host "Installer exited with code $($proc.ExitCode)"
+          if (Test-Path $logPath) {
+            Write-Host 'Installer log tail:'
+            Get-Content $logPath -Tail 80
+          }
+          if ($proc.ExitCode -ne 0) {
+            Write-Error "Installer exited with code $($proc.ExitCode)."
+            exit 1
           }
 
           Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 
-          # Verify the key DLL is present before caching.
-          if (-not (Get-Item "$depsDir\SimHub.Plugins.dll" -ErrorAction SilentlyContinue)) {
-            Write-Error "SimHub.Plugins.dll not found in $depsDir after staging."
+          # Verify key plugin assembly exists before caching full install.
+          if (-not (Test-Path (Join-Path $simhubDir 'SimHub.Plugins.dll'))) {
+            Write-Error "SimHub.Plugins.dll not found under $simhubDir after install."
             exit 1
           }
-          Write-Host "SimHub DLLs staged at: $depsDir"
+
+          $sizeBytes = (Get-ChildItem $simhubDir -Recurse -File | Measure-Object Length -Sum).Sum
+          $sizeMB = [math]::Round($sizeBytes / 1MB, 2)
+          Write-Host "SimHub full install staged at $simhubDir ($sizeMB MB)"
 
       - name: Configure SimHub dependency path
         shell: pwsh
         run: |
-          $depsDir = "$env:RUNNER_TEMP\simhub-deps"
+          $simhubDir = "$env:RUNNER_TEMP\simhub-deps"
 
-          # Locate the directory that contains the SimHub plugin DLLs.
-          # The installer may place files in a subdirectory.
-          $probe = Get-ChildItem $depsDir -Filter 'SimHub.Plugins.dll' -Recurse -ErrorAction SilentlyContinue |
-                   Select-Object -First 1
-          if (-not $probe) {
-            Write-Error "SimHub.Plugins.dll not found under $depsDir"
+          if (-not (Test-Path "$simhubDir\SimHub.Plugins.dll")) {
+            Write-Error "SimHub.Plugins.dll not found under $simhubDir"
             exit 1
           }
-          $simhubDir = $probe.DirectoryName
           Write-Host "SimHub DLLs located at: $simhubDir"
 
           # Write Directory.Build.props.user so MSBuild picks up the staged DLLs.
