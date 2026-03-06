@@ -182,7 +182,7 @@ jobs:
           $ArtifactLabel = '${{ inputs.artifact-label }}'
           $BinDir        = "FanaBridge\bin\${{ inputs.configuration }}"
           $Dist          = 'dist'
-          $ShortSha      = $env:GITHUB_SHA.Substring(0, 7)
+          $ShortSha      = (git rev-parse --short HEAD)
 
           New-Item $Dist                         -ItemType Directory -Force | Out-Null
           New-Item "$Dist\DevicesLogos"           -ItemType Directory -Force | Out-Null
