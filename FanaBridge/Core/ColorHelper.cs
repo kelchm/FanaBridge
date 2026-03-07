@@ -72,16 +72,16 @@ namespace FanaBridge
 
         /// <summary>
         /// Converts a Color to a Fanatec 3-bit intensity value (0-7).
-        /// Uses ITU-R BT.601 luminance (0.299R + 0.587G + 0.114B) with
-        /// premultiplied alpha, then scales to the hardware range.
+        /// Uses HSV Value (max channel) with premultiplied alpha, then
+        /// scales to the hardware range.
         /// Intended for monochrome LEDs (e.g. encoder indicators) where
         /// SimHub provides full Color but the hardware only has brightness.
         /// </summary>
         public static byte ColorToIntensity(System.Drawing.Color color)
         {
             double a = color.A / 255.0;
-            double luminance = (0.299 * color.R + 0.587 * color.G + 0.114 * color.B) * a;
-            int level = (int)Math.Round(luminance / 255.0 * 7.0);
+            double value = Math.Max(color.R, Math.Max(color.G, color.B)) * a;
+            int level = (int)Math.Round(value / 255.0 * 7.0);
             return (byte)Math.Min(Math.Max(level, 0), 7);
         }
 
