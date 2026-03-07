@@ -12,7 +12,82 @@ using SimHub.Plugins.OutputPlugins.GraphicalDash.LedModules;
 namespace FanaBridge
 {
     /// <summary>
-    /// Registers one DeviceDescriptor per known Fanatec wheel type so each
+    /// Identifies a specific selectable device configuration — a standalone
+    /// wheel or a hub + module combination — built from a <see cref="WheelProfile"/>.
+    /// </summary>
+    public class DeviceConfig
+    {
+        /// <summary>The wheel profile this config was built from.</summary>
+        public WheelProfile Profile { get; set; }
+
+        /// <summary>Resolved capabilities (computed view of the profile).</summary>
+        public WheelCapabilities Capabilities { get; set; }
+
+        /// <summary>
+        /// Stable identifier for SimHub's DeviceTypeID.
+        /// Derived from the profile's match criteria.
+        /// Format: "Fanatec_{wheelType}" or "Fanatec_{wheelType}_{moduleType}".
+        /// </summary>
+        public string DeviceTypeId
+        {
+            get
+            {
+                if (Profile?.Match == null)
+                    return "Fanatec_" + (Profile?.Id ?? "Unknown");
+
+                if (!string.IsNullOrEmpty(Profile.Match.ModuleType))
+                    return "Fanatec_" + Profile.Match.WheelType + "_" + Profile.Match.ModuleType;
+
+                return "Fanatec_" + Profile.Match.WheelType;
+            }
+        }
+
+        /// <summary>
+        /// Optional parent device type ID for logo fallback.
+        /// Hub+module combos use a virtual parent like "Fanatec_Module_PBMR"
+        /// so all hubs sharing the same module share one logo image.
+        /// Null for standalone wheels.
+        /// </summary>
+        public string ParentDeviceTypeId
+        {
+            get
+            {
+                if (Profile?.Match == null || string.IsNullOrEmpty(Profile.Match.ModuleType))
+                    return null;
+                return "Fanatec_Module_" + Profile.Match.ModuleType;
+            }
+        }
+
+        /// <summary>SDK wheel type enum, resolved from profile match criteria.</summary>
+        public M_FS_WHEEL_SWTYPE WheelType
+        {
+            get
+            {
+                if (Profile?.Match == null) return M_FS_WHEEL_SWTYPE.FS_WHEEL_SWTYPE_UNINITIALIZED;
+                string fullName = "FS_WHEEL_SWTYPE_" + Profile.Match.WheelType;
+                if (Enum.TryParse(fullName, out M_FS_WHEEL_SWTYPE result))
+                    return result;
+                return M_FS_WHEEL_SWTYPE.FS_WHEEL_SWTYPE_UNINITIALIZED;
+            }
+        }
+
+        /// <summary>SDK module type enum, resolved from profile match criteria.</summary>
+        public M_FS_WHEEL_SW_MODULETYPE ModuleType
+        {
+            get
+            {
+                if (Profile?.Match == null || string.IsNullOrEmpty(Profile.Match.ModuleType))
+                    return M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED;
+                string fullName = "FS_WHEEL_SW_MODULETYPE_" + Profile.Match.ModuleType;
+                if (Enum.TryParse(fullName, out M_FS_WHEEL_SW_MODULETYPE result))
+                    return result;
+                return M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Registers one DeviceDescriptor per loaded <see cref="WheelProfile"/> so each
     /// appears as a separate entry in SimHub's Devices view with its own
     /// settings (.shdevice) and connected/disconnected status.
     ///
@@ -20,6 +95,8 @@ namespace FanaBridge
     /// the SDK wheel identity, not USB PID, because all wheel rims share the
     /// wheelbase PID. The DeviceInstances are thin wrappers over the shared
     /// FanatecPlugin singleton — they do not open their own HID connections.
+    ///
+    /// Profiles are loaded from JSON files by <see cref="WheelProfileStore"/>.
     /// </summary>
     public class FanatecDevicesRegistry : IDeviceDescriptorsRegistry
     {
@@ -27,7 +104,44 @@ namespace FanaBridge
         {
             SimHub.Logging.Current.Info("FanatecDevicesRegistry: GetDevices() called");
 
-            foreach (var config in WheelCapabilityRegistry.GetDeviceConfigurations())
+            // Ensure profiles are loaded from disk
+            WheelProfileStore.EnsureLoaded();
+
+            // De-duplicate by DeviceTypeId so that a user profile with the
+            // same match criteria as a built-in profile doesn't produce two
+            // descriptors with the same DeviceTypeID (which SimHub rejects).
+            // GetAll() returns built-in first, then user, so last-wins gives
+            // user profiles priority — matching the auto-resolution behaviour.
+            var configs = new Dictionary<string, DeviceConfig>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var profile in WheelProfileStore.GetAll())
+            {
+                // Skip bare hub profiles (no LEDs, no display)
+                if (!profile.HasLeds && profile.DisplayType == DisplayType.None)
+                {
+                    SimHub.Logging.Current.Info(
+                        "FanatecDevicesRegistry: Skipping bare profile '" + profile.Id + "'");
+                    continue;
+                }
+
+                var config = new DeviceConfig
+                {
+                    Profile = profile,
+                    Capabilities = new WheelCapabilities(profile),
+                };
+
+                if (configs.ContainsKey(config.DeviceTypeId))
+                {
+                    SimHub.Logging.Current.Info(
+                        "FanatecDevicesRegistry: Profile '" + profile.Id +
+                        "' (" + profile.Source + ") supersedes earlier entry for " +
+                        config.DeviceTypeId);
+                }
+
+                configs[config.DeviceTypeId] = config;
+            }
+
+            foreach (var config in configs.Values)
             {
                 SimHub.Logging.Current.Info(
                     "FanatecDevicesRegistry: Registering " + config.Capabilities.Name +
@@ -59,9 +173,12 @@ namespace FanaBridge
     /// <summary>
     /// DeviceInstance for a specific Fanatec wheel type.
     ///
-    /// Owns a <c>LedModuleSettings&lt;FanatecLedManager&gt;</c> which provides
-    /// the native SimHub LED profile editor, settings persistence, brightness
-    /// controls, and the full .shdevice export structure.
+    /// Owns a single <c>LedModuleSettings</c> that handles all LED types
+    /// (Rev, Flag, Button/Encoder) through the unified <c>FanatecLedDriver</c>.
+    /// All LEDs appear under a single "LEDs" tab in SimHub's LED Editor.
+    ///
+    /// Provides the native SimHub LED profile editor, settings persistence,
+    /// brightness controls, and the full .shdevice export structure.
     ///
     /// Does NOT own hardware — delegates to the shared FanatecPlugin singleton
     /// for all SDK/HID access. Reports Connected only when the singleton's
@@ -72,8 +189,9 @@ namespace FanaBridge
         private readonly DeviceConfig _config;
         private JObject _customSettings = new JObject();
 
-        // Native LED module — provides RGBLedsDrivers, settings, and UI.
+        // LED module (col03) — null when wheel has no LEDs.
         private LedModuleSettings<FanatecLedManager> _ledModule;
+
         private bool _ledModuleInitialized;
 
         // Display manager — null when the wheel has no display.
@@ -90,8 +208,9 @@ namespace FanaBridge
         // ── LED module setup ─────────────────────────────────────────────
 
         /// <summary>
-        /// Lazily creates the LedModuleSettings with a pre-configured
-        /// FanatecLedManager for this wheel's capabilities.
+        /// Lazily creates the LedModuleSettings for this device.
+        /// A single module handles all LED types (Rev, Flag, Button/Encoder)
+        /// through the unified <see cref="FanatecLedDriver"/>.
         /// </summary>
         private void EnsureLedModuleInitialized()
         {
@@ -100,18 +219,18 @@ namespace FanaBridge
             _ledModuleInitialized = true;
 
             var caps = _config.Capabilities;
-            if (caps.TotalLedCount == 0)
-                return;
+            int allLeds = caps.AllLedCount;
+
+            if (allLeds == 0) return;
 
             var manager = new FanatecLedManager(caps);
             var options = new LedModuleOptions
             {
                 DeviceName = caps.ShortName ?? caps.Name,
-                LedCount = 0,            // no RPM/telemetry LEDs
-                // Combine button + encoder LEDs into ButtonsCount (matches native devices)
-                ButtonsCount = caps.TotalLedCount,
-                EncodersCount = 0,       // not using separate encoder section
-                RawLedCount = caps.TotalLedCount,
+                LedCount = caps.RevFlagCount,
+                ButtonsCount = caps.ButtonLedCount,
+                EncodersCount = 0,  // all non-rev/flag LEDs are "buttons" in SimHub
+                RawLedCount = allLeds,
                 LedDriver = manager,
                 EnableBrightnessSection = true,
                 ShowConnectionStatus = true,
@@ -119,17 +238,15 @@ namespace FanaBridge
             };
 
             _ledModule = new LedModuleSettings<FanatecLedManager>(options);
-
-            // Mark as embedded so the standalone device-enable checkbox is hidden —
-            // enable/disable is handled by the parent DeviceInstance's Connected toggle.
             _ledModule.IsEmbedded = true;
-            _ledModule.IsEnabled = true;  // Required for UI to be interactive
-            _ledModule.IndividualLEDsMode = IndividualLEDsMode.Combined;  // Show raw profile by default
+            _ledModule.IsEnabled = true;
+            _ledModule.IndividualLEDsMode = IndividualLEDsMode.Combined;
 
             SimHub.Logging.Current.Info(
-                "FanatecWheelDeviceInstance[" + caps.Name + "]: LedModuleSettings created (" +
-                "buttons=" + caps.ButtonLedCount + ", encoders=" + caps.EncoderLedCount +
-                ", raw=" + caps.TotalLedCount + ")");
+                "FanatecWheelDeviceInstance[" + caps.Name + "]: LED module created (" +
+                "rev=" + caps.RevLedCount + ", flag=" + caps.FlagLedCount +
+                ", color=" + caps.ColorLedCount + ", mono=" + caps.MonoLedCount +
+                ", total=" + allLeds + ")");
         }
 
         // ── DeviceInstance overrides ─────────────────────────────────────
@@ -230,7 +347,6 @@ namespace FanaBridge
             {
                 try
                 {
-                    // LedModuleSettings.SetSettings expects Dictionary<string, JToken>
                     var dict = new Dictionary<string, JToken>();
                     foreach (var prop in obj.Properties())
                     {
@@ -274,6 +390,11 @@ namespace FanaBridge
             if (device == null || !device.IsConnected)
                 return;
 
+            // While the wizard is probing hardware, suspend all output so
+            // SimHub's per-frame LED writes don't overwrite the test signals.
+            if (plugin.WizardActive)
+                return;
+
             // ── Display ──────────────────────────────────────────────────
             if (_config.Capabilities.Display != DisplayType.None)
             {
@@ -288,9 +409,6 @@ namespace FanaBridge
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
-            // LedModuleSettings.Display() evaluates all owned RGBLedsDrivers,
-            // builds LedDeviceState, and routes through the FanatecLedManager
-            // → FanatecLedButtonsDriver → FanatecDevice.SetLedState().
             _ledModule?.Display();
         }
 
@@ -322,19 +440,16 @@ namespace FanaBridge
         {
             EnsureLedModuleInitialized();
 
-            // LED settings tab — native LedModuleSettings UI
-            if (_ledModule != null)
+            // LED settings tab
+            var ledEditControl = _ledModule?.EditControl;
+            if (ledEditControl != null)
             {
-                var editControl = _ledModule.EditControl;
-                if (editControl != null)
-                {
-                    yield return new DeviceSettingControl(
-                        editControl,
-                        0,
-                        "LEDs",
-                        DeviceSettingControlKind.None,
-                        true);
-                }
+                yield return new DeviceSettingControl(
+                    ledEditControl,
+                    0,
+                    "LEDs",
+                    DeviceSettingControlKind.None,
+                    true);
             }
 
             // Screen settings tab (only for wheels with a display)
@@ -351,6 +466,24 @@ namespace FanaBridge
                     screenPanel,
                     1,
                     "Screen",
+                    DeviceSettingControlKind.None,
+                    true);
+            }
+
+            // Tuning settings tab (only for wheels with encoders)
+            if (_config.Capabilities.HasEncoders)
+            {
+                var tuningPanel = new TuningSettingsPanel();
+                tuningPanel.Bind(_customSettings);
+                tuningPanel.SettingsChanged += () =>
+                {
+                    // Persist settings on change (handled by SimHub)
+                };
+
+                yield return new DeviceSettingControl(
+                    tuningPanel,
+                    2,
+                    "Tuning",
                     DeviceSettingControlKind.None,
                     true);
             }

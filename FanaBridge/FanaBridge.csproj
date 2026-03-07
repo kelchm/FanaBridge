@@ -68,10 +68,25 @@
       <HintPath>$(SimHubDir)BA63Driver.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="SharpDX">
+      <HintPath>$(SimHubDir)SharpDX.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SharpDX.DirectInput">
+      <HintPath>$(SimHubDir)SharpDX.DirectInput.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
     <Resource Include="Resources\Images\plugin-icon.png" />
+  </ItemGroup>
+
+  <!-- ── Wheel profile JSON files ──────────────────────────────────────
+       Embedded in the DLL as assembly resources.  Immutable at runtime.
+       User-created profiles are loaded from a separate directory. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Profiles\*.json" />
   </ItemGroup>
 
   <!-- ── Device logo processing ──────────────────────────────────────

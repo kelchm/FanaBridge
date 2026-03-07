@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Navigation;
 using System.Windows.Threading;
+using FanatecManaged;
 using Timer = System.Timers.Timer;
 
 namespace FanaBridge
@@ -14,6 +15,17 @@ namespace FanaBridge
     public partial class SettingsControl : UserControl
     {
         public FanatecPlugin Plugin { get; }
+
+        /// <summary>Suppresses ComboBox SelectionChanged while we're programmatically populating.</summary>
+        private bool _suppressProfileChange;
+
+        /// <summary>
+        /// The device name that SimHub registered at startup. SimHub caches
+        /// device descriptors, so this name won't change until a restart.
+        /// We track it to show a restart notice when the active profile has
+        /// a different name.
+        /// </summary>
+        private string _registeredDeviceName;
 
         public SettingsControl()
         {
@@ -74,6 +86,12 @@ namespace FanaBridge
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             Plugin.StateChanged += OnPluginStateChanged;
+
+            // Capture the device name SimHub registered at startup
+            var caps = Plugin.CurrentCapabilities;
+            if (caps?.Name != null)
+                _registeredDeviceName = caps.ShortName ?? caps.Name;
+
             UpdateStatus();
         }
 
@@ -99,6 +117,7 @@ namespace FanaBridge
                 txtStatus.Text = "Disconnected";
                 txtWheelName.Text = "—";
                 txtCapabilities.Text = "—";
+                UpdateProfilePicker(null, null, null);
                 return;
             }
 
@@ -107,25 +126,324 @@ namespace FanaBridge
 
             if (!identified)
             {
-                // Connected but wheel not (yet) identified
                 txtStatus.Text = "Connected — " + Plugin.WheelName;
                 txtWheelName.Text = "—";
                 txtCapabilities.Text = "—";
+                UpdateProfilePicker(null, null, null);
                 return;
             }
 
             txtStatus.Text = "Connected";
             txtWheelName.Text = Plugin.WheelName;
-            txtCapabilities.Text = string.Format("{0} button LEDs, {1} encoder LEDs, Display: {2}",
-                caps.ButtonLedCount,
-                caps.EncoderLedCount,
+            txtCapabilities.Text = string.Format("{0} color LEDs, {1} mono LEDs, {2} rev, {3} flag, Display: {4}",
+                caps.ColorLedCount,
+                caps.MonoLedCount,
+                caps.RevLedCount,
+                caps.FlagLedCount,
                 caps.Display);
+
+            // Resolve the current wheel/module codes for profile lookup
+            var sdk = Plugin.SdkManager;
+            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
+            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
+                ? null
+                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
+
+            UpdateProfilePicker(wheelCode, moduleCode, caps);
+        }
+
+        // =====================================================================
+        // PROFILE PICKER
+        // =====================================================================
+
+        private void UpdateProfilePicker(
+            string wheelCode, string moduleCode, WheelCapabilities activeCaps)
+        {
+            if (wheelCode == null)
+            {
+                // No identified wheel — hide picker
+                panelProfilePicker.Visibility = Visibility.Collapsed;
+                txtProfileHint.Visibility = Visibility.Visible;
+                txtProfileHint.Text = "Connect a wheel to manage profiles.";
+                return;
+            }
+
+            panelProfilePicker.Visibility = Visibility.Visible;
+
+            // Build the match key (same format as the profile ID: "WHEELTYPE_MODULE")
+            string matchKey = wheelCode;
+            if (moduleCode != null)
+                matchKey += "_" + moduleCode;
+
+            // Get ALL profiles that match this wheel (built-in + user, even duplicates)
+            var all = WheelProfileStore.FindAllForWheel(wheelCode, moduleCode);
+
+            // Determine which profile auto-resolution would pick (no override)
+            var autoResolved = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null);
+            string autoOverrideKey = autoResolved != null
+                ? WheelProfileStore.MakeOverrideKey(autoResolved)
+                : null;
+
+            // Current override (if any) from settings
+            string currentOverride = null;
+            Plugin.Settings.ProfileOverrides?.TryGetValue(matchKey, out currentOverride);
+
+            if (all.Count <= 1)
+            {
+                // Single profile (or none) — no need for a picker
+                txtProfileHint.Visibility = Visibility.Collapsed;
+                cboProfile.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                // Multiple profiles — show picker with explanation
+                txtProfileHint.Visibility = Visibility.Visible;
+                txtProfileHint.Text = "Multiple profiles available:";
+                cboProfile.Visibility = Visibility.Visible;
+            }
+
+            // Populate combo (even if hidden, keeps logic simple)
+            _suppressProfileChange = true;
+            try
+            {
+                cboProfile.Items.Clear();
+                int selectedIndex = 0;
+
+                for (int i = 0; i < all.Count; i++)
+                {
+                    var p = all[i];
+                    string overrideKey = WheelProfileStore.MakeOverrideKey(p);
+                    string sourceLabel = p.Source == ProfileSource.BuiltIn
+                        ? "\ud83d\udce6 Built-in"
+                        : "\ud83d\udcdd " + System.IO.Path.GetFileName(p.SourcePath ?? "Custom");
+                    string label = p.Name + "  [" + sourceLabel + "]";
+
+                    var item = new ComboBoxItem
+                    {
+                        Content = label,
+                        Tag = overrideKey,
+                    };
+                    cboProfile.Items.Add(item);
+
+                    // Select: explicit override wins, otherwise the auto-resolved one
+                    if (!string.IsNullOrEmpty(currentOverride))
+                    {
+                        if (string.Equals(overrideKey, currentOverride, StringComparison.OrdinalIgnoreCase))
+                            selectedIndex = i;
+                    }
+                    else
+                    {
+                        if (string.Equals(overrideKey, autoOverrideKey, StringComparison.OrdinalIgnoreCase))
+                            selectedIndex = i;
+                    }
+                }
+
+                cboProfile.SelectedIndex = selectedIndex;
+            }
+            finally
+            {
+                _suppressProfileChange = false;
+            }
+
+            // Update source display and delete button state
+            UpdateProfileSourceDisplay(activeCaps);
+        }
+
+        private void UpdateProfileSourceDisplay(WheelCapabilities caps)
+        {
+            if (caps == null || caps.ProfileSource == null)
+            {
+                txtProfileSource.Text = "";
+                btnDeleteProfile.IsEnabled = false;
+                txtContributeProfile.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            bool isCustom = caps.ProfileSource == FanaBridge.ProfileSource.User;
+
+            if (isCustom)
+            {
+                string fileName = caps.ProfileSourcePath != null
+                    ? System.IO.Path.GetFileName(caps.ProfileSourcePath)
+                    : "(unknown)";
+                txtProfileSource.Text = "Custom profile \u2014 " + fileName;
+                btnDeleteProfile.IsEnabled = true;
+            }
+            else
+            {
+                txtProfileSource.Text = "Built-in profile";
+                btnDeleteProfile.IsEnabled = false;
+            }
+
+            // Show contribute callout only for custom profiles
+            txtContributeProfile.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void CboProfile_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressProfileChange || Plugin == null) return;
+
+            var selected = cboProfile.SelectedItem as ComboBoxItem;
+            if (selected == null) return;
+
+            string overrideKey = selected.Tag as string;
+            if (string.IsNullOrEmpty(overrideKey)) return;
+
+            // Build match key for current wheel
+            var sdk = Plugin.SdkManager;
+            if (!sdk.WheelDetected) return;
+
+            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
+            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
+                ? null
+                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
+            string matchKey = wheelCode;
+            if (moduleCode != null)
+                matchKey += "_" + moduleCode;
+
+            // Check if the selected profile is the one auto-resolution would pick
+            var autoResolved = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null);
+            string autoOverrideKey = autoResolved != null
+                ? WheelProfileStore.MakeOverrideKey(autoResolved)
+                : null;
+            bool isDefault = string.Equals(overrideKey, autoOverrideKey, StringComparison.OrdinalIgnoreCase);
+
+            if (isDefault)
+            {
+                // No need to persist an override — default resolution already picks this
+                Plugin.Settings.ProfileOverrides.Remove(matchKey);
+            }
+            else
+            {
+                Plugin.Settings.ProfileOverrides[matchKey] = overrideKey;
+            }
+
+            // Persist settings and re-resolve capabilities
+            Plugin.SaveSettings();
+            sdk.RefreshCapabilities();
+
+            // Show restart notice if the device name changed from what SimHub registered
+            UpdateRestartNotice();
+        }
+
+        private void UpdateRestartNotice()
+        {
+            var caps = Plugin?.CurrentCapabilities;
+            if (caps?.Name == null || _registeredDeviceName == null)
+            {
+                txtRestartNotice.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            string currentName = caps.ShortName ?? caps.Name;
+            bool nameChanged = !string.Equals(
+                currentName, _registeredDeviceName, StringComparison.OrdinalIgnoreCase);
+
+            txtRestartNotice.Visibility = nameChanged
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        // =====================================================================
+        // PROFILE DELETION
+        // =====================================================================
+
+        private void BtnDeleteProfile_Click(object sender, RoutedEventArgs e)
+        {
+            var caps = Plugin?.CurrentCapabilities;
+            if (caps?.Profile == null || caps.ProfileSource != FanaBridge.ProfileSource.User)
+                return;
+
+            string profileId = caps.Profile.Id;
+            string fileName = caps.ProfileSourcePath != null
+                ? System.IO.Path.GetFileName(caps.ProfileSourcePath)
+                : profileId;
+
+            var result = MessageBox.Show(
+                "Delete custom profile \"" + caps.Profile.Name + "\"?\n\n" +
+                "File: " + fileName + "\n\n" +
+                "This cannot be undone. If a built-in profile exists for this " +
+                "wheel, it will be used instead.",
+                "Delete Profile",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (result != MessageBoxResult.Yes)
+                return;
+
+            // Remove any override for this profile
+            var sdk = Plugin.SdkManager;
+            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
+            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
+                ? null
+                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
+            string matchKey = wheelCode;
+            if (moduleCode != null)
+                matchKey += "_" + moduleCode;
+
+            Plugin.Settings.ProfileOverrides.Remove(matchKey);
+
+            // Delete from disk and store
+            bool deleted = WheelProfileStore.DeleteUserProfile(profileId);
+            if (!deleted)
+            {
+                MessageBox.Show("Failed to delete profile.", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            // Re-resolve and update UI
+            Plugin.SaveSettings();
+            sdk.RefreshCapabilities();
+            UpdateRestartNotice();
+            UpdateStatus();
         }
 
         private void BtnReconnect_Click(object sender, RoutedEventArgs e)
         {
             Plugin?.ForceReconnect();
             UpdateStatus(); // immediate since we're already on UI thread
+        }
+
+        private void BtnOpenProfilesFolder_Click(object sender, RoutedEventArgs e)
+        {
+            string userDir = WheelProfileStore.GetUserProfileDirectory();
+            if (userDir != null)
+                Process.Start("explorer.exe", userDir);
+        }
+
+        private void BtnContributeProfile_Click(object sender, RoutedEventArgs e)
+        {
+            var caps = Plugin?.CurrentCapabilities;
+            if (caps?.Profile == null || caps.ProfileSource != FanaBridge.ProfileSource.User)
+                return;
+
+            var profile = caps.Profile;
+            string fileName = !string.IsNullOrEmpty(caps.ProfileSourcePath)
+                ? System.IO.Path.GetFileName(caps.ProfileSourcePath)
+                : profile.Id + ".json";
+
+            // Open a pre-filled GitHub issue
+            string title = Uri.EscapeDataString("Wheel profile: " + profile.Id);
+            string label = Uri.EscapeDataString("wheel profile");
+            string body = Uri.EscapeDataString(
+                "## Wheel Profile Submission\n\n" +
+                "**Wheel:** " + (profile.Match?.WheelType ?? "Unknown") + "\n" +
+                "**Module:** " + (profile.Match?.ModuleType ?? "None") + "\n\n" +
+                "Please drag and drop `" + fileName + "` into this issue.\n" +
+                "You can find it via **Open Profiles Folder** in the FanaBridge settings.");
+
+            string url = "https://github.com/kelchm/FanaBridge/issues/new" +
+                         "?title=" + title + "&labels=" + label + "&body=" + body;
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanaBridge: Failed to open GitHub: " + ex.Message);
+            }
         }
 
         private void RepoLink_RequestNavigate(object sender, RequestNavigateEventArgs e)
@@ -143,6 +461,41 @@ namespace FanaBridge
             }
 
             e.Handled = true;
+        }
+
+        // =====================================================================
+        // WHEEL PROFILE WIZARD
+        // =====================================================================
+
+        private void BtnCreateProfile_Click(object sender, RoutedEventArgs e)
+        {
+            if (Plugin == null || !Plugin.IsDeviceConnected)
+            {
+                MessageBox.Show(
+                    "Please connect a Fanatec device first.",
+                    "Not Connected",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            var dialog = new WheelProfileWizardDialog(Plugin);
+            dialog.Owner = Window.GetWindow(this);
+            dialog.ShowDialog();
+
+            // The wizard calls Reload() + RefreshCapabilities() before closing.
+            // Refresh the UI now that the dialog is dismissed so the new
+            // profile shows up immediately in the picker.
+            UpdateStatus();
+        }
+
+        // =====================================================================
+        // FEATURE FLAGS
+        // =====================================================================
+
+        private void ChkEnableTuning_Changed(object sender, RoutedEventArgs e)
+        {
+            Plugin?.SaveSettings();
         }
 
         // =====================================================================

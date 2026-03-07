@@ -31,6 +31,13 @@ namespace FanaBridge
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
         public event Action StateChanged;
 
+        /// <summary>
+        /// When true, device instances skip all LED and display output so the
+        /// profile wizard can send probe signals without being overwritten by
+        /// SimHub's frame-by-frame updates.  Set by the wizard dialog.
+        /// </summary>
+        public bool WizardActive { get; set; }
+
         /// <summary>Whether the Fanatec device is currently connected (for UI binding).</summary>
         public bool IsDeviceConnected => _connected;
 
@@ -71,6 +78,15 @@ namespace FanaBridge
             _reconnectCooldown = 0;
             _wheelPollCooldown = 0;
 
+            // Wire up profile override resolution from plugin settings
+            _sdk.ProfileOverrideResolver = (matchKey) =>
+            {
+                if (Settings.ProfileOverrides != null
+                    && Settings.ProfileOverrides.TryGetValue(matchKey, out var overrideId))
+                    return overrideId;
+                return null;
+            };
+
             // Attempt initial connection
             _connected = TryConnect();
 
@@ -82,8 +98,9 @@ namespace FanaBridge
             this.AttachDelegate("FanaBridge.WheelType", () => (int)_sdk.SteeringWheelType);
             this.AttachDelegate("FanaBridge.ModuleType", () => (int)_sdk.SubModuleType);
             this.AttachDelegate("FanaBridge.Capabilities.ButtonLedCount", () => _sdk.CurrentCapabilities.ButtonLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.EncoderLedCount", () => _sdk.CurrentCapabilities.EncoderLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.TotalLedCount", () => _sdk.CurrentCapabilities.TotalLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.ColorLedCount", () => _sdk.CurrentCapabilities.ColorLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.MonoLedCount", () => _sdk.CurrentCapabilities.MonoLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.TotalLedCount", () => _sdk.CurrentCapabilities.AllLedCount);
             this.AttachDelegate("FanaBridge.Capabilities.DisplayType", () => _sdk.CurrentCapabilities.Display.ToString());
 
             // --- Events ---
@@ -207,7 +224,7 @@ namespace FanaBridge
             }
 
             _sdk?.Dispose();
-            _device?.Disconnect();
+            _device?.Dispose();
         }
 
         /// <summary>
@@ -228,6 +245,15 @@ namespace FanaBridge
             _reconnectCooldown = 0;
             _connected = TryConnect();
             StateChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// Persists the current <see cref="Settings"/> to SimHub's storage.
+        /// Called from the settings UI when profile overrides change.
+        /// </summary>
+        public void SaveSettings()
+        {
+            this.SaveCommonSettings("FanaBridgeSettings", Settings);
         }
 
         public System.Windows.Controls.Control GetWPFSettingsControl(PluginManager pluginManager)

@@ -1,0 +1,27 @@
+{
+  "$schema": "wheel-profile.schema.json",
+  "schemaVersion": 1,
+  "id": "PHUB_PBMR",
+  "name": "Fanatec Podium Hub + Button Module Rally",
+  "shortName": "Fanatec Podium Hub + BMR",
+  "match": {
+    "wheelType": "PHUB",
+    "moduleType": "PBMR"
+  },
+  "display": "basic",
+  "colorFormat": "rgb555",
+  "leds": [
+    { "channel": "color", "hwIndex": 0,  "role": "button",  "label": "Top-left" },
+    { "channel": "color", "hwIndex": 1,  "role": "encoder", "label": "Right encoder" },
+    { "channel": "color", "hwIndex": 2,  "role": "button",  "label": "Mid-left upper" },
+    { "channel": "color", "hwIndex": 3,  "role": "button",  "label": "Mid-left lower" },
+    { "channel": "color", "hwIndex": 4,  "role": "button",  "label": "Bottom-left" },
+    { "channel": "color", "hwIndex": 5,  "role": "button",  "label": "Bottom-right" },
+    { "channel": "color", "hwIndex": 6,  "role": "button",  "label": "Mid-right lower" },
+    { "channel": "color", "hwIndex": 7,  "role": "button",  "label": "Mid-right upper" },
+    { "channel": "color", "hwIndex": 8,  "role": "encoder", "label": "Left encoder" },
+    { "channel": "color", "hwIndex": 9,  "role": "button",  "label": "Top-right" },
+    { "channel": "color", "hwIndex": 10, "role": "button",  "label": "Center" },
+    { "channel": "color", "hwIndex": 11, "role": "encoder", "label": "Center encoder" }
+  ]
+}

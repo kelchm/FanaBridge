@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "wheel-profile.schema.json",
+  "title": "FanaBridge Wheel Profile",
+  "description": "Defines LED layout, display type, and input mappings for a Fanatec steering wheel or module.\n\nschemaVersion history:\n  1 — initial schema (channel/role/hwIndex LED model, match by wheelType/moduleType)",
+  "type": "object",
+  "required": ["schemaVersion", "id", "name", "shortName", "match", "display", "leds"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "description": "Profile format version. Must equal 1 for this schema. Increment when breaking changes to the format are needed, then update or replace this schema accordingly.",
+      "type": "integer",
+      "const": 1
+    },
+    "id": {
+      "description": "Unique profile identifier, typically matching the SDK type code(s) (e.g. \"PSWBMW\", \"PHUB_PBMR\").",
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "description": "Full product name (e.g. \"Fanatec Podium Steering Wheel BMW M4 GT3\").",
+      "type": "string",
+      "minLength": 1
+    },
+    "shortName": {
+      "description": "Abbreviated display name used in the SimHub UI.",
+      "type": "string",
+      "minLength": 1
+    },
+    "match": {
+      "description": "Criteria used to auto-detect this profile from the SDK-reported hardware identity.",
+      "type": "object",
+      "required": ["wheelType"],
+      "additionalProperties": false,
+      "properties": {
+        "wheelType": {
+          "description": "SDK wheel type short code (FS_WHEEL_SWTYPE_ prefix stripped, e.g. \"PSWBMW\", \"PHUB\").",
+          "type": "string",
+          "minLength": 1
+        },
+        "moduleType": {
+          "description": "Optional SDK module type short code (FS_WHEEL_SW_MODULETYPE_ prefix stripped, e.g. \"PBMR\", \"PBME\"). Omit for standalone wheels with no attached module.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "display": {
+      "description": "Screen/display type present on this wheel: \"none\" = no display, \"basic\" = basic status display, \"itm\" = ITM display.",
+      "type": "string",
+      "enum": ["none", "basic", "itm"]
+    },
+    "colorFormat": {
+      "description": "Pixel encoding for the Color LED channel. Defaults to \"rgb565\" (5-6-5). Set to \"rgb555\" for hardware whose LED controller only reads 5 green bits (e.g. Button Module Rally).",
+      "type": "string",
+      "enum": ["rgb565", "rgb555"],
+      "default": "rgb565"
+    },
+    "leds": {
+      "description": "Ordered array of LED definitions. The array index is the SimHub logical LED index.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/LedDefinition"
+      }
+    }
+  },
+  "definitions": {
+    "LedDefinition": {
+      "description": "Describes a single physical LED on the device.",
+      "type": "object",
+      "required": ["channel", "hwIndex", "role", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "description": "Hardware communication channel — determines the col03 sub-command and encoding used. \"rev\" = subcmd 0x00 (RPM strip), \"flag\" = subcmd 0x01 (status flags), \"color\" = subcmd 0x02 (RGB565/555 button area), \"mono\" = subcmd 0x03 (3-bit intensity).",
+          "type": "string",
+          "enum": ["rev", "flag", "color", "mono"]
+        },
+        "hwIndex": {
+          "description": "Zero-based index within the channel's protocol array (e.g. slot in the color array for subcmd 0x02, byte index in the mono payload for subcmd 0x03).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "role": {
+          "description": "Semantic role of this LED. Drives SimHub categorization and future auto-mapping: \"rev\" = RPM/shift, \"flag\" = status/warning, \"button\" = button backlight, \"encoder\" = encoder knob, \"indicator\" = general-purpose.",
+          "type": "string",
+          "enum": ["rev", "flag", "button", "encoder", "indicator"]
+        },
+        "label": {
+          "description": "Human-readable label shown in the SimHub UI (e.g. \"Button 1\", \"Left encoder\").",
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "description": "Legacy single-input association (e.g. \"enc_left\"). Kept for backward compatibility — prefer inputMapping for new profiles.",
+          "type": "string"
+        },
+        "inputMapping": {
+          "$ref": "#/definitions/InputMapping"
+        }
+      }
+    },
+    "InputMapping": {
+      "description": "Structured input association for a single LED. Supports button, relative encoder (CW/CCW), and absolute encoder (per-detent) mappings; any combination may be present simultaneously.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "button": {
+          "description": "SimHub input ID for a momentary push-button (e.g. \"JoystickPlugin.FANATEC_Wheel.Button3\"). Null/omitted when not applicable.",
+          "type": "string"
+        },
+        "relative": {
+          "description": "Relative (incremental) encoder input IDs: [CW input, CCW input]. Null/omitted when not applicable.",
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "absolute": {
+          "description": "Absolute (positional) encoder input IDs — one entry per detent in detection order (typically 12 entries for Fanatec encoders). Null/omitted when not applicable.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}
