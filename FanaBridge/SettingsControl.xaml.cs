@@ -198,7 +198,7 @@ namespace FanaBridge
             {
                 // Multiple profiles — show picker with explanation
                 txtProfileHint.Visibility = Visibility.Visible;
-                txtProfileHint.Text = "Multiple profiles match this wheel. Choose which one to use:";
+                txtProfileHint.Text = "Multiple profiles available:";
                 cboProfile.Visibility = Visibility.Visible;
             }
 
@@ -215,13 +215,8 @@ namespace FanaBridge
                     string overrideKey = WheelProfileStore.MakeOverrideKey(p);
                     string sourceLabel = p.Source == ProfileSource.BuiltIn
                         ? "\ud83d\udce6 Built-in"
-                        : "\ud83d\udcdd Custom";
+                        : "\ud83d\udcdd " + System.IO.Path.GetFileName(p.SourcePath ?? "Custom");
                     string label = p.Name + "  [" + sourceLabel + "]";
-
-                    // Mark the auto-resolved profile so the user knows which
-                    // one is active when no explicit override is set
-                    if (string.Equals(overrideKey, autoOverrideKey, StringComparison.OrdinalIgnoreCase))
-                        label += "  (default)";
 
                     var item = new ComboBoxItem
                     {
@@ -258,24 +253,30 @@ namespace FanaBridge
         {
             if (caps == null || caps.ProfileSource == null)
             {
-                txtProfileSource.Text = "—";
+                txtProfileSource.Text = "";
                 btnDeleteProfile.IsEnabled = false;
+                txtContributeProfile.Visibility = Visibility.Collapsed;
                 return;
             }
 
-            if (caps.ProfileSource == FanaBridge.ProfileSource.User)
+            bool isCustom = caps.ProfileSource == FanaBridge.ProfileSource.User;
+
+            if (isCustom)
             {
                 string fileName = caps.ProfileSourcePath != null
                     ? System.IO.Path.GetFileName(caps.ProfileSourcePath)
                     : "(unknown)";
-                txtProfileSource.Text = "\ud83d\udcdd Custom — " + fileName;
+                txtProfileSource.Text = "Custom profile \u2014 " + fileName;
                 btnDeleteProfile.IsEnabled = true;
             }
             else
             {
-                txtProfileSource.Text = "\ud83d\udce6 Built-in";
+                txtProfileSource.Text = "Built-in profile";
                 btnDeleteProfile.IsEnabled = false;
             }
+
+            // Show contribute callout only for custom profiles
+            txtContributeProfile.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void CboProfile_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -402,6 +403,47 @@ namespace FanaBridge
         {
             Plugin?.ForceReconnect();
             UpdateStatus(); // immediate since we're already on UI thread
+        }
+
+        private void BtnOpenProfilesFolder_Click(object sender, RoutedEventArgs e)
+        {
+            string userDir = WheelProfileStore.GetUserProfileDirectory();
+            if (userDir != null)
+                Process.Start("explorer.exe", userDir);
+        }
+
+        private void BtnContributeProfile_Click(object sender, RoutedEventArgs e)
+        {
+            var caps = Plugin?.CurrentCapabilities;
+            if (caps?.Profile == null || caps.ProfileSource != FanaBridge.ProfileSource.User)
+                return;
+
+            var profile = caps.Profile;
+            string fileName = !string.IsNullOrEmpty(caps.ProfileSourcePath)
+                ? System.IO.Path.GetFileName(caps.ProfileSourcePath)
+                : profile.Id + ".json";
+
+            // Open a pre-filled GitHub issue
+            string title = Uri.EscapeDataString("Wheel profile: " + profile.Id);
+            string label = Uri.EscapeDataString("wheel profile");
+            string body = Uri.EscapeDataString(
+                "## Wheel Profile Submission\n\n" +
+                "**Wheel:** " + (profile.Match?.WheelType ?? "Unknown") + "\n" +
+                "**Module:** " + (profile.Match?.ModuleType ?? "None") + "\n\n" +
+                "Please drag and drop `" + fileName + "` into this issue.\n" +
+                "You can find it via **Open Profiles Folder** in the FanaBridge settings.");
+
+            string url = "https://github.com/kelchm/FanaBridge/issues/new" +
+                         "?title=" + title + "&labels=" + label + "&body=" + body;
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanaBridge: Failed to open GitHub: " + ex.Message);
+            }
         }
 
         private void RepoLink_RequestNavigate(object sender, RequestNavigateEventArgs e)

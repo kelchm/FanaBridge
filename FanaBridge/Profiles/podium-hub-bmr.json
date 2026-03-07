@@ -1,5 +1,6 @@
 {
   "$schema": "wheel-profile.schema.json",
+  "schemaVersion": 1,
   "id": "PHUB_PBMR",
   "name": "Fanatec Podium Hub + Button Module Rally",
   "shortName": "Fanatec Podium Hub + BMR",
@@ -7,7 +8,7 @@
     "wheelType": "PHUB",
     "moduleType": "PBMR"
   },
-  "display": "Basic",
+  "display": "basic",
   "colorFormat": "rgb555",
   "leds": [
     { "channel": "color", "hwIndex": 0,  "role": "button",  "label": "Top-left" },

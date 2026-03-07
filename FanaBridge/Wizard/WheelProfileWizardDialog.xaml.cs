@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using FanatecManaged;
+using Microsoft.Win32;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 
@@ -1236,7 +1238,31 @@ namespace FanaBridge
             try
             {
                 var profile = BuildProfile();
-                SaveProfile(profile);
+
+                string userDir = WheelProfileStore.GetUserProfileDirectory();
+                if (userDir == null)
+                    throw new InvalidOperationException("Could not determine user profile directory.");
+
+                string suggestedName = SanitizeForId(profile.Name) + ".json";
+
+                var dlg = new SaveFileDialog
+                {
+                    Title = "Save Wheel Profile",
+                    Filter = "JSON files (*.json)|*.json",
+                    InitialDirectory = userDir,
+                    FileName = suggestedName,
+                    OverwritePrompt = true,
+                };
+
+                if (dlg.ShowDialog(this) != true)
+                    return;
+
+                string filePath = dlg.FileName;
+
+                // Derive the profile Id from the chosen filename
+                profile.Id = Path.GetFileNameWithoutExtension(filePath);
+
+                SaveProfile(profile, filePath);
 
                 // Hot-reload: re-read profiles and force capability re-evaluation
                 // so the new profile takes effect immediately without restarting SimHub.
@@ -1245,7 +1271,9 @@ namespace FanaBridge
 
                 MessageBox.Show(
                     "Profile saved and loaded!\n\n" +
-                    "Your new profile is active immediately \u2014 no restart required.",
+                    "Your new profile is active immediately \u2014 no restart required.\n\n" +
+                    "If this profile works well, consider sharing it on GitHub so\n" +
+                    "others with the same wheel can benefit!",
                     "Profile Saved",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
@@ -1293,13 +1321,11 @@ namespace FanaBridge
         private WheelProfile BuildProfile()
         {
             var s = _state;
-            string id = s.WheelType ?? "UNKNOWN";
-            if (s.ModuleType != null)
-                id += "_" + s.ModuleType;
 
             var profile = new WheelProfile
             {
-                Id = id,
+                Schema = "wheel-profile.schema.json",
+                SchemaVersion = 1,
                 Name = s.ProfileName,
                 ShortName = s.ProfileName.Length > 20
                     ? s.ProfileName.Substring(0, 20)
@@ -1418,15 +1444,25 @@ namespace FanaBridge
                 led.InputMapping = mapping;
         }
 
-        private static void SaveProfile(WheelProfile profile)
+        /// <summary>
+        /// Converts a profile name into a safe ID/filename component.
+        /// Collapses non-alphanumeric runs into hyphens and lowercases.
+        /// </summary>
+        private static string SanitizeForId(string name)
         {
-            string userDir = WheelProfileStore.GetUserProfileDirectory();
-            if (userDir == null)
-                throw new InvalidOperationException("Could not determine user profile directory.");
+            if (string.IsNullOrWhiteSpace(name))
+                return "custom-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
 
-            string fileName = profile.Id.ToLowerInvariant().Replace(' ', '-') + ".json";
-            string filePath = Path.Combine(userDir, fileName);
+            string id = Regex.Replace(name.Trim(), @"[^a-zA-Z0-9]+", "-").ToLowerInvariant();
+            id = id.Trim('-');
 
+            return string.IsNullOrEmpty(id)
+                ? "custom-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss")
+                : id;
+        }
+
+        private static void SaveProfile(WheelProfile profile, string filePath)
+        {
             var settings = new JsonSerializerSettings
             {
                 Formatting = Formatting.Indented,

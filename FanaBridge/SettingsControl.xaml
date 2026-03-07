@@ -30,25 +30,51 @@
                 </StackPanel>
             </styles:SHSection>
 
-            <!-- Active Profile -->
+            <!-- Wheel Profile -->
             <styles:SHSection Title="WHEEL PROFILE" ShowSeparator="True">
                 <StackPanel>
                     <TextBlock x:Name="txtProfileHint" TextWrapping="Wrap" Margin="0,0,0,8"
                                Text="Connect a wheel to manage profiles." />
                     <StackPanel x:Name="panelProfilePicker" Visibility="Collapsed">
-                        <StackPanel Orientation="Horizontal" Margin="0,4">
-                            <TextBlock Text="Active: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
-                            <ComboBox x:Name="cboProfile" Width="320" SelectionChanged="CboProfile_SelectionChanged" />
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox x:Name="cboProfile" Width="420"
+                                      SelectionChanged="CboProfile_SelectionChanged" />
+                            <Button x:Name="btnDeleteProfile" Click="BtnDeleteProfile_Click"
+                                    IsEnabled="False" Margin="6,0,0,0" Padding="6,4"
+                                    Background="Transparent" BorderBrush="Transparent"
+                                    Foreground="#FF6666" FontSize="14" Cursor="Hand"
+                                    Content="&#x1F5D1;" ToolTip="Delete the selected custom profile" />
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,4">
-                            <TextBlock Text="Source: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
-                            <TextBlock x:Name="txtProfileSource" Text="—" VerticalAlignment="Center" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <styles:SHButtonPrimary x:Name="btnDeleteProfile" Click="BtnDeleteProfile_Click"
-                                                    IsEnabled="False" ToolTip="Delete the selected user profile from disk">
-                                Delete Custom Profile
+                        <TextBlock x:Name="txtProfileSource" Text="" Margin="0,4,0,0"
+                                   Foreground="#AAAAAA" FontSize="11" />
+                        <Border x:Name="txtContributeProfile" Visibility="Collapsed"
+                                Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
+                                CornerRadius="4" Padding="10,6" Margin="0,10,0,0"
+                                HorizontalAlignment="Left">
+                            <TextBlock Foreground="#AADDFF" FontSize="12">
+                                &#x2139;  This profile could help others!
+                                <Hyperlink Click="BtnContributeProfile_Click"
+                                           Foreground="#4FC3F7" TextDecorations="None"
+                                           ToolTip="Open a pre-filled GitHub issue to share this profile">
+                                    Share it on GitHub
+                                </Hyperlink>
+                            </TextBlock>
+                        </Border>
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0"
+                                    VerticalAlignment="Center">
+                            <styles:SHButtonPrimary x:Name="btnCreateProfile" Click="BtnCreateProfile_Click"
+                                                    HorizontalAlignment="Left"
+                                                    ToolTip="Probe your wheel's hardware to create a new profile">
+                                New Profile Wizard
                             </styles:SHButtonPrimary>
+                            <TextBlock VerticalAlignment="Center" Margin="12,0,0,0"
+                                       Foreground="#AAAAAA" FontSize="11">
+                                <Hyperlink Click="BtnOpenProfilesFolder_Click"
+                                           Foreground="#4FC3F7" TextDecorations="None"
+                                           ToolTip="Open the folder containing custom profile files">
+                                    Open Profiles Folder
+                                </Hyperlink>
+                            </TextBlock>
                         </StackPanel>
                         <TextBlock x:Name="txtRestartNotice" Visibility="Collapsed"
                                    TextWrapping="Wrap" Margin="0,8,0,0"
@@ -72,17 +98,6 @@
                         <TextBlock Text="Scroll speed (ms): " VerticalAlignment="Center" />
                         <TextBox x:Name="txtScrollSpeed" Width="50" Text="250" VerticalContentAlignment="Center" LostFocus="TxtScrollSpeed_LostFocus" />
                     </StackPanel>
-                </StackPanel>
-            </styles:SHSection>
-
-            <!-- Wheel Profile Wizard -->
-            <styles:SHSection Title="NEW WHEEL PROFILE" ShowSeparator="True">
-                <StackPanel>
-                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,8"
-                               Text="Create a profile for an unsupported wheel. The wizard probes your hardware to detect LED and display capabilities, then saves a reusable JSON profile." />
-                    <styles:SHButtonPrimary x:Name="btnCreateProfile" Click="BtnCreateProfile_Click" HorizontalAlignment="Left">
-                        Launch Profile Wizard
-                    </styles:SHButtonPrimary>
                 </StackPanel>
             </styles:SHSection>
 

@@ -1,5 +1,6 @@
 {
   "$schema": "wheel-profile.schema.json",
+  "schemaVersion": 1,
   "id": "PHUB_PBME",
   "name": "Fanatec Podium Hub + Button Module Endurance",
   "shortName": "Fanatec Podium Hub + BME",
@@ -7,7 +8,7 @@
     "wheelType": "PHUB",
     "moduleType": "PBME"
   },
-  "display": "Itm",
+  "display": "itm",
   "leds": [
     { "channel": "rev",  "hwIndex": 0, "role": "rev",  "label": "Rev 1" },
     { "channel": "rev",  "hwIndex": 1, "role": "rev",  "label": "Rev 2" },

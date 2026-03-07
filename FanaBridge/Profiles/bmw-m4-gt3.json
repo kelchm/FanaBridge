@@ -1,12 +1,13 @@
 {
   "$schema": "wheel-profile.schema.json",
+  "schemaVersion": 1,
   "id": "PSWBMW",
   "name": "Fanatec Podium Steering Wheel BMW M4 GT3",
   "shortName": "Fanatec BMW M4 GT3",
   "match": {
     "wheelType": "PSWBMW"
   },
-  "display": "Basic",
+  "display": "basic",
   "leds": [
     { "channel": "color", "hwIndex": 0,  "role": "button", "label": "Button 1" },
     { "channel": "color", "hwIndex": 1,  "role": "button", "label": "Button 2" },

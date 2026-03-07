@@ -178,6 +178,17 @@ namespace FanaBridge
     /// </summary>
     public class WheelProfile
     {
+        /// <summary>JSON Schema reference — always "wheel-profile.schema.json".</summary>
+        [JsonProperty("$schema", Order = -3)]
+        public string Schema { get; set; }
+
+        /// <summary>
+        /// Profile format version.  Must be 1 for the current schema.
+        /// Increment when breaking format changes are made.
+        /// </summary>
+        [JsonProperty("schemaVersion", Order = -2)]
+        public int SchemaVersion { get; set; }
+
         /// <summary>Unique profile identifier (e.g. "PSWBMW", "PHUB_PBMR").</summary>
         [JsonProperty("id")]
         public string Id { get; set; }
