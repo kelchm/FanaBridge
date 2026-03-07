@@ -17,77 +17,32 @@ namespace FanaBridge
     /// display capabilities by sending test signals to the hardware and asking
     /// the user to report what they observe.  Produces a <see cref="WheelProfile"/>
     /// JSON file saved to the user profile directory.
+    ///
+    /// Architecture: The dialog is a thin view layer over <see cref="WizardState"/>,
+    /// which is the single source of truth for all probe results, navigation,
+    /// and input-mapping data.  User actions update the model immediately;
+    /// the view re-renders from the model.  Probes always run when entering
+    /// a section so that the hardware state matches the visible step,
+    /// regardless of forward or backward navigation.
     /// </summary>
     public partial class WheelProfileWizardDialog : Window
     {
         private readonly FanatecPlugin _plugin;
         private FanatecDevice Device => _plugin.Device;
 
-        // ── Step panels (order must match _stepTitles / _stepSubtitles) ──
-        private UIElement[] _steps;
+        // ── State model (single source of truth) ─────────────────────────
+        private readonly WizardState _state = new WizardState();
 
-        private int _currentStep;
+        // ── Section → XAML panel lookup ──────────────────────────────────
+        private Dictionary<WizardSection, UIElement> _panels;
 
-        // ── Probe results ────────────────────────────────────────────────
-        private bool _hasDisplay;
-        private int _revCount;
-        private int _flagCount;
-        private int _colorCount;
-        private ColorFormat _colorFormat = ColorFormat.Rgb565;
-        private int _monoCount;
-
-        // ── Probe-step UI state ──────────────────────────────────────────
-        /// <summary>CTS for the mono-LED blink loop running on ThreadPool.</summary>
+        // ── Async hardware helpers ───────────────────────────────────────
         private volatile CancellationTokenSource _probeCts;
-        /// <summary>True once the user has answered the current probe step.</summary>
-        private bool _stepAnswered;
-
-        // ── Input mapping ────────────────────────────────────────────────
-        // Built during the input-mapping step: LED hwIndex → detected input id.
-        // Uses SimHub's PluginManager.InputPressed event for reliable detection.
-        private List<InputMappingEntry> _inputMappingLeds;
-        private int _inputMappingIndex;
         private volatile CancellationTokenSource _blinkCts;
-        private string _detectedInputId;
+        private readonly ManualResetEventSlim _blinkDone = new ManualResetEventSlim(true);
         private bool _listeningForInput;
-        /// <summary>Callback invoked on the UI thread when an input is detected.</summary>
         private Action<string> _inputHandler;
-        /// <summary>Encoder mode read from the device at the start of input mapping.</summary>
-        private EncoderMode? _encoderMode;
-        /// <summary>Unique input IDs collected during the auto-classification window.</summary>
-        private List<string> _classifyInputs;
-        /// <summary>Timer that fires after a short window to classify the input type.</summary>
         private DispatcherTimer _classifyTimer;
-
-        // ── Identity (from SDK) ──────────────────────────────────────────
-        private readonly string _wheelType;
-        private readonly string _moduleType;
-
-        private static readonly string[] StepTitles =
-        {
-            "Welcome",
-            "Display Detection",
-            "Rev / RPM LED Detection",
-            "Flag / Status LED Detection",
-            "Button Colour LED Detection",
-            "Green Channel Test",
-            "Monochrome LED Detection",
-            "Input Mapping",
-            "Summary",
-        };
-
-        private static readonly string[] StepSubtitles =
-        {
-            "Create a hardware profile for an unsupported wheel",
-            "Testing the 7-segment display",
-            "Testing subcmd 0x00 — RPM / shift-indicator LEDs",
-            "Testing subcmd 0x01 — flag / status LEDs",
-            "Testing subcmd 0x02 — button backlight LEDs",
-            "Determining the colour encoding format",
-            "Testing subcmd 0x03 — intensity-only LEDs",
-            "Map each LED to its physical button or encoder",
-            "Review and save your new wheel profile",
-        };
 
         // ─────────────────────────────────────────────────────────────────
 
@@ -97,137 +52,133 @@ namespace FanaBridge
 
             _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
 
-            _steps = new UIElement[]
+            _panels = new Dictionary<WizardSection, UIElement>
             {
-                stepWelcome,
-                stepDisplay,
-                stepRevLeds,
-                stepFlagLeds,
-                stepColorLeds,
-                stepColorFormat,
-                stepMonoLeds,
-                stepInputMapping,
-                stepSummary,
+                { WizardSection.Welcome,              stepWelcome },
+                { WizardSection.DisplayDiscovery,     stepDisplay },
+                { WizardSection.RevDiscovery,         stepRevLeds },
+                { WizardSection.FlagDiscovery,        stepFlagLeds },
+                { WizardSection.ColorDiscovery,       stepColorLeds },
+                { WizardSection.ColorFormatDiscovery, stepColorFormat },
+                { WizardSection.MonoDiscovery,        stepMonoLeds },
+                { WizardSection.InputMapping,         stepInputMapping },
+                { WizardSection.Summary,              stepSummary },
             };
 
             // Pre-populate identity from the SDK
             var sdk = _plugin.SdkManager;
-            _wheelType = WheelProfileStore.StripWheelPrefix(
+            _state.WheelType = WheelProfileStore.StripWheelPrefix(
                 sdk.SteeringWheelType.ToString());
-            _moduleType =
+            _state.ModuleType =
                 sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
                     ? null
                     : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
 
-            txtWizWheelType.Text = _wheelType ?? "Unknown";
-            txtWizModuleType.Text = _moduleType ?? "(none)";
+            txtWizWheelType.Text = _state.WheelType ?? "Unknown";
+            txtWizModuleType.Text = _state.ModuleType ?? "(none)";
 
-            string defaultName = _wheelType ?? "Unknown Wheel";
-            if (_moduleType != null)
-                defaultName += " + " + _moduleType;
+            string defaultName = _state.WheelType ?? "Unknown Wheel";
+            if (_state.ModuleType != null)
+                defaultName += " + " + _state.ModuleType;
             txtProfileName.Text = defaultName;
+            _state.ProfileName = defaultName;
+
+            // Commit profile name changes immediately
+            txtProfileName.TextChanged += (s, ev) => _state.ProfileName = txtProfileName.Text;
+
+            // Commit count selections immediately (not deferred to navigation)
+            cboRevCount.SelectionChanged += (s, ev) =>
+            {
+                if (_state.Rev.Answer == ProbeAnswer.Detected)
+                    _state.Rev.Count = cboRevCount.SelectedIndex + 1;
+                SyncNextButton();
+            };
+            cboFlagCount.SelectionChanged += (s, ev) =>
+            {
+                if (_state.Flag.Answer == ProbeAnswer.Detected)
+                    _state.Flag.Count = cboFlagCount.SelectedIndex + 1;
+                SyncNextButton();
+            };
+            cboColorCount.SelectionChanged += (s, ev) =>
+            {
+                if (_state.Color.Answer == ProbeAnswer.Detected)
+                    _state.Color.Count = cboColorCount.SelectedIndex + 1;
+                SyncNextButton();
+            };
+            cboMonoCount.SelectionChanged += (s, ev) =>
+            {
+                if (_state.Mono.Answer == ProbeAnswer.Detected)
+                    _state.Mono.Count = cboMonoCount.SelectedIndex + 1;
+                SyncNextButton();
+            };
 
             // Suspend normal SimHub LED output while the wizard is active
             _plugin.WizardActive = true;
 
-            ShowStep(0);
+            NavigateToSection(WizardSection.Welcome);
         }
 
         // =====================================================================
-        // Step navigation
+        // Section navigation
         // =====================================================================
 
-        private void ShowStep(int step)
+        /// <summary>
+        /// Transitions the wizard to a named section.  Updates panel visibility,
+        /// header text, and button state.  Always runs the section's hardware
+        /// probe so LEDs/display match the visible step.
+        /// </summary>
+        private void NavigateToSection(WizardSection section)
         {
-            _currentStep = step;
+            // Tear down ALL async work from the previous section before
+            // touching anything else.  Each call is a no-op when idle.
+            StopClassifyTimer();
+            StopListeningForInput();
+            CancelBlink();
             CancelProbeBlink();
 
-            for (int i = 0; i < _steps.Length; i++)
-                _steps[i].Visibility = i == step ? Visibility.Visible : Visibility.Collapsed;
+            _state.Section = section;
 
-            txtStepTitle.Text = StepTitles[step];
-            txtStepSubtitle.Text = StepSubtitles[step];
+            // Show only the target panel
+            foreach (var kv in _panels)
+                kv.Value.Visibility = kv.Key == section
+                    ? Visibility.Visible : Visibility.Collapsed;
 
-            btnBack.IsEnabled = step > 0;
+            txtStepTitle.Text = WizardState.GetTitle(section);
+            txtStepSubtitle.Text = WizardState.GetSubtitle(section);
 
-            // Hide Next during input-mapping step (user advances per-LED via
-            // Confirm/Skip) and on the final summary step.
-            bool isInputStep = step == 7;
-            bool isFinalStep = step == _steps.Length - 1;
+            btnBack.IsEnabled = _state.CanGoBack;
+
+            bool isInputStep = section == WizardSection.InputMapping;
+            bool isFinalStep = section == WizardSection.Summary;
             btnNext.Visibility = (!isInputStep && !isFinalStep)
                 ? Visibility.Visible : Visibility.Collapsed;
             btnSave.Visibility = isFinalStep
                 ? Visibility.Visible : Visibility.Collapsed;
 
-            // Welcome step (0) needs no answer; probe steps (1-6) require one.
-            _stepAnswered = step == 0;
-            btnNext.IsEnabled = _stepAnswered;
+            SyncNextButton();
 
-            RunProbe(step);
+            RunProbe(section);
         }
 
-        /// <summary>Returns the next step index, skipping irrelevant steps.</summary>
-        private int NextStep(int current)
+        /// <summary>Enables/disables the Next button based on the current section state.</summary>
+        private void SyncNextButton()
         {
-            int next = current + 1;
-            // Skip colour-format step when there are no colour LEDs
-            if (next == 5 && _colorCount == 0)
-                next = 6;
-            // Skip input-mapping step when there are no button/encoder LEDs
-            if (next == 7 && _colorCount + _monoCount == 0)
-                next = 8;
-            return next;
-        }
-
-        /// <summary>Returns the previous step index, skipping irrelevant steps.</summary>
-        private int PrevStep(int current)
-        {
-            int prev = current - 1;
-            if (prev == 7 && _colorCount + _monoCount == 0)
-                prev = 6;
-            if (prev == 5 && _colorCount == 0)
-                prev = 4;
-            return prev;
+            btnNext.IsEnabled = _state.CanGoNext;
         }
 
         private void BtnNext_Click(object sender, RoutedEventArgs e)
         {
-            if (!_stepAnswered) return;
-            ReadStepInput(_currentStep);
-            int next = NextStep(_currentStep);
-            if (next < _steps.Length)
-                ShowStep(next);
+            if (!_state.CanGoNext) return;
+            var next = _state.GetNextSection(_state.Section);
+            if (next.HasValue)
+                NavigateToSection(next.Value);
         }
 
         private void BtnBack_Click(object sender, RoutedEventArgs e)
         {
-            int prev = PrevStep(_currentStep);
-            if (prev >= 0)
-                ShowStep(prev);
-        }
-
-        /// <summary>Captures the user's selection on the current step before navigating away.</summary>
-        private void ReadStepInput(int step)
-        {
-            switch (step)
-            {
-                case 2:
-                    if (panelRevCount.Visibility == Visibility.Visible)
-                        _revCount = cboRevCount.SelectedIndex + 1;   // items are 1-based
-                    break;
-                case 3:
-                    if (panelFlagCount.Visibility == Visibility.Visible)
-                        _flagCount = cboFlagCount.SelectedIndex + 1;
-                    break;
-                case 4:
-                    if (panelColorCount.Visibility == Visibility.Visible)
-                        _colorCount = cboColorCount.SelectedIndex + 1;
-                    break;
-                case 6:
-                    if (panelMonoCount.Visibility == Visibility.Visible)
-                        _monoCount = cboMonoCount.SelectedIndex + 1;
-                    break;
-            }
+            var prev = _state.GetPrevSection(_state.Section);
+            if (prev.HasValue)
+                NavigateToSection(prev.Value);
         }
 
         // =====================================================================
@@ -241,20 +192,53 @@ namespace FanaBridge
         // reports back LED state. We must rely on the user to observe and
         // report what they see.
 
-        /// <summary>Sends the test signal appropriate for the given step.</summary>
-        private void RunProbe(int step)
+        /// <summary>
+        /// Sets the hardware to the correct state for the given section.
+        /// Probes are idempotent LED/display signals — always safe to re-run.
+        /// We must keep hardware in sync with the visible section so the user
+        /// sees the right LEDs whether navigating forward or back.
+        /// </summary>
+        private void RunProbe(WizardSection section)
         {
-            switch (step)
+            switch (section)
             {
-                case 0: SetAllLedsOff();   break;
-                case 1: ProbeDisplay();    break;
-                case 2: ProbeRevLeds();    break;
-                case 3: ProbeFlagLeds();   break;
-                case 4: ProbeColorLeds();  break;
-                case 5: ProbeColorFormat(); break;
-                case 6: ProbeMonoLeds();   break;
-                case 7: BeginInputMapping(); break;
-                case 8: BuildSummary();    break;
+                case WizardSection.Welcome:
+                    // Don't touch hardware on Welcome — no probe to show.
+                    // Avoids clearing a display test pattern if the user
+                    // navigates back to edit the profile name.
+                    break;
+
+                case WizardSection.DisplayDiscovery:
+                    ProbeDisplay();
+                    break;
+
+                case WizardSection.RevDiscovery:
+                    ProbeRevLeds();
+                    break;
+
+                case WizardSection.FlagDiscovery:
+                    ProbeFlagLeds();
+                    break;
+
+                case WizardSection.ColorDiscovery:
+                    ProbeColorLeds();
+                    break;
+
+                case WizardSection.ColorFormatDiscovery:
+                    ProbeColorFormat();
+                    break;
+
+                case WizardSection.MonoDiscovery:
+                    ProbeMonoLeds();
+                    break;
+
+                case WizardSection.InputMapping:
+                    BeginInputMapping();
+                    break;
+
+                case WizardSection.Summary:
+                    BuildSummary();
+                    break;
             }
         }
 
@@ -321,6 +305,10 @@ namespace FanaBridge
 
         private void ProbeRevLeds()
         {
+            // Clear the display — the "888" test pattern from the previous
+            // display-detection step should not linger.
+            try { Device?.ClearDisplay(); } catch { }
+
             var colors = new ushort[9];
             for (int i = 0; i < colors.Length; i++)
                 colors[i] = ColorHelper.Colors.Red;
@@ -349,7 +337,7 @@ namespace FanaBridge
 
         private void ProbeMonoLeds()
         {
-            // Colours all black → colour LEDs stay dark.
+            // Colors all black → color LEDs stay dark.
             // Blink intensity high/low so mono-only LEDs are hard to miss.
             CancelProbeBlink();
             var cts = new CancellationTokenSource();
@@ -399,17 +387,17 @@ namespace FanaBridge
             }
         }
 
-        // ── Colour-format sub-test ───────────────────────────────────────
+        // ── Color-format sub-test ────────────────────────────────────────
         //
-        // Strategy: When this step activates, RunProbe immediately sends
-        // "Test B" — green=128 encoded as RGB565.  This sets only bit 10.
+        // Strategy: When this section activates, the probe sends green=128
+        // encoded as RGB565.  This sets only bit 10.
         //
         //  • On true RGB565 hardware the LED appears green.
         //  • On RGB555 hardware the lower 5 green bits are all zero → dark/off.
         //
-        // The user simply reports what they see RIGHT NOW:
-        //  "LEDs are green" → RGB565
-        //  "LEDs are OFF / wrong colour" → RGB555
+        // The user simply reports what they see:
+        //  "LEDs are still green" → RGB565
+        //  "LEDs are OFF or a completely wrong color" → RGB555
         //
         // No A/B switching required — one glance is enough.
 
@@ -418,7 +406,7 @@ namespace FanaBridge
             try
             {
                 // Green = 128 → g6 = 32 (0x20).  Only bit 10 is set.
-                int count = Math.Max(_colorCount, 1);
+                int count = Math.Max(_state.Color.Count, 1);
                 var colors = new ushort[12];
                 var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
                 ushort test = ColorHelper.RgbToRgb565(0, 128, 0);
@@ -432,48 +420,26 @@ namespace FanaBridge
             catch { }
         }
 
-        private void ColorSame_Click(object sender, RoutedEventArgs e)
-        {
-            _colorFormat = ColorFormat.Rgb565;
-            txtColorFormatResult.Text = "\u2713 Standard RGB565 — 6-bit green";
-            MarkAnswered(sender);
-        }
-
-        private void ColorDark_Click(object sender, RoutedEventArgs e)
-        {
-            _colorFormat = ColorFormat.Rgb555;
-            txtColorFormatResult.Text = "\u2713 RGB555 — 5-bit green (MSB ignored)";
-            MarkAnswered(sender);
-        }
-
         // ── Answer helpers ─────────────────────────────────────────────
 
         /// <summary>
-        /// Marks the current step as answered, enables Next, and highlights
-        /// the button the user clicked so their choice is visually obvious.
+        /// Highlights the chosen button and dims siblings.  Call after
+        /// updating the state model — does NOT modify state itself.
         /// </summary>
-        private void MarkAnswered(object sender)
+        private void HighlightChoice(object sender)
         {
-            _stepAnswered = true;
-            btnNext.IsEnabled = true;
-
-            if (sender is Button btn)
+            if (sender is Button btn && btn.Parent is StackPanel panel)
             {
-                // Walk the parent StackPanel and dim sibling buttons,
-                // then highlight the chosen one.
-                if (btn.Parent is StackPanel panel)
+                foreach (var child in panel.Children)
                 {
-                    foreach (var child in panel.Children)
+                    if (child is Button sibling)
                     {
-                        if (child is Button sibling)
-                        {
-                            sibling.Opacity = sibling == btn ? 1.0 : 0.45;
-                            sibling.BorderBrush = sibling == btn
-                                ? new System.Windows.Media.SolidColorBrush(
-                                    System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44))
-                                : new System.Windows.Media.SolidColorBrush(
-                                    System.Windows.Media.Color.FromRgb(0x55, 0x55, 0x55));
-                        }
+                        sibling.Opacity = sibling == btn ? 1.0 : 0.45;
+                        sibling.BorderBrush = sibling == btn
+                            ? new System.Windows.Media.SolidColorBrush(
+                                System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44))
+                            : new System.Windows.Media.SolidColorBrush(
+                                System.Windows.Media.Color.FromRgb(0x55, 0x55, 0x55));
                     }
                 }
             }
@@ -483,158 +449,182 @@ namespace FanaBridge
 
         private void DisplayYes_Click(object sender, RoutedEventArgs e)
         {
-            _hasDisplay = true;
+            _state.Display.Answer = ProbeAnswer.Detected;
             txtDisplayResult.Text = "\u2713 Display detected";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
         }
+
         private void DisplayNotWorking_Click(object sender, RoutedEventArgs e)
         {
-            // The wheel has a display but the probe didn't produce visible output.
-            // We still record the display as present so the profile includes it.
-            _hasDisplay = true;
+            _state.Display.Answer = ProbeAnswer.Inconclusive;
             txtDisplayResult.Text = "\u2713 Display present (probe inconclusive)";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
         }
+
         private void DisplayNo_Click(object sender, RoutedEventArgs e)
         {
-            _hasDisplay = false;
+            _state.Display.Answer = ProbeAnswer.NotPresent;
             txtDisplayResult.Text = "\u2713 No display";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         // ── Rev LED probe answers ────────────────────────────────────────
 
         private void RevSome_Click(object sender, RoutedEventArgs e)
         {
+            _state.Rev.Answer = ProbeAnswer.Detected;
             panelRevCount.Visibility = Visibility.Visible;
             cboRevCount.SelectedIndex = 8; // default to 9
+            _state.Rev.Count = 9;
             txtRevResult.Text = "";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         private void RevNotWorking_Click(object sender, RoutedEventArgs e)
         {
-            _revCount = 0;
+            _state.Rev.Answer = ProbeAnswer.Inconclusive;
+            _state.Rev.Count = 0;
             panelRevCount.Visibility = Visibility.Collapsed;
             txtRevResult.Text = "\u2713 Rev LEDs present but probe inconclusive";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         private void RevNone_Click(object sender, RoutedEventArgs e)
         {
-            _revCount = 0;
+            _state.Rev.Answer = ProbeAnswer.NotPresent;
+            _state.Rev.Count = 0;
             panelRevCount.Visibility = Visibility.Collapsed;
             txtRevResult.Text = "\u2713 No rev LEDs";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         // ── Flag LED probe answers ───────────────────────────────────────
 
         private void FlagSome_Click(object sender, RoutedEventArgs e)
         {
+            _state.Flag.Answer = ProbeAnswer.Detected;
             panelFlagCount.Visibility = Visibility.Visible;
             cboFlagCount.SelectedIndex = 5; // default to 6
+            _state.Flag.Count = 6;
             txtFlagResult.Text = "";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         private void FlagNotWorking_Click(object sender, RoutedEventArgs e)
         {
-            _flagCount = 0;
+            _state.Flag.Answer = ProbeAnswer.Inconclusive;
+            _state.Flag.Count = 0;
             panelFlagCount.Visibility = Visibility.Collapsed;
             txtFlagResult.Text = "\u2713 Flag LEDs present but probe inconclusive";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         private void FlagNone_Click(object sender, RoutedEventArgs e)
         {
-            _flagCount = 0;
+            _state.Flag.Answer = ProbeAnswer.NotPresent;
+            _state.Flag.Count = 0;
             panelFlagCount.Visibility = Visibility.Collapsed;
             txtFlagResult.Text = "\u2713 No flag LEDs";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         // ── Color LED probe answers ──────────────────────────────────────
 
         private void ColorSome_Click(object sender, RoutedEventArgs e)
         {
+            _state.Color.Answer = ProbeAnswer.Detected;
             panelColorCount.Visibility = Visibility.Visible;
             cboColorCount.SelectedIndex = 11; // default to 12
+            _state.Color.Count = 12;
             txtColorResult.Text = "";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         private void ColorNotWorking_Click(object sender, RoutedEventArgs e)
         {
-            _colorCount = 0;
+            _state.Color.Answer = ProbeAnswer.Inconclusive;
+            _state.Color.Count = 0;
             panelColorCount.Visibility = Visibility.Collapsed;
-            txtColorResult.Text = "\u2713 Colour LEDs present but probe inconclusive";
-            MarkAnswered(sender);
+            txtColorResult.Text = "\u2713 Color LEDs present but probe inconclusive";
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         private void ColorNone_Click(object sender, RoutedEventArgs e)
         {
-            _colorCount = 0;
+            _state.Color.Answer = ProbeAnswer.NotPresent;
+            _state.Color.Count = 0;
             panelColorCount.Visibility = Visibility.Collapsed;
-            txtColorResult.Text = "\u2713 No colour LEDs";
-            MarkAnswered(sender);
+            txtColorResult.Text = "\u2713 No color LEDs";
+            HighlightChoice(sender);
+            SyncNextButton();
+        }
+
+        // ── Color format answers ─────────────────────────────────────────
+
+        private void ColorSame_Click(object sender, RoutedEventArgs e)
+        {
+            _state.ColorFormat.Answer = ProbeAnswer.Detected;
+            _state.ColorFormat.Format = ColorFormat.Rgb565;
+            txtColorFormatResult.Text = "\u2713 Standard RGB565 \u2014 6-bit green";
+            HighlightChoice(sender);
+            SyncNextButton();
+        }
+
+        private void ColorDark_Click(object sender, RoutedEventArgs e)
+        {
+            _state.ColorFormat.Answer = ProbeAnswer.Detected;
+            _state.ColorFormat.Format = ColorFormat.Rgb555;
+            txtColorFormatResult.Text = "\u2713 RGB555 \u2014 5-bit green (MSB ignored)";
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         // ── Mono LED probe answers ───────────────────────────────────────
 
-        private void MonoNone_Click(object sender, RoutedEventArgs e)
-        {
-            _monoCount = 0;
-            panelMonoCount.Visibility = Visibility.Collapsed;
-            txtMonoResult.Text = "\u2713 No mono LEDs";
-            MarkAnswered(sender);
-        }
-
         private void MonoSome_Click(object sender, RoutedEventArgs e)
         {
+            _state.Mono.Answer = ProbeAnswer.Detected;
             panelMonoCount.Visibility = Visibility.Visible;
+            cboMonoCount.SelectedIndex = 0;
+            _state.Mono.Count = 1;
             txtMonoResult.Text = "";
-            MarkAnswered(sender);
+            HighlightChoice(sender);
+            SyncNextButton();
+        }
+
+        private void MonoNone_Click(object sender, RoutedEventArgs e)
+        {
+            _state.Mono.Answer = ProbeAnswer.NotPresent;
+            _state.Mono.Count = 0;
+            panelMonoCount.Visibility = Visibility.Collapsed;
+            txtMonoResult.Text = "\u2713 No mono LEDs";
+            HighlightChoice(sender);
+            SyncNextButton();
         }
 
         // =====================================================================
-        // Input Mapping (step 7)
+        // Input Mapping
         // =====================================================================
         //
-        // For each colour + mono button/encoder LED we:
-        //   1. Light ONLY that LED (distinctive colour).
+        // For each color + mono button/encoder LED we:
+        //   1. Light ONLY that LED (distinctive color).
         //   2. Subscribe to SimHub's PluginManager.InputPressed event.
         //   3. Wait for any button press or encoder rotation.
-        //   4. Record the mapping as the LedDefinition.Input string.
+        //   4. Record the mapping in the state model.
         //
-        // This data enables downstream ASTR profile generation and future
-        // custom lighting / visualization features.
-
-        /// <summary>Tracks one LED that needs an input mapping.</summary>
-        private class InputMappingEntry
-        {
-            public LedChannel Channel;
-            public int HwIndex;
-            public string Label;
-
-            // --- Captured data ---
-            /// <summary>True if user classified this as an encoder.</summary>
-            public bool IsEncoder;
-            /// <summary>Button input ID (non-encoder), or null.</summary>
-            public string ButtonInputId;
-            /// <summary>Relative encoder CW input, or null.</summary>
-            public string RelativeCW;
-            /// <summary>Relative encoder CCW input, or null.</summary>
-            public string RelativeCCW;
-            /// <summary>Absolute encoder position inputs, or null.</summary>
-            public List<string> AbsoluteInputs;
-
-            /// <summary>True when at least one input has been captured.</summary>
-            public bool HasAny =>
-                ButtonInputId != null ||
-                RelativeCW != null ||
-                (AbsoluteInputs != null && AbsoluteInputs.Count > 0);
-        }
+        // The mapping section is its own mini state machine driven by
+        // InputMappingState and MappingPhase in the state model.
 
         /// <summary>
         /// Builds the list of LEDs that need mapping and starts the
@@ -642,46 +632,56 @@ namespace FanaBridge
         /// </summary>
         private void BeginInputMapping()
         {
-            // Capture counts from previous steps
-            ReadStepInput(6); // mono count
+            var mapping = _state.Mapping;
 
-            _inputMappingLeds = new List<InputMappingEntry>();
-
-            for (int i = 0; i < _colorCount; i++)
+            // Only build the LED list once (re-entering from Back keeps it)
+            if (mapping.Leds.Count == 0)
             {
-                _inputMappingLeds.Add(new InputMappingEntry
+                for (int i = 0; i < _state.Color.Count; i++)
                 {
-                    Channel = LedChannel.Color,
-                    HwIndex = i,
-                    Label = "Colour LED " + (i + 1),
-                });
+                    mapping.Leds.Add(new InputMappingEntry
+                    {
+                        Channel = LedChannel.Color,
+                        HwIndex = i,
+                        Label = "Color LED " + (i + 1),
+                    });
+                }
+
+                int monoStart = _state.Color.Count;
+                for (int i = 0; i < _state.Mono.Count; i++)
+                {
+                    mapping.Leds.Add(new InputMappingEntry
+                    {
+                        Channel = LedChannel.Mono,
+                        HwIndex = monoStart + i,
+                        Label = "Mono LED " + (i + 1),
+                    });
+                }
             }
 
-            int monoStart = _colorCount;
-            for (int i = 0; i < _monoCount; i++)
-            {
-                _inputMappingLeds.Add(new InputMappingEntry
-                {
-                    Channel = LedChannel.Mono,
-                    HwIndex = monoStart + i,
-                    Label = "Mono LED " + (i + 1),
-                });
-            }
-
-            if (_inputMappingLeds.Count == 0)
+            if (mapping.Leds.Count == 0)
             {
                 // Nothing to map — jump straight to summary
-                ShowStep(NextStep(7));
+                var next = _state.GetNextSection(WizardSection.InputMapping);
+                if (next.HasValue)
+                    NavigateToSection(next.Value);
                 return;
             }
 
             // Read the current encoder mode from the device (best-effort).
-            // This informs which capture flow we show for encoder LEDs.
-            _encoderMode = Device?.ReadEncoderMode();
-            SimHub.Logging.Current.Info(
-                "WheelProfileWizard: Encoder mode = " + (_encoderMode?.ToString() ?? "unknown"));
+            if (mapping.EncoderMode == null)
+            {
+                mapping.EncoderMode = Device?.ReadEncoderMode();
+                SimHub.Logging.Current.Info(
+                    "WheelProfileWizard: Encoder mode = " +
+                    (mapping.EncoderMode?.ToString() ?? "unknown"));
+            }
 
-            _inputMappingIndex = 0;
+            // When re-entering via Back after all LEDs were mapped, show the
+            // last LED instead of bouncing forward to Summary again.
+            if (mapping.IsComplete && mapping.Leds.Count > 0)
+                mapping.CurrentIndex = mapping.Leds.Count - 1;
+
             ShowInputMappingLed();
         }
 
@@ -740,6 +740,9 @@ namespace FanaBridge
                 cts.Cancel();
                 _blinkCts = null;
             }
+            // Wait for the blink thread to finish so its last HID write
+            // can't race with the next LightSingleLed call.
+            _blinkDone.Wait(500);
         }
 
         /// <summary>
@@ -748,19 +751,24 @@ namespace FanaBridge
         /// </summary>
         private void ShowInputMappingLed()
         {
-            if (_inputMappingIndex >= _inputMappingLeds.Count)
+            var mapping = _state.Mapping;
+
+            if (mapping.IsComplete)
             {
                 // All LEDs mapped — move to summary
                 StopListeningForInput();
-                ShowStep(NextStep(7));
+                var next = _state.GetNextSection(WizardSection.InputMapping);
+                if (next.HasValue)
+                    NavigateToSection(next.Value);
                 return;
             }
 
-            var entry = _inputMappingLeds[_inputMappingIndex];
+            var entry = mapping.CurrentEntry;
+            mapping.Phase = MappingPhase.WaitingForInput;
 
             // Update UI
             txtInputProgress.Text = string.Format(
-                "LED {0} of {1}", _inputMappingIndex + 1, _inputMappingLeds.Count);
+                "LED {0} of {1}", mapping.CurrentIndex + 1, mapping.Leds.Count);
             txtInputLedLabel.Text = entry.Label;
             txtInputLedDetail.Text = string.Format(
                 "{0} channel, hardware index {1}", entry.Channel, entry.HwIndex);
@@ -768,8 +776,7 @@ namespace FanaBridge
             // Reset detection state
             txtDetectedInput.Text = "Waiting for input\u2026";
             txtDetectedInput.Foreground = System.Windows.Media.Brushes.Gray;
-            _detectedInputId = null;
-            _classifyInputs = new List<string>();
+            mapping.ClassifyInputs = new List<string>();
             StopClassifyTimer();
 
             // Hide phase-specific panels
@@ -778,7 +785,7 @@ namespace FanaBridge
             panelAbsoluteCapture.Visibility = Visibility.Collapsed;
 
             // Prev enabled only when not on first LED
-            btnInputPrev.IsEnabled = _inputMappingIndex > 0;
+            btnInputPrev.IsEnabled = mapping.CurrentIndex > 0;
 
             // Cancel any running blink to prevent ThreadPool race on
             // the shared HID report buffer.
@@ -799,13 +806,17 @@ namespace FanaBridge
         /// </summary>
         private void OnAutoClassifyInput(string input)
         {
-            if (!_classifyInputs.Contains(input))
-                _classifyInputs.Add(input);
+            var mapping = _state.Mapping;
+            var inputs = mapping.ClassifyInputs;
 
-            if (_classifyInputs.Count == 1)
+            if (!inputs.Contains(input))
+                inputs.Add(input);
+
+            if (inputs.Count == 1)
             {
+                mapping.Phase = MappingPhase.Classifying;
+
                 // First input detected — show it and start the timer
-                _detectedInputId = input;
                 txtDetectedInput.Text = "\u2714 " + FormatInputDisplay(input);
                 txtDetectedInput.Foreground = new System.Windows.Media.SolidColorBrush(
                     System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44));
@@ -816,15 +827,14 @@ namespace FanaBridge
                 _classifyTimer.Tick += OnClassifyTimerTick;
                 _classifyTimer.Start();
             }
-            else if (_classifyInputs.Count == 2)
+            else if (inputs.Count == 2)
             {
                 // Second unique input — likely an encoder
-                bool isAbsolute = _encoderMode == EncoderMode.Pulse ||
-                                  _encoderMode == EncoderMode.Constant;
+                bool isAbsolute = mapping.EncoderMode == EncoderMode.Pulse ||
+                                  mapping.EncoderMode == EncoderMode.Constant;
 
                 if (isAbsolute)
                 {
-                    // Absolute mode: keep collecting more positions
                     UpdateAutoClassifyStatus();
                 }
                 else
@@ -844,7 +854,7 @@ namespace FanaBridge
 
         private void UpdateAutoClassifyStatus()
         {
-            int n = _classifyInputs.Count;
+            int n = _state.Mapping.ClassifyInputs.Count;
             txtDetectedInput.Text = "\u2714 " + n + " unique input" +
                 (n == 1 ? "" : "s") + " detected";
             txtDetectedInput.Foreground = new System.Windows.Media.SolidColorBrush(
@@ -856,11 +866,12 @@ namespace FanaBridge
             StopClassifyTimer();
             StopListeningForInput();
 
-            int n = _classifyInputs.Count;
+            var mapping = _state.Mapping;
+            int n = mapping.ClassifyInputs.Count;
             if (n == 0) return;
 
-            bool isAbsolute = _encoderMode == EncoderMode.Pulse ||
-                              _encoderMode == EncoderMode.Constant;
+            bool isAbsolute = mapping.EncoderMode == EncoderMode.Pulse ||
+                              mapping.EncoderMode == EncoderMode.Constant;
 
             if (n == 1)
             {
@@ -888,27 +899,33 @@ namespace FanaBridge
 
         private void ClassifyAsButton()
         {
-            var entry = _inputMappingLeds[_inputMappingIndex];
+            var mapping = _state.Mapping;
+            var entry = mapping.CurrentEntry;
             entry.IsEncoder = false;
-            entry.ButtonInputId = _classifyInputs[0];
+            entry.ButtonInputId = mapping.ClassifyInputs[0];
+            mapping.Phase = MappingPhase.Completed;
             AdvanceToNextLed();
         }
 
         private void ClassifyAsRelativeEncoder()
         {
-            var entry = _inputMappingLeds[_inputMappingIndex];
+            var mapping = _state.Mapping;
+            var entry = mapping.CurrentEntry;
+            var inputs = mapping.ClassifyInputs;
+
             entry.IsEncoder = true;
-            entry.RelativeCW = _classifyInputs[0];
-            entry.RelativeCCW = _classifyInputs.Count > 1 ? _classifyInputs[1] : null;
+            entry.RelativeCW = inputs[0];
+            entry.RelativeCCW = inputs.Count > 1 ? inputs[1] : null;
+            mapping.Phase = MappingPhase.RelativeConfirm;
 
             ShowEncoderModeBanner();
 
             panelRelativeCapture.Visibility = Visibility.Visible;
-            txtRelativePrompt.Text = "Direction 1: " + FormatInputDisplay(_classifyInputs[0]);
+            txtRelativePrompt.Text = "Direction 1: " + FormatInputDisplay(inputs[0]);
 
-            if (_classifyInputs.Count > 1)
+            if (inputs.Count > 1)
             {
-                txtRelativeStatus.Text = "\u2714 Direction 2: " + FormatInputDisplay(_classifyInputs[1]);
+                txtRelativeStatus.Text = "\u2714 Direction 2: " + FormatInputDisplay(inputs[1]);
                 txtRelativeStatus.Foreground = new System.Windows.Media.SolidColorBrush(
                     System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44));
                 btnRelativeConfirm.IsEnabled = true;
@@ -923,15 +940,18 @@ namespace FanaBridge
 
         private void ClassifyAsAbsoluteEncoder()
         {
-            var entry = _inputMappingLeds[_inputMappingIndex];
+            var mapping = _state.Mapping;
+            var entry = mapping.CurrentEntry;
+
             entry.IsEncoder = true;
-            entry.AbsoluteInputs = new List<string>(_classifyInputs);
+            entry.AbsoluteInputs = new List<string>(mapping.ClassifyInputs);
+            mapping.Phase = MappingPhase.AbsoluteCapture;
 
             ShowEncoderModeBanner();
             BeginAbsoluteCapture();
         }
 
-        /// <summary>Lights a single LED with a distinctive colour.
+        /// <summary>Lights a single LED with a distinctive color.
         /// Sets ALL channels (rev/flag off) to mirror production pattern.</summary>
         private void LightSingleLed(InputMappingEntry entry)
         {
@@ -955,16 +975,6 @@ namespace FanaBridge
             catch { /* best-effort */ }
         }
 
-        private void StartInputPoll()
-        {
-            StartListeningForInput();
-        }
-
-        private void StopInputPoll()
-        {
-            StopListeningForInput();
-        }
-
         /// <summary>Strips the JoystickPlugin prefix for display.</summary>
         private static string FormatInputDisplay(string inputId)
         {
@@ -976,13 +986,13 @@ namespace FanaBridge
         }
 
         // -----------------------------------------------------------------
-        // Relative encoder confirmation
+        // Encoder mode banner
         // -----------------------------------------------------------------
 
         private void ShowEncoderModeBanner()
         {
             string modeLabel;
-            switch (_encoderMode)
+            switch (_state.Mapping.EncoderMode)
             {
                 case EncoderMode.Encoder:  modeLabel = "Relative (Encoder)"; break;
                 case EncoderMode.Pulse:    modeLabel = "Absolute (Pulse)"; break;
@@ -995,23 +1005,22 @@ namespace FanaBridge
         }
 
         // -----------------------------------------------------------------
-        // Phase 3a: Relative encoder — confirmation only
-        // (both directions are captured automatically)
+        // Relative encoder confirmation
         // -----------------------------------------------------------------
 
         private void RelativeConfirm_Click(object sender, RoutedEventArgs e)
         {
-            // Relative capture done — advance to next LED
+            _state.Mapping.Phase = MappingPhase.Completed;
             AdvanceToNextLed();
         }
 
         // -----------------------------------------------------------------
-        // Phase 3b: Absolute encoder capture (all positions)
+        // Absolute encoder capture (all positions)
         // -----------------------------------------------------------------
 
         private void BeginAbsoluteCapture()
         {
-            var entry = _inputMappingLeds[_inputMappingIndex];
+            var entry = _state.Mapping.CurrentEntry;
             if (entry.AbsoluteInputs == null)
                 entry.AbsoluteInputs = new List<string>();
 
@@ -1031,7 +1040,6 @@ namespace FanaBridge
 
             _inputHandler = input =>
             {
-                // Accumulate unique inputs in detection order
                 if (!entry.AbsoluteInputs.Contains(input))
                 {
                     entry.AbsoluteInputs.Add(input);
@@ -1041,7 +1049,6 @@ namespace FanaBridge
                         System.Windows.Media.Color.FromRgb(0x44, 0xDD, 0x44));
                     btnAbsoluteDone.IsEnabled = true;
                 }
-                // Keep listening for more positions (don't stop)
             };
             StartListeningForInput();
         }
@@ -1049,24 +1056,21 @@ namespace FanaBridge
         private void AbsoluteDone_Click(object sender, RoutedEventArgs e)
         {
             StopListeningForInput();
+            _state.Mapping.Phase = MappingPhase.Completed;
             AdvanceToNextLed();
         }
 
-
-
         // -----------------------------------------------------------------
-        // Navigation helpers
+        // Input-mapping navigation helpers
         // -----------------------------------------------------------------
 
         private void AdvanceToNextLed()
         {
             StopClassifyTimer();
-            StopInputPoll();
-            _inputMappingIndex++;
+            StopListeningForInput();
+            _state.Mapping.CurrentIndex++;
             ShowInputMappingLed();
         }
-
-
 
         /// <summary>
         /// Turns off only the button LED for the current mapping entry.
@@ -1095,9 +1099,10 @@ namespace FanaBridge
         {
             CancelBlink();
 
-            if (_inputMappingIndex >= _inputMappingLeds.Count) return;
-            var entry = _inputMappingLeds[_inputMappingIndex];
+            var entry = _state.Mapping.CurrentEntry;
+            if (entry == null) return;
 
+            _blinkDone.Reset();
             var cts = new CancellationTokenSource();
             _blinkCts = cts;
             var token = cts.Token;
@@ -1106,7 +1111,6 @@ namespace FanaBridge
             {
                 try
                 {
-                    // 3 blink cycles: OFF-ON, OFF-ON, OFF-ON
                     for (int i = 0; i < 3 && !token.IsCancellationRequested; i++)
                     {
                         ClearButtonLed();
@@ -1118,14 +1122,18 @@ namespace FanaBridge
                     }
                 }
                 catch { /* device may have disconnected */ }
+                finally
+                {
+                    _blinkDone.Set();
+                }
             });
         }
 
         private void InputSkip_Click(object sender, RoutedEventArgs e)
         {
             StopClassifyTimer();
-            StopInputPoll();
-            _inputMappingIndex++;
+            StopListeningForInput();
+            _state.Mapping.CurrentIndex++;
             ShowInputMappingLed();
         }
 
@@ -1133,17 +1141,17 @@ namespace FanaBridge
         {
             StopClassifyTimer();
             StopListeningForInput();
-            _detectedInputId = null;
 
-            // Reset the current entry
-            var entry = _inputMappingLeds[_inputMappingIndex];
-            entry.ButtonInputId = null;
-            entry.RelativeCW = null;
-            entry.RelativeCCW = null;
-            entry.AbsoluteInputs = null;
-            entry.IsEncoder = false;
+            var entry = _state.Mapping.CurrentEntry;
+            if (entry != null)
+            {
+                entry.ButtonInputId = null;
+                entry.RelativeCW = null;
+                entry.RelativeCCW = null;
+                entry.AbsoluteInputs = null;
+                entry.IsEncoder = false;
+            }
 
-            // Re-show from Phase 1
             ShowInputMappingLed();
         }
 
@@ -1153,9 +1161,9 @@ namespace FanaBridge
             StopListeningForInput();
             CancelBlink();
 
-            if (_inputMappingIndex > 0)
+            if (_state.Mapping.CurrentIndex > 0)
             {
-                _inputMappingIndex--;
+                _state.Mapping.CurrentIndex--;
                 ShowInputMappingLed();
             }
         }
@@ -1168,10 +1176,13 @@ namespace FanaBridge
         {
             ClearAllLeds();
 
-            int total = _revCount + _flagCount + _colorCount + _monoCount;
-            int mapped = 0;
-            if (_inputMappingLeds != null)
-                mapped = _inputMappingLeds.Count(m => m.HasAny);
+            var s = _state;
+            int revCount = s.Rev.Count;
+            int flagCount = s.Flag.Count;
+            int colorCount = s.Color.Count;
+            int monoCount = s.Mono.Count;
+            int total = revCount + flagCount + colorCount + monoCount;
+            int mapped = s.Mapping.MappedCount;
 
             string fmt =
                 "Profile:       {0}\n" +
@@ -1180,36 +1191,36 @@ namespace FanaBridge
                 "Display:       {3}\n" +
                 "Rev LEDs:      {4}\n" +
                 "Flag LEDs:     {5}\n" +
-                "Colour LEDs:   {6}\n" +
-                "Colour Format: {7}\n" +
+                "Color LEDs:    {6}\n" +
+                "Color Format:  {7}\n" +
                 "Mono LEDs:     {8}\n\n" +
                 "Total LEDs:    {9}\n" +
                 "Input mapped:  {10} of {11}";
 
             txtSummary.Text = string.Format(fmt,
-                txtProfileName.Text,
-                _wheelType ?? "(unknown)",
-                _moduleType ?? "(none)",
-                _hasDisplay ? "Basic (7-segment)" : "None",
-                _revCount,
-                _flagCount,
-                _colorCount,
-                _colorCount > 0 ? _colorFormat.ToString() : "N/A",
-                _monoCount,
+                s.ProfileName,
+                s.WheelType ?? "(unknown)",
+                s.ModuleType ?? "(none)",
+                s.Display.HasDisplay ? "Basic (7-segment)" : "None",
+                revCount,
+                flagCount,
+                colorCount,
+                colorCount > 0 ? s.ColorFormat.Format.ToString() : "N/A",
+                monoCount,
                 total,
                 mapped,
-                _colorCount + _monoCount);
+                colorCount + monoCount);
 
             // Append mapping details
-            if (_inputMappingLeds != null && mapped > 0)
+            if (mapped > 0)
             {
                 txtSummary.Text += "\n\nMappings:";
-                foreach (var m in _inputMappingLeds)
+                foreach (var m in s.Mapping.Leds)
                 {
                     if (!m.HasAny) continue;
                     txtSummary.Text += "\n  " + m.Label;
                     if (m.ButtonInputId != null)
-                        txtSummary.Text += " → " + FormatInputDisplay(m.ButtonInputId);
+                        txtSummary.Text += " \u2192 " + FormatInputDisplay(m.ButtonInputId);
                     if (m.RelativeCW != null || m.RelativeCCW != null)
                         txtSummary.Text += " [rel: " +
                             FormatInputDisplay(m.RelativeCW) + " / " +
@@ -1234,7 +1245,7 @@ namespace FanaBridge
 
                 MessageBox.Show(
                     "Profile saved and loaded!\n\n" +
-                    "Your new profile is active immediately — no restart required.",
+                    "Your new profile is active immediately \u2014 no restart required.",
                     "Profile Saved",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
@@ -1281,31 +1292,35 @@ namespace FanaBridge
 
         private WheelProfile BuildProfile()
         {
-            string id = _wheelType ?? "UNKNOWN";
-            if (_moduleType != null)
-                id += "_" + _moduleType;
+            var s = _state;
+            string id = s.WheelType ?? "UNKNOWN";
+            if (s.ModuleType != null)
+                id += "_" + s.ModuleType;
 
             var profile = new WheelProfile
             {
                 Id = id,
-                Name = txtProfileName.Text,
-                ShortName = txtProfileName.Text.Length > 20
-                    ? txtProfileName.Text.Substring(0, 20)
-                    : txtProfileName.Text,
+                Name = s.ProfileName,
+                ShortName = s.ProfileName.Length > 20
+                    ? s.ProfileName.Substring(0, 20)
+                    : s.ProfileName,
                 Match = new ProfileMatch
                 {
-                    WheelType = _wheelType,
-                    ModuleType = _moduleType,
+                    WheelType = s.WheelType,
+                    ModuleType = s.ModuleType,
                 },
-                Display = _hasDisplay ? "basic" : "none",
+                Display = s.Display.HasDisplay ? "basic" : "none",
                 Leds = new List<LedDefinition>(),
             };
 
-            if (_colorCount > 0 && _colorFormat == ColorFormat.Rgb555)
+            int colorCount = s.Color.Count;
+            int monoCount = s.Mono.Count;
+
+            if (colorCount > 0 && s.ColorFormat.Format == ColorFormat.Rgb555)
                 profile.ColorFormatRaw = "rgb555";
 
             // Rev LEDs — hwIndex 0..N-1
-            for (int i = 0; i < _revCount; i++)
+            for (int i = 0; i < s.Rev.Count; i++)
             {
                 profile.Leds.Add(new LedDefinition
                 {
@@ -1317,7 +1332,7 @@ namespace FanaBridge
             }
 
             // Flag LEDs — hwIndex 0..N-1
-            for (int i = 0; i < _flagCount; i++)
+            for (int i = 0; i < s.Flag.Count; i++)
             {
                 profile.Leds.Add(new LedDefinition
                 {
@@ -1328,8 +1343,8 @@ namespace FanaBridge
                 });
             }
 
-            // Colour LEDs — hwIndex 0..N-1
-            for (int i = 0; i < _colorCount; i++)
+            // Color LEDs — hwIndex 0..N-1
+            for (int i = 0; i < colorCount; i++)
             {
                 var led = new LedDefinition
                 {
@@ -1343,9 +1358,9 @@ namespace FanaBridge
                 profile.Leds.Add(led);
             }
 
-            // Mono LEDs — hw indices start after the colour slots
-            int monoStart = _colorCount;
-            for (int i = 0; i < _monoCount; i++)
+            // Mono LEDs — hw indices start after the color slots
+            int monoStart = colorCount;
+            for (int i = 0; i < monoCount; i++)
             {
                 var led = new LedDefinition
                 {
@@ -1369,7 +1384,7 @@ namespace FanaBridge
         /// </summary>
         private void ApplyInputMapping(LedDefinition led, LedChannel channel, int hwIndex)
         {
-            var entry = _inputMappingLeds?.FirstOrDefault(
+            var entry = _state.Mapping.Leds.FirstOrDefault(
                 m => m.Channel == channel && m.HwIndex == hwIndex);
             if (entry == null || !entry.HasAny) return;
 

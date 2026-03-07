@@ -151,7 +151,7 @@
             <StackPanel x:Name="stepColorLeds" Visibility="Collapsed">
                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,16">
                     All previous LEDs have been turned off.
-                    Bright GREEN has been sent to all button / colour LED slots.
+                    Bright GREEN has been sent to all button / color LED slots.
                     These are typically behind buttons or around encoder knobs.
                 </TextBlock>
                 <StackPanel HorizontalAlignment="Center">
@@ -159,7 +159,7 @@
                             HorizontalAlignment="Stretch" Margin="0,0,0,8" Click="ColorSome_Click"/>
                     <Button Content="&#x2753;  Nothing lit up (but my wheel has button LEDs)"
                             HorizontalAlignment="Stretch" Margin="0,0,0,8" Click="ColorNotWorking_Click"/>
-                    <Button Content="&#x2716;  My wheel has no button / colour LEDs"
+                    <Button Content="&#x2716;  My wheel has no button / color LEDs"
                             HorizontalAlignment="Stretch" Click="ColorNone_Click"/>
                 </StackPanel>
                 <StackPanel x:Name="panelColorCount" Orientation="Horizontal"
@@ -187,16 +187,16 @@
             <!-- Step 5: Color format probe -->
             <StackPanel x:Name="stepColorFormat" Visibility="Collapsed">
                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,8">
-                    A specific shade of green has been sent to your colour LEDs.
-                    Look at the LEDs on your wheel right now.
+                    A specific shade of green has been sent to your color LEDs.
+                    The LEDs should still be green from the previous step.
                 </TextBlock>
                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,20" FontWeight="Bold">
                     What do you see?
                 </TextBlock>
                 <StackPanel HorizontalAlignment="Center">
-                    <Button Content="&#x1F7E2;  The LEDs are green (bright or dim)"
+                    <Button Content="&#x1F7E2;  The LEDs are still green (bright or dim)"
                             HorizontalAlignment="Stretch" Margin="0,0,0,8" Click="ColorSame_Click"/>
-                    <Button Content="&#x26AB;  The LEDs are OFF or a completely wrong colour"
+                    <Button Content="&#x26AB;  The LEDs are OFF or a completely wrong color"
                             HorizontalAlignment="Stretch" Click="ColorDark_Click"/>
                 </StackPanel>
                 <TextBlock x:Name="txtColorFormatResult" HorizontalAlignment="Center"
@@ -206,16 +206,16 @@
             <!-- Step 6: Mono LED probe -->
             <StackPanel x:Name="stepMonoLeds" Visibility="Collapsed">
                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,16">
-                    All colour LEDs have been turned off, but the intensity channel
-                    is set to maximum.  Some wheels have additional single-colour
-                    (monochrome) LEDs — often behind encoder knobs — that only
-                    respond to intensity.
-                    Do you see any NEW LEDs that were NOT lit during the colour test?
+                    All color LEDs have been turned off and the intensity channel
+                    is now blinking at full brightness.  Some wheels have additional
+                    single-color (monochrome) LEDs — often behind encoder knobs —
+                    that only respond to the intensity channel.
+                    Look for any LEDs that are visibly blinking on and off right now.
                 </TextBlock>
                 <StackPanel HorizontalAlignment="Center">
-                    <Button Content="&#x2714;  I see new LEDs — let me count them"
+                    <Button Content="&#x2714;  I see LEDs blinking — let me count them"
                             HorizontalAlignment="Stretch" Margin="0,0,0,8" Click="MonoSome_Click"/>
-                    <Button Content="&#x2716;  No new LEDs appeared"
+                    <Button Content="&#x2716;  Nothing is blinking"
                             HorizontalAlignment="Stretch" Click="MonoNone_Click"/>
                 </StackPanel>
                 <StackPanel x:Name="panelMonoCount" Orientation="Horizontal"
