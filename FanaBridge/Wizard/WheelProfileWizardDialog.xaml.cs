@@ -260,11 +260,13 @@ namespace FanaBridge.Wizard
             try
             {
                 if (Device == null || !Device.IsConnected) return;
-                Device.SetRevLedColors(revColors ?? new ushort[9]);
-                Device.SetFlagLedColors(flagColors ?? new ushort[6]);
-                Device.SetButtonLedState(
+                var leds = _plugin.Leds;
+                if (leds == null) return;
+                leds.SetRevLedColors(revColors ?? new ushort[9]);
+                leds.SetFlagLedColors(flagColors ?? new ushort[6]);
+                leds.SetButtonLedState(
                     buttonColors ?? new ushort[12],
-                    buttonIntensities ?? new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE]);
+                    buttonIntensities ?? new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE]);
             }
             catch { /* best-effort */ }
         }
@@ -273,7 +275,7 @@ namespace FanaBridge.Wizard
         private void SetAllLedsOff()
         {
             SetAllLeds();
-            try { Device?.ClearDisplay(); } catch { }
+            try { _plugin.Display?.ClearDisplay(); } catch { }
         }
 
         /// <summary>Turns off every LED channel and clears the display.
@@ -288,7 +290,7 @@ namespace FanaBridge.Wizard
             SetAllLeds(); // all LEDs off
             try
             {
-                Device?.SetDisplay(
+                _plugin.Display?.SetDisplay(
                     SevenSegment.Digit8,
                     SevenSegment.Digit8,
                     SevenSegment.Digit8);
@@ -300,7 +302,7 @@ namespace FanaBridge.Wizard
         {
             // Clear the display — the "888" test pattern from the previous
             // display-detection step should not linger.
-            try { Device?.ClearDisplay(); } catch { }
+            try { _plugin.Display?.ClearDisplay(); } catch { }
 
             var colors = new ushort[9];
             for (int i = 0; i < colors.Length; i++)
@@ -319,7 +321,7 @@ namespace FanaBridge.Wizard
         private void ProbeColorLeds()
         {
             var colors = new ushort[12];
-            var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+            var intensities = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
             for (int i = 0; i < 12; i++)
             {
                 colors[i] = ColorHelper.Colors.Green;
@@ -338,7 +340,7 @@ namespace FanaBridge.Wizard
             var token = cts.Token;
 
             // Start with LEDs on
-            var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+            var intensities = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
             for (int i = 0; i < intensities.Length; i++)
                 intensities[i] = 7;
             SetAllLeds(buttonIntensities: intensities);
@@ -353,14 +355,14 @@ namespace FanaBridge.Wizard
                         if (token.IsCancellationRequested) break;
 
                         // Dim
-                        var off = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+                        var off = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
                         SetAllLeds(buttonIntensities: off);
 
                         Thread.Sleep(400);
                         if (token.IsCancellationRequested) break;
 
                         // Bright
-                        var on = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+                        var on = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
                         for (int i = 0; i < on.Length; i++)
                             on[i] = 7;
                         SetAllLeds(buttonIntensities: on);
@@ -401,7 +403,7 @@ namespace FanaBridge.Wizard
                 // Green = 128 → g6 = 32 (0x20).  Only bit 10 is set.
                 int count = Math.Max(_state.Color.Count, 1);
                 var colors = new ushort[12];
-                var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+                var intensities = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
                 ushort test = ColorHelper.RgbToRgb565(0, 128, 0);
                 for (int i = 0; i < count; i++)
                 {
@@ -664,7 +666,7 @@ namespace FanaBridge.Wizard
             // Read the current encoder mode from the device (best-effort).
             if (mapping.EncoderMode == null)
             {
-                mapping.EncoderMode = Device?.ReadEncoderMode();
+                mapping.EncoderMode = _plugin.Tuning?.ReadEncoderMode();
                 SimHub.Logging.Current.Info(
                     "WheelProfileWizard: Encoder mode = " +
                     (mapping.EncoderMode?.ToString() ?? "unknown"));
@@ -951,7 +953,7 @@ namespace FanaBridge.Wizard
             try
             {
                 var colors = new ushort[12];
-                var intensities = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+                var intensities = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
 
                 if (entry.Channel == LedChannel.Color)
                 {
@@ -1074,9 +1076,9 @@ namespace FanaBridge.Wizard
         {
             try
             {
-                Device?.SetButtonLedState(
+                _plugin.Leds?.SetButtonLedState(
                     new ushort[12],
-                    new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE]);
+                    new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE]);
             }
             catch { /* best-effort */ }
         }
@@ -1300,7 +1302,7 @@ namespace FanaBridge.Wizard
             // Re-enable normal SimHub LED output and force a full resend
             // so the device instance picks up where it left off.
             _plugin.WizardActive = false;
-            _plugin.Device?.ForceDirty();
+            _plugin.Leds?.ForceDirty();
 
             base.OnClosed(e);
         }

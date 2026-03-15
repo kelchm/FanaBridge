@@ -24,6 +24,9 @@ namespace FanaBridge
         private FanatecSdkManager _sdk;
         private FanatecDevice _device;
         private ConnectionMonitor _connectionMonitor;
+        private FanatecTuningController _tuning;
+        private LedEncoder _leds;
+        private DisplayEncoder _display;
 
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
         public event Action StateChanged;
@@ -53,6 +56,15 @@ namespace FanaBridge
         /// <summary>Shared HID device — used by DeviceInstance wrappers for hardware I/O.</summary>
         public FanatecDevice Device => _device;
 
+        /// <summary>Shared LED encoder — used by DeviceInstance LED drivers and wizard.</summary>
+        public LedEncoder Leds => _leds;
+
+        /// <summary>Shared display encoder — used by DeviceInstance display managers and wizard.</summary>
+        public DisplayEncoder Display => _display;
+
+        /// <summary>Shared tuning controller — used by TuningSettingsPanel for encoder config.</summary>
+        public FanatecTuningController Tuning => _tuning;
+
         public PluginManager PluginManager { get; set; }
 
         public ImageSource PictureIcon => new BitmapImage(new Uri(
@@ -71,6 +83,12 @@ namespace FanaBridge
 
             _sdk = new FanatecSdkManager();
             _device = new FanatecDevice();
+            _leds = new LedEncoder(_device);
+            _display = new DisplayEncoder(_device);
+            _tuning = new FanatecTuningController(
+                _device,
+                msg => SimHub.Logging.Current.Warn(msg),
+                msg => SimHub.Logging.Current.Info(msg));
 
             // Wire up profile override resolution from plugin settings
             _sdk.ProfileOverrideResolver = (matchKey) =>
@@ -127,7 +145,7 @@ namespace FanaBridge
                 // but our dirty-tracking arrays still hold the old instance's
                 // last output.  Force a full resend on the next frame so the
                 // new DeviceInstance's first write always reaches hardware.
-                _device.ForceDirty();
+                _leds.ForceDirty();
 
                 this.TriggerEvent("WheelChanged");
                 StateChanged?.Invoke();
@@ -157,7 +175,7 @@ namespace FanaBridge
             {
                 try
                 {
-                    _device.ClearDisplay();
+                    _display.ClearDisplay();
                 }
                 catch (Exception ex)
                 {

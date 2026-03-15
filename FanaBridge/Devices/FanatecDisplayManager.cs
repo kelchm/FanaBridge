@@ -14,7 +14,7 @@ namespace FanaBridge.Devices
     /// </summary>
     public class FanatecDisplayManager
     {
-        private readonly FanatecDevice _device;
+        private readonly DisplayEncoder _display;
         private JObject _settings;
 
         private string _currentText = "";
@@ -25,9 +25,9 @@ namespace FanaBridge.Devices
         private int _lastSentSpeed = int.MinValue;
         private string _lastDisplayMode;
 
-        public FanatecDisplayManager(FanatecDevice device, JObject settings)
+        public FanatecDisplayManager(DisplayEncoder display, JObject settings)
         {
-            _device = device;
+            _display = display;
             _settings = settings ?? new JObject();
         }
 
@@ -82,7 +82,7 @@ namespace FanaBridge.Devices
         /// </summary>
         public void Clear()
         {
-            _device.ClearDisplay();
+            _display.ClearDisplay();
             _currentText = "";
             _currentGear = "";
             _lastSentGear = int.MinValue;
@@ -101,7 +101,7 @@ namespace FanaBridge.Devices
             if (gear == _lastSentGear && _lastDisplayMode == "Gear")
                 return;
 
-            _device.DisplayGear(gear);
+            _display.DisplayGear(gear);
             _lastSentGear = gear;
             _lastDisplayMode = "Gear";
             _currentGear = GearToString(gear);
@@ -117,7 +117,7 @@ namespace FanaBridge.Devices
             if (speed == _lastSentSpeed && _lastDisplayMode == "Speed")
                 return;
 
-            _device.DisplaySpeed(speed);
+            _display.DisplaySpeed(speed);
             _lastSentSpeed = speed;
             _lastDisplayMode = "Speed";
             _currentText = speed.ToString();
@@ -135,7 +135,7 @@ namespace FanaBridge.Devices
                 // Show speed when in pit or nearly stopped
                 if (speed != _lastSentSpeed || _lastDisplayMode != "GearSpeed_Speed")
                 {
-                    _device.DisplaySpeed(speed);
+                    _display.DisplaySpeed(speed);
                     _lastSentSpeed = speed;
                     _lastDisplayMode = "GearSpeed_Speed";
                     _currentText = speed.ToString();
@@ -149,7 +149,7 @@ namespace FanaBridge.Devices
 
                 if (gear != _lastSentGear || _lastDisplayMode != "GearSpeed_Gear")
                 {
-                    _device.DisplayGear(gear);
+                    _display.DisplayGear(gear);
                     _lastSentGear = gear;
                     _lastDisplayMode = "GearSpeed_Gear";
                     _currentGear = GearToString(gear);

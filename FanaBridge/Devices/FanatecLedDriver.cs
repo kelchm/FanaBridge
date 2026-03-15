@@ -81,7 +81,7 @@ namespace FanaBridge.Devices
             _revColors = new ushort[caps.RevLedCount];
             _flagColors = new ushort[caps.FlagLedCount];
             _buttonColors = new ushort[Math.Max(_colorSlotCount, 0)];
-            _intensityPayload = new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE];
+            _intensityPayload = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
 
             _buttonColorConverter = caps.ColorFormat == ColorFormat.Rgb555
                 ? (Func<Color, ushort>)ColorHelper.ToRgb555Premultiplied
@@ -117,16 +117,16 @@ namespace FanaBridge.Devices
         {
             try
             {
-                var device = FanatecPlugin.Instance?.Device;
-                if (device == null) return;
+                var leds = FanatecPlugin.Instance?.Leds;
+                if (leds == null) return;
 
                 if (_caps.HasRevLeds)
-                    device.SetRevLedColors(new ushort[_caps.RevLedCount]);
+                    leds.SetRevLedColors(new ushort[_caps.RevLedCount]);
                 if (_caps.HasFlagLeds)
-                    device.SetFlagLedColors(new ushort[_caps.FlagLedCount]);
+                    leds.SetFlagLedColors(new ushort[_caps.FlagLedCount]);
                 if (_colorSlotCount > 0 || _caps.MonoLedCount > 0)
-                    device.SetButtonLedState(new ushort[_colorSlotCount],
-                                              new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE]);
+                    leds.SetButtonLedState(new ushort[_colorSlotCount],
+                                              new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE]);
             }
             catch (Exception ex)
             {
@@ -149,7 +149,8 @@ namespace FanaBridge.Devices
         public bool SendLeds(LedDeviceState state, bool forceRefresh)
         {
             var device = FanatecPlugin.Instance?.Device;
-            if (device == null || !device.IsConnected)
+            var leds = FanatecPlugin.Instance?.Leds;
+            if (device == null || !device.IsConnected || leds == null)
                 return false;
 
             bool ok = true;
@@ -195,13 +196,13 @@ namespace FanaBridge.Devices
 
             // ── Send to hardware ─────────────────────────────────────
             if (_caps.HasRevLeds)
-                ok = device.SetRevLedColors(_revColors) && ok;
+                ok = leds.SetRevLedColors(_revColors) && ok;
 
             if (_caps.HasFlagLeds)
-                ok = device.SetFlagLedColors(_flagColors) && ok;
+                ok = leds.SetFlagLedColors(_flagColors) && ok;
 
             if (_colorSlotCount > 0 || _caps.MonoLedCount > 0)
-                ok = device.SetButtonLedState(_buttonColors, _intensityPayload) && ok;
+                ok = leds.SetButtonLedState(_buttonColors, _intensityPayload) && ok;
 
             return ok;
         }

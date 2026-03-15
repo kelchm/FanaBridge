@@ -541,7 +541,7 @@ namespace FanaBridge
             {
                 // Fits on the display — just send it
                 SimHub.Logging.Current.Info($"SettingsControl: Sending display text \"{text}\"");
-                Plugin.Device.DisplayText(text);
+                Plugin.Display.DisplayText(text);
                 return;
             }
 
@@ -554,14 +554,14 @@ namespace FanaBridge
         {
             StopScroll();
             if (Plugin != null && Plugin.IsDeviceConnected)
-                Plugin.Device.ClearDisplay();
+                Plugin.Display.ClearDisplay();
         }
 
         private void BtnClearDisplay_Click(object sender, RoutedEventArgs e)
         {
             StopScroll();
             if (Plugin == null || !Plugin.IsDeviceConnected) return;
-            Plugin.Device.ClearDisplay();
+            Plugin.Display.ClearDisplay();
         }
 
         /// <summary>
@@ -620,7 +620,7 @@ namespace FanaBridge
                 _scrollPos = 0;
             }
 
-            Plugin.Device.SetDisplay(
+            Plugin.Display.SetDisplay(
                 frames[pos],
                 frames[pos + 1],
                 frames[pos + 2]);

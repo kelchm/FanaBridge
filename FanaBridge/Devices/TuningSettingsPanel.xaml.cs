@@ -65,10 +65,10 @@ namespace FanaBridge.Devices
                 string modeTag = null;
                 byte[] rawDump = null;
 
-                var device = FanatecPlugin.Instance?.Device;
-                if (device != null && device.IsConnected)
+                var tuning = FanatecPlugin.Instance?.Tuning;
+                if (tuning != null && tuning.IsConnected)
                 {
-                    rawDump = device.ReadTuningStateRaw();
+                    rawDump = tuning.ReadTuningStateRaw();
                     if (rawDump != null)
                     {
                         byte raw = rawDump[18]; // TUNING_READ_ENCODER_MODE_OFFSET
@@ -144,13 +144,13 @@ namespace FanaBridge.Devices
             // Send to hardware immediately
             try
             {
-                var device = FanatecPlugin.Instance?.Device;
-                if (device != null && device.IsConnected)
+                var tuning = FanatecPlugin.Instance?.Tuning;
+                if (tuning != null && tuning.IsConnected)
                 {
                     EncoderMode mode;
                     if (Enum.TryParse(modeTag, true, out mode))
                     {
-                        bool ok = device.SetEncoderMode(mode);
+                        bool ok = tuning.SetEncoderMode(mode);
                         SimHub.Logging.Current.Info(
                             "TuningSettingsPanel: Encoder mode → " + mode + " (" + (ok ? "OK" : "FAILED") + ")");
                     }

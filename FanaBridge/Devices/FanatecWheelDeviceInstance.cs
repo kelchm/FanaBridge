@@ -242,7 +242,7 @@ namespace FanaBridge.Devices
             {
                 if (_displayManager == null)
                 {
-                    _displayManager = new FanatecDisplayManager(device, _customSettings);
+                    _displayManager = new FanatecDisplayManager(plugin.Display, _customSettings);
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
                 }
