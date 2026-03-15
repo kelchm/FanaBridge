@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using Newtonsoft.Json;
 
 namespace FanaBridge.Profiles
@@ -9,6 +10,11 @@ namespace FanaBridge.Profiles
     /// <summary>
     /// Loads <see cref="WheelProfile"/> definitions and provides lookup by
     /// SDK wheel/module type.
+    ///
+    /// Thread-safe via snapshot-and-swap: all read methods capture a local
+    /// reference to the current immutable snapshot, so concurrent reads never
+    /// see partially-populated state even if <see cref="Reload"/> is running
+    /// on another thread.
     ///
     /// Loading order (later entries override earlier ones with the same ID):
     ///   1. Built-in profiles embedded in the plugin DLL as assembly resources.
@@ -18,18 +24,37 @@ namespace FanaBridge.Profiles
     /// </summary>
     public static class WheelProfileStore
     {
-        /// <summary>All loaded profiles (may contain multiple entries for the same wheel).</summary>
-        private static readonly List<WheelProfile> _all = new List<WheelProfile>();
+        /// <summary>
+        /// Immutable snapshot of loaded profiles.  Replaced atomically by
+        /// <see cref="Reload"/> and <see cref="DeleteUserProfile"/>.
+        /// </summary>
+        private class ProfileSnapshot
+        {
+            public IReadOnlyList<WheelProfile> All { get; }
+            public IReadOnlyDictionary<string, WheelProfile> ById { get; }
+
+            public ProfileSnapshot(
+                List<WheelProfile> all,
+                Dictionary<string, WheelProfile> byId)
+            {
+                All = all;
+                ById = byId;
+            }
+        }
+
+        private static volatile ProfileSnapshot _snapshot;
 
         /// <summary>
-        /// Auto-resolution lookup: maps profile ID to the "winning" entry.
-        /// When a user profile has the same ID as a built-in, the user version
-        /// wins here, but the built-in remains in <see cref="_all"/>.
+        /// Returns the current snapshot, loading if necessary.
+        /// All public read methods call this to get a consistent view.
         /// </summary>
-        private static readonly Dictionary<string, WheelProfile> _byId
-            = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
-
-        private static bool _loaded;
+        private static ProfileSnapshot GetSnapshot()
+        {
+            var snap = _snapshot;
+            if (snap != null) return snap;
+            EnsureLoaded();
+            return _snapshot;
+        }
 
         /// <summary>
         /// Loads all profiles from embedded resources and user directory.
@@ -37,34 +62,33 @@ namespace FanaBridge.Profiles
         /// </summary>
         public static void EnsureLoaded()
         {
-            if (_loaded) return;
-            _loaded = true;
-
-            // 1. Built-in profiles: embedded in the assembly (immutable)
-            LoadFromEmbeddedResources();
-
-            // 2. User profiles: writable directory on disk (overrides built-in)
-            string userDir = GetUserProfileDirectory();
-            if (userDir != null)
-                LoadFromDirectory(userDir);
-
-            SimHub.Logging.Current.Info(
-                "WheelProfileStore: Loaded " + _all.Count + " profile(s) (" + _byId.Count + " unique IDs)");
+            if (_snapshot != null) return;
+            Reload();
         }
 
         /// <summary>
         /// Reloads all profiles from scratch (embedded + user directory).
         /// Called after the wizard saves a new profile so the change takes
         /// effect immediately without restarting SimHub.
+        /// Builds a new snapshot and swaps it in atomically.
         /// </summary>
         public static void Reload()
         {
-            _all.Clear();
-            _byId.Clear();
-            _loaded = false;
-            EnsureLoaded();
+            var all = new List<WheelProfile>();
+            var byId = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
+
+            // 1. Built-in profiles: embedded in the assembly (immutable)
+            LoadFromEmbeddedResources(all, byId);
+
+            // 2. User profiles: writable directory on disk (overrides built-in)
+            string userDir = GetUserProfileDirectory();
+            if (userDir != null)
+                LoadFromDirectory(userDir, all, byId);
+
+            Interlocked.Exchange(ref _snapshot, new ProfileSnapshot(all, byId));
+
             SimHub.Logging.Current.Info(
-                "WheelProfileStore: Reloaded — " + _all.Count + " profile(s)");
+                "WheelProfileStore: Loaded " + all.Count + " profile(s) (" + byId.Count + " unique IDs)");
         }
 
         /// <summary>
@@ -94,7 +118,8 @@ namespace FanaBridge.Profiles
         /// Loads profile JSON from assembly embedded resources.
         /// Resource names matching "*.Profiles.*.json" are treated as profiles.
         /// </summary>
-        private static void LoadFromEmbeddedResources()
+        private static void LoadFromEmbeddedResources(
+            List<WheelProfile> all, Dictionary<string, WheelProfile> byId)
         {
             var assembly = typeof(WheelProfileStore).Assembly;
 
@@ -124,8 +149,8 @@ namespace FanaBridge.Profiles
                                 continue;
                             }
 
-                            _byId[profile.Id] = profile;
-                            _all.Add(profile);
+                            byId[profile.Id] = profile;
+                            all.Add(profile);
                             profile.Source = ProfileSource.BuiltIn;
                             profile.SourcePath = resourceName;
                             SimHub.Logging.Current.Info(
@@ -146,7 +171,8 @@ namespace FanaBridge.Profiles
         /// Loads all .json files from a directory into the store.
         /// Files loaded later override earlier ones with the same ID.
         /// </summary>
-        private static void LoadFromDirectory(string directory)
+        private static void LoadFromDirectory(
+            string directory, List<WheelProfile> all, Dictionary<string, WheelProfile> byId)
         {
             if (!Directory.Exists(directory))
                 return;
@@ -168,15 +194,15 @@ namespace FanaBridge.Profiles
                     profile.Source = ProfileSource.User;
                     profile.SourcePath = file;
 
-                    bool wasBuiltIn = _byId.TryGetValue(profile.Id, out var existing)
+                    bool wasBuiltIn = byId.TryGetValue(profile.Id, out var existing)
                         && existing.Source == ProfileSource.BuiltIn;
-                    bool wasUser = _byId.TryGetValue(profile.Id, out var existingUser)
+                    bool wasUser = byId.TryGetValue(profile.Id, out var existingUser)
                         && existingUser.Source == ProfileSource.User;
 
                     // User profile wins in the auto-resolution dictionary,
-                    // but the built-in remains in _all for the profile picker.
-                    _byId[profile.Id] = profile;
-                    _all.Add(profile);
+                    // but the built-in remains in all for the profile picker.
+                    byId[profile.Id] = profile;
+                    all.Add(profile);
 
                     if (wasUser)
                     {
@@ -210,8 +236,8 @@ namespace FanaBridge.Profiles
         /// </summary>
         public static WheelProfile GetById(string id)
         {
-            EnsureLoaded();
-            return _byId.TryGetValue(id, out var profile) ? profile : null;
+            var snap = GetSnapshot();
+            return snap.ById.TryGetValue(id, out var profile) ? profile : null;
         }
 
         /// <summary>
@@ -221,8 +247,8 @@ namespace FanaBridge.Profiles
         /// </summary>
         public static WheelProfile GetById(string id, ProfileSource source)
         {
-            EnsureLoaded();
-            return _all.FirstOrDefault(p =>
+            var snap = GetSnapshot();
+            return snap.All.FirstOrDefault(p =>
                 string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase)
                 && p.Source == source);
         }
@@ -250,7 +276,7 @@ namespace FanaBridge.Profiles
         public static WheelProfile FindByWheelType(
             string wheelType, string moduleType, string overrideId)
         {
-            EnsureLoaded();
+            var snap = GetSnapshot();
 
             // 0. Explicit user override (from plugin settings).
             //    An override key is "ID:source" (e.g. "PHUB_PBMR:BuiltIn")
@@ -267,16 +293,16 @@ namespace FanaBridge.Profiles
             if (!string.IsNullOrEmpty(moduleType))
             {
                 string compoundId = wheelType + "_" + moduleType;
-                if (_byId.TryGetValue(compoundId, out var compound))
+                if (snap.ById.TryGetValue(compoundId, out var compound))
                     return compound;
             }
 
             // Fall back to wheel-only key
-            if (_byId.TryGetValue(wheelType, out var profile))
+            if (snap.ById.TryGetValue(wheelType, out var profile))
                 return profile;
 
             // Scan by match criteria (for profiles that use non-standard IDs)
-            foreach (var p in _byId.Values)
+            foreach (var p in snap.ById.Values)
             {
                 if (p.Match == null) continue;
 
@@ -305,8 +331,7 @@ namespace FanaBridge.Profiles
         /// </summary>
         public static IEnumerable<WheelProfile> GetAll()
         {
-            EnsureLoaded();
-            return _all;
+            return GetSnapshot().All;
         }
 
         /// <summary>
@@ -318,10 +343,10 @@ namespace FanaBridge.Profiles
         public static List<WheelProfile> FindAllForWheel(
             string wheelType, string moduleType = null)
         {
-            EnsureLoaded();
+            var snap = GetSnapshot();
             var results = new List<WheelProfile>();
 
-            foreach (var p in _all)
+            foreach (var p in snap.All)
             {
                 if (p.Match == null) continue;
 
@@ -356,10 +381,9 @@ namespace FanaBridge.Profiles
         /// </summary>
         public static bool DeleteUserProfile(string profileId)
         {
-            EnsureLoaded();
+            var snap = GetSnapshot();
 
-            // Find the user entry in _all
-            var userProfile = _all.FirstOrDefault(p =>
+            var userProfile = snap.All.FirstOrDefault(p =>
                 string.Equals(p.Id, profileId, StringComparison.OrdinalIgnoreCase)
                 && p.Source == ProfileSource.User);
 
@@ -375,21 +399,19 @@ namespace FanaBridge.Profiles
                 if (!string.IsNullOrEmpty(userProfile.SourcePath) && File.Exists(userProfile.SourcePath))
                     File.Delete(userProfile.SourcePath);
 
-                _all.Remove(userProfile);
+                // Build a new snapshot without the deleted profile.
+                // Iterate in load order so "last wins" for byId is preserved.
+                var newAll = new List<WheelProfile>(snap.All.Count);
+                var newById = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
 
-                // If the auto-resolution winner was this user profile, restore
-                // the built-in (if any) or remove the entry.
-                if (_byId.TryGetValue(profileId, out var winner) && winner == userProfile)
+                foreach (var p in snap.All)
                 {
-                    var builtIn = _all.FirstOrDefault(p =>
-                        string.Equals(p.Id, profileId, StringComparison.OrdinalIgnoreCase)
-                        && p.Source == ProfileSource.BuiltIn);
-
-                    if (builtIn != null)
-                        _byId[profileId] = builtIn;
-                    else
-                        _byId.Remove(profileId);
+                    if (p == userProfile) continue;
+                    newAll.Add(p);
+                    newById[p.Id] = p; // last wins (user > built-in)
                 }
+
+                Interlocked.Exchange(ref _snapshot, new ProfileSnapshot(newAll, newById));
 
                 SimHub.Logging.Current.Info(
                     "WheelProfileStore: Deleted user profile '" + profileId + "'");
@@ -424,7 +446,7 @@ namespace FanaBridge.Profiles
             if (string.IsNullOrEmpty(overrideKey))
                 return null;
 
-            EnsureLoaded();
+            var snap = GetSnapshot();
 
             int sep = overrideKey.LastIndexOf(':');
             if (sep > 0 && sep < overrideKey.Length - 1)
@@ -436,8 +458,8 @@ namespace FanaBridge.Profiles
                     return GetById(id, source);
             }
 
-            // Legacy / simple key — fall back to _byId lookup
-            return _byId.TryGetValue(overrideKey, out var p) ? p : null;
+            // Legacy / simple key — fall back to ById lookup
+            return snap.ById.TryGetValue(overrideKey, out var p) ? p : null;
         }
 
         /// <summary>

@@ -1,4 +1,6 @@
 using FanaBridge.Profiles;
+using FanaBridge.Protocol;
+using FanaBridge.Transport;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.PSE;
 
 namespace FanaBridge.Adapters
@@ -21,6 +23,8 @@ namespace FanaBridge.Adapters
     public class FanatecLedManager : LedsGenericManager<FanatecLedDriver>
     {
         private readonly WheelCapabilities _caps;
+        private readonly LedEncoder _leds;
+        private readonly IDeviceTransport _transport;
         private FanatecLedDriver _driver;
 
         /// <summary>
@@ -37,9 +41,11 @@ namespace FanaBridge.Adapters
         /// <summary>
         /// Creates a manager configured for a specific wheel's LED layout.
         /// </summary>
-        public FanatecLedManager(WheelCapabilities caps)
+        public FanatecLedManager(WheelCapabilities caps, LedEncoder leds, IDeviceTransport transport)
         {
             _caps = caps ?? WheelCapabilities.None;
+            _leds = leds;
+            _transport = transport;
         }
 
         // ── LedsGenericManager<T> overrides ──────────────────────────────
@@ -50,7 +56,7 @@ namespace FanaBridge.Adapters
         /// </summary>
         public override FanatecLedDriver GetDriver()
         {
-            _driver = new FanatecLedDriver(_caps);
+            _driver = new FanatecLedDriver(_caps, _leds, _transport);
 
             SimHub.Logging.Current.Info(
                 "FanatecLedManager: Created driver for " + (_caps.Name ?? "unknown") +

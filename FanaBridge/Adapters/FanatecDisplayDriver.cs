@@ -1,6 +1,5 @@
 using FanaBridge.Protocol;
 using GameReaderCommon;
-using Newtonsoft.Json.Linq;
 using System;
 
 namespace FanaBridge.Adapters
@@ -15,7 +14,7 @@ namespace FanaBridge.Adapters
     public class FanatecDisplayDriver
     {
         private readonly DisplayEncoder _display;
-        private JObject _settings;
+        private DisplaySettings _settings;
 
         private string _currentText = "";
         private string _currentGear = "";
@@ -25,24 +24,24 @@ namespace FanaBridge.Adapters
         private int _lastSentSpeed = int.MinValue;
         private string _lastDisplayMode;
 
-        public FanatecDisplayDriver(DisplayEncoder display, JObject settings)
+        public FanatecDisplayDriver(DisplayEncoder display, DisplaySettings settings)
         {
             _display = display;
-            _settings = settings ?? new JObject();
+            _settings = settings ?? new DisplaySettings();
         }
 
         /// <summary>
-        /// Replaces the settings JObject (e.g. after SetSettings in the DeviceInstance).
+        /// Replaces the settings (e.g. after SetSettings in the DeviceInstance).
         /// </summary>
-        public void UpdateSettings(JObject settings)
+        public void UpdateSettings(DisplaySettings settings)
         {
-            _settings = settings ?? new JObject();
+            _settings = settings ?? new DisplaySettings();
         }
 
         /// <summary>The current display mode string ("Gear", "Speed", "GearAndSpeed").</summary>
         public string DisplayMode
         {
-            get { return (string)_settings["displayMode"] ?? "Gear"; }
+            get { return _settings.DisplayMode ?? DisplaySettings.DefaultMode; }
         }
 
         /// <summary>Current displayed text (for SimHub properties).</summary>

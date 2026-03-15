@@ -41,6 +41,7 @@ namespace FanaBridge.Adapters
 
         // Display manager — null when the wheel has no display.
         private FanatecDisplayDriver _displayManager;
+        private DisplaySettings _displaySettings = new DisplaySettings();
 
         // Track connection state transitions for cleanup on disconnect.
         private bool _wasConnected;
@@ -68,7 +69,8 @@ namespace FanaBridge.Adapters
 
             if (allLeds == 0) return;
 
-            var manager = new FanatecLedManager(caps);
+            var plugin = FanatecPlugin.Instance;
+            var manager = new FanatecLedManager(caps, plugin.Leds, plugin.Device);
             var options = new LedModuleOptions
             {
                 DeviceName = caps.ShortName ?? caps.Name,
@@ -107,8 +109,9 @@ namespace FanaBridge.Adapters
             {
                 ["wheelType"] = _config.WheelType.ToString(),
                 ["moduleType"] = _config.ModuleType.ToString(),
-                ["displayMode"] = "Gear",
+                ["displayMode"] = DisplaySettings.DefaultMode,
             };
+            _displaySettings = new DisplaySettings();
 
             if (_ledModule != null)
                 _ledModule.LoadDefaults();
@@ -206,7 +209,11 @@ namespace FanaBridge.Adapters
                 }
             }
 
-            _displayManager?.UpdateSettings(_customSettings);
+            _displaySettings = new DisplaySettings
+            {
+                DisplayMode = (string)_customSettings["displayMode"] ?? DisplaySettings.DefaultMode,
+            };
+            _displayManager?.UpdateSettings(_displaySettings);
         }
 
         public override void DataUpdate(PluginManager pluginManager, ref GameData data)
@@ -245,7 +252,7 @@ namespace FanaBridge.Adapters
             {
                 if (_displayManager == null)
                 {
-                    _displayManager = new FanatecDisplayDriver(plugin.Display, _customSettings);
+                    _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
                 }
@@ -301,10 +308,12 @@ namespace FanaBridge.Adapters
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 var screenPanel = new ScreenSettingsPanel();
-                screenPanel.Bind(_customSettings);
+                screenPanel.Bind(_displaySettings);
                 screenPanel.SettingsChanged += () =>
                 {
-                    _displayManager?.UpdateSettings(_customSettings);
+                    // Sync back to JObject for persistence
+                    _customSettings["displayMode"] = _displaySettings.DisplayMode;
+                    _displayManager?.UpdateSettings(_displaySettings);
                 };
 
                 yield return new DeviceSettingControl(

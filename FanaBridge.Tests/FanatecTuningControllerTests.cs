@@ -236,7 +236,7 @@ namespace FanaBridge.Tests
 
             Assert.False(ok);
             // No write should have been sent (only the read request)
-            Assert.Equal(1, transport.SentCol03Reports.Count);
+            Assert.Single(transport.SentCol03Reports);
             Assert.Empty(transport.SentCol01Reports);
         }
 

@@ -7,6 +7,7 @@ using BA63Driver.Mapper;
 using FanaBridge;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
+using FanaBridge.Transport;
 
 namespace FanaBridge.Adapters
 {
@@ -35,6 +36,8 @@ namespace FanaBridge.Adapters
         private readonly WheelCapabilities _caps;
         private readonly WheelProfile _profile;
         private readonly PhysicalMapper _mapper;
+        private readonly LedEncoder _leds;
+        private readonly IDeviceTransport _transport;
 
         // Pre-built dispatch table: for each logical LED index, the channel
         // and hardware index to write to.  Built once from the profile.
@@ -55,9 +58,11 @@ namespace FanaBridge.Adapters
         // depending on the hardware. Resolved once in the constructor.
         private readonly Func<Color, ushort> _buttonColorConverter;
 
-        public FanatecLedDriver(WheelCapabilities caps)
+        public FanatecLedDriver(WheelCapabilities caps, LedEncoder leds, IDeviceTransport transport)
         {
             _caps = caps ?? throw new ArgumentNullException(nameof(caps));
+            _leds = leds ?? throw new ArgumentNullException(nameof(leds));
+            _transport = transport ?? throw new ArgumentNullException(nameof(transport));
             _profile = caps.Profile;
 
             // Build dispatch tables from the profile
@@ -99,8 +104,7 @@ namespace FanaBridge.Adapters
             {
                 try
                 {
-                    var device = FanatecPlugin.Instance?.Device;
-                    return device != null && device.IsConnected;
+                    return _transport.IsConnected;
                 }
                 catch
                 {
@@ -118,15 +122,12 @@ namespace FanaBridge.Adapters
         {
             try
             {
-                var leds = FanatecPlugin.Instance?.Leds;
-                if (leds == null) return;
-
                 if (_caps.HasRevLeds)
-                    leds.SetRevLedColors(new ushort[_caps.RevLedCount]);
+                    _leds.SetRevLedColors(new ushort[_caps.RevLedCount]);
                 if (_caps.HasFlagLeds)
-                    leds.SetFlagLedColors(new ushort[_caps.FlagLedCount]);
+                    _leds.SetFlagLedColors(new ushort[_caps.FlagLedCount]);
                 if (_colorSlotCount > 0 || _caps.MonoLedCount > 0)
-                    leds.SetButtonLedState(new ushort[_colorSlotCount],
+                    _leds.SetButtonLedState(new ushort[_colorSlotCount],
                                               new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE]);
             }
             catch (Exception ex)
@@ -149,9 +150,7 @@ namespace FanaBridge.Adapters
         /// </summary>
         public bool SendLeds(LedDeviceState state, bool forceRefresh)
         {
-            var device = FanatecPlugin.Instance?.Device;
-            var leds = FanatecPlugin.Instance?.Leds;
-            if (device == null || !device.IsConnected || leds == null)
+            if (!_transport.IsConnected)
                 return false;
 
             bool ok = true;
@@ -197,13 +196,13 @@ namespace FanaBridge.Adapters
 
             // ── Send to hardware ─────────────────────────────────────
             if (_caps.HasRevLeds)
-                ok = leds.SetRevLedColors(_revColors) && ok;
+                ok = _leds.SetRevLedColors(_revColors) && ok;
 
             if (_caps.HasFlagLeds)
-                ok = leds.SetFlagLedColors(_flagColors) && ok;
+                ok = _leds.SetFlagLedColors(_flagColors) && ok;
 
             if (_colorSlotCount > 0 || _caps.MonoLedCount > 0)
-                ok = leds.SetButtonLedState(_buttonColors, _intensityPayload) && ok;
+                ok = _leds.SetButtonLedState(_buttonColors, _intensityPayload) && ok;
 
             return ok;
         }
