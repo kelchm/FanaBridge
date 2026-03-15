@@ -9,21 +9,6 @@ using Microsoft.Win32.SafeHandles;
 namespace FanaBridge
 {
     /// <summary>
-    /// Encoder operating mode for Fanatec button modules.
-    /// Sent as byte 19 in the col03 tuning configuration report (cmd 0x03).
-    /// </summary>
-    public enum EncoderMode : byte
-    {
-        /// <summary>Relative / incremental — sends CW/CCW pulses.</summary>
-        Encoder = 0x00,
-        /// <summary>Absolute — sends position as individual button presses (pulse).</summary>
-        Pulse = 0x01,
-        /// <summary>Absolute — holds button for current position (constant).</summary>
-        Constant = 0x02,
-        /// <summary>Firmware auto-selects between modes based on interaction.</summary>
-        Auto = 0x03,
-    }
-    /// <summary>
     /// HID communication layer for Fanatec wheel LED and display control.
     /// Ported from the standalone PoC to .NET Framework 4.8.
     /// </summary>
@@ -88,6 +73,14 @@ namespace FanaBridge
         private const byte COL01_SUBCMD_TUNING_ACK = 0x06;
         private const int TUNING_ACK_BURST_COUNT = 4;
         private const int TUNING_ACK_BURST_DELAY_MS = 1;
+
+        // ── Write serialization ────────────────────────────────────────────
+        // All public methods that send HID reports acquire this lock so that
+        // multi-report sequences (staged button commit, tuning read-modify-
+        // write, wizard SetAllLeds) execute atomically.  The private
+        // SendLedReport / SendDisplayReport helpers are called *inside* the
+        // lock and must NOT acquire it themselves.
+        private readonly object _writeLock = new object();
 
         // ── Dirty tracking — skip redundant HID writes ───────────────────
         // Color tracking keyed by subcmd; missing entry = dirty (forces send).
@@ -338,66 +331,69 @@ namespace FanaBridge
             if (colors == null || colors.Length == 0 || colors.Length > MAX_BUTTON_LEDS) return false;
             if (intensityPayload == null || intensityPayload.Length != INTENSITY_PAYLOAD_SIZE) return false;
 
-            int ledCount = colors.Length;
-
-            // Check color changes via dictionary-based tracking
-            ushort[] lastC;
-            bool colorsChanged = true;
-            if (_lastColors.TryGetValue(SUBCMD_BUTTON_COLORS, out lastC) && lastC.Length == ledCount)
+            lock (_writeLock)
             {
-                colorsChanged = false;
-                for (int i = 0; i < ledCount; i++)
+                int ledCount = colors.Length;
+
+                // Check color changes via dictionary-based tracking
+                ushort[] lastC;
+                bool colorsChanged = true;
+                if (_lastColors.TryGetValue(SUBCMD_BUTTON_COLORS, out lastC) && lastC.Length == ledCount)
                 {
-                    if (colors[i] != lastC[i]) { colorsChanged = true; break; }
+                    colorsChanged = false;
+                    for (int i = 0; i < ledCount; i++)
+                    {
+                        if (colors[i] != lastC[i]) { colorsChanged = true; break; }
+                    }
                 }
-            }
 
-            // Check intensity changes
-            bool intensitiesChanged = true;
-            if (_lastIntensities != null && _lastIntensities.Length == INTENSITY_PAYLOAD_SIZE)
-            {
-                intensitiesChanged = false;
-                for (int i = 0; i < INTENSITY_PAYLOAD_SIZE; i++)
+                // Check intensity changes
+                bool intensitiesChanged = true;
+                if (_lastIntensities != null && _lastIntensities.Length == INTENSITY_PAYLOAD_SIZE)
                 {
-                    if (intensityPayload[i] != _lastIntensities[i]) { intensitiesChanged = true; break; }
+                    intensitiesChanged = false;
+                    for (int i = 0; i < INTENSITY_PAYLOAD_SIZE; i++)
+                    {
+                        if (intensityPayload[i] != _lastIntensities[i]) { intensitiesChanged = true; break; }
+                    }
                 }
-            }
 
-            if (!colorsChanged && !intensitiesChanged)
-                return true;
+                if (!colorsChanged && !intensitiesChanged)
+                    return true;
 
-            // Stage whichever reports changed, then commit with the last one.
-            bool ok = true;
+                // Stage whichever reports changed, then commit with the last one.
+                bool ok = true;
 
-            if (colorsChanged && intensitiesChanged)
-            {
-                ok = SendButtonColorReport(colors, commit: false);
-                ok = SendButtonIntensityReport(intensityPayload, commit: true) && ok;
-            }
-            else if (colorsChanged)
-            {
-                ok = SendButtonColorReport(colors, commit: true);
-            }
-            else
-            {
-                ok = SendButtonIntensityReport(intensityPayload, commit: true);
-            }
-
-            if (ok)
-            {
-                if (lastC == null || lastC.Length != ledCount)
+                if (colorsChanged && intensitiesChanged)
                 {
-                    lastC = new ushort[ledCount];
-                    _lastColors[SUBCMD_BUTTON_COLORS] = lastC;
+                    ok = SendButtonColorReport(colors, commit: false);
+                    ok = SendButtonIntensityReport(intensityPayload, commit: true) && ok;
                 }
-                Array.Copy(colors, lastC, ledCount);
+                else if (colorsChanged)
+                {
+                    ok = SendButtonColorReport(colors, commit: true);
+                }
+                else
+                {
+                    ok = SendButtonIntensityReport(intensityPayload, commit: true);
+                }
 
-                if (_lastIntensities == null)
-                    _lastIntensities = new byte[INTENSITY_PAYLOAD_SIZE];
-                Array.Copy(intensityPayload, _lastIntensities, INTENSITY_PAYLOAD_SIZE);
+                if (ok)
+                {
+                    if (lastC == null || lastC.Length != ledCount)
+                    {
+                        lastC = new ushort[ledCount];
+                        _lastColors[SUBCMD_BUTTON_COLORS] = lastC;
+                    }
+                    Array.Copy(colors, lastC, ledCount);
+
+                    if (_lastIntensities == null)
+                        _lastIntensities = new byte[INTENSITY_PAYLOAD_SIZE];
+                    Array.Copy(intensityPayload, _lastIntensities, INTENSITY_PAYLOAD_SIZE);
+                }
+
+                return ok;
             }
-
-            return ok;
         }
 
         /// <summary>
@@ -431,42 +427,45 @@ namespace FanaBridge
             int count = colors.Length;
             if (count == 0 || count > MAX_RGB565_PER_REPORT) return false;
 
-            // Dirty check: missing entry or size mismatch forces a send
-            ushort[] last;
-            if (_lastColors.TryGetValue(subcmd, out last) && last.Length == count)
+            lock (_writeLock)
             {
-                bool changed = false;
+                // Dirty check: missing entry or size mismatch forces a send
+                ushort[] last;
+                if (_lastColors.TryGetValue(subcmd, out last) && last.Length == count)
+                {
+                    bool changed = false;
+                    for (int i = 0; i < count; i++)
+                    {
+                        if (colors[i] != last[i]) { changed = true; break; }
+                    }
+                    if (!changed) return true;
+                }
+
+                // Reuse pooled buffer — zero the payload region then fill
+                Array.Clear(_ledReportBuf, 0, LED_REPORT_LENGTH);
+                _ledReportBuf[0] = 0xFF;
+                _ledReportBuf[1] = 0x01;
+                _ledReportBuf[2] = subcmd;
+
                 for (int i = 0; i < count; i++)
                 {
-                    if (colors[i] != last[i]) { changed = true; break; }
+                    int offset = REPORT_HEADER_SIZE + (i * 2);
+                    _ledReportBuf[offset]     = (byte)((colors[i] >> 8) & 0xFF);
+                    _ledReportBuf[offset + 1] = (byte)(colors[i] & 0xFF);
                 }
-                if (!changed) return true;
-            }
 
-            // Reuse pooled buffer — zero the payload region then fill
-            Array.Clear(_ledReportBuf, 0, LED_REPORT_LENGTH);
-            _ledReportBuf[0] = 0xFF;
-            _ledReportBuf[1] = 0x01;
-            _ledReportBuf[2] = subcmd;
-
-            for (int i = 0; i < count; i++)
-            {
-                int offset = REPORT_HEADER_SIZE + (i * 2);
-                _ledReportBuf[offset]     = (byte)((colors[i] >> 8) & 0xFF);
-                _ledReportBuf[offset + 1] = (byte)(colors[i] & 0xFF);
-            }
-
-            bool ok = SendLedReport(_ledReportBuf);
-            if (ok)
-            {
-                if (last == null || last.Length != count)
+                bool ok = SendLedReport(_ledReportBuf);
+                if (ok)
                 {
-                    last = new ushort[count];
-                    _lastColors[subcmd] = last;
+                    if (last == null || last.Length != count)
+                    {
+                        last = new ushort[count];
+                        _lastColors[subcmd] = last;
+                    }
+                    Array.Copy(colors, last, count);
                 }
-                Array.Copy(colors, last, count);
+                return ok;
             }
-            return ok;
         }
 
         private bool SendButtonColorReport(ushort[] colors, bool commit)
@@ -608,50 +607,53 @@ namespace FanaBridge
                 return false;
             }
 
-            SimHub.Logging.Current.Info(
-                "FanatecDevice: Setting encoder mode to " + mode + " (0x" + ((byte)mode).ToString("X2") + ")");
-
-            // 1. Read current tuning state
-            var readBuf = ReadTuningState(TUNING_DEVICE_ID_BMR);
-            if (readBuf == null)
+            lock (_writeLock)
             {
-                SimHub.Logging.Current.Warn(
-                    "FanatecDevice: Cannot set encoder mode — failed to read current tuning state");
-                return false;
+                SimHub.Logging.Current.Info(
+                    "FanatecDevice: Setting encoder mode to " + mode + " (0x" + ((byte)mode).ToString("X2") + ")");
+
+                // 1. Read current tuning state
+                var readBuf = ReadTuningState(TUNING_DEVICE_ID_BMR);
+                if (readBuf == null)
+                {
+                    SimHub.Logging.Current.Warn(
+                        "FanatecDevice: Cannot set encoder mode — failed to read current tuning state");
+                    return false;
+                }
+
+                SimHub.Logging.Current.Info(
+                    "FanatecDevice: Current tuning state read OK (byte[" + TUNING_READ_ENCODER_MODE_OFFSET + "]=0x"
+                    + readBuf[TUNING_READ_ENCODER_MODE_OFFSET].ToString("X2") + ")");
+
+                // 2. Build the WRITE buffer.
+                //    READ response:  [ff 03] [deviceId] [payload...]
+                //    WRITE command:  [ff 03] [00]       [deviceId] [payload...]
+                //    Shift bytes 2..62 of the read response into bytes 3..63 of
+                //    the write buffer, inserting the WRITE subcode at byte[2].
+                var writeBuf = new byte[TUNING_REPORT_LENGTH];
+                writeBuf[0] = 0xFF;
+                writeBuf[1] = TUNING_CMD_CLASS;
+                writeBuf[2] = TUNING_SUBCMD_WRITE;
+                Array.Copy(readBuf, 2, writeBuf, 3, TUNING_REPORT_LENGTH - 3);
+
+                // 3. Set the encoder mode in the WRITE buffer
+                writeBuf[TUNING_WRITE_ENCODER_MODE_OFFSET] = (byte)mode;
+
+                // 4. Write the buffer
+                bool ok = SendLedReport(writeBuf);
+                if (!ok)
+                {
+                    SimHub.Logging.Current.Warn("FanatecDevice: Failed to send tuning config report");
+                    return false;
+                }
+
+                // 5. Send col01 0x06 acknowledgement burst
+                ok = SendTuningAckBurst();
+                if (!ok)
+                    SimHub.Logging.Current.Warn("FanatecDevice: Tuning ack burst failed (mode may still have been set)");
+
+                return ok;
             }
-
-            SimHub.Logging.Current.Info(
-                "FanatecDevice: Current tuning state read OK (byte[" + TUNING_READ_ENCODER_MODE_OFFSET + "]=0x"
-                + readBuf[TUNING_READ_ENCODER_MODE_OFFSET].ToString("X2") + ")");
-
-            // 2. Build the WRITE buffer.
-            //    READ response:  [ff 03] [deviceId] [payload...]
-            //    WRITE command:  [ff 03] [00]       [deviceId] [payload...]
-            //    Shift bytes 2..62 of the read response into bytes 3..63 of
-            //    the write buffer, inserting the WRITE subcode at byte[2].
-            var writeBuf = new byte[TUNING_REPORT_LENGTH];
-            writeBuf[0] = 0xFF;
-            writeBuf[1] = TUNING_CMD_CLASS;
-            writeBuf[2] = TUNING_SUBCMD_WRITE;
-            Array.Copy(readBuf, 2, writeBuf, 3, TUNING_REPORT_LENGTH - 3);
-
-            // 3. Set the encoder mode in the WRITE buffer
-            writeBuf[TUNING_WRITE_ENCODER_MODE_OFFSET] = (byte)mode;
-
-            // 4. Write the buffer
-            bool ok = SendLedReport(writeBuf);
-            if (!ok)
-            {
-                SimHub.Logging.Current.Warn("FanatecDevice: Failed to send tuning config report");
-                return false;
-            }
-
-            // 5. Send col01 0x06 acknowledgement burst
-            ok = SendTuningAckBurst();
-            if (!ok)
-                SimHub.Logging.Current.Warn("FanatecDevice: Tuning ack burst failed (mode may still have been set)");
-
-            return ok;
         }
 
         /// <summary>
@@ -661,21 +663,24 @@ namespace FanaBridge
         /// <returns>The current encoder mode, or null if the read fails.</returns>
         public EncoderMode? ReadEncoderMode()
         {
-            var readBuf = ReadTuningState(TUNING_DEVICE_ID_BMR);
-            if (readBuf == null)
+            lock (_writeLock)
             {
+                var readBuf = ReadTuningState(TUNING_DEVICE_ID_BMR);
+                if (readBuf == null)
+                {
+                    SimHub.Logging.Current.Warn(
+                        "FanatecDevice: ReadEncoderMode — failed to read tuning state");
+                    return null;
+                }
+
+                byte raw = readBuf[TUNING_READ_ENCODER_MODE_OFFSET];
+                if (Enum.IsDefined(typeof(EncoderMode), raw))
+                    return (EncoderMode)raw;
+
                 SimHub.Logging.Current.Warn(
-                    "FanatecDevice: ReadEncoderMode — failed to read tuning state");
+                    "FanatecDevice: ReadEncoderMode — unknown mode byte 0x" + raw.ToString("X2"));
                 return null;
             }
-
-            byte raw = readBuf[TUNING_READ_ENCODER_MODE_OFFSET];
-            if (Enum.IsDefined(typeof(EncoderMode), raw))
-                return (EncoderMode)raw;
-
-            SimHub.Logging.Current.Warn(
-                "FanatecDevice: ReadEncoderMode — unknown mode byte 0x" + raw.ToString("X2"));
-            return null;
         }
 
         /// <summary>
@@ -684,7 +689,10 @@ namespace FanaBridge
         /// </summary>
         public byte[] ReadTuningStateRaw()
         {
-            return ReadTuningState(TUNING_DEVICE_ID_BMR);
+            lock (_writeLock)
+            {
+                return ReadTuningState(TUNING_DEVICE_ID_BMR);
+            }
         }
 
         /// <summary>
@@ -736,16 +744,19 @@ namespace FanaBridge
         /// </summary>
         public bool SetDisplay(byte seg1, byte seg2, byte seg3)
         {
-            _displayReportBuf[0] = 0x01;  // Report ID
-            _displayReportBuf[1] = 0xF8;
-            _displayReportBuf[2] = 0x09;
-            _displayReportBuf[3] = 0x01;
-            _displayReportBuf[4] = 0x02;
-            _displayReportBuf[5] = seg1;
-            _displayReportBuf[6] = seg2;
-            _displayReportBuf[7] = seg3;
+            lock (_writeLock)
+            {
+                _displayReportBuf[0] = 0x01;  // Report ID
+                _displayReportBuf[1] = 0xF8;
+                _displayReportBuf[2] = 0x09;
+                _displayReportBuf[3] = 0x01;
+                _displayReportBuf[4] = 0x02;
+                _displayReportBuf[5] = seg1;
+                _displayReportBuf[6] = seg2;
+                _displayReportBuf[7] = seg3;
 
-            return SendDisplayReport(_displayReportBuf);
+                return SendDisplayReport(_displayReportBuf);
+            }
         }
 
         /// <summary>
@@ -804,27 +815,39 @@ namespace FanaBridge
             if (string.IsNullOrEmpty(text))
                 return ClearDisplay();
 
-            int segCount = 0;
-            _displayTextSegs[0] = SevenSegment.Blank;
-            _displayTextSegs[1] = SevenSegment.Blank;
-            _displayTextSegs[2] = SevenSegment.Blank;
-
-            foreach (char ch in text)
+            lock (_writeLock)
             {
-                if ((ch == '.' || ch == ',') && segCount > 0)
+                int segCount = 0;
+                _displayTextSegs[0] = SevenSegment.Blank;
+                _displayTextSegs[1] = SevenSegment.Blank;
+                _displayTextSegs[2] = SevenSegment.Blank;
+
+                foreach (char ch in text)
                 {
-                    _displayTextSegs[segCount - 1] |= SevenSegment.Dot;
-                }
-                else
-                {
-                    _displayTextSegs[segCount] = SevenSegment.CharToSegment(ch);
-                    segCount++;
+                    if ((ch == '.' || ch == ',') && segCount > 0)
+                    {
+                        _displayTextSegs[segCount - 1] |= SevenSegment.Dot;
+                    }
+                    else
+                    {
+                        _displayTextSegs[segCount] = SevenSegment.CharToSegment(ch);
+                        segCount++;
+                    }
+
+                    if (segCount >= 3) break;
                 }
 
-                if (segCount >= 3) break;
+                _displayReportBuf[0] = 0x01;  // Report ID
+                _displayReportBuf[1] = 0xF8;
+                _displayReportBuf[2] = 0x09;
+                _displayReportBuf[3] = 0x01;
+                _displayReportBuf[4] = 0x02;
+                _displayReportBuf[5] = _displayTextSegs[0];
+                _displayReportBuf[6] = _displayTextSegs[1];
+                _displayReportBuf[7] = _displayTextSegs[2];
+
+                return SendDisplayReport(_displayReportBuf);
             }
-
-            return SetDisplay(_displayTextSegs[0], _displayTextSegs[1], _displayTextSegs[2]);
         }
 
         // =====================================================================

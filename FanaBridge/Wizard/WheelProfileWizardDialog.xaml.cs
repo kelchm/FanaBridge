@@ -249,15 +249,6 @@ namespace FanaBridge
         /// the production frame loop.  Null parameters default to all-off.
         /// Dirty tracking skips unchanged channels automatically.
         /// </summary>
-        /// <remarks>
-        /// HACK: The 1 ms sleeps between writes work around a firmware timing
-        /// issue — back-to-back col03 reports sent without any gap are
-        /// intermittently dropped by the device.  In production this never
-        /// occurs because writes are spaced by the ~16 ms frame interval.
-        /// A proper fix would be a rate-limited serial write queue in
-        /// <see cref="FanatecDevice"/>, but that's overkill while only the
-        /// wizard triggers rapid multi-channel writes.
-        /// </remarks>
         private void SetAllLeds(
             ushort[] revColors = null,
             ushort[] flagColors = null,
@@ -268,9 +259,7 @@ namespace FanaBridge
             {
                 if (Device == null || !Device.IsConnected) return;
                 Device.SetRevLedColors(revColors ?? new ushort[9]);
-                Thread.Sleep(1);
                 Device.SetFlagLedColors(flagColors ?? new ushort[6]);
-                Thread.Sleep(1);
                 Device.SetButtonLedState(
                     buttonColors ?? new ushort[12],
                     buttonIntensities ?? new byte[FanatecDevice.INTENSITY_PAYLOAD_SIZE]);
