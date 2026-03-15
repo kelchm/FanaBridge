@@ -1,5 +1,5 @@
 using System;
-using FanaBridge.Core;
+using FanaBridge.Transport;
 using Xunit;
 
 namespace FanaBridge.Tests

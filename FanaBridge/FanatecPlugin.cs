@@ -1,4 +1,8 @@
-using FanaBridge.Core;
+using FanaBridge.Adapters;
+using FanaBridge.Profiles;
+using FanaBridge.Protocol;
+using FanaBridge.Transport;
+using FanaBridge.UI;
 using GameReaderCommon;
 using SimHub.Plugins;
 using System;

@@ -86,7 +86,7 @@
        Embedded in the DLL as assembly resources.  Immutable at runtime.
        User-created profiles are loaded from a separate directory. -->
   <ItemGroup>
-    <EmbeddedResource Include="Profiles\*.json" />
+    <EmbeddedResource Include="Resources\Profiles\*.json" />
   </ItemGroup>
 
   <!-- ── Device logo processing ──────────────────────────────────────

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Core;
+using FanaBridge.Profiles;
+using FanaBridge.Protocol;
+using FanaBridge.Transport;
 using Xunit;
 
 namespace FanaBridge.Tests
