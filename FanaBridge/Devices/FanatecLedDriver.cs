@@ -4,8 +4,10 @@ using System.Drawing;
 using System.Linq;
 using BA63Driver.Interfaces;
 using BA63Driver.Mapper;
+using FanaBridge;
+using FanaBridge.Core;
 
-namespace FanaBridge
+namespace FanaBridge.Devices
 {
     /// <summary>
     /// Unified BA63-compatible driver for all Fanatec LED types.

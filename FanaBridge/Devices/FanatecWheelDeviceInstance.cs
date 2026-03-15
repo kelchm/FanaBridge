@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge;
+using FanaBridge.Core;
 using FanatecManaged;
 using GameReaderCommon;
 using Newtonsoft.Json.Linq;
@@ -8,7 +10,7 @@ using SimHub.Plugins;
 using SimHub.Plugins.Devices;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.LedModules;
 
-namespace FanaBridge
+namespace FanaBridge.Devices
 {
     /// <summary>
     /// DeviceInstance for a specific Fanatec wheel type.

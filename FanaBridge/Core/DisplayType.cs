@@ -1,4 +1,4 @@
-namespace FanaBridge
+namespace FanaBridge.Core
 {
     /// <summary>
     /// The type of display available on a wheel or button module.

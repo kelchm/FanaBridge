@@ -1,7 +1,8 @@
 using System;
+using FanaBridge.Core;
 using FanatecManaged;
 
-namespace FanaBridge
+namespace FanaBridge.Devices
 {
     /// <summary>
     /// Identifies a specific selectable device configuration — a standalone

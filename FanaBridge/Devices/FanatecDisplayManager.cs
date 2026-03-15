@@ -1,8 +1,9 @@
+using FanaBridge.Core;
 using GameReaderCommon;
 using Newtonsoft.Json.Linq;
 using System;
 
-namespace FanaBridge
+namespace FanaBridge.Devices
 {
     /// <summary>
     /// Maps telemetry data to the Fanatec 3-digit 7-segment display.

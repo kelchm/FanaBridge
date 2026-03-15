@@ -1,7 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge.Core;
 
-namespace FanaBridge
+namespace FanaBridge.Wizard
 {
     // ── Wizard sections (replace magic step numbers) ─────────────────────
 

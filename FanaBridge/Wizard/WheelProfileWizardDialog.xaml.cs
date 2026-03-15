@@ -7,12 +7,14 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using FanaBridge;
+using FanaBridge.Core;
 using FanatecManaged;
 using Microsoft.Win32;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 
-namespace FanaBridge
+namespace FanaBridge.Wizard
 {
     /// <summary>
     /// Standalone probe-based wizard dialog that discovers a wheel's LED and

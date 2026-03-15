@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge
+namespace FanaBridge.Core
 {
     /// <summary>
     /// RGB color helper with RGB565 conversion and predefined colors.

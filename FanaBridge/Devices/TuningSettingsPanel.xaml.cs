@@ -1,9 +1,11 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
+using FanaBridge;
+using FanaBridge.Core;
 using Newtonsoft.Json.Linq;
 
-namespace FanaBridge
+namespace FanaBridge.Devices
 {
     public partial class TuningSettingsPanel : UserControl
     {

@@ -1,6 +1,7 @@
+using FanaBridge.Core;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.PSE;
 
-namespace FanaBridge
+namespace FanaBridge.Devices
 {
     /// <summary>
     /// Bridges <see cref="FanatecLedDriver"/> into SimHub's

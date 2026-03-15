@@ -6,7 +6,7 @@ using System.Threading;
 using HidSharp;
 using Microsoft.Win32.SafeHandles;
 
-namespace FanaBridge
+namespace FanaBridge.Core
 {
     /// <summary>
     /// HID communication layer for Fanatec wheel LED and display control.

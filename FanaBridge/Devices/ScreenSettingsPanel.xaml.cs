@@ -2,7 +2,7 @@ using System;
 using System.Windows.Controls;
 using Newtonsoft.Json.Linq;
 
-namespace FanaBridge
+namespace FanaBridge.Devices
 {
     public partial class ScreenSettingsPanel : UserControl
     {

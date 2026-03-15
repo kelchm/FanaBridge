@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
+using FanaBridge.Core;
 using SimHub.Plugins.Devices;
 
-namespace FanaBridge
+namespace FanaBridge.Devices
 {
     /// <summary>
     /// Registers one DeviceDescriptor per loaded <see cref="WheelProfile"/> so each

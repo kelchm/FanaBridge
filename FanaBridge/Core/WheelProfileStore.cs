@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
 
-namespace FanaBridge
+namespace FanaBridge.Core
 {
     /// <summary>
     /// Loads <see cref="WheelProfile"/> definitions and provides lookup by

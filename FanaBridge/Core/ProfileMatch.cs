@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace FanaBridge
+namespace FanaBridge.Core
 {
     /// <summary>
     /// Matching criteria to associate a profile with the connected hardware.

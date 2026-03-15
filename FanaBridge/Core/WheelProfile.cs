@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
 
-namespace FanaBridge
+namespace FanaBridge.Core
 {
     /// <summary>
     /// A complete wheel profile — the single source of truth for a device's
@@ -82,7 +82,7 @@ namespace FanaBridge
             {
                 if (Enum.TryParse(Display, true, out DisplayType dt))
                     return dt;
-                return FanaBridge.DisplayType.None;
+                return FanaBridge.Core.DisplayType.None;
             }
         }
 

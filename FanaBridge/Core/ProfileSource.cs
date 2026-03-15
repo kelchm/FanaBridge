@@ -1,4 +1,4 @@
-namespace FanaBridge
+namespace FanaBridge.Core
 {
     /// <summary>
     /// Indicates whether a profile was shipped with the plugin or created by the user.

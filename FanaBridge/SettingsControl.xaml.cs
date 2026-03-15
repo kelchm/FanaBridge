@@ -7,6 +7,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Navigation;
 using System.Windows.Threading;
+using FanaBridge.Core;
+using FanaBridge.Wizard;
 using FanatecManaged;
 using Timer = System.Timers.Timer;
 
@@ -259,7 +261,7 @@ namespace FanaBridge
                 return;
             }
 
-            bool isCustom = caps.ProfileSource == FanaBridge.ProfileSource.User;
+            bool isCustom = caps.ProfileSource == ProfileSource.User;
 
             if (isCustom)
             {
@@ -351,7 +353,7 @@ namespace FanaBridge
         private void BtnDeleteProfile_Click(object sender, RoutedEventArgs e)
         {
             var caps = Plugin?.CurrentCapabilities;
-            if (caps?.Profile == null || caps.ProfileSource != FanaBridge.ProfileSource.User)
+            if (caps?.Profile == null || caps.ProfileSource != ProfileSource.User)
                 return;
 
             string profileId = caps.Profile.Id;
@@ -415,7 +417,7 @@ namespace FanaBridge
         private void BtnContributeProfile_Click(object sender, RoutedEventArgs e)
         {
             var caps = Plugin?.CurrentCapabilities;
-            if (caps?.Profile == null || caps.ProfileSource != FanaBridge.ProfileSource.User)
+            if (caps?.Profile == null || caps.ProfileSource != ProfileSource.User)
                 return;
 
             var profile = caps.Profile;

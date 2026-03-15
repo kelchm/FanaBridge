@@ -1,3 +1,4 @@
+using FanaBridge.Core;
 using GameReaderCommon;
 using SimHub.Plugins;
 using System;

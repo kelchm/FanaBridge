@@ -3,7 +3,7 @@ using System.Linq;
 using FanatecManaged;
 using HidSharp;
 
-namespace FanaBridge
+namespace FanaBridge.Core
 {
     /// <summary>
     /// Manages the Fanatec SDK connection lifecycle and provides unified

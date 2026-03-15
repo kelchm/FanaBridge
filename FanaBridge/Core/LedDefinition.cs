@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using Newtonsoft.Json;
 
-namespace FanaBridge
+namespace FanaBridge.Core
 {
     /// <summary>
     /// Structured input association for a single LED.

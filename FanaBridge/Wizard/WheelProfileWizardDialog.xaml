@@ -1,4 +1,4 @@
-<Window x:Class="FanaBridge.WheelProfileWizardDialog"
+<Window x:Class="FanaBridge.Wizard.WheelProfileWizardDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="FanaBridge — New Wheel Profile"
