@@ -12,7 +12,7 @@ namespace FanaBridge.Core
     /// This is the single source of truth for "what Fanatec hardware is present."
     /// It replaces the previous approach of requiring a hard-coded product ID.
     /// </summary>
-    public class FanatecSdkManager : IDisposable
+    public class FanatecSdkManager : IDisposable, ISdkConnection
     {
         public const ushort FANATEC_VENDOR_ID = 0x0EB7;
 

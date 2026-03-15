@@ -12,7 +12,7 @@ namespace FanaBridge.Core
     /// HID communication layer for Fanatec wheel LED and display control.
     /// Ported from the standalone PoC to .NET Framework 4.8.
     /// </summary>
-    public class FanatecDevice : IDisposable
+    public class FanatecDevice : IDisposable, IDeviceConnection
     {
         // ── Protocol constants (col03 report format) ─────────────────────
         private const int LED_REPORT_LENGTH = 64;
