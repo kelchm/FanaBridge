@@ -1,4 +1,5 @@
 using FanaBridge.Adapters;
+using FanaBridge.Diagnostics;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
@@ -6,6 +7,7 @@ using FanaBridge.UI;
 using GameReaderCommon;
 using SimHub.Plugins;
 using System;
+using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -27,6 +29,7 @@ namespace FanaBridge
 
         private FanatecSdkManager _sdk;
         private FanatecDevice _device;
+        private CapturingTransport _capturingTransport;
         private ConnectionMonitor _connectionMonitor;
         private FanatecTuningController _tuning;
         private LedEncoder _leds;
@@ -69,6 +72,12 @@ namespace FanaBridge
         /// <summary>Shared tuning controller — used by TuningSettingsPanel for encoder config.</summary>
         public FanatecTuningController Tuning => _tuning;
 
+        /// <summary>The capturing transport decorator, for USB traffic capture.</summary>
+        public CapturingTransport CapturingTransport => _capturingTransport;
+
+        /// <summary>Whether a USB capture session is currently active.</summary>
+        public bool IsCapturing => _capturingTransport?.IsCapturing == true;
+
         public PluginManager PluginManager { get; set; }
 
         public ImageSource PictureIcon => new BitmapImage(new Uri(
@@ -87,10 +96,11 @@ namespace FanaBridge
 
             _sdk = new FanatecSdkManager();
             _device = new FanatecDevice();
-            _leds = new LedEncoder(_device);
-            _display = new DisplayEncoder(_device);
+            _capturingTransport = new CapturingTransport(_device);
+            _leds = new LedEncoder(_capturingTransport);
+            _display = new DisplayEncoder(_capturingTransport);
             _tuning = new FanatecTuningController(
-                _device,
+                _capturingTransport,
                 msg => SimHub.Logging.Current.Warn(msg),
                 msg => SimHub.Logging.Current.Info(msg));
 
@@ -187,6 +197,7 @@ namespace FanaBridge
                 }
             }
 
+            StopCapture();
             _sdk?.Dispose();
             _device?.Dispose();
         }
@@ -207,6 +218,52 @@ namespace FanaBridge
         public void SaveSettings()
         {
             this.SaveCommonSettings("FanaBridgeSettings", Settings);
+        }
+
+        // =====================================================================
+        // USB CAPTURE
+        // =====================================================================
+
+        /// <summary>
+        /// Returns the directory where capture files are written.
+        /// Resolves to [SimHub]\Logs\FanaBridge, one level above the Plugins folder.
+        /// </summary>
+        public static string GetCaptureDirectory()
+        {
+            string dllDir = Path.GetDirectoryName(typeof(FanatecPlugin).Assembly.Location) ?? ".";
+            return Path.GetFullPath(Path.Combine(dllDir, "..", "Logs", "FanaBridge"));
+        }
+
+        /// <summary>
+        /// Starts a USB capture session. Returns the path of the capture file.
+        /// </summary>
+        public string StartCapture()
+        {
+            string dir = GetCaptureDirectory();
+            string fileName = "capture-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt";
+            string filePath = Path.Combine(dir, fileName);
+
+            var session = new CaptureSession(filePath, _sdk?.ProductName);
+            _capturingTransport.StartCapture(session);
+
+            SimHub.Logging.Current.Info("FanaBridge: Capture started → " + filePath);
+            StateChanged?.Invoke();
+            return filePath;
+        }
+
+        /// <summary>
+        /// Stops the active USB capture session. Returns the file path, or null if not capturing.
+        /// </summary>
+        public string StopCapture()
+        {
+            if (_capturingTransport == null) return null;
+
+            var session = _capturingTransport.StopCapture();
+            if (session == null) return null;
+
+            SimHub.Logging.Current.Info("FanaBridge: Capture stopped → " + session.FilePath);
+            StateChanged?.Invoke();
+            return session.FilePath;
         }
 
         public System.Windows.Controls.Control GetWPFSettingsControl(PluginManager pluginManager)

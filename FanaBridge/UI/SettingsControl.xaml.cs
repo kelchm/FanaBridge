@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Windows;
@@ -96,6 +97,7 @@ namespace FanaBridge.UI
                 _registeredDeviceName = caps.ShortName ?? caps.Name;
 
             UpdateStatus();
+            UpdateCaptureUI();
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -499,6 +501,100 @@ namespace FanaBridge.UI
         private void ChkEnableTuning_Changed(object sender, RoutedEventArgs e)
         {
             Plugin?.SaveSettings();
+        }
+
+        // =====================================================================
+        // USB CAPTURE
+        // =====================================================================
+
+        /// <summary>Path to the last completed capture file, for the "Open File" button.</summary>
+        private string _lastCaptureFile;
+
+        private void BtnStartCapture_Click(object sender, RoutedEventArgs e)
+        {
+            if (Plugin == null) return;
+
+            try
+            {
+                Plugin.StartCapture();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Failed to start capture:\n" + ex.Message,
+                    "Capture Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            UpdateCaptureUI();
+        }
+
+        private void BtnStopCapture_Click(object sender, RoutedEventArgs e)
+        {
+            if (Plugin == null) return;
+
+            string path = Plugin.StopCapture();
+            if (path != null)
+                _lastCaptureFile = path;
+
+            UpdateCaptureUI();
+        }
+
+        private void BtnOpenCapture_Click(object sender, RoutedEventArgs e)
+        {
+            if (_lastCaptureFile != null && File.Exists(_lastCaptureFile))
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(_lastCaptureFile) { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    SimHub.Logging.Current.Warn("FanaBridge: Failed to open capture file: " + ex.Message);
+                }
+            }
+        }
+
+        private void BtnOpenCaptureFolder_Click(object sender, RoutedEventArgs e)
+        {
+            string dir = FanatecPlugin.GetCaptureDirectory();
+
+            try
+            {
+                Directory.CreateDirectory(dir);
+                Process.Start("explorer.exe", dir);
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanaBridge: Failed to open captures folder: " + ex.Message);
+            }
+        }
+
+        private void UpdateCaptureUI()
+        {
+            bool capturing = Plugin?.IsCapturing == true;
+
+            btnStartCapture.Visibility = capturing ? Visibility.Collapsed : Visibility.Visible;
+            btnStopCapture.Visibility = capturing ? Visibility.Visible : Visibility.Collapsed;
+            btnOpenCapture.Visibility = (!capturing && _lastCaptureFile != null)
+                ? Visibility.Visible : Visibility.Collapsed;
+
+            if (capturing)
+            {
+                var session = Plugin.CapturingTransport?.ActiveSession;
+                txtCaptureStatus.Text = "\u25cf Recording \u2014 " + (session?.FilePath ?? "");
+                txtCaptureStatus.Foreground = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0xFF, 0x66, 0x66));
+            }
+            else if (_lastCaptureFile != null)
+            {
+                txtCaptureStatus.Text = "Last capture: " + Path.GetFileName(_lastCaptureFile);
+                txtCaptureStatus.Foreground = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0xAA, 0xAA, 0xAA));
+            }
+            else
+            {
+                txtCaptureStatus.Text = "";
+            }
         }
 
         // =====================================================================

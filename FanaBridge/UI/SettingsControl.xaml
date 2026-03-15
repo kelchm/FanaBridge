@@ -101,6 +101,29 @@
                 </StackPanel>
             </styles:SHSection>
 
+            <!-- Diagnostics -->
+            <styles:SHSection Title="DIAGNOSTICS" ShowSeparator="True">
+                <StackPanel>
+                    <TextBlock Text="Record all HID traffic between FanaBridge and your wheel for troubleshooting."
+                               TextWrapping="Wrap" Margin="0,0,0,8" Opacity="0.7" FontSize="11" />
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <styles:SHButtonPrimary x:Name="btnStartCapture" Click="BtnStartCapture_Click"
+                                                Content="Start Capture" VerticalAlignment="Center" />
+                        <styles:SHButtonPrimary x:Name="btnStopCapture" Click="BtnStopCapture_Click"
+                                                Visibility="Collapsed" Margin="8,0,0,0"
+                                                Content="Stop Capture" VerticalAlignment="Center" />
+                        <styles:SHButtonPrimary x:Name="btnOpenCapture" Click="BtnOpenCapture_Click"
+                                                Visibility="Collapsed" Margin="8,0,0,0"
+                                                Content="Open File" VerticalAlignment="Center" />
+                        <styles:SHButtonPrimary x:Name="btnOpenCaptureFolder" Click="BtnOpenCaptureFolder_Click"
+                                                Margin="8,0,0,0"
+                                                Content="Open Folder" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock x:Name="txtCaptureStatus" Text="" Margin="0,6,0,0"
+                               Foreground="#AAAAAA" FontSize="11" />
+                </StackPanel>
+            </styles:SHSection>
+
             <!-- Experimental Features -->
             <styles:SHSection Title="EXPERIMENTAL FEATURES" ShowSeparator="True">
                 <StackPanel>
