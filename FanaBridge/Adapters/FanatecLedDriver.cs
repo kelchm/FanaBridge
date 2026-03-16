@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Linq;
+using System.Threading.Tasks;
+using BA63Driver.Base;
 using BA63Driver.Interfaces;
 using BA63Driver.Mapper;
-using FanaBridge;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
@@ -31,7 +31,7 @@ namespace FanaBridge.Adapters
     ///   Color LEDs  → subcmd 0x02 RGB565  (SetButtonLedState)
     ///   Mono LEDs   → subcmd 0x03 intensity (SetButtonLedState)
     /// </summary>
-    public class FanatecLedDriver : ILedButtonsDriver
+    public class FanatecLedDriver : DriverBase, ILedButtonsDriver
     {
         private readonly WheelCapabilities _caps;
         private readonly WheelProfile _profile;
@@ -57,6 +57,11 @@ namespace FanaBridge.Adapters
         // Color conversion delegate for button LEDs — RGB565 or RGB555
         // depending on the hardware. Resolved once in the constructor.
         private readonly Func<Color, ushort> _buttonColorConverter;
+
+        // Async write state — mirrors the typical SimHub driver pattern.
+        // SendLeds kicks off a Task.Run; if the previous write is still
+        // in-flight the frame is dropped rather than blocking.
+        private Task _refreshTask;
 
         public FanatecLedDriver(WheelCapabilities caps, LedEncoder leds, IDeviceTransport transport)
         {
@@ -97,29 +102,18 @@ namespace FanaBridge.Adapters
         }
 
         // ── IDriver properties ───────────────────────────────────────────
-
-        public bool IsConnected
-        {
-            get
-            {
-                try
-                {
-                    return _transport.IsConnected;
-                }
-                catch
-                {
-                    return false;
-                }
-            }
-        }
-
-        public string SerialNumber => null;
-        public string FirmwareVersion => null;
+        // IsConnected, SerialNumber, FirmwareVersion inherited from DriverBase.
 
         // ── IDriver methods ──────────────────────────────────────────────
 
         public void Clear()
         {
+            try
+            {
+                _refreshTask?.Wait(2000);
+            }
+            catch { }
+
             try
             {
                 if (_caps.HasRevLeds)
@@ -138,7 +132,14 @@ namespace FanaBridge.Adapters
 
         public void Dispose()
         {
-            // Hardware lifetime managed by FanatecPlugin.
+            try
+            {
+                _refreshTask?.Wait(2000);
+            }
+            catch { }
+
+            IsConnected = false;
+            // Hardware lifetime managed by FanatecPlugin — don't close HID streams.
         }
 
         // ── ILedButtonsDriver ────────────────────────────────────────────
@@ -150,18 +151,28 @@ namespace FanaBridge.Adapters
         /// </summary>
         public bool SendLeds(LedDeviceState state, bool forceRefresh)
         {
-            if (!_transport.IsConnected)
+            if (!IsConnected || !_transport.IsConnected)
                 return false;
 
-            bool ok = true;
+            // Skip unchanged frames — avoid color conversion and USB I/O
+            if (!stateComparer.HasChanged(state) && !forceRefresh)
+                return true;
 
-            // Clear frame buffers
+            // Drop this frame if the previous write is still in flight
+            if (_refreshTask != null)
+            {
+                var t = _refreshTask;
+                if (t != null && t.Status != TaskStatus.RanToCompletion
+                              && t.Status != TaskStatus.Faulted)
+                    return true;
+            }
+
+            // ── Build frame buffers (runs on the calling thread) ─────
             Array.Clear(_revColors, 0, _revColors.Length);
             Array.Clear(_flagColors, 0, _flagColors.Length);
             Array.Clear(_buttonColors, 0, _buttonColors.Length);
             Array.Clear(_intensityPayload, 0, _intensityPayload.Length);
 
-            // ── Per-LED dispatch ─────────────────────────────────────
             for (int i = 0; i < _ledChannels.Length; i++)
             {
                 Color color = _mapper.GetColor(i, state, ignoreBrightness: false);
@@ -194,17 +205,44 @@ namespace FanaBridge.Adapters
                 }
             }
 
-            // ── Send to hardware ─────────────────────────────────────
-            if (_caps.HasRevLeds)
-                ok = _leds.SetRevLedColors(_revColors) && ok;
+            // ── Snapshot buffers for the background task ─────────────
+            // The frame buffers are reused each call, so copy them for
+            // the closure to avoid races with the next frame's build.
+            ushort[] revSnap = _caps.HasRevLeds ? (ushort[])_revColors.Clone() : null;
+            ushort[] flagSnap = _caps.HasFlagLeds ? (ushort[])_flagColors.Clone() : null;
+            ushort[] colorSnap = (_colorSlotCount > 0 || _caps.MonoLedCount > 0)
+                ? (ushort[])_buttonColors.Clone() : null;
+            byte[] intensitySnap = colorSnap != null
+                ? (byte[])_intensityPayload.Clone() : null;
 
-            if (_caps.HasFlagLeds)
-                ok = _leds.SetFlagLedColors(_flagColors) && ok;
+            // ── Send to hardware asynchronously ──────────────────────
+            _refreshTask = Task.Run(() =>
+            {
+                try
+                {
+                    if (revSnap != null)
+                        _leds.SetRevLedColors(revSnap);
 
-            if (_colorSlotCount > 0 || _caps.MonoLedCount > 0)
-                ok = _leds.SetButtonLedState(_buttonColors, _intensityPayload) && ok;
+                    if (flagSnap != null)
+                        _leds.SetFlagLedColors(flagSnap);
 
-            return ok;
+                    if (colorSnap != null)
+                        _leds.SetButtonLedState(colorSnap, intensitySnap);
+                }
+                catch (Exception ex)
+                {
+                    SimHub.Logging.Current.Error(
+                        "FanatecLedDriver: Write failed, marking disconnected: " + ex.Message);
+                    IsConnected = false;
+                }
+                finally
+                {
+                    _refreshTask = null;
+                }
+            });
+
+            stateComparer.SetLastState(state);
+            return true;
         }
 
         public IPhysicalMapper GetPhysicalMapper()
