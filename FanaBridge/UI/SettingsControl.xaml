@@ -36,7 +36,19 @@
                     <TextBlock x:Name="txtProfileHint" TextWrapping="Wrap" Margin="0,0,0,8"
                                Text="Connect a wheel to manage profiles." />
                     <StackPanel x:Name="panelProfilePicker" Visibility="Collapsed">
-                        <StackPanel Orientation="Horizontal">
+                        <!-- Shown when the connected wheel has no matching profile -->
+                        <Border x:Name="borderNoProfileAlert" Visibility="Collapsed"
+                                Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
+                                CornerRadius="4" Padding="10,8" Margin="0,0,0,12">
+                            <TextBlock Foreground="#AADDFF" FontSize="12" TextWrapping="Wrap">
+                                &#x2139;  This wheel doesn't have a FanaBridge profile yet. Click <Bold>New Profile Wizard</Bold> to create one — it only takes a few minutes.
+                            </TextBlock>
+                        </Border>
+                        <!-- Shown when multiple profiles match (built-in + user override) -->
+                        <TextBlock x:Name="txtMultipleProfilesHint" Visibility="Collapsed"
+                                   TextWrapping="Wrap" Margin="0,0,0,8"
+                                   Text="Multiple profiles available:" />
+                        <StackPanel x:Name="panelProfileCombo" Orientation="Horizontal">
                             <ComboBox x:Name="cboProfile" Width="420"
                                       SelectionChanged="CboProfile_SelectionChanged" />
                             <Button x:Name="btnDeleteProfile" Click="BtnDeleteProfile_Click"
@@ -79,7 +91,7 @@
                         <TextBlock x:Name="txtRestartNotice" Visibility="Collapsed"
                                    TextWrapping="Wrap" Margin="0,8,0,0"
                                    Foreground="#FFDDAA" FontStyle="Italic"
-                                   Text="&#x26A0;  Profile changed. Restart SimHub for the device name to update in the Devices list. LED and display output uses the new profile immediately." />
+                                   Text="&#x26A0;  Restart SimHub for this wheel to appear in the Devices list. LED and display output is active immediately." />
                     </StackPanel>
                 </StackPanel>
             </styles:SHSection>

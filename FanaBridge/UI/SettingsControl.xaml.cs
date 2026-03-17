@@ -127,12 +127,20 @@ namespace FanaBridge.UI
             var caps = Plugin.CurrentCapabilities;
             bool identified = caps.Name != null;
 
+            // Resolve wheel/module codes from the SDK — available even when no profile exists
+            var sdk = Plugin.SdkManager;
+            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
+            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
+                ? null
+                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
+
             if (!identified)
             {
                 txtStatus.Text = "Connected — " + Plugin.WheelName;
                 txtWheelName.Text = "—";
                 txtCapabilities.Text = "—";
-                UpdateProfilePicker(null, null, null);
+                // Still show the panel so the wizard button is accessible for unsupported wheels
+                UpdateProfilePicker(wheelCode, moduleCode, null);
                 return;
             }
 
@@ -144,13 +152,6 @@ namespace FanaBridge.UI
                 caps.RevLedCount,
                 caps.FlagLedCount,
                 caps.Display);
-
-            // Resolve the current wheel/module codes for profile lookup
-            var sdk = Plugin.SdkManager;
-            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
-            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
-                ? null
-                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
 
             UpdateProfilePicker(wheelCode, moduleCode, caps);
         }
@@ -171,6 +172,7 @@ namespace FanaBridge.UI
                 return;
             }
 
+            txtProfileHint.Visibility = Visibility.Collapsed;
             panelProfilePicker.Visibility = Visibility.Visible;
 
             // Build the match key (same format as the profile ID: "WHEELTYPE_MODULE")
@@ -191,18 +193,26 @@ namespace FanaBridge.UI
             string currentOverride = null;
             Plugin.Settings.ProfileOverrides?.TryGetValue(matchKey, out currentOverride);
 
-            if (all.Count <= 1)
+            if (all.Count == 0)
             {
-                // Single profile (or none) — no need for a picker
-                txtProfileHint.Visibility = Visibility.Collapsed;
-                cboProfile.Visibility = Visibility.Collapsed;
+                // No profile for this wheel — show amber alert, hide combo
+                borderNoProfileAlert.Visibility = Visibility.Visible;
+                txtMultipleProfilesHint.Visibility = Visibility.Collapsed;
+                panelProfileCombo.Visibility = Visibility.Collapsed;
+            }
+            else if (all.Count == 1)
+            {
+                // Single profile — show it in the combo so users get confirmation it loaded
+                borderNoProfileAlert.Visibility = Visibility.Collapsed;
+                txtMultipleProfilesHint.Visibility = Visibility.Collapsed;
+                panelProfileCombo.Visibility = Visibility.Visible;
             }
             else
             {
                 // Multiple profiles — show picker with explanation
-                txtProfileHint.Visibility = Visibility.Visible;
-                txtProfileHint.Text = "Multiple profiles available:";
-                cboProfile.Visibility = Visibility.Visible;
+                borderNoProfileAlert.Visibility = Visibility.Collapsed;
+                txtMultipleProfilesHint.Visibility = Visibility.Visible;
+                panelProfileCombo.Visibility = Visibility.Visible;
             }
 
             // Populate combo (even if hidden, keeps logic simple)
@@ -256,11 +266,13 @@ namespace FanaBridge.UI
         {
             if (caps == null || caps.ProfileSource == null)
             {
+                txtProfileSource.Visibility = Visibility.Collapsed;
                 txtProfileSource.Text = "";
                 btnDeleteProfile.IsEnabled = false;
                 txtContributeProfile.Visibility = Visibility.Collapsed;
                 return;
             }
+            txtProfileSource.Visibility = Visibility.Visible;
 
             bool isCustom = caps.ProfileSource == ProfileSource.User;
 
@@ -332,17 +344,21 @@ namespace FanaBridge.UI
         private void UpdateRestartNotice()
         {
             var caps = Plugin?.CurrentCapabilities;
-            if (caps?.Name == null || _registeredDeviceName == null)
+            if (caps?.Name == null)
             {
                 txtRestartNotice.Visibility = Visibility.Collapsed;
                 return;
             }
 
             string currentName = caps.ShortName ?? caps.Name;
-            bool nameChanged = !string.Equals(
-                currentName, _registeredDeviceName, StringComparison.OrdinalIgnoreCase);
 
-            txtRestartNotice.Visibility = nameChanged
+            // Show restart notice if:
+            // - No device was registered at startup (new profile just created for an unknown wheel), OR
+            // - The device name changed from what SimHub registered at boot
+            bool needsRestart = _registeredDeviceName == null
+                || !string.Equals(currentName, _registeredDeviceName, StringComparison.OrdinalIgnoreCase);
+
+            txtRestartNotice.Visibility = needsRestart
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
@@ -490,6 +506,7 @@ namespace FanaBridge.UI
             // Refresh the UI now that the dialog is dismissed so the new
             // profile shows up immediately in the picker.
             UpdateStatus();
+            UpdateRestartNotice();
         }
 
         // =====================================================================

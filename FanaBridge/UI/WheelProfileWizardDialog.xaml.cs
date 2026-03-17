@@ -1265,8 +1265,9 @@ namespace FanaBridge.UI
                 _plugin.SdkManager.RefreshCapabilities();
 
                 MessageBox.Show(
-                    "Profile saved and loaded!\n\n" +
-                    "Your new profile is active immediately \u2014 no restart required.\n\n" +
+                    "Profile saved!\n\n" +
+                    "LED and display output is active immediately — no restart needed for that.\n\n" +
+                    "To have this wheel appear in SimHub's Devices list, restart SimHub once.\n\n" +
                     "If this profile works well, consider sharing it on GitHub so\n" +
                     "others with the same wheel can benefit!",
                     "Profile Saved",
