@@ -131,6 +131,9 @@ namespace FanaBridge.Profiles
                     continue;
                 if (resourceName.IndexOf(".Profiles.", StringComparison.OrdinalIgnoreCase) < 0)
                     continue;
+                // Exclude the JSON schema file — it has no 'id' and is not a profile.
+                if (resourceName.EndsWith(".schema.json", StringComparison.OrdinalIgnoreCase))
+                    continue;
 
                 try
                 {
