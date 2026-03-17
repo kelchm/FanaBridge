@@ -428,7 +428,7 @@ namespace FanaBridge.UI
         {
             string userDir = WheelProfileStore.GetUserProfileDirectory();
             if (userDir != null)
-                Process.Start("explorer.exe", userDir);
+                Process.Start(new ProcessStartInfo { FileName = userDir, UseShellExecute = true });
         }
 
         private void BtnContributeProfile_Click(object sender, RoutedEventArgs e)
