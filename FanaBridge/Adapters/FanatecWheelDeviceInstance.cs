@@ -142,11 +142,15 @@ namespace FanaBridge.Adapters
         {
             var result = new JObject();
 
-            // LED module settings (produces ledModuleSettings, leds, buttons, encoders, raw keys)
             if (_ledModule != null)
             {
                 try
                 {
+                    // Serialize the module object itself (brightness, IndividualLEDsMode, etc.)
+                    // under "ledModuleSettings" — matches how LedModuleDevice does it.
+                    result["ledModuleSettings"] = JToken.FromObject(_ledModule);
+
+                    // Per-channel profile data (leds, buttons, raw, …)
                     var ledDict = _ledModule.GetSettings(forTemplate, forDefaultSettings);
                     if (ledDict != null)
                     {
@@ -190,16 +194,20 @@ namespace FanaBridge.Adapters
                     _customSettings[key] = obj[key].DeepClone();
             }
 
-            // Pass LED-related settings to LedModuleSettings
             if (_ledModule != null)
             {
                 try
                 {
+                    // Restore module-level state (brightness, IndividualLEDsMode, etc.)
+                    // before passing channel profiles, matching LedModuleDevice.SetSettings.
+                    var moduleToken = obj["ledModuleSettings"];
+                    if (moduleToken != null)
+                        Newtonsoft.Json.JsonConvert.PopulateObject(moduleToken.ToString(), _ledModule);
+
+                    // Per-channel profile data (leds, buttons, raw, …)
                     var dict = new Dictionary<string, JToken>();
                     foreach (var prop in obj.Properties())
-                    {
                         dict[prop.Name] = prop.Value;
-                    }
                     _ledModule.SetSettings(dict, isDefault);
                 }
                 catch (Exception ex)
