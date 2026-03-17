@@ -1,9 +1,12 @@
+using FanaBridge.Profiles;
+using FanaBridge.Protocol;
+using FanaBridge.Transport;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.PSE;
 
-namespace FanaBridge
+namespace FanaBridge.Adapters
 {
     /// <summary>
-    /// Bridges <see cref="FanatecLedButtonsDriver"/> into SimHub's
+    /// Bridges <see cref="FanatecLedDriver"/> into SimHub's
     /// <c>ILedDeviceManager</c> pipeline via <c>LedsGenericManager&lt;T&gt;</c>.
     ///
     /// Each <see cref="FanatecWheelDeviceInstance"/> creates one of these with
@@ -17,10 +20,12 @@ namespace FanaBridge
     ///   • Connection/reconnection lifecycle and events
     ///   • Force-refresh timers
     /// </summary>
-    public class FanatecLedManager : LedsGenericManager<FanatecLedButtonsDriver>
+    public class FanatecLedManager : LedsGenericManager<FanatecLedDriver>
     {
         private readonly WheelCapabilities _caps;
-        private FanatecLedButtonsDriver _driver;
+        private readonly LedEncoder _leds;
+        private readonly IDeviceTransport _transport;
+        private FanatecLedDriver _driver;
 
         /// <summary>
         /// Parameterless constructor required by the <c>new()</c> constraint on
@@ -30,31 +35,34 @@ namespace FanaBridge
         /// </summary>
         public FanatecLedManager()
         {
-            // Fallback: use empty caps.  The real constructor below is preferred.
             _caps = WheelCapabilities.None;
         }
 
         /// <summary>
         /// Creates a manager configured for a specific wheel's LED layout.
         /// </summary>
-        public FanatecLedManager(WheelCapabilities caps)
+        public FanatecLedManager(WheelCapabilities caps, LedEncoder leds, IDeviceTransport transport)
         {
             _caps = caps ?? WheelCapabilities.None;
+            _leds = leds;
+            _transport = transport;
         }
 
         // ── LedsGenericManager<T> overrides ──────────────────────────────
 
         /// <summary>
         /// Called by the base class when a connection is needed.
-        /// Creates the BA63-compatible driver with the wheel's capabilities.
+        /// Creates the unified BA63-compatible driver with the wheel's capabilities.
         /// </summary>
-        public override FanatecLedButtonsDriver GetDriver()
+        public override FanatecLedDriver GetDriver()
         {
-            _driver = new FanatecLedButtonsDriver(_caps);
+            _driver = new FanatecLedDriver(_caps, _leds, _transport);
 
             SimHub.Logging.Current.Info(
                 "FanatecLedManager: Created driver for " + (_caps.Name ?? "unknown") +
-                " (" + _caps.TotalLedCount + " LEDs)");
+                " (" + _caps.AllLedCount + " LEDs: rev=" + _caps.RevLedCount +
+                ", flag=" + _caps.FlagLedCount + ", color=" + _caps.ColorLedCount +
+                ", mono=" + _caps.MonoLedCount + ")");
 
             return _driver;
         }

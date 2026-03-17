@@ -1,8 +1,8 @@
+using FanaBridge.Protocol;
 using GameReaderCommon;
-using Newtonsoft.Json.Linq;
 using System;
 
-namespace FanaBridge
+namespace FanaBridge.Adapters
 {
     /// <summary>
     /// Maps telemetry data to the Fanatec 3-digit 7-segment display.
@@ -11,10 +11,10 @@ namespace FanaBridge
     /// Settings are read from a JObject so this can be owned by either the
     /// plugin or a DeviceInstance — no dependency on FanatecPluginSettings.
     /// </summary>
-    public class FanatecDisplayManager
+    public class FanatecDisplayDriver
     {
-        private readonly FanatecDevice _device;
-        private JObject _settings;
+        private readonly DisplayEncoder _display;
+        private DisplaySettings _settings;
 
         private string _currentText = "";
         private string _currentGear = "";
@@ -24,24 +24,30 @@ namespace FanaBridge
         private int _lastSentSpeed = int.MinValue;
         private string _lastDisplayMode;
 
-        public FanatecDisplayManager(FanatecDevice device, JObject settings)
+        // GearAndSpeed overlay: show gear for a brief period after each gear change
+        // TODO: make duration configurable; revisit with a proper implementation
+        private static readonly TimeSpan GearOverlayDuration = TimeSpan.FromSeconds(2);
+        private int _lastKnownGear = int.MinValue;
+        private DateTime _gearOverlayUntil = DateTime.MinValue;
+
+        public FanatecDisplayDriver(DisplayEncoder display, DisplaySettings settings)
         {
-            _device = device;
-            _settings = settings ?? new JObject();
+            _display = display;
+            _settings = settings ?? new DisplaySettings();
         }
 
         /// <summary>
-        /// Replaces the settings JObject (e.g. after SetSettings in the DeviceInstance).
+        /// Replaces the settings (e.g. after SetSettings in the DeviceInstance).
         /// </summary>
-        public void UpdateSettings(JObject settings)
+        public void UpdateSettings(DisplaySettings settings)
         {
-            _settings = settings ?? new JObject();
+            _settings = settings ?? new DisplaySettings();
         }
 
         /// <summary>The current display mode string ("Gear", "Speed", "GearAndSpeed").</summary>
         public string DisplayMode
         {
-            get { return (string)_settings["displayMode"] ?? "Gear"; }
+            get { return _settings.DisplayMode ?? DisplaySettings.DefaultMode; }
         }
 
         /// <summary>Current displayed text (for SimHub properties).</summary>
@@ -81,11 +87,13 @@ namespace FanaBridge
         /// </summary>
         public void Clear()
         {
-            _device.ClearDisplay();
+            _display.ClearDisplay();
             _currentText = "";
             _currentGear = "";
             _lastSentGear = int.MinValue;
             _lastSentSpeed = int.MinValue;
+            _lastKnownGear = int.MinValue;
+            _gearOverlayUntil = DateTime.MinValue;
         }
 
         // =====================================================================
@@ -100,7 +108,7 @@ namespace FanaBridge
             if (gear == _lastSentGear && _lastDisplayMode == "Gear")
                 return;
 
-            _device.DisplayGear(gear);
+            _display.DisplayGear(gear);
             _lastSentGear = gear;
             _lastDisplayMode = "Gear";
             _currentGear = GearToString(gear);
@@ -116,7 +124,7 @@ namespace FanaBridge
             if (speed == _lastSentSpeed && _lastDisplayMode == "Speed")
                 return;
 
-            _device.DisplaySpeed(speed);
+            _display.DisplaySpeed(speed);
             _lastSentSpeed = speed;
             _lastDisplayMode = "Speed";
             _currentText = speed.ToString();
@@ -124,35 +132,40 @@ namespace FanaBridge
 
         private void UpdateGearAndSpeed(GameData data)
         {
-            // Show gear in the center digit, speed scrolls on edges when available
-            // Simple compromise: show gear primarily, speed when stationary or in pit
-            bool inPit = data.NewData.IsInPitLane != 0;
+            string gearStr = data.NewData.Gear;
+            int gear = ParseGear(gearStr);
             int speed = (int)Math.Round(data.NewData.SpeedKmh);
+            if (speed < 0) speed = 0;
+            if (speed > 999) speed = 999;
 
-            if (inPit || speed < 5)
+            // Trigger the gear overlay whenever the gear changes
+            if (gear != _lastKnownGear)
             {
-                // Show speed when in pit or nearly stopped
-                if (speed != _lastSentSpeed || _lastDisplayMode != "GearSpeed_Speed")
-                {
-                    _device.DisplaySpeed(speed);
-                    _lastSentSpeed = speed;
-                    _lastDisplayMode = "GearSpeed_Speed";
-                    _currentText = speed.ToString();
-                }
+                _lastKnownGear = gear;
+                _gearOverlayUntil = DateTime.UtcNow + GearOverlayDuration;
             }
-            else
-            {
-                // Show gear when driving
-                string gearStr = data.NewData.Gear;
-                int gear = ParseGear(gearStr);
 
+            if (DateTime.UtcNow < _gearOverlayUntil)
+            {
+                // Show gear as a temporary overlay after a gear change
                 if (gear != _lastSentGear || _lastDisplayMode != "GearSpeed_Gear")
                 {
-                    _device.DisplayGear(gear);
+                    _display.DisplayGear(gear);
                     _lastSentGear = gear;
                     _lastDisplayMode = "GearSpeed_Gear";
                     _currentGear = GearToString(gear);
                     _currentText = _currentGear;
+                }
+            }
+            else
+            {
+                // Default: show speed
+                if (speed != _lastSentSpeed || _lastDisplayMode != "GearSpeed_Speed")
+                {
+                    _display.DisplaySpeed(speed);
+                    _lastSentSpeed = speed;
+                    _lastDisplayMode = "GearSpeed_Speed";
+                    _currentText = speed.ToString();
                 }
             }
         }

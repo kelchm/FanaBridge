@@ -1,29 +1,26 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using HidSharp;
 using Microsoft.Win32.SafeHandles;
 
-namespace FanaBridge
+namespace FanaBridge.Transport
 {
     /// <summary>
-    /// HID communication layer for Fanatec wheel LED and display control.
-    /// Ported from the standalone PoC to .NET Framework 4.8.
+    /// HID transport layer for Fanatec wheel hardware.
+    /// Manages device lifecycle (connect/disconnect) and provides the
+    /// <see cref="IDeviceTransport"/> interface used by protocol encoders
+    /// (LEDs, display, tuning).
     /// </summary>
-    public class FanatecDevice
+    public class FanatecDevice : IDisposable, IDeviceConnection, IDeviceTransport
     {
-        public const int LED_COUNT = 12;
-        public const int INTENSITY_COUNT = 16;
-
-        private const int LED_REPORT_LENGTH = 64;
         private const int DISPLAY_REPORT_LENGTH = 8;
 
-        // Dirty tracking — skip redundant HID writes
-        private readonly ushort[] _lastColors = new ushort[LED_COUNT];
-        private readonly byte[] _lastIntensities = new byte[INTENSITY_COUNT];
-        private bool _colorsDirty = true;
-        private bool _intensitiesDirty = true;
+        // ── Write serialization ────────────────────────────────────────────
+        // IDeviceTransport.SendCol03 / SendCol01 acquire this lock per-call.
+        // IDeviceTransport.BeginBatch acquires it for multi-report sequences.
+        private readonly object _writeLock = new object();
 
         private HidDevice _ledDevice;       // col03: 64-byte LED control
         private HidStream _ledStream;
@@ -102,6 +99,9 @@ namespace FanaBridge
         /// </summary>
         public bool Connect(int productId)
         {
+            // Release any previous connection to prevent resource leaks
+            Disconnect();
+
             try
             {
                 var devices = DeviceList.Local.GetHidDevices()
@@ -122,8 +122,8 @@ namespace FanaBridge
                 if (_ledDevice == null)
                 {
                     _ledDevice = devices.FirstOrDefault(d =>
-                        d.GetMaxOutputReportLength() == LED_REPORT_LENGTH ||
-                        d.GetMaxOutputReportLength() == LED_REPORT_LENGTH + 1);
+                        d.GetMaxOutputReportLength() == 64 ||
+                        d.GetMaxOutputReportLength() == 65);
                 }
 
                 if (_ledDevice == null)
@@ -241,227 +241,77 @@ namespace FanaBridge
             return false;
         }
 
-        // =====================================================================
-        // LED CONTROL
-        // =====================================================================
+        // ── IDeviceTransport implementation ──────────────────────────────
 
-        /// <summary>
-        /// Atomically updates LED colors and intensities in a single
-        /// commit cycle.  Skips HID writes entirely when neither array
-        /// has changed since the last successful send.
-        ///
-        /// This is the primary API that callers (DeviceInstance) should use
-        /// every frame.  It solves two problems with the old separate
-        /// SetColors/SetIntensities approach:
-        ///   1. Dirty tracking was broken for the commit=true call
-        ///      (it always sent even when nothing changed).
-        ///   2. The staging + commit protocol requires coordination
-        ///      across both reports which the caller shouldn't manage.
-        /// </summary>
-        /// <param name="colors">LED_COUNT-element array of RGB565 values</param>
-        /// <param name="ledIntensities">LED_COUNT-element array of per-LED intensity values (0-7).
-        /// Global intensity channels are always set to max internally.</param>
-        /// <returns>True if hardware was updated (or already up-to-date).</returns>
-        public bool SetLedState(ushort[] colors, byte[] ledIntensities)
+        bool IDeviceTransport.SendCol03(byte[] data)
         {
-            if (colors == null || colors.Length != LED_COUNT) return false;
-            if (ledIntensities == null || ledIntensities.Length != LED_COUNT) return false;
-
-            // Build full intensity array: per-LED values + global channels at max
-            var intensities = new byte[INTENSITY_COUNT];
-            Array.Copy(ledIntensities, intensities, LED_COUNT);
-            for (int i = LED_COUNT; i < INTENSITY_COUNT; i++)
-                intensities[i] = 7;
-
-            bool colorsChanged = _colorsDirty;
-            bool intensitiesChanged = _intensitiesDirty;
-
-            if (!colorsChanged)
+            lock (_writeLock)
             {
-                for (int i = 0; i < LED_COUNT; i++)
+                return SendLedReport(data);
+            }
+        }
+
+        int IDeviceTransport.ReadCol03(byte[] buffer, int timeoutMs)
+        {
+            if (_ledStream == null) return -1;
+            lock (_writeLock)
+            {
+                int saved = _ledStream.ReadTimeout;
+                try
                 {
-                    if (colors[i] != _lastColors[i])
-                    {
-                        colorsChanged = true;
-                        break;
-                    }
+                    _ledStream.ReadTimeout = timeoutMs;
+                    return _ledStream.Read(buffer, 0, buffer.Length);
+                }
+                catch
+                {
+                    return -1;
+                }
+                finally
+                {
+                    _ledStream.ReadTimeout = saved;
                 }
             }
+        }
 
-            if (!intensitiesChanged)
+        int IDeviceTransport.Col03MaxInputReportLength
+        {
+            get
             {
-                for (int i = 0; i < INTENSITY_COUNT; i++)
+                if (_ledDevice == null) return 64;
+                int len = _ledDevice.GetMaxInputReportLength();
+                return len > 0 ? len : 64;
+            }
+        }
+
+        bool IDeviceTransport.SendCol01(byte[] data)
+        {
+            lock (_writeLock)
+            {
+                return SendDisplayReport(data);
+            }
+        }
+
+        IDisposable IDeviceTransport.BeginBatch()
+        {
+            Monitor.Enter(_writeLock);
+            return new BatchToken(_writeLock);
+        }
+
+        private sealed class BatchToken : IDisposable
+        {
+            private readonly object _lock;
+            private bool _released;
+
+            public BatchToken(object @lock) { _lock = @lock; }
+
+            public void Dispose()
+            {
+                if (!_released)
                 {
-                    if (intensities[i] != _lastIntensities[i])
-                    {
-                        intensitiesChanged = true;
-                        break;
-                    }
+                    _released = true;
+                    Monitor.Exit(_lock);
                 }
             }
-
-            // Nothing to do — hardware is already showing this state
-            if (!colorsChanged && !intensitiesChanged)
-                return true;
-
-            // Stage whichever reports changed, then commit with the last one.
-            // If only one changed we can send it directly with commit=true.
-            bool ok = true;
-
-            if (colorsChanged && intensitiesChanged)
-            {
-                ok = SendColorReport(colors, commit: false);
-                ok = SendIntensityReport(intensities, commit: true) && ok;
-            }
-            else if (colorsChanged)
-            {
-                ok = SendColorReport(colors, commit: true);
-            }
-            else // intensitiesChanged
-            {
-                ok = SendIntensityReport(intensities, commit: true);
-            }
-
-            if (ok)
-            {
-                Array.Copy(colors, _lastColors, LED_COUNT);
-                Array.Copy(intensities, _lastIntensities, INTENSITY_COUNT);
-                _colorsDirty = false;
-                _intensitiesDirty = false;
-            }
-
-            return ok;
-        }
-
-        // ── Low-level report senders (private) ───────────────────────────
-
-        private bool SendColorReport(ushort[] colors, bool commit)
-        {
-            var report = new byte[LED_REPORT_LENGTH];
-            report[0] = 0xFF;
-            report[1] = 0x01;
-            report[2] = 0x02;
-
-            for (int i = 0; i < LED_COUNT; i++)
-            {
-                int offset = 3 + (i * 2);
-                report[offset] = (byte)((colors[i] >> 8) & 0xFF);
-                report[offset + 1] = (byte)(colors[i] & 0xFF);
-            }
-
-            report[27] = commit ? (byte)0x01 : (byte)0x00;
-            return SendLedReport(report);
-        }
-
-        private bool SendIntensityReport(byte[] intensities, bool commit)
-        {
-            var report = new byte[LED_REPORT_LENGTH];
-            report[0] = 0xFF;
-            report[1] = 0x01;
-            report[2] = 0x03;
-
-            Array.Copy(intensities, 0, report, 3, INTENSITY_COUNT);
-            report[18] = commit ? (byte)0x01 : (byte)0x00;
-            return SendLedReport(report);
-        }
-
-        // =====================================================================
-        // DISPLAY CONTROL
-        // =====================================================================
-
-        /// <summary>
-        /// Sets the 3-digit 7-segment display.
-        /// Matches the Linux kernel driver ftec_set_display() protocol.
-        /// </summary>
-        public bool SetDisplay(byte seg1, byte seg2, byte seg3)
-        {
-            var report = new byte[DISPLAY_REPORT_LENGTH];
-            report[0] = 0x01;  // Report ID
-            report[1] = 0xF8;
-            report[2] = 0x09;
-            report[3] = 0x01;
-            report[4] = 0x02;
-            report[5] = seg1;
-            report[6] = seg2;
-            report[7] = seg3;
-
-            return SendDisplayReport(report);
-        }
-
-        /// <summary>
-        /// Blank the display.
-        /// </summary>
-        public bool ClearDisplay()
-        {
-            return SetDisplay(SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank);
-        }
-
-        /// <summary>
-        /// Display a gear number: -1=R, 0=N, 1-9.
-        /// </summary>
-        public bool DisplayGear(int gear)
-        {
-            byte seg;
-            switch (gear)
-            {
-                case -1: seg = SevenSegment.R; break;
-                case 0:  seg = SevenSegment.N; break;
-                case 1:  seg = SevenSegment.Digit1; break;
-                case 2:  seg = SevenSegment.Digit2; break;
-                case 3:  seg = SevenSegment.Digit3; break;
-                case 4:  seg = SevenSegment.Digit4; break;
-                case 5:  seg = SevenSegment.Digit5; break;
-                case 6:  seg = SevenSegment.Digit6; break;
-                case 7:  seg = SevenSegment.Digit7; break;
-                case 8:  seg = SevenSegment.Digit8; break;
-                case 9:  seg = SevenSegment.Digit9; break;
-                default: seg = SevenSegment.N; break;
-            }
-
-            return SetDisplay(SevenSegment.Blank, seg, SevenSegment.Blank);
-        }
-
-        /// <summary>
-        /// Display a speed value (0-999) on the 3-digit display.
-        /// </summary>
-        public bool DisplaySpeed(int speed)
-        {
-            if (speed < 0 || speed > 999) speed = 0;
-
-            byte seg1 = SevenSegment.GetDigitSegment(speed / 100);
-            byte seg2 = SevenSegment.GetDigitSegment((speed / 10) % 10);
-            byte seg3 = SevenSegment.GetDigitSegment(speed % 10);
-
-            return SetDisplay(seg1, seg2, seg3);
-        }
-
-        /// <summary>
-        /// Display up to 3 characters of text. Dots/commas are folded onto predecessor.
-        /// </summary>
-        public bool DisplayText(string text)
-        {
-            if (string.IsNullOrEmpty(text))
-                return ClearDisplay();
-
-            var segs = new List<byte>();
-            foreach (char ch in text)
-            {
-                if ((ch == '.' || ch == ',') && segs.Count > 0)
-                {
-                    segs[segs.Count - 1] |= SevenSegment.Dot;
-                }
-                else
-                {
-                    segs.Add(SevenSegment.CharToSegment(ch));
-                }
-
-                if (segs.Count >= 3) break;
-            }
-
-            while (segs.Count < 3)
-                segs.Add(SevenSegment.Blank);
-
-            return SetDisplay(segs[0], segs[1], segs[2]);
         }
 
         // =====================================================================
@@ -487,23 +337,11 @@ namespace FanaBridge
             _displayDevice = null;
             _connectedProductId = 0;
             ProductName = null;
-
-            // Force resend on next connect
-            _colorsDirty = true;
-            _intensitiesDirty = true;
         }
 
-        /// <summary>
-        /// Marks LED state as dirty so the next SetLedState call always
-        /// sends to hardware, even if the values haven't changed.
-        /// Call this when the physical wheel rim changes — the firmware
-        /// resets its LED state but our tracking arrays still hold the
-        /// previous instance's last output.
-        /// </summary>
-        public void ForceDirty()
+        public void Dispose()
         {
-            _colorsDirty = true;
-            _intensitiesDirty = true;
+            Disconnect();
         }
     }
 }

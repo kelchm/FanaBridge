@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace FanaBridge
 {
     /// <summary>
@@ -19,5 +21,23 @@ namespace FanaBridge
 
         /// <summary>Maximum HID update rate in Hz (1-120)</summary>
         public int MaxUpdateRateHz { get; set; } = 60;
+
+        // ---- Profile selection ----
+
+        /// <summary>
+        /// Per-wheel profile override.  Key = wheel match key (e.g. "PHUB_PBMR"),
+        /// Value = profile ID to use instead of auto-resolve.
+        /// Empty / missing key = auto (built-in takes priority, user overrides).
+        /// </summary>
+        public Dictionary<string, string> ProfileOverrides { get; set; }
+            = new Dictionary<string, string>();
+
+        // ---- Feature flags ----
+
+        /// <summary>
+        /// Enable tuning features (encoder mode, etc.).  These write directly
+        /// to device firmware settings via USB HID and are disabled by default.
+        /// </summary>
+        public bool EnableTuning { get; set; } = false;
     }
 }

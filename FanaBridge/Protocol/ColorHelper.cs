@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge
+namespace FanaBridge.Protocol
 {
     /// <summary>
     /// RGB color helper with RGB565 conversion and predefined colors.
@@ -17,6 +17,21 @@ namespace FanaBridge
             ushort g6 = (ushort)((g >> 2) & 0x3F);
             ushort b5 = (ushort)((b >> 3) & 0x1F);
             return (ushort)((b5 << 11) | (g6 << 5) | r5);
+        }
+
+        /// <summary>
+        /// Converts 24-bit RGB to 16-bit BGR555 packed in the RGB565 layout.
+        /// Green is quantized to 5 bits (same as R/B) and placed in the lower
+        /// 5 bits of the 6-bit green field, leaving bit 10 always zero.
+        /// Required for hardware (e.g. Button Module Rally) that only reads
+        /// 5 green bits and ignores or misinterprets the MSB.
+        /// </summary>
+        public static ushort RgbToRgb555(byte r, byte g, byte b)
+        {
+            ushort r5 = (ushort)((r >> 3) & 0x1F);
+            ushort g5 = (ushort)((g >> 3) & 0x1F);
+            ushort b5 = (ushort)((b >> 3) & 0x1F);
+            return (ushort)((b5 << 11) | (g5 << 5) | r5);
         }
 
         /// <summary>
@@ -40,6 +55,34 @@ namespace FanaBridge
             byte g = (byte)Math.Round(color.G * a);
             byte b = (byte)Math.Round(color.B * a);
             return RgbToRgb565(r, g, b);
+        }
+
+        /// <summary>
+        /// Converts a System.Drawing.Color to RGB555, pre-multiplying alpha.
+        /// See <see cref="RgbToRgb555"/> for when this is needed.
+        /// </summary>
+        public static ushort ToRgb555Premultiplied(System.Drawing.Color color)
+        {
+            double a = color.A / 255.0;
+            byte r = (byte)Math.Round(color.R * a);
+            byte g = (byte)Math.Round(color.G * a);
+            byte b = (byte)Math.Round(color.B * a);
+            return RgbToRgb555(r, g, b);
+        }
+
+        /// <summary>
+        /// Converts a Color to a Fanatec 3-bit intensity value (0-7).
+        /// Uses HSV Value (max channel) with premultiplied alpha, then
+        /// scales to the hardware range.
+        /// Intended for monochrome LEDs (e.g. encoder indicators) where
+        /// SimHub provides full Color but the hardware only has brightness.
+        /// </summary>
+        public static byte ColorToIntensity(System.Drawing.Color color)
+        {
+            double a = color.A / 255.0;
+            double value = Math.Max(color.R, Math.Max(color.G, color.B)) * a;
+            int level = (int)Math.Round(value / 255.0 * 7.0);
+            return (byte)Math.Min(Math.Max(level, 0), 7);
         }
 
         /// <summary>

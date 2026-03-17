@@ -1,3 +1,4 @@
+using FanaBridge.Protocol;
 using Xunit;
 
 namespace FanaBridge.Tests

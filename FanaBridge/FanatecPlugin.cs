@@ -1,3 +1,8 @@
+using FanaBridge.Adapters;
+using FanaBridge.Profiles;
+using FanaBridge.Protocol;
+using FanaBridge.Transport;
+using FanaBridge.UI;
 using GameReaderCommon;
 using SimHub.Plugins;
 using System;
@@ -22,17 +27,23 @@ namespace FanaBridge
 
         private FanatecSdkManager _sdk;
         private FanatecDevice _device;
-
-        private bool _connected;
-        private int _frameCounter;
-        private int _reconnectCooldown;
-        private int _wheelPollCooldown;
+        private ConnectionMonitor _connectionMonitor;
+        private FanatecTuningController _tuning;
+        private LedEncoder _leds;
+        private DisplayEncoder _display;
 
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
         public event Action StateChanged;
 
+        /// <summary>
+        /// When true, device instances skip all LED and display output so the
+        /// profile wizard can send probe signals without being overwritten by
+        /// SimHub's frame-by-frame updates.  Set by the wizard dialog.
+        /// </summary>
+        public bool WizardActive { get; set; }
+
         /// <summary>Whether the Fanatec device is currently connected (for UI binding).</summary>
-        public bool IsDeviceConnected => _connected;
+        public bool IsDeviceConnected => _connectionMonitor?.IsConnected == true;
 
         /// <summary>Name of the connected device (for UI binding).</summary>
         public string DeviceName => _sdk?.ProductName ?? "Not connected";
@@ -48,6 +59,15 @@ namespace FanaBridge
 
         /// <summary>Shared HID device — used by DeviceInstance wrappers for hardware I/O.</summary>
         public FanatecDevice Device => _device;
+
+        /// <summary>Shared LED encoder — used by DeviceInstance LED drivers and wizard.</summary>
+        public LedEncoder Leds => _leds;
+
+        /// <summary>Shared display encoder — used by DeviceInstance display managers and wizard.</summary>
+        public DisplayEncoder Display => _display;
+
+        /// <summary>Shared tuning controller — used by TuningSettingsPanel for encoder config.</summary>
+        public FanatecTuningController Tuning => _tuning;
 
         public PluginManager PluginManager { get; set; }
 
@@ -67,23 +87,53 @@ namespace FanaBridge
 
             _sdk = new FanatecSdkManager();
             _device = new FanatecDevice();
-            _frameCounter = 0;
-            _reconnectCooldown = 0;
-            _wheelPollCooldown = 0;
+            _leds = new LedEncoder(_device);
+            _display = new DisplayEncoder(_device);
+            _tuning = new FanatecTuningController(
+                _device,
+                msg => SimHub.Logging.Current.Warn(msg),
+                msg => SimHub.Logging.Current.Info(msg));
+
+            // Wire up profile override resolution from plugin settings
+            _sdk.ProfileOverrideResolver = (matchKey) =>
+            {
+                if (Settings.ProfileOverrides != null
+                    && Settings.ProfileOverrides.TryGetValue(matchKey, out var overrideId))
+                    return overrideId;
+                return null;
+            };
+
+            _connectionMonitor = new ConnectionMonitor(
+                _sdk, _device, TryConnect,
+                msg => SimHub.Logging.Current.Warn(msg),
+                msg => SimHub.Logging.Current.Info(msg));
+
+            _connectionMonitor.Connected += () =>
+            {
+                this.TriggerEvent("DeviceConnected");
+                StateChanged?.Invoke();
+            };
+
+            _connectionMonitor.Disconnected += () =>
+            {
+                this.TriggerEvent("DeviceDisconnected");
+                StateChanged?.Invoke();
+            };
 
             // Attempt initial connection
-            _connected = TryConnect();
+            _connectionMonitor.TryInitialConnect();
 
             // --- Properties ---
-            this.AttachDelegate("FanaBridge.Connected", () => _connected);
+            this.AttachDelegate("FanaBridge.Connected", () => _connectionMonitor.IsConnected);
             this.AttachDelegate("FanaBridge.DeviceName", () => _sdk.ProductName ?? "Not connected");
             this.AttachDelegate("FanaBridge.WheelName", () => _sdk.WheelDisplayName);
             this.AttachDelegate("FanaBridge.WheelDetected", () => _sdk.WheelDetected);
             this.AttachDelegate("FanaBridge.WheelType", () => (int)_sdk.SteeringWheelType);
             this.AttachDelegate("FanaBridge.ModuleType", () => (int)_sdk.SubModuleType);
             this.AttachDelegate("FanaBridge.Capabilities.ButtonLedCount", () => _sdk.CurrentCapabilities.ButtonLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.EncoderLedCount", () => _sdk.CurrentCapabilities.EncoderLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.TotalLedCount", () => _sdk.CurrentCapabilities.TotalLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.ColorLedCount", () => _sdk.CurrentCapabilities.ColorLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.MonoLedCount", () => _sdk.CurrentCapabilities.MonoLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.TotalLedCount", () => _sdk.CurrentCapabilities.AllLedCount);
             this.AttachDelegate("FanaBridge.Capabilities.DisplayType", () => _sdk.CurrentCapabilities.Display.ToString());
 
             // --- Events ---
@@ -99,89 +149,20 @@ namespace FanaBridge
                 // but our dirty-tracking arrays still hold the old instance's
                 // last output.  Force a full resend on the next frame so the
                 // new DeviceInstance's first write always reaches hardware.
-                _device.ForceDirty();
+                _leds.ForceDirty();
 
                 this.TriggerEvent("WheelChanged");
                 StateChanged?.Invoke();
             };
 
-            SimHub.Logging.Current.Info($"FanaBridge: Init complete, connected={_connected}");
+            SimHub.Logging.Current.Info(
+                $"FanaBridge: Init complete, connected={_connectionMonitor.IsConnected}");
         }
 
         public void DataUpdate(PluginManager pluginManager, ref GameData data)
         {
-            _frameCounter++;
-
-            if (!_connected)
-            {
-                if (_reconnectCooldown > 0)
-                {
-                    _reconnectCooldown--;
-                    return;
-                }
-
-                _connected = TryConnect();
-                if (!_connected)
-                {
-                    _reconnectCooldown = 300;
-                    return;
-                }
-
-                this.TriggerEvent("DeviceConnected");
-                StateChanged?.Invoke();
-            }
-
-            // Verify device is still alive periodically (HID bus check is more
-            // expensive, so do it less frequently than the stream check)
-            if (_frameCounter % 120 == 0)
-            {
-                if (!_device.IsDevicePresent)
-                {
-                    SimHub.Logging.Current.Warn("FanaBridge: Device no longer on HID bus");
-                    _device.Disconnect();
-                    _sdk.Disconnect();
-                    _connected = false;
-                    _reconnectCooldown = 120;
-                    this.TriggerEvent("DeviceDisconnected");
-                    StateChanged?.Invoke();
-                    return;
-                }
-            }
-            else if (_frameCounter % 60 == 0)
-            {
-                if (!_device.IsConnected || !_sdk.IsConnected)
-                {
-                    SimHub.Logging.Current.Warn("FanaBridge: Device or SDK disconnected");
-                    _connected = false;
-                    _reconnectCooldown = 300;
-                    this.TriggerEvent("DeviceDisconnected");
-                    StateChanged?.Invoke();
-                    return;
-                }
-            }
-
-            // Poll wheel identity (~every 2 seconds)
-            if (_wheelPollCooldown <= 0)
-            {
-                try
-                {
-                    _sdk.PollWheelIdentity();
-                }
-                catch (Exception ex)
-                {
-                    SimHub.Logging.Current.Warn($"FanaBridge: SDK poll failed, triggering reconnect: {ex.Message}");
-                    _connected = false;
-                    _reconnectCooldown = 60; // shorter cooldown — device may still be present
-                    this.TriggerEvent("DeviceDisconnected");
-                    StateChanged?.Invoke();
-                    return;
-                }
-                _wheelPollCooldown = 30;  // ~0.5 s at 60 fps
-            }
-            else
-            {
-                _wheelPollCooldown--;
-            }
+            if (!_connectionMonitor.Update())
+                return;
 
             if (!data.GameRunning || data.NewData == null)
                 return;
@@ -194,11 +175,11 @@ namespace FanaBridge
 
             this.SaveCommonSettings("FanaBridgeSettings", Settings);
 
-            if (_connected)
+            if (_connectionMonitor?.IsConnected == true)
             {
                 try
                 {
-                    _device.ClearDisplay();
+                    _display.ClearDisplay();
                 }
                 catch (Exception ex)
                 {
@@ -207,7 +188,7 @@ namespace FanaBridge
             }
 
             _sdk?.Dispose();
-            _device?.Disconnect();
+            _device?.Dispose();
         }
 
         /// <summary>
@@ -215,19 +196,18 @@ namespace FanaBridge
         /// </summary>
         public void ForceReconnect()
         {
-            SimHub.Logging.Current.Info("FanaBridge: ForceReconnect requested");
+            // ConnectionMonitor.ForceReconnect() already fires Connected/Disconnected,
+            // which invoke StateChanged via the event subscriptions set up in Init().
+            _connectionMonitor.ForceReconnect();
+        }
 
-            if (_connected)
-            {
-                _device?.Disconnect();
-                _sdk?.Disconnect();
-                _connected = false;
-                StateChanged?.Invoke();
-            }
-
-            _reconnectCooldown = 0;
-            _connected = TryConnect();
-            StateChanged?.Invoke();
+        /// <summary>
+        /// Persists the current <see cref="Settings"/> to SimHub's storage.
+        /// Called from the settings UI when profile overrides change.
+        /// </summary>
+        public void SaveSettings()
+        {
+            this.SaveCommonSettings("FanaBridgeSettings", Settings);
         }
 
         public System.Windows.Controls.Control GetWPFSettingsControl(PluginManager pluginManager)

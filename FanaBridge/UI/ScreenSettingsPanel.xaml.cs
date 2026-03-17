@@ -1,12 +1,12 @@
 using System;
 using System.Windows.Controls;
-using Newtonsoft.Json.Linq;
+using FanaBridge.Adapters;
 
-namespace FanaBridge
+namespace FanaBridge.UI
 {
     public partial class ScreenSettingsPanel : UserControl
     {
-        private JObject _settings;
+        private DisplaySettings _settings;
         private bool _suppressEvents;
 
         /// <summary>Fired when the user changes a setting. The parent should persist.</summary>
@@ -18,15 +18,15 @@ namespace FanaBridge
         }
 
         /// <summary>
-        /// Binds the panel to a device-instance settings JObject.
+        /// Binds the panel to a DisplaySettings instance.
         /// Call once after construction, before the panel is displayed.
         /// </summary>
-        public void Bind(JObject settings)
+        public void Bind(DisplaySettings settings)
         {
-            _settings = settings ?? new JObject();
+            _settings = settings ?? new DisplaySettings();
             _suppressEvents = true;
 
-            string mode = (string)_settings["displayMode"] ?? "Gear";
+            string mode = _settings.DisplayMode ?? DisplaySettings.DefaultMode;
             foreach (ComboBoxItem item in cmbDisplayMode.Items)
             {
                 if ((string)item.Tag == mode)
@@ -46,9 +46,10 @@ namespace FanaBridge
             var selected = cmbDisplayMode.SelectedItem as ComboBoxItem;
             if (selected != null)
             {
-                _settings["displayMode"] = (string)selected.Tag;
+                _settings.DisplayMode = (string)selected.Tag;
                 SettingsChanged?.Invoke();
             }
         }
+
     }
 }
