@@ -64,22 +64,29 @@ namespace FanaBridge.Protocol
         /// offsets for the current wheel configuration.</param>
         public bool SetButtonLedState(ushort[] colors, byte[] intensityPayload)
         {
-            if (colors == null || colors.Length == 0 || colors.Length > MAX_BUTTON_LEDS) return false;
+            // colors may be null or empty for wheels that have mono LEDs but no color LEDs,
+            // in which case we skip subcmd 0x02 and send only the subcmd 0x03 intensity report.
+            if (colors != null && colors.Length > MAX_BUTTON_LEDS) return false;
             if (intensityPayload == null || intensityPayload.Length != INTENSITY_PAYLOAD_SIZE) return false;
 
             using (_transport.BeginBatch())
             {
-                int ledCount = colors.Length;
+                bool hasColors = colors != null && colors.Length > 0;
+                int ledCount = hasColors ? colors.Length : 0;
 
                 // Check color changes via dictionary-based tracking
-                ushort[] lastC;
-                bool colorsChanged = true;
-                if (_lastColors.TryGetValue(SUBCMD_BUTTON_COLORS, out lastC) && lastC.Length == ledCount)
+                ushort[] lastC = null;
+                bool colorsChanged = false;
+                if (hasColors)
                 {
-                    colorsChanged = false;
-                    for (int i = 0; i < ledCount; i++)
+                    colorsChanged = true;
+                    if (_lastColors.TryGetValue(SUBCMD_BUTTON_COLORS, out lastC) && lastC.Length == ledCount)
                     {
-                        if (colors[i] != lastC[i]) { colorsChanged = true; break; }
+                        colorsChanged = false;
+                        for (int i = 0; i < ledCount; i++)
+                        {
+                            if (colors[i] != lastC[i]) { colorsChanged = true; break; }
+                        }
                     }
                 }
 
@@ -100,12 +107,12 @@ namespace FanaBridge.Protocol
                 // Stage whichever reports changed, then commit with the last one.
                 bool ok = true;
 
-                if (colorsChanged && intensitiesChanged)
+                if (hasColors && colorsChanged && intensitiesChanged)
                 {
                     ok = SendButtonColorReport(colors, commit: false);
                     ok = SendButtonIntensityReport(intensityPayload, commit: true) && ok;
                 }
-                else if (colorsChanged)
+                else if (hasColors && colorsChanged)
                 {
                     ok = SendButtonColorReport(colors, commit: true);
                 }
@@ -116,12 +123,15 @@ namespace FanaBridge.Protocol
 
                 if (ok)
                 {
-                    if (lastC == null || lastC.Length != ledCount)
+                    if (hasColors)
                     {
-                        lastC = new ushort[ledCount];
-                        _lastColors[SUBCMD_BUTTON_COLORS] = lastC;
+                        if (lastC == null || lastC.Length != ledCount)
+                        {
+                            lastC = new ushort[ledCount];
+                            _lastColors[SUBCMD_BUTTON_COLORS] = lastC;
+                        }
+                        Array.Copy(colors, lastC, ledCount);
                     }
-                    Array.Copy(colors, lastC, ledCount);
 
                     if (_lastIntensities == null)
                         _lastIntensities = new byte[INTENSITY_PAYLOAD_SIZE];

@@ -196,8 +196,9 @@ namespace FanaBridge
         /// </summary>
         public void ForceReconnect()
         {
+            // ConnectionMonitor.ForceReconnect() already fires Connected/Disconnected,
+            // which invoke StateChanged via the event subscriptions set up in Init().
             _connectionMonitor.ForceReconnect();
-            StateChanged?.Invoke();
         }
 
         /// <summary>

@@ -44,12 +44,14 @@ namespace FanaBridge.Adapters
         private readonly LedChannel[] _ledChannels;
         private readonly int[] _ledHwIndices;
 
-        // Reusable frame buffers — avoid per-frame heap allocations.
-        // Sized from the profile's channel counts.
-        private readonly ushort[] _revColors;
-        private readonly ushort[] _flagColors;
-        private readonly ushort[] _buttonColors;   // sized to max color hw index + 1
-        private readonly byte[] _intensityPayload;
+        // Ping-pong frame buffers — zero per-frame heap allocations.
+        // We only start a new task after the previous one completes, so
+        // buffer[_ping] is always safe to build while buffer[1-_ping] is sent.
+        private readonly ushort[][] _revBufs;    // [2][RevLedCount]
+        private readonly ushort[][] _flagBufs;   // [2][FlagLedCount]
+        private readonly ushort[][] _colorBufs;  // [2][_colorSlotCount]
+        private readonly byte[][] _intensityBufs; // [2][INTENSITY_PAYLOAD_SIZE]
+        private int _ping = 0;
 
         // Track how many color-channel slots the hardware needs
         private readonly int _colorSlotCount;
@@ -89,10 +91,12 @@ namespace FanaBridge.Adapters
 
             _colorSlotCount = maxColorHwIndex + 1;
 
-            _revColors = new ushort[caps.RevLedCount];
-            _flagColors = new ushort[caps.FlagLedCount];
-            _buttonColors = new ushort[Math.Max(_colorSlotCount, 0)];
-            _intensityPayload = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
+            _revBufs = new[] { new ushort[caps.RevLedCount], new ushort[caps.RevLedCount] };
+            _flagBufs = new[] { new ushort[caps.FlagLedCount], new ushort[caps.FlagLedCount] };
+            _colorBufs = new[] { new ushort[Math.Max(_colorSlotCount, 0)],
+                                 new ushort[Math.Max(_colorSlotCount, 0)] };
+            _intensityBufs = new[] { new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE],
+                                     new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE] };
 
             _buttonColorConverter = caps.ColorFormat == ColorFormat.Rgb555
                 ? (Func<Color, ushort>)ColorHelper.ToRgb555Premultiplied
@@ -167,11 +171,19 @@ namespace FanaBridge.Adapters
                     return true;
             }
 
-            // ── Build frame buffers (runs on the calling thread) ─────
-            Array.Clear(_revColors, 0, _revColors.Length);
-            Array.Clear(_flagColors, 0, _flagColors.Length);
-            Array.Clear(_buttonColors, 0, _buttonColors.Length);
-            Array.Clear(_intensityPayload, 0, _intensityPayload.Length);
+            // ── Build into the current ping-pong slot ────────────────
+            // The previous task (using the other slot) is guaranteed complete
+            // by the in-flight check above, so writing here is race-free.
+            int ping = _ping;
+            var revColors = _revBufs[ping];
+            var flagColors = _flagBufs[ping];
+            var colorBuf = _colorBufs[ping];
+            var intensities = _intensityBufs[ping];
+
+            Array.Clear(revColors, 0, revColors.Length);
+            Array.Clear(flagColors, 0, flagColors.Length);
+            Array.Clear(colorBuf, 0, colorBuf.Length);
+            Array.Clear(intensities, 0, intensities.Length);
 
             for (int i = 0; i < _ledChannels.Length; i++)
             {
@@ -181,53 +193,47 @@ namespace FanaBridge.Adapters
                 switch (_ledChannels[i])
                 {
                     case LedChannel.Rev:
-                        if (hw < _revColors.Length)
-                            _revColors[hw] = ColorHelper.ToRgb565Premultiplied(color);
+                        if (hw < revColors.Length)
+                            revColors[hw] = ColorHelper.ToRgb565Premultiplied(color);
                         break;
 
                     case LedChannel.Flag:
-                        if (hw < _flagColors.Length)
-                            _flagColors[hw] = ColorHelper.ToRgb565Premultiplied(color);
+                        if (hw < flagColors.Length)
+                            flagColors[hw] = ColorHelper.ToRgb565Premultiplied(color);
                         break;
 
                     case LedChannel.Color:
-                        if (hw < _buttonColors.Length)
+                        if (hw < colorBuf.Length)
                         {
-                            _buttonColors[hw] = _buttonColorConverter(color);
-                            _intensityPayload[hw] = 7; // max — brightness is in the color
+                            colorBuf[hw] = _buttonColorConverter(color);
+                            intensities[hw] = 7; // max — brightness is in the color
                         }
                         break;
 
                     case LedChannel.Mono:
-                        if (hw < _intensityPayload.Length)
-                            _intensityPayload[hw] = ColorHelper.ColorToIntensity(color);
+                        if (hw < intensities.Length)
+                            intensities[hw] = ColorHelper.ColorToIntensity(color);
                         break;
                 }
             }
 
-            // ── Snapshot buffers for the background task ─────────────
-            // The frame buffers are reused each call, so copy them for
-            // the closure to avoid races with the next frame's build.
-            ushort[] revSnap = _caps.HasRevLeds ? (ushort[])_revColors.Clone() : null;
-            ushort[] flagSnap = _caps.HasFlagLeds ? (ushort[])_flagColors.Clone() : null;
-            ushort[] colorSnap = (_colorSlotCount > 0 || _caps.MonoLedCount > 0)
-                ? (ushort[])_buttonColors.Clone() : null;
-            byte[] intensitySnap = colorSnap != null
-                ? (byte[])_intensityPayload.Clone() : null;
+            bool sendColors = _colorSlotCount > 0 || _caps.MonoLedCount > 0;
 
             // ── Send to hardware asynchronously ──────────────────────
+            // Capture the local array references (no Clone needed — the ping-pong
+            // guarantees the background task finishes before we write this slot again).
             _refreshTask = Task.Run(() =>
             {
                 try
                 {
-                    if (revSnap != null)
-                        _leds.SetRevLedColors(revSnap);
+                    if (_caps.HasRevLeds)
+                        _leds.SetRevLedColors(revColors);
 
-                    if (flagSnap != null)
-                        _leds.SetFlagLedColors(flagSnap);
+                    if (_caps.HasFlagLeds)
+                        _leds.SetFlagLedColors(flagColors);
 
-                    if (colorSnap != null)
-                        _leds.SetButtonLedState(colorSnap, intensitySnap);
+                    if (sendColors)
+                        _leds.SetButtonLedState(colorBuf, intensities);
                 }
                 catch (Exception ex)
                 {
@@ -240,6 +246,9 @@ namespace FanaBridge.Adapters
                     _refreshTask = null;
                 }
             });
+
+            // Advance to the other slot for the next frame
+            _ping = 1 - ping;
 
             stateComparer.SetLastState(state);
             return true;
@@ -271,7 +280,7 @@ namespace FanaBridge.Adapters
 
             int buttonCount = caps.ButtonLedCount;
             if (buttonCount > 0)
-                maps.Add(new ButtonRangeMap(0, buttonCount));
+                maps.Add(new ButtonRangeMap(revFlagCount, buttonCount));
 
             return new PhysicalMapper(maps.ToArray());
         }

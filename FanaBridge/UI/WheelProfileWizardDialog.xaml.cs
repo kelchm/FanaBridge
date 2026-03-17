@@ -1380,8 +1380,19 @@ namespace FanaBridge.UI
                 profile.Leds.Add(led);
             }
 
-            // Mono LEDs — hw indices start after the color slots
+            // Mono LEDs — hw indices start after the color slots in the intensity payload.
+            // The intensity payload is INTENSITY_PAYLOAD_SIZE bytes; clamp mono count so
+            // colorCount + monoCount never exceeds that limit.
             int monoStart = colorCount;
+            int maxMono = LedEncoder.INTENSITY_PAYLOAD_SIZE - monoStart;
+            if (monoCount > maxMono)
+            {
+                SimHub.Logging.Current.Warn(
+                    string.Format("WheelProfileWizard: Clamping mono LED count from {0} to {1} " +
+                                  "(colorCount={2} + monoCount must not exceed INTENSITY_PAYLOAD_SIZE={3})",
+                                  monoCount, maxMono, colorCount, LedEncoder.INTENSITY_PAYLOAD_SIZE));
+                monoCount = maxMono;
+            }
             for (int i = 0; i < monoCount; i++)
             {
                 var led = new LedDefinition
@@ -1422,11 +1433,11 @@ namespace FanaBridge.UI
                 led.Input = entry.ButtonInputId; // legacy compat
             }
 
-            if (entry.RelativeCW != null || entry.RelativeCCW != null)
+            if (entry.RelativeCW != null && entry.RelativeCCW != null)
             {
-                mapping.Relative = new List<string>();
-                if (entry.RelativeCW != null) mapping.Relative.Add(entry.RelativeCW);
-                if (entry.RelativeCCW != null) mapping.Relative.Add(entry.RelativeCCW);
+                // Only write relative mapping when both directions were captured;
+                // the schema requires exactly [cw, ccw] and a 1-item array would violate it.
+                mapping.Relative = new List<string> { entry.RelativeCW, entry.RelativeCCW };
                 led.Input = led.Input ?? entry.RelativeCW; // legacy compat
             }
 
