@@ -87,7 +87,6 @@ namespace FanaBridge.Adapters
             _ledModule = new LedModuleSettings<FanatecLedManager>(options);
             _ledModule.IsEmbedded = true;
             _ledModule.IsEnabled = true;
-            _ledModule.IndividualLEDsMode = IndividualLEDsMode.Combined;
 
             SimHub.Logging.Current.Info(
                 "FanatecWheelDeviceInstance[" + caps.Name + "]: LED module created (" +
@@ -278,22 +277,13 @@ namespace FanaBridge.Adapters
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: End called");
 
             _displayManager?.Clear();
-
-            // LedModuleSettings may implement IDisposable for cleanup
-            try
-            {
-                (_ledModule as IDisposable)?.Dispose();
-            }
-            catch (Exception ex)
-            {
-                SimHub.Logging.Current.Warn(
-                    "FanatecWheelDeviceInstance: LedModule dispose failed: " + ex.Message);
-            }
+            _ledModule?.FinalizeModule();
         }
 
         public override IEnumerable<DynamicButtonAction> GetDynamicButtonActions()
         {
-            return Enumerable.Empty<DynamicButtonAction>();
+            EnsureLedModuleInitialized();
+            return _ledModule?.GetDynamicActions() ?? Enumerable.Empty<DynamicButtonAction>();
         }
 
         public override IEnumerable<DeviceSettingControl> GetSettingsControls()
