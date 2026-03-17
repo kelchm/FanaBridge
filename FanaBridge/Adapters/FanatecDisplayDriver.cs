@@ -24,6 +24,12 @@ namespace FanaBridge.Adapters
         private int _lastSentSpeed = int.MinValue;
         private string _lastDisplayMode;
 
+        // GearAndSpeed overlay: show gear for a brief period after each gear change
+        // TODO: make duration configurable; revisit with a proper implementation
+        private static readonly TimeSpan GearOverlayDuration = TimeSpan.FromSeconds(2);
+        private int _lastKnownGear = int.MinValue;
+        private DateTime _gearOverlayUntil = DateTime.MinValue;
+
         public FanatecDisplayDriver(DisplayEncoder display, DisplaySettings settings)
         {
             _display = display;
@@ -86,6 +92,8 @@ namespace FanaBridge.Adapters
             _currentGear = "";
             _lastSentGear = int.MinValue;
             _lastSentSpeed = int.MinValue;
+            _lastKnownGear = int.MinValue;
+            _gearOverlayUntil = DateTime.MinValue;
         }
 
         // =====================================================================
@@ -124,28 +132,22 @@ namespace FanaBridge.Adapters
 
         private void UpdateGearAndSpeed(GameData data)
         {
-            // Show gear in the center digit, speed scrolls on edges when available
-            // Simple compromise: show gear primarily, speed when stationary or in pit
-            bool inPit = data.NewData.IsInPitLane != 0;
+            string gearStr = data.NewData.Gear;
+            int gear = ParseGear(gearStr);
             int speed = (int)Math.Round(data.NewData.SpeedKmh);
+            if (speed < 0) speed = 0;
+            if (speed > 999) speed = 999;
 
-            if (inPit || speed < 5)
+            // Trigger the gear overlay whenever the gear changes
+            if (gear != _lastKnownGear)
             {
-                // Show speed when in pit or nearly stopped
-                if (speed != _lastSentSpeed || _lastDisplayMode != "GearSpeed_Speed")
-                {
-                    _display.DisplaySpeed(speed);
-                    _lastSentSpeed = speed;
-                    _lastDisplayMode = "GearSpeed_Speed";
-                    _currentText = speed.ToString();
-                }
+                _lastKnownGear = gear;
+                _gearOverlayUntil = DateTime.UtcNow + GearOverlayDuration;
             }
-            else
-            {
-                // Show gear when driving
-                string gearStr = data.NewData.Gear;
-                int gear = ParseGear(gearStr);
 
+            if (DateTime.UtcNow < _gearOverlayUntil)
+            {
+                // Show gear as a temporary overlay after a gear change
                 if (gear != _lastSentGear || _lastDisplayMode != "GearSpeed_Gear")
                 {
                     _display.DisplayGear(gear);
@@ -153,6 +155,17 @@ namespace FanaBridge.Adapters
                     _lastDisplayMode = "GearSpeed_Gear";
                     _currentGear = GearToString(gear);
                     _currentText = _currentGear;
+                }
+            }
+            else
+            {
+                // Default: show speed
+                if (speed != _lastSentSpeed || _lastDisplayMode != "GearSpeed_Speed")
+                {
+                    _display.DisplaySpeed(speed);
+                    _lastSentSpeed = speed;
+                    _lastDisplayMode = "GearSpeed_Speed";
+                    _currentText = speed.ToString();
                 }
             }
         }
