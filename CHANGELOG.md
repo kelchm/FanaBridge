@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0] - 2026-03-16
+
+### Added
+- **Wheel Profile Wizard**: 8-step dialog that probes hardware to generate custom profiles for unsupported wheels
+- **JSON Wheel Profiles**: device capabilities are now defined in editable JSON files; user-created profiles are supported alongside built-ins
+- **Encoder tuning** (experimental): read and set encoder mode (Encoder / Pulse / Constant / Auto) from plugin settings
+- Profile picker in settings when multiple profiles match the connected wheel
+- Settings UI actions: delete custom profile, "Open Profiles Folder", "Contribute to GitHub"
+
+### Fixed
+- Green color corruption on Button Module Rally hardware
+- `GearAndSpeed` display mode: gear now shows as a 2-second overlay after each shift, then reverts to speed
+- LED settings not persisting between sessions
+
+### New Wheel Support
+- Podium Hub + Button Module Endurance
+
 ## [0.1.0.0] - 2026-02-23 (beta)
 
 ### Added
