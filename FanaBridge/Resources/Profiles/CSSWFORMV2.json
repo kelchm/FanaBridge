@@ -2,8 +2,8 @@
   "$schema": "wheel-profile.schema.json",
   "schemaVersion": 1,
   "id": "CSSWFORMV2",
-  "name": "Fanatec ClubSport Steering Wheel Formula V2",
-  "shortName": "Fanatec Formula V2",
+  "name": "Fanatec ClubSport Steering Wheel Formula V2.5",
+  "shortName": "Fanatec Formula V2.5",
   "match": {
     "wheelType": "CSSWFORMV2"
   },
