@@ -126,7 +126,7 @@ namespace FanaBridge.Profiles
             foreach (string resourceName in assembly.GetManifestResourceNames())
             {
                 // Embedded resource names follow: {RootNamespace}.{RelativePath}.{filename}
-                // e.g. "FanaBridge.Resources.Profiles.bmw-m4-gt3.json"
+                // e.g. "FanaBridge.Resources.Profiles.PSWBMW.json"
                 if (!resourceName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
                     continue;
                 if (resourceName.IndexOf(".Profiles.", StringComparison.OrdinalIgnoreCase) < 0)
