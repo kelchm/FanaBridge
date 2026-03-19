@@ -1,6 +1,12 @@
 # Changelog
 
-## [0.2.0] - 2026-03-16
+## v0.2.1 - 2026-03-18
+
+### New Wheel Support
+- ClubSport Steering Wheel Formula V2.5 (CSSWFORMV2)
+
+
+## v0.2.0 - 2026-03-16
 
 ### Added
 - **Wheel Profile Wizard**: 8-step dialog that probes hardware to generate custom profiles for unsupported wheels
@@ -17,7 +23,7 @@
 ### New Wheel Support
 - Podium Hub + Button Module Endurance
 
-## [0.1.0.0] - 2026-02-23 (beta)
+## v0.1.0 - 2026-02-23 (beta)
 
 ### Added
 - Initial public beta release
