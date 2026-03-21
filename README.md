@@ -29,9 +29,10 @@ Built-in profiles are included for:
 
 | Wheel / Configuration | LEDs | Display |
 |---|---|---|
+| ClubSport Steering Wheel Formula V2.5 | 9 rev + 6 flag LEDs | 3-digit |
 | Podium Steering Wheel BMW M4 GT3 | 12 color + 3 mono (encoders) | 3-digit |
-| Podium Hub + Button Module Rally (BMR) | 12 color LEDs | 3-digit |
 | Podium Hub + Button Module Endurance (BME) | 9 rev + 6 flag LEDs | ITM (basic support) |
+| Podium Hub + Button Module Rally (BMR) | 12 color LEDs | 3-digit |
 
 ### Unsupported wheels
 
