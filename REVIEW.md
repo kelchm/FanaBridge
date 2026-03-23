@@ -126,18 +126,28 @@ The findings below are refinements, not indications of fundamental problems.
 
 ## Resource Management
 
-11. **`FanatecDevice.Disconnect()` doesn't null `_connectedProductId` atomically
-    with stream closure**: If `IsDevicePresent` is called between setting
-    `_connectedProductId = 0` and the stream cleanup completing, it would return
-    false even if the device is still connected. This is extremely unlikely in
-    practice.
+11. **`FanatecDevice.Connect` resource leak on partial failure**: If `_ledStream`
+    opens successfully (line 135) but a later exception occurs before the method
+    returns `true`, the method returns `false` without calling `Disconnect()`.
+    The `Disconnect()` call at the top of `Connect()` only handles pre-existing
+    connections, not partial failures in the current attempt. The leaked
+    `_ledStream` would be orphaned.
 
-12. **`FanatecPlugin.End()` disposes `_sdk` and `_device` but doesn't dispose
+12. **`FanatecSdkManager.TrySdkConnect` leaks `WheelInterface` on failure**:
+    When `wi.Connect(productId)` returns `false`, the `WheelInterface` instance
+    is abandoned without calling `Release()`. If `WheelInterface` holds
+    unmanaged SDK resources, they leak.
+
+13. **`CancellationTokenSource` and `ManualResetEventSlim` in wizard never
+    disposed**: `_probeCts`, `_blinkCts`, and `_blinkDone` in
+    `WheelProfileWizardDialog` are cancelled/reset but never disposed. These
+    implement `IDisposable` and hold `WaitHandle`s that should be released.
+    Over multiple wizard sessions this could leak OS handles.
+
+14. **`FanatecPlugin.End()` disposes `_sdk` and `_device` but doesn't dispose
     `_connectionMonitor`, `_tuning`, `_leds`, or `_display`**: These don't
-    implement `IDisposable`, so there's nothing to dispose. However,
-    `_connectionMonitor` holds references to delegates and event handlers that
-    could theoretically prevent garbage collection. **Impact**: None — the plugin
-    lives for the process lifetime.
+    implement `IDisposable`, so there's nothing to dispose. **Impact**: None —
+    the plugin lives for the process lifetime.
 
 ---
 
@@ -184,6 +194,46 @@ The findings below are refinements, not indications of fundamental problems.
 17. **CHANGELOG disconnected from GitHub Releases**: `release.yml` uses
     `--generate-notes` which auto-generates from commits, ignoring the curated
     `CHANGELOG.md`.
+
+---
+
+## Transport Concerns
+
+15. **`ReadCol03` holds the write lock during reads**: In `FanatecDevice`, the
+    `ReadCol03` method acquires `_writeLock` before reading. Tuning reads can
+    time out at up to 1000ms, during which all LED and display writes are
+    blocked. This could cause visible LED flickering or stuttering on wheels
+    with tuning features enabled.
+
+16. **`FanatecTuningController` drain loop has no iteration cap**: The
+    `while (_transport.ReadCol03(buf, DRAIN_TIMEOUT_MS) >= 0) { }` loop in
+    `ReadTuningState` has no maximum iteration count. If the device keeps
+    producing reports, the drain could run indefinitely (each iteration bounded
+    by 50ms timeout, but no total limit).
+
+---
+
+## Dead Code & Unused Settings
+
+17. **`MaxUpdateRateHz` is declared but never consumed**: The
+    `FanatecPluginSettings.MaxUpdateRateHz` property exists with a default of
+    60 but no code reads it to throttle updates.
+
+---
+
+## UI Layer
+
+18. **`TuningSettingsPanel` hardcoded magic offset**: Line 75 uses `rawDump[18]`
+    instead of referencing `FanatecTuningController.READ_ENCODER_MODE_OFFSET`.
+    If the constant changes, the UI silently reads the wrong byte.
+
+19. **`SyncFromDevice` blocks the UI thread**: `tuning.ReadTuningStateRaw()`
+    performs HID I/O with up to 1-second timeout on the UI dispatcher thread.
+    This could freeze the UI briefly.
+
+20. **Wizard `Process.Start` for file explorer lacks error handling**: No
+    try/catch around `Process.Start(userDir)` in `SettingsControl.xaml.cs`. If
+    the path is invalid, this throws unhandled.
 
 ---
 
@@ -234,15 +284,22 @@ The findings below are refinements, not indications of fundamental problems.
 ### Should Fix
 1. Add `volatile` to `_refreshTask` in `FanatecLedDriver` (item 4)
 2. Add `volatile` to `WizardActive` in `FanatecPlugin` (item 10)
-3. Add `<LangVersion>8.0</LangVersion>` to `FanaBridge.Tests.csproj` (item 13)
+3. Add `<LangVersion>8.0</LangVersion>` to `FanaBridge.Tests.csproj`
+4. Fix `FanatecDevice.Connect` partial failure resource leak (item 11)
+5. Fix `FanatecSdkManager.TrySdkConnect` `WheelInterface` leak (item 12)
 
 ### Should Consider
-4. Add tests for `LedEncoder` and `DisplayEncoder` — these are the highest-value
-   untested components
-5. Add code coverage reporting to CI (item 14)
-6. Fix `build-install-archive.ps1` `--no-restore` issue (item 15)
+6. Add tests for `LedEncoder` and `DisplayEncoder` — highest-value untested
+   components
+7. Add code coverage reporting to CI
+8. Fix `build-install-archive.ps1` `--no-restore` issue
+9. Dispose `CancellationTokenSource`/`ManualResetEventSlim` in wizard (item 13)
+10. Reference `READ_ENCODER_MODE_OFFSET` constant in TuningSettingsPanel (item 18)
+11. Remove or implement `MaxUpdateRateHz` dead setting (item 17)
 
 ### Nice to Have
-7. Cache computed LED counts in `WheelProfile` (item 7)
-8. Add `WheelProfileStore` tests for profile resolution logic
-9. Use CHANGELOG content in GitHub Release notes (item 17)
+12. Cache computed LED counts in `WheelProfile` (item 7)
+13. Add `WheelProfileStore` tests for profile resolution logic
+14. Use CHANGELOG content in GitHub Release notes
+15. Add iteration cap to tuning drain loop (item 16)
+16. Run `SyncFromDevice` off the UI thread (item 19)
