@@ -568,15 +568,9 @@ ITM display support depends on the wheelbase, steering wheel, and button module 
 | **Base** | Wheelbase is PDD1, PDD1 (PS4), or PDD2 | 1 | Wheelbase's own display |
 | **BME** | Button Module Endurance connected | 3 | PBME's large OLED |
 | **Bentley** | Bentley GT3 steering wheel | 4 | Bentley wheel's built-in display |
-| **GTSWX** | GT Steering Wheel X | 3 | GTSWX's built-in display |
+| **GTSWX** | GT Steering Wheel Extreme | 3 | GTSWX's built-in display |
 
 > **Note:** BME and GTSWX share Device ID 3 on the wire. They are mutually exclusive — a setup will have one or the other, never both.
-
-#### Devices Without ITM Support
-
-- **PBMR** (Podium Button Module Rally) — No ITM support. Only supports button LEDs and 7-segment display.
-- **DD10/DD20** — Pass the initial ITM gate but have no base display. Require a hub with PBME attached, or a Bentley/GTSWX wheel for ITM.
-- **CSDD / CSDDPlus / GTDDPRO / CSLDD** — Not in the official base ITM detection, but raw HID ITM commands work (bypassing the SDK check).
 
 ### ITM Command Reference
 
@@ -1095,7 +1089,7 @@ The native SDK's tuning menu WRITE (`FSTuningMenu::PrivateDataSet`) sends a sing
 
 The [report trigger mechanism](#trigger-mechanism) (subcmd `0x06`) is used only for CBP operations, not for tuning menu writes. The tuning menu has its own `DataReportTrigger` method (subcmd `0x06` within the col03 `0x03` command class), but this is part of the **READ** path — it requests the device to send back its current tuning state.
 
-> **Note:** FanaBridge currently sends a burst of 4 ON/OFF trigger pairs after tuning writes. This was reverse-engineered from observed behavior and does not match the native SDK, which sends zero trigger pairs after a WRITE. The FanaBridge implementation should be considered experimental.
+> **Note:** FanaBridge currently sends a burst of 4 ON/OFF trigger pairs after tuning writes. This does not match the SDK, which sends zero trigger pairs after a WRITE. The FanaBridge implementation should be considered experimental.
 
 ### WRITE Report Byte Map (Quick Reference)
 

@@ -16,13 +16,7 @@ A self-contained steering wheel rim with a **passive** quick-release connection 
 A mounting platform with an **active** PCB/MCU and a quick-release connection to the wheelbase. Designed for attaching third-party or custom steering wheels. Has a USB-C interface for connecting a **button module**. A hub's effective capabilities are **compositional** — the combination of its own native features plus whatever module is attached. Examples: Podium Hub (PHUB), CSL Universal Hub (CSLUHUB), ClubSport Universal Hub V2 (CSUHV2).
 
 ### Button Module
-An accessory that attaches to a **hub** (never a standalone wheel) via USB-C. Provides LEDs, displays, buttons, and encoders. The module's capabilities become the hub's effective capabilities. Only two are known: PBME and PBMR. Identified by the `BUTTON_MODULE_TYPE` enum.
-
-### PBME (Podium Button Module Endurance)
-The more capable button module. Provides: 9 RGB rev LEDs, 6 RGB flag LEDs, button LEDs with intensity control, encoder LEDs, a 2.7" 256x64 OLED display (ITM + legacy modes), and col03 input reports. `BUTTON_MODULE_TYPE` ID 1.
-
-### PBMR (Podium Button Module Rally)
-The simpler button module. Provides: button LEDs (RGB555), encoder LEDs, and a ~1" OLED display (7-seg protocol only, no ITM). No rev LEDs, no flag LEDs. `BUTTON_MODULE_TYPE` ID 2.
+An accessory that attaches to a **hub** (never a standalone wheel) via USB-C. Provides LEDs, displays, buttons, and encoders. The module's capabilities become the hub's effective capabilities. Identified by the `BUTTON_MODULE_TYPE` enum. See [Button Modules](devices.md#button-modules) for specific modules and their capabilities.
 
 ### Compositional Capability Model
 The principle that a hub's effective capabilities are determined by the combination of its native features plus the attached module's features. This is not hardcoded to specific modules — if a new module were released, any compatible hub would gain its capabilities. See [Button Modules](devices/button-modules.md).
