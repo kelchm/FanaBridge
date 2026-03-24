@@ -128,10 +128,10 @@ For **RevStripe rims** (CSLRP1X, CSLRP1PS4, CSLRWRC), this is an RGB333 color va
 
 ```
 Example: Red
-  data_lo = 0x38, data_hi = 0x00
+  data_lo = 0x00, data_hi = 0x38
 
 Example: Green
-  data_lo = 0xC0, data_hi = 0x01
+  data_lo = 0x01, data_hi = 0xC0
 ```
 
 #### Blink Enable (subcmd 0x07)
@@ -151,16 +151,16 @@ byte[4] (data_lo):  [  0  0   0  0  0   0  0  G2  ]   (.......G)
 
 Each channel has 3 bits (0–7), yielding 512 possible colors:
 
-| Color | R | G | B | data_lo | data_hi |
-|-------|---|---|---|---------|---------|
+| Color | R | G | B | data_lo (byte[4]) | data_hi (byte[5]) |
+|-------|---|---|---|-------------------|-------------------|
 | Off | 0 | 0 | 0 | `0x00` | `0x00` |
-| Red | 7 | 0 | 0 | `0x38` | `0x00` |
-| Green | 0 | 7 | 0 | `0xC0` | `0x01` |
-| Blue | 0 | 0 | 7 | `0x07` | `0x00` |
-| Yellow | 7 | 7 | 0 | `0xF8` | `0x01` |
-| Magenta | 7 | 0 | 7 | `0x3F` | `0x00` |
-| Cyan | 0 | 7 | 7 | `0xC7` | `0x01` |
-| White | 7 | 7 | 7 | `0xFF` | `0x01` |
+| Red | 7 | 0 | 0 | `0x00` | `0x38` |
+| Green | 0 | 7 | 0 | `0x01` | `0xC0` |
+| Blue | 0 | 0 | 7 | `0x00` | `0x07` |
+| Yellow | 7 | 7 | 0 | `0x01` | `0xF8` |
+| Magenta | 7 | 0 | 7 | `0x00` | `0x3F` |
+| Cyan | 0 | 7 | 7 | `0x01` | `0xC7` |
+| White | 7 | 7 | 7 | `0x01` | `0xFF` |
 
 > **Note:** The Fanatec SDK only uses 8 discrete colors (each channel fully on or fully off). The hardware encoding supports 3 bits per channel, so intermediate values (e.g., R=4, G=2, B=0) may work but are not officially exercised.
 

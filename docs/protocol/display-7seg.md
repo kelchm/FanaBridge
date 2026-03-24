@@ -1,6 +1,8 @@
 # 7-Segment Display Protocol
 
-The 3-digit 7-segment display is found on many Fanatec steering wheels and button modules. It is controlled via **8-byte col01 HID reports** and is typically used to show gear, speed, or short text strings.
+This protocol controls the 3-digit display found on many Fanatec wheels, hubs, and button modules. It uses **8-byte col01 HID reports** and is typically used to show gear, speed, or short text strings.
+
+The same protocol is used regardless of the underlying display hardware — physical LED 7-segment displays and small OLED displays are both addressed with identical commands. On devices with a larger ITM-capable OLED (e.g., PBME), this protocol drives the **legacy mode** (the last ITM page), which renders 7-segment-style content. See [Steering Wheels — Display Capabilities](../devices/steering-wheels.md#display-capabilities) for per-device display types.
 
 ## Display Command
 
@@ -144,7 +146,7 @@ All three segment bytes set to `0x00` (blank).
 
 ## Display Ownership
 
-On OLED-equipped devices, the host can explicitly take or release control of the display. This command only works on devices where the 7-segment display uses an OLED panel (not all devices):
+On certain OLED-equipped devices (currently only the PBME), the host can explicitly take or release control of the display. The native SDK checks an internal `IsSevenSegmentOLED` flag before sending this command:
 
 ```
 Host takes control:   [RID, F8, 09, 01, 18, 02, 00, 00]
@@ -158,7 +160,7 @@ Release to firmware:  [RID, F8, 09, 01, 18, 01, 00, 00]
 
 This is important during operations where the firmware needs to show its own content (e.g., [CBP adjustment](clutch-bite-point.md), tuning menu navigation). The host should release control, wait for the operation to complete, then reclaim control.
 
-For non-OLED devices, this command is a no-op. Display conflict management must be handled by the host software (e.g., by pausing display writes during firmware operations).
+For devices where `IsSevenSegmentOLED` is false (including LED 7-segment displays and the PBMR's small OLED), this command is a no-op. Display conflict management on these devices must be handled by the host software (e.g., by pausing display writes during firmware operations).
 
 ## Interaction with Other Protocols
 

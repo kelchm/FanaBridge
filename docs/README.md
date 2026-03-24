@@ -17,14 +17,14 @@ Fanatec devices communicate over USB HID using two report collections with disti
 
 ## Device Reference
 
-Fanatec hardware is organized into three categories: wheelbases, steering wheels (rims), and button modules. Each has different capabilities and protocol support.
+Fanatec hardware is organized into four categories: wheelbases, wheels, hubs, and button modules. Hubs accept button modules whose capabilities compose with the hub's native features. Standalone wheels have fixed hardware.
 
 | Document | Description |
 |----------|-------------|
 | [Device Overview](devices/README.md) | Fanatec ecosystem overview and device identification |
 | [Wheel Bases](devices/wheel-bases.md) | Supported wheelbases, USB product IDs, and base capabilities |
-| [Steering Wheels](devices/steering-wheels.md) | All known steering wheel types with LED, display, and protocol capabilities |
-| [Button Modules](devices/button-modules.md) | PBME, PBMR — capabilities and protocol differences |
+| [Steering Wheels & Hubs](devices/steering-wheels.md) | Wheels (native capabilities) and hubs (native + module-extensible) |
+| [Button Modules](devices/button-modules.md) | PBME, PBMR — module capabilities and the compositional model |
 
 ## Conventions
 

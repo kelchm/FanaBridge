@@ -20,7 +20,7 @@ ITM display support depends on the wheelbase, steering wheel, and button module 
 ### Devices Without ITM Support
 
 - **PBMR** (Podium Button Module Rally) — No ITM support. Only supports button LEDs and 7-segment display.
-- **DD10/DD20** — Pass the initial ITM gate but have no base display. Require a PBME, Bentley, or GTSWX wheel for ITM.
+- **DD10/DD20** — Pass the initial ITM gate but have no base display. Require a hub with PBME attached, or a Bentley/GTSWX wheel for ITM.
 - **CSDD / CSDDPlus / GTDDPRO / CSLDD** — Not in the official base ITM detection, but raw HID ITM commands work (bypassing the SDK check).
 
 ## Command Reference

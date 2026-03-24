@@ -153,16 +153,13 @@ writeBuf[4] = 2;     // Switch to setup slot 2
 
 The dedicated SELECT SETUP subcmd (`0x01`) can also be used for this.
 
-## Acknowledgment Sequence
+## Post-WRITE Behavior
 
-After a WRITE, the host sends an **acknowledgment burst** on col01 (8-byte reports):
+The native SDK's tuning menu WRITE (`FSTuningMenu::PrivateDataSet`) sends a single col03 HID report and returns immediately — **no acknowledgment burst or trigger sequence is sent after a WRITE**.
 
-```
-[ReportID, 0xF8, 0x09, 0x01, 0x06, 0xFF, 0x03, 0x00]   ← trigger ON (startup)
-[ReportID, 0xF8, 0x09, 0x01, 0x06, 0x00, 0x00, 0x00]   ← trigger OFF
-```
+The [report trigger mechanism](clutch-bite-point.md#trigger-mechanism) (subcmd `0x06`) is used only for CBP operations, not for tuning menu writes. The tuning menu has its own `DataReportTrigger` method (subcmd `0x06` within the col03 `0x03` command class), but this is part of the **READ** path — it requests the device to send back its current tuning state.
 
-During normal operation, byte[6] changes from `0x03` to `0x02`. This uses the same [report trigger mechanism](clutch-bite-point.md#trigger-mechanism) documented in the CBP protocol.
+> **Note:** FanaBridge currently sends a burst of 4 ON/OFF trigger pairs after tuning writes. This was reverse-engineered from observed behavior and does not match the native SDK, which sends zero trigger pairs after a WRITE. The FanaBridge implementation should be considered experimental.
 
 ## WRITE Report Byte Map (Quick Reference)
 
