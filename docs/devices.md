@@ -94,9 +94,8 @@ All Fanatec wheelbases connect to the host PC via USB and expose HID endpoints f
 | `0x0005` | CSL Elite series |
 | `0x0006` | ClubSport V2 / V2.5 |
 | `0x0020` | ClubSport DD+ |
-| Others | TBD — additional product IDs not yet cataloged |
 
-> **Note:** The complete USB PID mapping is incomplete. The table above includes confirmed values.
+> **Note:** The complete USB PID mapping is incomplete. The table above includes confirmed values only.
 
 ### Base ITM Display
 
@@ -148,7 +147,7 @@ Fanatec uses a single `STEERINGWHEEL_TYPE` enum for both wheels and hubs. See [H
 | 19 | CSSWF1ESV2 | ClubSport F1 Esports V2 | Wheel |
 | 20 | PSWBMW | Podium BMW M4 GT3 | Wheel |
 | 21 | PSWBENT | Podium Bentley GT3 | Wheel |
-| 22 | GTSWX | GT Steering Wheel X | Wheel |
+| 22 | GTSWX | GT Steering Wheel Extreme | Wheel |
 | 23 | CSSWPVGT | ClubSport PVGT | Wheel |
 | 24 | CSSWFORMV3 | ClubSport Formula V3 | Wheel |
 | 25 | CSLSWGT3 | CSL Steering Wheel GT3 | Wheel |
@@ -357,17 +356,6 @@ Hub (native features) + Module (provided features) = Effective capabilities
 
 This model is not hardcoded to specific modules. If a new module were released with different capabilities, any compatible hub would gain those capabilities by connecting it.
 
-#### Effective Capability Matrix
-
-| Feature | Hub Alone | Hub + PBME | Hub + PBMR |
-|---------|-----------|------------|------------|
-| Rev LEDs | None | 9 (RGB565, col03) | None |
-| Flag LEDs | None | 6 (RGB565, col03) | None |
-| Button LEDs | None | Yes (RGB565, staged) | 9 (RGB555, col03) |
-| Encoder LEDs | None | Yes (intensity, col03) | 3 (intensity, col03) |
-| Display | Hub-dependent | 2.7" OLED (ITM + legacy) | ~1" OLED (7-seg protocol only) |
-| ITM | None | Yes (Device ID 3, col03) | None |
-| col03 Input Reports | None | Yes | None |
 
 > **Note:** Some hubs (CSWRUH, CSWRUHX) have a native 7-segment display. How this interacts with a module's display when both are present is [unverified](#native-hub-capabilities).
 
@@ -389,82 +377,27 @@ The PBME is the more capable of the two modules, featuring a 2.7" 256x64 OLED di
 |---------|---------|----------|
 | Rev LEDs | 9 LEDs, per-LED RGB565 color | Modern (col03) |
 | Flag LEDs | 6 LEDs, per-LED RGB565 color | Modern (col03) |
-| Button LEDs | RGB565 color + per-button intensity (staged commit) | Modern (col03) |
-| Encoder LEDs | Intensity-only, part of button intensity payload | Modern (col03) |
 | Display | 2.7" 256x64 OLED — ITM mode + legacy mode | col03 (ITM) / col01 (legacy) |
 
-#### Display
+#### Device-Specific Notes
 
-The PBME has a single OLED display that operates in two modes:
-
-- **ITM mode** — Full telemetry dashboards via the col03 ITM protocol (pages 1–5). Uses Device ID 3 on the wire. See [ITM Display Protocol](protocol.md#itm-display) for page layouts.
-- **Legacy mode** — Page 6 (the last ITM page). Renders 7-segment-style content and is addressed via the same col01 7-segment commands used for physical LED 7-segment displays. This mode is active when no ITM telemetry is being sent.
-
-#### Display Ownership
-
-The PBME's OLED display supports the `SevenSegmentModeEnable` command for explicit display ownership control:
-
-```
-Host takes control:   [RID, F8, 09, 01, 18, 02, 00, 00]
-Release to firmware:  [RID, F8, 09, 01, 18, 01, 00, 00]
-```
-
-This is important during CBP adjustments and tuning menu navigation, where the firmware needs to show its own content. See [Display Ownership](protocol.md#display-ownership).
-
-> **SDK note:** The native SDK checks `IsSevenSegmentOLED` (a flag set in the native DLL constructor) before sending this command. The managed SDK declares `FSSevenSegmentModeEnable` but never calls it directly — display ownership appears to be managed entirely in the native layer.
-
-#### col03 Input Reports
-
-The PBME sends col03 input reports (device → host) for events like analysis page changes. This enables the firmware-driven notification system for page changes:
-
-- `AnalysisPageChanged` — fires when the user navigates tuning/analysis pages
-- Used by the SDK to detect when to yield or reclaim display control
+- The OLED display operates in two modes: **ITM mode** (telemetry dashboards, pages 1–5, Device ID 3) and **legacy mode** (page 6, 7-segment-style content via col01). See [ITM Display](protocol.md#itm-display).
+- Supports `SevenSegmentModeEnable` for display ownership control. See [Display Ownership](protocol.md#display-ownership).
 
 ### PBMR (Podium Button Module Rally)
 
-The PBMR is a simpler module focused on rally-style controls. It provides button LEDs and a small display but lacks rev LEDs, flag LEDs, and ITM support.
+The PBMR is a simpler module focused on rally-style controls with button and encoder LEDs.
 
 #### Capabilities
 
 | Feature | Details | Protocol |
 |---------|---------|----------|
-| Rev LEDs | **None** | — |
-| Flag LEDs | **None** | — |
-| Button LEDs | 9 LEDs, RGB555 color (5-5-5 bit) | Modern (col03) |
-| Encoder LEDs | 3 LEDs, intensity-only | Modern (col03) |
-| Display | ~1" OLED (resolution unknown) | col01 (7-seg protocol only) |
-| ITM Display | **None** | — |
+| Button LEDs | 7 LEDs, RGB555 color (5-5-5 bit) | Modern (col03) |
+| Encoder LEDs | 3 LEDs, RGB555 color | Modern (col03) |
+| Display | ~1" OLED (resolution unknown) — 7-seg protocol only | col01 |
 
-#### Display
+#### Device-Specific Notes
 
-The PBMR has a small ~1" OLED display. Despite being a dot-matrix OLED capable of arbitrary rendering, all research to date indicates it is only addressable via the same col01 7-segment commands used for physical LED 7-segment displays. It does not support ITM mode.
-
-#### Color Format Difference
-
-The PBMR uses **RGB555** (5-5-5 bit) color encoding instead of the standard RGB565. This means the green channel has 5 bits of precision (0–31) instead of 6 bits (0–63), resulting in a slightly reduced color range.
-
-#### No col03 Input Reports
-
-Unlike the PBME, the PBMR does **not** send col03 input reports. This means:
-
-- No `AnalysisPageChanged` notifications
-- No firmware-driven page change detection
-- CBP mode detection must rely on alternative methods (e.g., registry monitoring on Windows)
-
-#### Display Ownership
-
-The `SevenSegmentModeEnable` command is a **no-op** on the PBMR. Despite having an OLED panel, the PBMR does not support display ownership handoff — display conflict management (e.g., during CBP adjustment) must be handled by pausing host display writes.
-
-### Compatible Hubs
-
-See [Hubs](#hubs) for the full list of module-compatible hubs.
-
-| Hub ID | Hub Name |
-|--------|----------|
-| 5 | CSWRUH |
-| 6 | CSWRUHX |
-| 12 | PHUB |
-| 14 | CSLUHUB |
-| 18 | CSUHV2 |
-
-SIDESWIPE (26) is classified as a hub but does **not** support module attachment. See [Hub Types](#hub-types).
+- Uses **RGB555** color encoding (5 bits per channel) instead of the standard RGB565, resulting in a slightly reduced color range.
+- The OLED display is only addressable via col01 7-segment commands despite being a dot-matrix display.
+- `SevenSegmentModeEnable` is a no-op. Display conflict management must be handled by pausing host writes.
