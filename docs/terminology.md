@@ -28,11 +28,14 @@ The principle that a hub's effective capabilities are determined by the combinat
 ### LED 7-Segment Display
 A physical display using discrete LED segments to render 3 digits. Found on older wheels. Controlled via the col01 7-segment protocol. Cannot display arbitrary graphics. Not ITM-capable.
 
-### OLED Display
-A dot-matrix OLED display. Found in various sizes across wheels and modules. The SDK classifies a wheel as OLED via `FSUtilHasWheelRimOLED`. OLED displays are addressed via the col01 7-segment protocol; larger OLEDs on ITM-capable devices also support col03 ITM mode. See [Display Capabilities](reference/devices.md#display-capabilities) for the per-device matrix.
+### OLED (Basic)
+A dot-matrix OLED display (typically ~1") that renders 7-segment-style content only. Addressed via the same col01 7-segment protocol as physical LED 7-segment displays. Not ITM-capable. The SDK planned a dedicated "SmallOLED" ITM mode for these displays but it is disabled in current firmware.
 
-### LCD Display
-A larger graphical display (e.g., 3.4" 800x800). ITM-capable. See [Display Capabilities](reference/devices.md#display-capabilities).
+### OLED (ITM)
+A larger dot-matrix OLED display capable of full ITM telemetry dashboards via col03. Can also operate in legacy mode (7-segment-style content via col01). See [Display Capabilities](reference/devices.md#display-capabilities) for the per-device matrix.
+
+### LCD
+A graphical LCD display. ITM-capable. See [Display Capabilities](reference/devices.md#display-capabilities).
 
 ### ITM Display
 Any display capable of showing multi-page telemetry dashboards via the col03 ITM protocol. Supported on certain wheelbases, wheels, and button modules. See [ITM Display Protocol](reference/protocol.md#itm-display).

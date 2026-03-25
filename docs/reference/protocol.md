@@ -166,9 +166,8 @@ Fanatec steering wheels support several types of LEDs controlled through two dis
 |------|---------|---------------|-------|
 | **Rev LEDs** | RPM / shift indicator strip | 9 | Per-LED RGB (modern) or on/off (legacy) |
 | **Flag LEDs** | Status / warning indicators | 6 | Per-LED RGB (modern) or single color (legacy) |
-| **Button LEDs** | Button backlighting | Up to 12 | Per-LED RGB + intensity |
+| **Button LEDs** | Button backlighting (RGB devices only) | Up to 12 | Per-LED RGB + intensity |
 | **RevStripe** | Single-color LED strip | 1 (entire strip) | RGB333 (8 colors via SDK, 512 via raw) |
-| **Mono LEDs** | Monochrome intensity LEDs | Varies | 3-bit intensity (0–7) |
 
 ### Modern Protocol (col03)
 
@@ -213,7 +212,7 @@ FF 01 01 [F0hi F0lo] [F1hi F1lo] ... [F5hi F5lo] 00...
 
 #### Staged Button LED Reports (Color + Intensity)
 
-Button LEDs use a **staged commit protocol**. Colors (subcmd `0x02`) and intensities (subcmd `0x03`) can be sent independently, and changes only take effect when the **commit byte** is set to `0x01`.
+RGB button LEDs use a **staged commit protocol**. Colors (subcmd `0x02`) and intensities (subcmd `0x03`) can be sent independently, and changes only take effect when the **commit byte** is set to `0x01`. This protocol only applies to devices with RGB-capable button LEDs (currently PSWBMW, GTSWX, and the PBMR module).
 
 **Button Color Report (subcmd 0x02):**
 
@@ -232,10 +231,10 @@ Byte:  [0]   [1]   [2]   [3]     [4]     ... [18]
        0xFF  0x01  0x03  int_0   int_1   ... commit
 ```
 
-- Bytes 3–17: 15 intensity bytes (per-button + additional slots for encoder LEDs, etc.)
+- Bytes 3–17: 15 intensity bytes (3-bit values, range 0–7)
 - Byte 18: Commit flag (`0x01` = apply, `0x00` = stage only)
 
-The meaning of each intensity slot varies by wheel. For example, on wheels with encoder LEDs, some slots control encoder indicator brightness rather than button backlights.
+The intensity payload has 15 slots while the color payload has 12 — the extra slots exist because intensity values are 1 byte each vs 2 bytes for RGB565 colors, so more fit in the report. On some devices, the higher-indexed intensity slots control additional lighting elements (e.g., encoder backlighting) that are intensity-only and have no corresponding color slot.
 
 **Staging Behavior:**
 

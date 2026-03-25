@@ -9,6 +9,10 @@
 # Local build configuration
 Directory.Build.props.user
 
+# Local personal files
+TODO.txt
+.claude/settings.local.json
+
 # User-specific files
 *.rsuser
 *.suo

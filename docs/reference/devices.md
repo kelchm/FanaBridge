@@ -178,6 +178,7 @@ Rev LEDs are the RPM/shift indicator strip, typically 9 LEDs across the top of t
 | 21 | PSWBENT | 9 | **RGB** | Modern (col03) |
 | 22 | GTSWX | 9 | **RGB** | Modern (col03) |
 | 24 | CSSWFORMV3 | 9 | **RGB** | Modern (col03) |
+| 27 | CSSWFORMV2 (V2.5) | 9 | **RGB** | Modern (col03) |
 
 #### RevStripe
 
@@ -198,8 +199,8 @@ RevStripe is controlled as a single unit (index 0 only) with RGB333 color encodi
 | 9 | CSLRMCL | |
 | 11 | CSLRMCLV1_1 | |
 | 20 | PSWBMW | Has RGB button LEDs but no rev LED strip |
-| 23 | CSSWPVGT | No LEDs of any kind |
-| 25 | CSLSWGT3 | No LEDs of any kind |
+| 23 | CSSWPVGT | No rev, flag, or button LEDs |
+| 25 | CSLSWGT3 | No rev, flag, or button LEDs |
 
 > **SDK note:** The native bitmask for `FSUtilHasWheelRimRevLeds` includes PSWBMW(20). This likely reflects internal SDK routing where button LEDs are reused for rev LED-like functionality, not a physical rev LED strip. CSSWPVGT(23) and CSLSWGT3(25) also appear in some managed SDK code paths with a module fallback, but neither wheel has physical LEDs or a module attachment point.
 
@@ -214,6 +215,7 @@ Flag LEDs are status/warning indicators. Only these wheels have native flag LEDs
 | 21 | PSWBENT |
 | 22 | GTSWX |
 | 24 | CSSWFORMV3 |
+| 27 | CSSWFORMV2 (V2.5) |
 
 ### RGB LED Support
 
@@ -226,6 +228,7 @@ Wheels with per-LED RGB color support via the modern col03 protocol:
 | 21 | PSWBENT | Yes | Yes |
 | 22 | GTSWX | Yes | Yes |
 | 24 | CSSWFORMV3 | Yes | Yes |
+| 27 | CSSWFORMV2 (V2.5) | Yes | Yes |
 
 > **SDK note:** The native bitmask (`FSUtilIsWheelRimRGBLedsSupported`, mask `0x1780400`) also includes bit 20 (PSWBMW). The PSWBMW has no rev LED strip — this bit likely enables the RGB **button LED** code path. CSSWPVGT(23) and CSLSWGT3(25) are **not** set in the native bitmask; these wheels have no physical LEDs.
 
@@ -247,13 +250,13 @@ Wheels have several distinct display technologies. The display type determines w
 | Display Type | Technology | Protocol | ITM Capable |
 |-------------|-----------|----------|-------------|
 | LED 7-segment | Physical LED segments, 3 digits | col01 7-seg only | No |
-| Small OLED | ~1" dot-matrix OLED | col01 7-seg protocol only | No |
-| Large OLED | 2.7" 256x64 OLED | col01 7-seg + col03 ITM | Yes |
-| LCD | 3.4" 800x800 LCD | col03 ITM | Yes |
+| OLED (Basic) | Dot-matrix OLED, typically ~1" | col01 7-seg only | No |
+| OLED (ITM) | Larger dot-matrix OLED (e.g., PBME: 2.7" 256x64) | col01 7-seg + col03 ITM | Yes |
+| LCD | Graphical LCD (e.g., 3.4" 800x800) | col03 ITM | Yes |
 
-All display types that support ITM can also operate in a **legacy mode** — this is the last ITM page (page 6 for most devices, page 5 for Bentley), which renders 7-segment-style content. The legacy page is not a separate protocol — it is an ITM page that the firmware uses to display basic information (gear, speed) when no telemetry data is being sent.
+**OLED (Basic)** displays render 7-segment-style content and are addressed with the same col01 commands as physical LED 7-segment displays. The SDK planned a dedicated "SmallOLED" ITM mode (Device ID 2, with its own 11-page layout) but this feature is disabled in current firmware.
 
-The col01 7-segment protocol works identically across LED 7-segment and small OLED displays — the host sends the same segment-encoded bytes regardless of the underlying hardware.
+**OLED (ITM)** and **LCD** displays support full telemetry dashboards via the col03 ITM protocol. They can also operate in **legacy mode** — the last ITM page (page 6 for most devices, page 5 for Bentley), which renders 7-segment-style content when no telemetry data is being sent.
 
 #### Per-Wheel Display Matrix
 
@@ -262,22 +265,23 @@ The col01 7-segment protocol works identically across LED 7-segment and small OL
 | 2 | CSWRBMW | LED 7-seg | — | |
 | 3 | CSWRFORM | LED 7-seg | — | |
 | 4 | CSWRPORSCHE | LED 7-seg | — | |
-| 9 | CSLRMCL | Small OLED | — | |
-| 10 | CSWRFORMV2 | LED 7-seg | — | |
-| 11 | CSLRMCLV1_1 | Small OLED | — | |
-| 13 | DDRGT | LED 7-seg | — | |
+| 7 | CSLRP1X | LED 7-seg | — | |
+| 8 | CSLRP1PS4 | LED 7-seg | — | |
+| 9 | CSLRMCL | OLED (Basic) | — | |
+| 10 | CSWRFORMV2 | OLED (Basic) | — | |
+| 11 | CSLRMCLV1_1 | OLED (Basic) | — | |
+| 13 | DDRGT | OLED (Basic) | — | |
 | 15 | CSLRWRC | LED 7-seg | — | |
 | 16 | CSSWBMWV2 | LED 7-seg | — | |
 | 17 | CSSWRS | LED 7-seg | — | |
-| 19 | CSSWF1ESV2 | LED 7-seg | — | Tentative — needs verification |
-| 20 | PSWBMW | Small OLED | — | ~1" OLED, same form factor as PBMR |
+| 19 | CSSWF1ESV2 | LED 7-seg | — | |
+| 20 | PSWBMW | OLED (Basic) | — | |
 | 21 | PSWBENT | LCD | 4 | 3.4" 800x800, dedicated Bentley ITM pages |
-| 22 | GTSWX | Unknown | 3 | ITM-capable; display technology unconfirmed |
-| 23 | CSSWPVGT | None | — | |
-| 24 | CSSWFORMV3 | LED 7-seg | — | Tentative — needs verification |
-| 25 | CSLSWGT3 | Small OLED | — | No physical LEDs |
-
-> **Note:** Several display type assignments above (marked tentative) are inferred from SDK data and may not be fully verified against physical hardware.
+| 22 | GTSWX | OLED (ITM) | 3 | Dedicated GTSWX ITM pages |
+| 23 | CSSWPVGT | OLED (Basic) | — | Round display; ITM planned but disabled in SDK |
+| 24 | CSSWFORMV3 | OLED (Basic) | — | |
+| 25 | CSLSWGT3 | OLED (Basic) | — | |
+| 27 | CSSWFORMV2 (V2.5) | OLED (Basic) | — | |
 
 ### APM (Advanced Paddle Mode)
 
@@ -294,7 +298,7 @@ Only wheels with a rotary encoder support the APM tuning parameter:
 
 | Protocol | Collection | Wheels |
 |----------|-----------|--------|
-| Modern (col03, RGB565) | col03 64B | CSWRFORMV2, CSSWF1ESV2, PSWBENT, GTSWX, CSSWFORMV3 |
+| Modern (col03, RGB565) | col03 64B | CSWRFORMV2, CSSWF1ESV2, PSWBENT, GTSWX, CSSWFORMV3, CSSWFORMV2 (V2.5) |
 | Legacy Non-RGB (bitmask) | col01 8B | CSWRBMW, CSWRFORM, CSWRPORSCHE, DDRGT, CSSWBMWV2, CSSWRS |
 | RevStripe (RGB333) | col01 8B | CSLRP1X, CSLRP1PS4, CSLRWRC |
 | No rev LED protocol | — | CSLRMCL, CSLRMCLV1_1, PSWBMW, CSSWPVGT, CSLSWGT3 |
@@ -336,7 +340,7 @@ Hubs generally have no native LEDs or displays — visual feedback comes from th
 
 When a button module is connected to a hub, the module's capabilities become available on that hub. The capabilities are determined entirely by the module — see [Button Modules](#button-modules) for the full capability matrix.
 
-For example, any compatible hub with a PBME gains: 9 RGB rev LEDs, 6 RGB flag LEDs, button LEDs, ITM display support, and encoder LEDs. The same hub with a PBMR instead gains: button LEDs, encoder LEDs, and a small display, but no rev LEDs, no flag LEDs, and no ITM.
+For example, any compatible hub with a PBME gains: 9 RGB rev LEDs, 6 RGB flag LEDs, a 2.7" OLED with ITM support, and display ownership control. The same hub with a PBMR instead gains: button LEDs, encoder LEDs, and a small OLED display, but no rev LEDs, no flag LEDs, and no ITM.
 
 If Fanatec were to release a new button module with different capabilities, any compatible hub would gain those capabilities simply by connecting the new module — the model is compositional, not hardcoded to specific modules.
 
@@ -377,7 +381,7 @@ The PBME is the more capable of the two modules, featuring a 2.7" 256x64 OLED di
 |---------|---------|----------|
 | Rev LEDs | 9 LEDs, per-LED RGB565 color | Modern (col03) |
 | Flag LEDs | 6 LEDs, per-LED RGB565 color | Modern (col03) |
-| Display | 2.7" 256x64 OLED — ITM mode + legacy mode | col03 (ITM) / col01 (legacy) |
+| Display | OLED (ITM) — 2.7" 256x64, ITM mode + legacy mode | col03 (ITM) / col01 (legacy) |
 
 #### Device-Specific Notes
 
@@ -394,7 +398,7 @@ The PBMR is a simpler module focused on rally-style controls with button and enc
 |---------|---------|----------|
 | Button LEDs | 7 LEDs, RGB555 color (5-5-5 bit) | Modern (col03) |
 | Encoder LEDs | 3 LEDs, RGB555 color | Modern (col03) |
-| Display | ~1" OLED (resolution unknown) — 7-seg protocol only | col01 |
+| Display | OLED (Basic) — ~1", 7-seg protocol only | col01 |
 
 #### Device-Specific Notes
 
