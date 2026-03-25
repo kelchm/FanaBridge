@@ -988,7 +988,7 @@ The `WHEEL_TUNING_MENU_DATA` structure is used in both READ responses and WRITE 
 
 - **DRI (offset 7)** is the only signed byte in the structure.
 - **LIN vs FFS**: Two SDK struct variants exist. `WHEEL_TUNING_MENU_DATA` calls offset 5 `LIN`; `FS_WHEEL_TUNING_MENU_DATA` calls it `FFS`. Same byte position, same semantics.
-- **APM (offset 17)**: Only populated on wheels with a rotary encoder — CSL Elite McLaren GT3, CSL Steering Wheel GT3, ClubSport Formula V2, and their revisions. Zero on all other wheels.
+- **APM (offset 17)**: Only populated on wheels with a rotary encoder — CSLRMCL, CSLRMCLV1_1, CSWRFORMV2, CSLSWGT3. Zero on all other wheels.
 - Bytes 23–63 are reserved and always zero.
 
 ### READ vs WRITE Report Layout
@@ -1146,12 +1146,12 @@ The firmware supports event-driven tuning change notification — no polling req
 
 Only these steering wheels report APM via the tuning menu:
 
-| Wheel | Internal ID |
-|-------|-------------|
-| CSL Elite McLaren GT3 | CSLRMCL |
-| CSL Steering Wheel GT3 | CSLSWGT3 |
-| CSL Elite McLaren GT3 V1.1 | CSLRMCLV1_1 |
-| ClubSport Formula V2 | CSWRFORMV2 |
+| ID | Wheel |
+|----|-------|
+| 9 | CSLRMCL |
+| 10 | CSWRFORMV2 |
+| 11 | CSLRMCLV1_1 |
+| 25 | CSLSWGT3 |
 
 For all other wheels, APM is ignored (always zero).
 

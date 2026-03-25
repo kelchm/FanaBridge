@@ -74,11 +74,11 @@ All Fanatec wheelbases connect to the host PC via USB and expose HID endpoints f
 |----|-----------|-------------|---------------|-------------|----------|
 | 1 | CSWV2 | ClubSport Wheel Base V2 | Yes | Yes | No |
 | 2 | CSWV25 | ClubSport Wheel Base V2.5 | Yes | Yes | No |
-| 3 | CSLE_1_0 | CSL Elite Wheel Base 1.0 | Yes | Yes | No |
-| 4 | CSLE_1_1 | CSL Elite Wheel Base 1.1 | Yes | Yes | No |
+| 3 | CSLE_1_0 | CSL Elite Wheel Base | Yes | Yes | No |
+| 4 | CSLE_1_1 | CSL Elite Wheel Base | Yes | Yes | No |
 | 5 | CSLEPS4 | CSL Elite Wheel Base+ (PS4) | Yes | Yes | No |
 | 6 | PDD1 | Podium Wheel Base DD1 | Yes | Yes | **Yes** |
-| 7 | PDD1_PS4 | Podium Wheel Base DD1 (PS4) | Yes | Yes | **Yes** |
+| 7 | PDD1_PS4 | Podium Wheel Base DD1 | Yes | Yes | **Yes** |
 | 8 | PDD2 | Podium Wheel Base DD2 | Yes | Yes | **Yes** |
 | 9 | GTDDPRO | GT DD PRO Wheel Base | Yes | Yes | No |
 | 10 | CSLDD | CSL DD Wheel Base | Yes | Yes | No |
@@ -86,6 +86,8 @@ All Fanatec wheelbases connect to the host PC via USB and expose HID endpoints f
 | 12 | CSDDPlus | ClubSport DD+ Wheel Base | Yes | Yes | No |
 | 13 | PDD25 | Podium Wheel Base DD | Yes | Yes | No |
 | 14 | PDD25PLUS | Podium Wheel Base DD+ | Yes | Yes | No |
+
+> **Note:** The SDK returns abbreviated names for some wheelbases (e.g., "CSL DD" without "Wheel Base"). We normalize all names to include "Wheel Base" for consistency. The SDK also does not distinguish CSLE_1_0/CSLE_1_1 or PDD1/PDD1_PS4 by display name — the enum names preserve the hardware revision distinction.
 
 ### USB Product IDs
 
@@ -105,7 +107,7 @@ Only three wheelbases have a built-in ITM display:
 - **PDD1_PS4** (Podium Wheel Base DD1 for PS4)
 - **PDD2** (Podium Wheel Base DD2)
 
-These use **Device ID 1** for ITM commands. See the [ITM display protocol](#itm-display) section for details.
+These use **Device ID 1** for ITM commands. See the [ITM display protocol](protocol.md#itm-display) section for details.
 
 Other wheelbases (CSDD, CSDDPlus, GTDDPRO, CSLDD, etc.) do not have a base display, but ITM is still available through compatible steering wheels or button modules.
 
@@ -127,34 +129,33 @@ Fanatec uses a single `STEERINGWHEEL_TYPE` enum for both wheels and hubs. See [H
 |----|-----------|-------------|----------|
 | 0 | UNINITIALIZED | (not connected) | — |
 | 1 | UNKNOWN | Unknown | Wheel |
-| 2 | CSWRBMW | ClubSport BMW GT2 | Wheel |
-| 3 | CSWRFORM | ClubSport Formula | Wheel |
-| 4 | CSWRPORSCHE | ClubSport Porsche | Wheel |
-| 5 | CSWRUH | ClubSport Universal Hub | **Hub** |
-| 6 | CSWRUHX | ClubSport Universal Hub X | **Hub** |
-| 7 | CSLRP1X | CSL Elite P1 (Xbox) | Wheel |
-| 8 | CSLRP1PS4 | CSL Elite P1 (PS4) | Wheel |
-| 9 | CSLRMCL | CSL Elite McLaren GT3 | Wheel |
-| 10 | CSWRFORMV2 | ClubSport Formula V2 | Wheel |
-| 11 | CSLRMCLV1_1 | CSL Elite McLaren GT3 V1.1 | Wheel |
+| 2 | CSWRBMW | ClubSport Steering Wheel BMW M3 GT2 | Wheel |
+| 3 | CSWRFORM | ClubSport Steering Wheel Formula Carbon | Wheel |
+| 4 | CSWRPORSCHE | ClubSport Steering Wheel Porsche 918 RSR | Wheel |
+| 5 | CSWRUH | ClubSport Steering Wheel Universal Hub | **Hub** |
+| 6 | CSWRUHX | ClubSport Steering Wheel Universal Hub for Xbox One | **Hub** |
+| 7 | CSLRP1X | CSL Elite Steering Wheel P1 for Xbox One | Wheel |
+| 8 | CSLRP1PS4 | CSL Elite Steering Wheel P1 for PlayStation 4 | Wheel |
+| 9 | CSLRMCL | CSL Elite Steering Wheel McLaren GT3 V1.0 | Wheel |
+| 10 | CSWRFORMV2 | ClubSport Steering Wheel Formula V2 | Wheel |
+| 11 | CSLRMCLV1_1 | CSL Elite Steering Wheel McLaren GT3 V2 | Wheel |
 | 12 | PHUB | Podium Hub | **Hub** |
-| 13 | DDRGT | Podium Racing Wheel (DD) | Wheel |
+| 13 | DDRGT | GT DD PRO Steering Wheel | Wheel |
 | 14 | CSLUHUB | CSL Universal Hub | **Hub** |
-| 15 | CSLRWRC | CSL WRC | Wheel |
-| 16 | CSSWBMWV2 | ClubSport BMW M3 GT2 V2 | Wheel |
-| 17 | CSSWRS | ClubSport RS | Wheel |
-| 18 | CSUHV2 | ClubSport Universal Hub V2 | **Hub** |
-| 19 | CSSWF1ESV2 | ClubSport F1 Esports V2 | Wheel |
-| 20 | PSWBMW | Podium BMW M4 GT3 | Wheel |
-| 21 | PSWBENT | Podium Bentley GT3 | Wheel |
+| 15 | CSLRWRC | CSL Elite Steering Wheel WRC | Wheel |
+| 16 | CSSWBMWV2 | ClubSport Steering Wheel BMW M3 GT2 V2 | Wheel |
+| 17 | CSSWRS | ClubSport Steering Wheel RS | Wheel |
+| 18 | CSUHV2 | ClubSport Steering Wheel Universal Hub V2 | **Hub** |
+| 19 | CSSWF1ESV2 | ClubSport Steering Wheel F1 Esports V2 | Wheel |
+| 20 | PSWBMW | Podium Steering Wheel BMW M4 GT3 | Wheel |
+| 21 | PSWBENT | Podium Steering Wheel Bentley GT3 | Wheel |
 | 22 | GTSWX | GT Steering Wheel Extreme | Wheel |
-| 23 | CSSWPVGT | ClubSport PVGT | Wheel |
-| 24 | CSSWFORMV3 | ClubSport Formula V3 | Wheel |
+| 23 | CSSWPVGT | CSL Elite Steering Wheel Porsche Vision GT | Wheel |
+| 24 | CSSWFORMV3 | ClubSport Steering Wheel Formula V3 | Wheel |
 | 25 | CSLSWGT3 | CSL Steering Wheel GT3 | Wheel |
 | 26 | SIDESWIPE | Sideswipe | **Hub** |
-| 27 | CSSWFORMV2 | ClubSport Formula V2.5 | Wheel |
 
-> **Note:** The Formula V2.5 (ID 27) reports `wheelType` as `CSSWFORMV2` — the same enum name as the Formula V2 (ID 10). The SDK distinguishes them by numeric ID, not by name.
+> **Note:** The ClubSport Steering Wheel Formula V2.5 is a variant of CSWRFORMV2 (ID 10), distinguished by `RIM_FORMV2_TYPE.V25`. The FanatecLib enum has `P2111 = 27` for this variant, but the GameControlService treats it as a sub-type of ID 10. The SDK display name is "ClubSport Steering Wheel Formula V2.5".
 
 Wheels are self-contained rims with fixed hardware. Their capabilities are determined entirely by their built-in components — they cannot be extended with modules.
 
@@ -166,19 +167,17 @@ Rev LEDs are the RPM/shift indicator strip, typically 9 LEDs across the top of t
 
 | ID | Wheel | LED Count | Color | Protocol |
 |----|-------|-----------|-------|----------|
-| 1 | UNKNOWN | 9 | Non-RGB | Legacy (col01) |
 | 2 | CSWRBMW | 9 | Non-RGB | Legacy (col01) |
 | 3 | CSWRFORM | 9 | Non-RGB | Legacy (col01) |
 | 4 | CSWRPORSCHE | 9 | Non-RGB | Legacy (col01) |
-| 10 | CSWRFORMV2 | 9 | **RGB** | Modern (col03) |
 | 13 | DDRGT | 9 | Non-RGB | Legacy (col01) |
 | 16 | CSSWBMWV2 | 9 | Non-RGB | Legacy (col01) |
 | 17 | CSSWRS | 9 | Non-RGB | Legacy (col01) |
+| 10 | CSWRFORMV2 | 9 | **RGB** | Modern (col03) |
 | 19 | CSSWF1ESV2 | 9 | **RGB** | Modern (col03) |
 | 21 | PSWBENT | 9 | **RGB** | Modern (col03) |
 | 22 | GTSWX | 9 | **RGB** | Modern (col03) |
 | 24 | CSSWFORMV3 | 9 | **RGB** | Modern (col03) |
-| 27 | CSSWFORMV2 (V2.5) | 9 | **RGB** | Modern (col03) |
 
 #### RevStripe
 
@@ -215,7 +214,6 @@ Flag LEDs are status/warning indicators. Only these wheels have native flag LEDs
 | 21 | PSWBENT |
 | 22 | GTSWX |
 | 24 | CSSWFORMV3 |
-| 27 | CSSWFORMV2 (V2.5) |
 
 ### RGB LED Support
 
@@ -228,7 +226,6 @@ Wheels with per-LED RGB color support via the modern col03 protocol:
 | 21 | PSWBENT | Yes | Yes |
 | 22 | GTSWX | Yes | Yes |
 | 24 | CSSWFORMV3 | Yes | Yes |
-| 27 | CSSWFORMV2 (V2.5) | Yes | Yes |
 
 > **SDK note:** The native bitmask (`FSUtilIsWheelRimRGBLedsSupported`, mask `0x1780400`) also includes bit 20 (PSWBMW). The PSWBMW has no rev LED strip — this bit likely enables the RGB **button LED** code path. CSSWPVGT(23) and CSLSWGT3(25) are **not** set in the native bitmask; these wheels have no physical LEDs.
 
@@ -267,21 +264,20 @@ Wheels have several distinct display technologies. The display type determines w
 | 4 | CSWRPORSCHE | LED 7-seg | — | |
 | 7 | CSLRP1X | LED 7-seg | — | |
 | 8 | CSLRP1PS4 | LED 7-seg | — | |
-| 9 | CSLRMCL | OLED (Basic) | — | |
-| 10 | CSWRFORMV2 | OLED (Basic) | — | |
-| 11 | CSLRMCLV1_1 | OLED (Basic) | — | |
-| 13 | DDRGT | OLED (Basic) | — | |
 | 15 | CSLRWRC | LED 7-seg | — | |
 | 16 | CSSWBMWV2 | LED 7-seg | — | |
 | 17 | CSSWRS | LED 7-seg | — | |
 | 19 | CSSWF1ESV2 | LED 7-seg | — | |
+| 9 | CSLRMCL | OLED (Basic) | — | |
+| 10 | CSWRFORMV2 | OLED (Basic) | — | |
+| 11 | CSLRMCLV1_1 | OLED (Basic) | — | |
+| 13 | DDRGT | OLED (Basic) | — | |
 | 20 | PSWBMW | OLED (Basic) | — | |
-| 21 | PSWBENT | LCD | 4 | 3.4" 800x800, dedicated Bentley ITM pages |
-| 22 | GTSWX | OLED (ITM) | 3 | Dedicated GTSWX ITM pages |
 | 23 | CSSWPVGT | OLED (Basic) | — | Round display; ITM planned but disabled in SDK |
 | 24 | CSSWFORMV3 | OLED (Basic) | — | |
 | 25 | CSLSWGT3 | OLED (Basic) | — | |
-| 27 | CSSWFORMV2 (V2.5) | OLED (Basic) | — | |
+| 22 | GTSWX | OLED (ITM) | 3 | Dedicated GTSWX ITM pages |
+| 21 | PSWBENT | LCD | 4 | 3.4" 800x800, dedicated Bentley ITM pages |
 
 ### APM (Advanced Paddle Mode)
 
@@ -298,7 +294,7 @@ Only wheels with a rotary encoder support the APM tuning parameter:
 
 | Protocol | Collection | Wheels |
 |----------|-----------|--------|
-| Modern (col03, RGB565) | col03 64B | CSWRFORMV2, CSSWF1ESV2, PSWBENT, GTSWX, CSSWFORMV3, CSSWFORMV2 (V2.5) |
+| Modern (col03, RGB565) | col03 64B | CSWRFORMV2, CSSWF1ESV2, PSWBENT, GTSWX, CSSWFORMV3 |
 | Legacy Non-RGB (bitmask) | col01 8B | CSWRBMW, CSWRFORM, CSWRPORSCHE, DDRGT, CSSWBMWV2, CSSWRS |
 | RevStripe (RGB333) | col01 8B | CSLRP1X, CSLRP1PS4, CSLRWRC |
 | No rev LED protocol | — | CSLRMCL, CSLRMCLV1_1, PSWBMW, CSSWPVGT, CSLSWGT3 |
@@ -311,14 +307,14 @@ Hubs are active devices with their own PCB and microcontroller. They serve as a 
 
 ### Hub Types
 
-| ID | Hub | Module Compatible | Notes |
-|----|-----|-------------------|-------|
-| 5 | CSWRUH | Yes | ClubSport Universal Hub |
-| 6 | CSWRUHX | Yes | ClubSport Universal Hub X |
-| 12 | PHUB | Yes | Podium Hub — no native LEDs or display |
-| 14 | CSLUHUB | Yes | CSL Universal Hub |
-| 18 | CSUHV2 | Yes | ClubSport Universal Hub V2 |
-| 26 | SIDESWIPE | **No** | Appears designed to adapt third-party wheels to Fanatec wheelbases; no module interface |
+| ID | Enum Name | Display Name | Module Compatible |
+|----|-----------|-------------|-------------------|
+| 5 | CSWRUH | ClubSport Steering Wheel Universal Hub | Yes |
+| 6 | CSWRUHX | ClubSport Steering Wheel Universal Hub for Xbox One | Yes |
+| 12 | PHUB | Podium Hub | Yes |
+| 14 | CSLUHUB | CSL Universal Hub | Yes |
+| 18 | CSUHV2 | ClubSport Steering Wheel Universal Hub V2 | Yes |
+| 26 | SIDESWIPE | Sideswipe | **No** |
 
 > **Note:** SIDESWIPE (26) is unreleased. Its classification as a hub and its capabilities are inferred from SDK data only and should be considered tentative.
 
@@ -326,13 +322,13 @@ Hubs are active devices with their own PCB and microcontroller. They serve as a 
 
 Hubs generally have no native LEDs or displays — visual feedback comes from the attached module. However, some older hubs have built-in features:
 
-| ID | Hub | 7-Segment Display | Other Native Features |
-|----|-----|-------------------|----------------------|
-| 5 | CSWRUH | **Yes** | Built-in 7-seg display |
-| 6 | CSWRUHX | **Yes** | Built-in 7-seg display |
-| 12 | PHUB | No | — |
-| 14 | CSLUHUB | No | — |
-| 18 | CSUHV2 | No | — |
+| ID | Enum Name | Display Name | 7-Segment Display |
+|----|-----------|-------------|-------------------|
+| 5 | CSWRUH | ClubSport Steering Wheel Universal Hub | **Yes** |
+| 6 | CSWRUHX | ClubSport Steering Wheel Universal Hub for Xbox One | **Yes** |
+| 12 | PHUB | Podium Hub | No |
+| 14 | CSLUHUB | CSL Universal Hub | No |
+| 18 | CSUHV2 | ClubSport Steering Wheel Universal Hub V2 | No |
 
 > **Unverified:** How the built-in 7-segment display on CSWRUH/CSWRUHX interacts with a module's display (if a module is connected simultaneously) is not yet confirmed. Further SDK research may be needed.
 
