@@ -307,30 +307,20 @@ Hubs are active devices with their own PCB and microcontroller. They serve as a 
 
 ### Hub Types
 
-| ID | Enum Name | Display Name | Module Compatible |
-|----|-----------|-------------|-------------------|
-| 5 | CSWRUH | ClubSport Steering Wheel Universal Hub | Yes |
-| 6 | CSWRUHX | ClubSport Steering Wheel Universal Hub for Xbox One | Yes |
-| 12 | PHUB | Podium Hub | Yes |
-| 14 | CSLUHUB | CSL Universal Hub | Yes |
-| 18 | CSUHV2 | ClubSport Steering Wheel Universal Hub V2 | Yes |
-| 26 | SIDESWIPE | Sideswipe | **No** |
+| ID | Enum Name | Display Name | Module Compatible | Native 7-Seg |
+|----|-----------|-------------|-------------------|--------------|
+| 5 | CSWRUH | ClubSport Universal Hub | Yes | **Yes** |
+| 6 | CSWRUHX | ClubSport Universal Hub for Xbox One | Yes | **Yes** |
+| 12 | PHUB | Podium Hub | Yes | No |
+| 14 | CSLUHUB | CSL Universal Hub | Yes | No |
+| 18 | CSUHV2 | ClubSport Universal Hub V2 | Yes | No |
+| 26 | SIDESWIPE | Sideswipe | **No** | No |
 
 > **Note:** SIDESWIPE (26) is unreleased. Its classification as a hub and its capabilities are inferred from SDK data only and should be considered tentative.
 
-### Native Hub Capabilities
+> **Unverified:** How the built-in 7-segment display on CSWRUH/CSWRUHX interacts with a module's display (if a module is connected simultaneously) is not yet confirmed.
 
-Hubs generally have no native LEDs or displays — visual feedback comes from the attached module. However, some older hubs have built-in features:
-
-| ID | Enum Name | Display Name | 7-Segment Display |
-|----|-----------|-------------|-------------------|
-| 5 | CSWRUH | ClubSport Steering Wheel Universal Hub | **Yes** |
-| 6 | CSWRUHX | ClubSport Steering Wheel Universal Hub for Xbox One | **Yes** |
-| 12 | PHUB | Podium Hub | No |
-| 14 | CSLUHUB | CSL Universal Hub | No |
-| 18 | CSUHV2 | ClubSport Steering Wheel Universal Hub V2 | No |
-
-> **Unverified:** How the built-in 7-segment display on CSWRUH/CSWRUHX interacts with a module's display (if a module is connected simultaneously) is not yet confirmed. Further SDK research may be needed.
+> **SDK note:** The SDK names these hubs with a "Steering Wheel" prefix (e.g., "ClubSport Steering Wheel Universal Hub") because they share the `STEERINGWHEEL_TYPE` enum with wheels. We use shortened names here for clarity.
 
 ### Module Capabilities
 
