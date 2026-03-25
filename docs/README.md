@@ -5,8 +5,8 @@ This directory contains documentation for the Fanatec HID protocols and hardware
 | Document | Description |
 |----------|-------------|
 | [Terminology](terminology.md) | Glossary of all key concepts — hardware categories, display types, protocol terms, color encodings, SDK concepts |
-| [Devices](devices.md) | Wheelbases, wheels, hubs, button modules — identification, capabilities, and the compositional model |
-| [Protocol](protocol.md) | HID transport, LED control, 7-segment display, ITM display, tuning menu, clutch bite point |
+| [Devices](reference/devices.md) | Wheelbases, wheels, hubs, button modules — identification, capabilities, and the compositional model |
+| [Protocol](reference/protocol.md) | HID transport, LED control, 7-segment display, ITM display, tuning menu, clutch bite point |
 
 ## Conventions
 
