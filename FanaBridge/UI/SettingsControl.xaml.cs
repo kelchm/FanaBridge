@@ -120,6 +120,7 @@ namespace FanaBridge.UI
                 txtStatus.Text = "Disconnected";
                 txtWheelName.Text = "—";
                 txtCapabilities.Text = "—";
+                borderUnverifiedAlert.Visibility = Visibility.Collapsed;
                 UpdateProfilePicker(null, null, null);
                 return;
             }
@@ -139,6 +140,7 @@ namespace FanaBridge.UI
                 txtStatus.Text = "Connected — " + Plugin.WheelName;
                 txtWheelName.Text = "—";
                 txtCapabilities.Text = "—";
+                borderUnverifiedAlert.Visibility = Visibility.Collapsed;
                 // Still show the panel so the wizard button is accessible for unsupported wheels
                 UpdateProfilePicker(wheelCode, moduleCode, null);
                 return;
@@ -152,6 +154,11 @@ namespace FanaBridge.UI
                 caps.RevLedCount,
                 caps.FlagLedCount,
                 caps.Display);
+
+            // Show unverified profile banner if applicable
+            borderUnverifiedAlert.Visibility = caps.Verified
+                ? Visibility.Collapsed
+                : Visibility.Visible;
 
             UpdateProfilePicker(wheelCode, moduleCode, caps);
         }
@@ -451,6 +458,34 @@ namespace FanaBridge.UI
                 "**Module:** " + (profile.Match?.ModuleType ?? "None") + "\n\n" +
                 "Please drag and drop `" + fileName + "` into this issue.\n" +
                 "You can find it via **Open Profiles Folder** in the FanaBridge settings.");
+
+            string url = "https://github.com/kelchm/FanaBridge/issues/new" +
+                         "?title=" + title + "&labels=" + label + "&body=" + body;
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanaBridge: Failed to open GitHub: " + ex.Message);
+            }
+        }
+
+        private void BtnReportIssue_Click(object sender, RoutedEventArgs e)
+        {
+            var caps = Plugin?.CurrentCapabilities;
+            string profileId = caps?.Profile?.Id ?? "unknown";
+            string title = Uri.EscapeDataString("Feedback: " + profileId + " profile");
+            string label = Uri.EscapeDataString("wheel profile");
+            string body = Uri.EscapeDataString(
+                "## Profile Feedback\n\n" +
+                "**Profile:** " + profileId + "\n" +
+                "**Wheel:** " + (caps?.Name ?? "Unknown") + "\n\n" +
+                "Please describe your experience:\n" +
+                "- Did the LEDs work correctly?\n" +
+                "- Did the display work correctly?\n" +
+                "- Any issues or unexpected behavior?\n");
 
             string url = "https://github.com/kelchm/FanaBridge/issues/new" +
                          "?title=" + title + "&labels=" + label + "&body=" + body;

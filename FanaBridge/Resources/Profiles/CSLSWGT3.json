@@ -1,0 +1,13 @@
+{
+  "$schema": "wheel-profile.schema.json",
+  "schemaVersion": 1,
+  "id": "CSLSWGT3",
+  "name": "Fanatec CSL Steering Wheel GT3",
+  "shortName": "Fanatec CSL GT3",
+  "match": {
+    "wheelType": "CSLSWGT3"
+  },
+  "display": "basic",
+  "verified": false,
+  "leds": []
+}

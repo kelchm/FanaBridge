@@ -5,6 +5,15 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="8">
 
+            <!-- Shown when the wheel has an ITM display but ITM is not yet supported -->
+            <Border x:Name="borderItmInfo" Visibility="Collapsed"
+                    Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
+                    CornerRadius="4" Padding="10,8" Margin="0,0,0,12">
+                <TextBlock Foreground="#AADDFF" FontSize="12" TextWrapping="Wrap">
+                    &#x2139;  This wheel has a graphical display. FanaBridge currently supports basic display mode only — full display support is planned.
+                </TextBlock>
+            </Border>
+
             <styles:SHSubSection Title="Display Mode">
                 <ComboBox x:Name="cmbDisplayMode"
                           SelectionChanged="CmbDisplayMode_SelectionChanged"
