@@ -38,20 +38,20 @@ A larger dot-matrix OLED display capable of full ITM telemetry dashboards via co
 A graphical LCD display. ITM-capable. See [Display Capabilities](reference/devices.md#display-capabilities).
 
 ### ITM Display
-Any display capable of showing multi-page telemetry dashboards via the col03 ITM protocol. Supported on certain wheelbases, wheels, and button modules. See [ITM Display Protocol](reference/protocol.md#itm-display).
+Any display capable of showing multi-page telemetry dashboards via the col03 ITM protocol. Supported on certain wheelbases, wheels, and button modules. See [ITM Display Protocol](reference/protocol.md#0x05--itm-display).
 
 ### Legacy Mode
 The last ITM page on an ITM-capable display. Renders 7-segment-style content (gear number, speed) and is addressed via the col01 7-segment protocol. This is not a separate protocol mode — it is an ITM page that the firmware uses when no telemetry data is being sent. Sometimes called "basic mode" in FanaBridge.
 
 ### Display Ownership
-A mechanism (subcmd `0x18`) allowing the host to explicitly take or release control of a display. When the firmware needs to show its own content (e.g., during CBP adjustment or tuning menu navigation), the host should release ownership. See [Display Ownership](reference/protocol.md#display-ownership).
+A mechanism (subcmd `0x18`) allowing the host to explicitly take or release control of a display. When the firmware needs to show its own content (e.g., during CBP adjustment or tuning menu navigation), the host should release ownership. See [Display Ownership](reference/protocol.md#0x18--display-ownership).
 
 ---
 
 ## LEDs
 
 ### Rev LEDs
-RPM / shift indicator LEDs, typically a strip of 9 LEDs across the top of a wheel or module. Can be individually-addressable (per-LED on/off or per-LED RGB color) depending on the device. Not all wheels have them. See [LED Control](reference/protocol.md#led-control).
+RPM / shift indicator LEDs, typically a strip of 9 LEDs across the top of a wheel or module. Can be individually-addressable (per-LED on/off or per-LED RGB color) depending on the device. Not all wheels have them. See [LED Control](reference/protocol.md#0x01--led-control).
 
 ### Flag LEDs
 Status / warning indicator LEDs. Found on select wheels and modules. See [devices](reference/devices.md#flag-leds) for the support matrix.
@@ -98,7 +98,7 @@ The SDK routes reports based on the first byte of the output buffer: `0xFF` → 
 The second byte of a col03 report, identifying the protocol domain: `0x01` = LED control, `0x02` = ITM enable / analysis page, `0x03` = tuning menu, `0x05` = ITM display (page set, param defs, value updates, keepalive).
 
 ### Report Trigger
-A general-purpose notification mechanism using col01 reports. Sends an ON/OFF pair: `[RID, F8, 09, 01, 06, FF, <SubId>, 00]` followed by `[RID, F8, 09, 01, 06, 00, 00, 00]`. SubId=1 is used for button module detection refresh, SubId=2 for CBP operations. See [Clutch Bite Point — Trigger Mechanism](reference/protocol.md#trigger-mechanism).
+A general-purpose notification mechanism using col01 reports. Sends an ON/OFF pair: `[RID, F8, 09, 01, 06, FF, <SubId>, 00]` followed by `[RID, F8, 09, 01, 06, 00, 00, 00]`. SubId=1 is used for button module detection refresh, SubId=2 for CBP operations. See [Clutch Bite Point — Trigger Mechanism](reference/protocol.md#0x06--report-trigger--ack).
 
 ### Staged Commit
 A protocol pattern where multiple data reports are sent without effect, then a final report with a commit flag (`0x01`) causes all pending changes to be applied atomically. Used by the col03 button LED protocol (color + intensity reports).
@@ -108,10 +108,10 @@ A protocol pattern where multiple data reports are sent without effect, then a f
 ## Tuning & Configuration
 
 ### Tuning Menu
-The wheelbase settings system (SEN, FF, SPR, DPR, etc.) controlled via col03 command class `0x03`. Uses a read-modify-write pattern — the device rejects writes that don't reflect the current state. See [Tuning Menu Protocol](reference/protocol.md#tuning-menu).
+The wheelbase settings system (SEN, FF, SPR, DPR, etc.) controlled via col03 command class `0x03`. Uses a read-modify-write pattern — the device rejects writes that don't reflect the current state. See [Tuning Menu Protocol](reference/protocol.md#0x03--tuning-menu).
 
 ### CBP (Clutch Bite Point)
-The engagement threshold for analog clutch paddles. Uses a completely separate command path from the tuning menu — sent via col01 through the WheelCommand interface (not the TuningMenu interface). Value range 0–100. See [Clutch Bite Point Protocol](reference/protocol.md#clutch-bite-point-cbp).
+The engagement threshold for analog clutch paddles. Uses a completely separate command path from the tuning menu — sent via col01 through the WheelCommand interface (not the TuningMenu interface). Value range 0–100. See [Clutch Bite Point Protocol](reference/protocol.md#0x17--set-clutch-bite-point).
 
 ### APM (Advanced Paddle Mode)
 A tuning parameter (struct offset 17) only relevant to wheels with a rotary encoder. Zero on all other devices. See [APM](reference/devices.md#apm-advanced-paddle-mode) for the specific wheels.
@@ -124,10 +124,10 @@ The tuning menu supports 5 setup slots (index 0–4). Each slot stores a complet
 ## ITM (In-Tuning-Menu)
 
 ### ITM
-The telemetry display system that shows multi-page dashboards on compatible displays. "In-Tuning-Menu" is the historical name from the SDK; in practice it is used for game telemetry, not just tuning. See [ITM Display Protocol](reference/protocol.md#itm-display).
+The telemetry display system that shows multi-page dashboards on compatible displays. "In-Tuning-Menu" is the historical name from the SDK; in practice it is used for game telemetry, not just tuning. See [ITM Display Protocol](reference/protocol.md#0x05--itm-display).
 
 ### ITM Device ID
-A numeric identifier routing ITM commands to the correct physical display. Values: 1 = wheelbase display, 2 = steering wheel / SmallOLED (disabled in current SDK), 3 = button module or compatible wheel display (shared, mutually exclusive), 4 = dedicated wheel display. See [ITM Display — Supported Devices](reference/protocol.md#supported-devices) for the specific device mapping.
+A numeric identifier routing ITM commands to the correct physical display. Values: 1 = wheelbase display, 2 = steering wheel / SmallOLED (disabled in current SDK), 3 = button module or compatible wheel display (shared, mutually exclusive), 4 = dedicated wheel display. See [ITM Display — Supported Devices](reference/protocol.md#itm-supported-devices) for the specific device mapping.
 
 ### ParamDefs
 Parameter definition reports (`FF 05 03 ...`) that tell the firmware what parameters will be displayed and in which slot positions. Required when using raw HID (FanaBridge approach). The SDK handles this internally.
@@ -139,7 +139,7 @@ Parameter value reports (`FF 05 01 ...`) that send actual telemetry data for dis
 A periodic packet (`FF 05 04 02 0B ...`) that must be sent every ~100ms to keep the ITM display alive.
 
 ### Page
-An ITM display layout showing a specific set of telemetry parameters. Most devices have 6 pages (page 6 = legacy), some have 5 (page 5 = legacy). Pages contain SPEED and GEAR as persistent headers plus page-specific parameters. See [Page Layouts](reference/protocol.md#page-layouts).
+An ITM display layout showing a specific set of telemetry parameters. Most devices have 6 pages (page 6 = legacy), some have 5 (page 5 = legacy). Pages contain SPEED and GEAR as persistent headers plus page-specific parameters. See [Page Layouts](reference/protocol.md#itm-page-layouts).
 
 ### Subscription Table
 The firmware's internal table of up to 16 parameter slots. In the SDK approach, the host queries this table to learn what parameters the firmware expects. In the raw HID approach (FanaBridge), the host defines the slots directly via ParamDefs.

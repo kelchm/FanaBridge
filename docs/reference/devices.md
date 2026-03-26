@@ -107,7 +107,7 @@ Only three wheelbases have a built-in ITM display:
 - **PDD1_PS4** (Podium Wheel Base DD1 for PS4)
 - **PDD2** (Podium Wheel Base DD2)
 
-These use **Device ID 1** for ITM commands. See the [ITM display protocol](protocol.md#itm-display) section for details.
+These use **Device ID 1** for ITM commands. See the [ITM display protocol](protocol.md#0x05--itm-display) section for details.
 
 Other wheelbases (CSDD, CSDDPlus, GTDDPRO, CSLDD, etc.) do not have a base display, but ITM is still available through compatible steering wheels or button modules.
 
@@ -189,7 +189,7 @@ These wheels have a single-color LED strip instead of individually-addressable r
 | 8 | CSLRP1PS4 | RGB333 | Legacy (col01) |
 | 15 | CSLRWRC | RGB333 | Legacy (col01) |
 
-RevStripe is controlled as a single unit (index 0 only) with RGB333 color encoding (512 possible colors, SDK uses 8). See [RevStripe protocol](protocol.md#revstripe).
+RevStripe is controlled as a single unit (index 0 only) with RGB333 color encoding (512 possible colors, SDK uses 8). See [RevStripe protocol](protocol.md#0x06--revstripe-enabledisable).
 
 #### No Rev LEDs
 
@@ -371,8 +371,8 @@ The PBME is the more capable of the two modules, featuring a 2.7" 256x64 OLED di
 
 #### Device-Specific Notes
 
-- The OLED display operates in two modes: **ITM mode** (telemetry dashboards, pages 1–5, Device ID 3) and **legacy mode** (page 6, 7-segment-style content via col01). See [ITM Display](protocol.md#itm-display).
-- Supports `SevenSegmentModeEnable` for display ownership control. See [Display Ownership](protocol.md#display-ownership).
+- The OLED display operates in two modes: **ITM mode** (telemetry dashboards, pages 1–5, Device ID 3) and **legacy mode** (page 6, 7-segment-style content via col01). See [ITM Display](protocol.md#0x05--itm-display).
+- Supports `SevenSegmentModeEnable` for display ownership control. See [Display Ownership](protocol.md#0x18--display-ownership).
 
 ### PBMR (Podium Button Module Rally)
 
