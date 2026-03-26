@@ -86,6 +86,36 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
+        /// Converts 24-bit RGB to the Fanatec col01 RGB333 encoding (9 bits in 2 bytes).
+        /// Each channel is quantized to 3 bits (0-7). Returns a ushort where the high
+        /// byte is data_hi and the low byte is data_lo, matching the col01 report layout:
+        ///   data_hi: [G1 G0 R2 R1 R0 B2 B1 B0]  (GG_RRR_BBB)
+        ///   data_lo: [0  0  0  0  0  0  0  G2 ]  (.......G)
+        /// </summary>
+        public static ushort RgbToRgb333(byte r, byte g, byte b)
+        {
+            int r3 = (r >> 5) & 0x07;
+            int g3 = (g >> 5) & 0x07;
+            int b3 = (b >> 5) & 0x07;
+            byte dataHi = (byte)(((g3 & 0x03) << 6) | (r3 << 3) | b3);
+            byte dataLo = (byte)((g3 >> 2) & 0x01);
+            return (ushort)((dataHi << 8) | dataLo);
+        }
+
+        /// <summary>
+        /// Converts a System.Drawing.Color to RGB333, pre-multiplying alpha.
+        /// See <see cref="RgbToRgb333"/> for the encoding format.
+        /// </summary>
+        public static ushort ToRgb333Premultiplied(System.Drawing.Color color)
+        {
+            double a = color.A / 255.0;
+            byte r = (byte)Math.Round(color.R * a);
+            byte g = (byte)Math.Round(color.G * a);
+            byte b = (byte)Math.Round(color.B * a);
+            return RgbToRgb333(r, g, b);
+        }
+
+        /// <summary>
         /// Converts BGR565 to an HTML hex string (e.g. "#FF0000").
         /// Approximate — expands 5/6/5 bits back to 8-bit channels.
         /// </summary>

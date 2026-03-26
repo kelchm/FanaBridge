@@ -34,7 +34,7 @@ namespace FanaBridge.Adapters
         private readonly DeviceConfig _config;
         private JObject _customSettings = new JObject();
 
-        // LED module (col03) — null when wheel has no LEDs.
+        // LED module — null when wheel has no LEDs.
         private LedModuleSettings<FanatecLedManager> _ledModule;
 
         private bool _ledModuleInitialized;
@@ -70,7 +70,7 @@ namespace FanaBridge.Adapters
             if (allLeds == 0) return;
 
             var plugin = FanatecPlugin.Instance;
-            var manager = new FanatecLedManager(caps, plugin.Leds, plugin.Device);
+            var manager = new FanatecLedManager(caps, plugin.Leds, plugin.LegacyLeds, plugin.Device);
             var options = new LedModuleOptions
             {
                 DeviceName = caps.ShortName ?? caps.Name,
@@ -254,7 +254,7 @@ namespace FanaBridge.Adapters
             if (plugin.WizardActive)
                 return;
 
-            // ── Display ──────────────────────────────────────────────────
+            // ── Display (ITM falls back to basic 7-seg until ITM support is implemented) ──
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 if (_displayManager == null)
@@ -306,7 +306,7 @@ namespace FanaBridge.Adapters
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 var screenPanel = new ScreenSettingsPanel();
-                screenPanel.Bind(_displaySettings);
+                screenPanel.Bind(_displaySettings, _config.Capabilities.Display);
                 screenPanel.SettingsChanged += () =>
                 {
                     // Sync back to JObject for persistence

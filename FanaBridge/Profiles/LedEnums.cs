@@ -2,18 +2,22 @@ namespace FanaBridge.Profiles
 {
     /// <summary>
     /// Hardware communication channel for a single LED.
-    /// Determines which col03 sub-command and encoding is used.
+    /// Determines which HID collection and sub-command is used.
     /// </summary>
     public enum LedChannel
     {
-        /// <summary>subcmd 0x00 — full RGB565 (Rev/RPM LEDs).</summary>
+        /// <summary>col03 subcmd 0x00 — per-LED RGB565 (Rev/RPM LEDs).</summary>
         Rev,
-        /// <summary>subcmd 0x01 — full RGB565 (Flag/status LEDs).</summary>
+        /// <summary>col03 subcmd 0x01 — per-LED RGB565 (Flag/status LEDs).</summary>
         Flag,
-        /// <summary>subcmd 0x02 — full RGB565 (button-area color LEDs).</summary>
+        /// <summary>col03 subcmd 0x02 — per-LED RGB565 (button-area color LEDs).</summary>
         Color,
-        /// <summary>subcmd 0x03 — 3-bit intensity only (monochrome LEDs).</summary>
+        /// <summary>col03 subcmd 0x03 — 3-bit intensity only (monochrome LEDs).</summary>
         Mono,
+        /// <summary>col01 subcmd 0x08 — 9-bit bitmask, per-LED on/off (non-RGB rev LEDs).</summary>
+        LegacyRev,
+        /// <summary>col01 subcmd 0x08 — single RGB333 color for the entire strip.</summary>
+        RevStripe,
     }
 
     /// <summary>

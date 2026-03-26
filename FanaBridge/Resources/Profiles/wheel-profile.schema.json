@@ -59,6 +59,11 @@
       "enum": ["rgb565", "rgb555"],
       "default": "rgb565"
     },
+    "verified": {
+      "description": "Whether this profile has been tested on physical hardware. Defaults to true when omitted. Unverified profiles show a warning banner in the UI.",
+      "type": "boolean",
+      "default": true
+    },
     "leds": {
       "description": "Ordered array of LED definitions. The array index is the SimHub logical LED index.",
       "type": "array",
@@ -75,9 +80,9 @@
       "additionalProperties": false,
       "properties": {
         "channel": {
-          "description": "Hardware communication channel — determines the col03 sub-command and encoding used. \"rev\" = subcmd 0x00 (RPM strip), \"flag\" = subcmd 0x01 (status flags), \"color\" = subcmd 0x02 (RGB565/555 button area), \"mono\" = subcmd 0x03 (3-bit intensity).",
+          "description": "Hardware communication channel — determines the HID collection and encoding used. col03: \"rev\" = subcmd 0x00 (RPM strip), \"flag\" = subcmd 0x01 (status flags), \"color\" = subcmd 0x02 (RGB565/555 button area), \"mono\" = subcmd 0x03 (3-bit intensity). col01: \"legacyRev\" = bitmask on/off per LED, \"revStripe\" = single RGB333 color for entire strip.",
           "type": "string",
-          "enum": ["rev", "flag", "color", "mono"]
+          "enum": ["rev", "flag", "color", "mono", "legacyRev", "revStripe"]
         },
         "hwIndex": {
           "description": "Zero-based index within the channel's protocol array (e.g. slot in the color array for subcmd 0x02, byte index in the mono payload for subcmd 0x03).",

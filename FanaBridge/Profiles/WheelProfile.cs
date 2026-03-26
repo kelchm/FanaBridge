@@ -52,6 +52,18 @@ namespace FanaBridge.Profiles
         [JsonProperty("colorFormat", DefaultValueHandling = DefaultValueHandling.Ignore)]
         public string ColorFormatRaw { get; set; }
 
+        /// <summary>
+        /// Whether this profile has been tested on physical hardware.
+        /// Defaults to true when omitted (existing profiles are verified).
+        /// Unverified profiles show a warning banner in the UI.
+        /// </summary>
+        [JsonProperty("verified", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public bool? VerifiedRaw { get; set; }
+
+        /// <summary>Parsed verified flag (defaults to true when omitted).</summary>
+        [JsonIgnore]
+        public bool Verified => VerifiedRaw ?? true;
+
         /// <summary>Parsed color format enum (defaults to Rgb565).</summary>
         [JsonIgnore]
         public ColorFormat ColorFormat
@@ -106,13 +118,21 @@ namespace FanaBridge.Profiles
         [JsonIgnore]
         public int MonoLedCount => Leds.Count(l => l.Channel == LedChannel.Mono);
 
+        /// <summary>Count of legacy non-RGB rev LEDs (col01 bitmask).</summary>
+        [JsonIgnore]
+        public int LegacyRevLedCount => Leds.Count(l => l.Channel == LedChannel.LegacyRev);
+
+        /// <summary>Count of RevStripe LEDs (col01 RGB333, typically 1).</summary>
+        [JsonIgnore]
+        public int RevStripeLedCount => Leds.Count(l => l.Channel == LedChannel.RevStripe);
+
         /// <summary>Count of "button" LEDs for SimHub (color + mono = everything except rev/flag).</summary>
         [JsonIgnore]
         public int ButtonLedCount => ColorLedCount + MonoLedCount;
 
-        /// <summary>Rev + Flag count (for SimHub's LedCount in LedModuleOptions).</summary>
+        /// <summary>Rev + Flag count for SimHub's LedCount — includes all rev-like channels.</summary>
         [JsonIgnore]
-        public int RevFlagCount => RevLedCount + FlagLedCount;
+        public int RevFlagCount => RevLedCount + FlagLedCount + LegacyRevLedCount + RevStripeLedCount;
 
         /// <summary>True if this device has any LEDs at all.</summary>
         [JsonIgnore]

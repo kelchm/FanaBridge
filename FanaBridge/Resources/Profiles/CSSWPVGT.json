@@ -1,0 +1,13 @@
+{
+  "$schema": "wheel-profile.schema.json",
+  "schemaVersion": 1,
+  "id": "CSSWPVGT",
+  "name": "Fanatec CSL Elite Steering Wheel Porsche Vision GT",
+  "shortName": "Fanatec Porsche VGT",
+  "match": {
+    "wheelType": "CSSWPVGT"
+  },
+  "display": "basic",
+  "verified": false,
+  "leds": []
+}

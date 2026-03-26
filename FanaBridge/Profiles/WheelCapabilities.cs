@@ -48,7 +48,13 @@ namespace FanaBridge.Profiles
         /// <summary>Number of monochrome intensity LEDs — subcmd 0x03.</summary>
         public int MonoLedCount { get; }
 
-        /// <summary>Rev + Flag count — used for LedModuleOptions.LedCount.</summary>
+        /// <summary>Number of legacy non-RGB rev LEDs — col01 bitmask.</summary>
+        public int LegacyRevLedCount { get; }
+
+        /// <summary>Number of RevStripe LEDs — col01 RGB333 (typically 1).</summary>
+        public int RevStripeLedCount { get; }
+
+        /// <summary>Rev + Flag count (including legacy rev and RevStripe) — used for LedModuleOptions.LedCount.</summary>
         public int RevFlagCount { get; }
 
         /// <summary>Color + Mono count — "button" LEDs for SimHub.</summary>
@@ -67,8 +73,13 @@ namespace FanaBridge.Profiles
 
         public bool HasRevLeds => RevLedCount > 0;
         public bool HasFlagLeds => FlagLedCount > 0;
+        public bool HasLegacyRevLeds => LegacyRevLedCount > 0;
+        public bool HasRevStripe => RevStripeLedCount > 0;
         public bool HasLeds => AllLedCount > 0;
         public bool HasEncoders { get; }
+
+        /// <summary>Whether this profile has been tested on physical hardware.</summary>
+        public bool Verified { get; }
 
         // ── Constructors ─────────────────────────────────────────────────
 
@@ -88,11 +99,14 @@ namespace FanaBridge.Profiles
             FlagLedCount = profile.FlagLedCount;
             ColorLedCount = profile.ColorLedCount;
             MonoLedCount = profile.MonoLedCount;
+            LegacyRevLedCount = profile.LegacyRevLedCount;
+            RevStripeLedCount = profile.RevStripeLedCount;
             RevFlagCount = profile.RevFlagCount;
             ButtonLedCount = profile.ButtonLedCount;
             AllLedCount = profile.TotalLedCount;
             ColorFormat = profile.ColorFormat;
             HasEncoders = profile.Leds.Any(l => l.Role == LedRole.Encoder);
+            Verified = profile.Verified;
         }
 
         /// <summary>Private constructor for the None sentinel.</summary>
@@ -101,6 +115,7 @@ namespace FanaBridge.Profiles
             Name = null;
             ShortName = null;
             Display = DisplayType.None;
+            Verified = true;
         }
 
         // ── Null object ──────────────────────────────────────────────────

@@ -24,14 +24,15 @@ namespace FanaBridge.Adapters
     {
         private readonly WheelCapabilities _caps;
         private readonly LedEncoder _leds;
+        private readonly LegacyLedEncoder _legacyLeds;
         private readonly IDeviceTransport _transport;
         private FanatecLedDriver _driver;
 
         /// <summary>
         /// Parameterless constructor required by the <c>new()</c> constraint on
         /// <c>LedModuleSettings&lt;T&gt;</c>.  Not used at runtime — the
-        /// <see cref="FanatecLedManager(WheelCapabilities)"/> constructor is
-        /// called explicitly and the instance is passed to LedModuleSettings.
+        /// <see cref="FanatecLedManager(WheelCapabilities, LedEncoder, LegacyLedEncoder, IDeviceTransport)"/>
+        /// constructor is called explicitly and the instance is passed to LedModuleSettings.
         /// </summary>
         public FanatecLedManager()
         {
@@ -41,10 +42,11 @@ namespace FanaBridge.Adapters
         /// <summary>
         /// Creates a manager configured for a specific wheel's LED layout.
         /// </summary>
-        public FanatecLedManager(WheelCapabilities caps, LedEncoder leds, IDeviceTransport transport)
+        public FanatecLedManager(WheelCapabilities caps, LedEncoder leds, LegacyLedEncoder legacyLeds, IDeviceTransport transport)
         {
             _caps = caps ?? WheelCapabilities.None;
             _leds = leds;
+            _legacyLeds = legacyLeds;
             _transport = transport;
         }
 
@@ -56,13 +58,15 @@ namespace FanaBridge.Adapters
         /// </summary>
         public override FanatecLedDriver GetDriver()
         {
-            _driver = new FanatecLedDriver(_caps, _leds, _transport);
+            _driver = new FanatecLedDriver(_caps, _leds, _legacyLeds, _transport);
 
             SimHub.Logging.Current.Info(
                 "FanatecLedManager: Created driver for " + (_caps.Name ?? "unknown") +
                 " (" + _caps.AllLedCount + " LEDs: rev=" + _caps.RevLedCount +
                 ", flag=" + _caps.FlagLedCount + ", color=" + _caps.ColorLedCount +
-                ", mono=" + _caps.MonoLedCount + ")");
+                ", mono=" + _caps.MonoLedCount +
+                ", legacyRev=" + _caps.LegacyRevLedCount +
+                ", revStripe=" + _caps.RevStripeLedCount + ")");
 
             return _driver;
         }

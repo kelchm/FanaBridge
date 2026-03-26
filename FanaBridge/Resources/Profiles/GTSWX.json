@@ -1,0 +1,33 @@
+{
+  "$schema": "wheel-profile.schema.json",
+  "schemaVersion": 1,
+  "id": "GTSWX",
+  "name": "Fanatec GT Steering Wheel Extreme",
+  "shortName": "Fanatec GT Extreme",
+  "match": {
+    "wheelType": "GTSWX"
+  },
+  "display": "itm",
+  "verified": false,
+  "leds": [
+    { "channel": "rev",  "hwIndex": 0, "role": "rev",  "label": "Rev LED 1" },
+    { "channel": "rev",  "hwIndex": 1, "role": "rev",  "label": "Rev LED 2" },
+    { "channel": "rev",  "hwIndex": 2, "role": "rev",  "label": "Rev LED 3" },
+    { "channel": "rev",  "hwIndex": 3, "role": "rev",  "label": "Rev LED 4" },
+    { "channel": "rev",  "hwIndex": 4, "role": "rev",  "label": "Rev LED 5" },
+    { "channel": "rev",  "hwIndex": 5, "role": "rev",  "label": "Rev LED 6" },
+    { "channel": "rev",  "hwIndex": 6, "role": "rev",  "label": "Rev LED 7" },
+    { "channel": "rev",  "hwIndex": 7, "role": "rev",  "label": "Rev LED 8" },
+    { "channel": "rev",  "hwIndex": 8, "role": "rev",  "label": "Rev LED 9" },
+    { "channel": "flag", "hwIndex": 0, "role": "flag", "label": "Flag LED 1" },
+    { "channel": "flag", "hwIndex": 1, "role": "flag", "label": "Flag LED 2" },
+    { "channel": "flag", "hwIndex": 2, "role": "flag", "label": "Flag LED 3" },
+    { "channel": "flag", "hwIndex": 3, "role": "flag", "label": "Flag LED 4" },
+    { "channel": "flag", "hwIndex": 4, "role": "flag", "label": "Flag LED 5" },
+    { "channel": "flag", "hwIndex": 5, "role": "flag", "label": "Flag LED 6" },
+    { "channel": "color", "hwIndex": 0, "role": "button", "label": "D-pad 1 ring" },
+    { "channel": "color", "hwIndex": 1, "role": "button", "label": "D-pad 2 ring" },
+    { "channel": "color", "hwIndex": 2, "role": "button", "label": "D-pad 3 ring" },
+    { "channel": "color", "hwIndex": 3, "role": "button", "label": "D-pad 4 ring" }
+  ]
+}

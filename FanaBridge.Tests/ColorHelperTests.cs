@@ -26,5 +26,27 @@ namespace FanaBridge.Tests
         {
             Assert.Equal(expected, ColorHelper.RgbToRgb565(r, g, b));
         }
+
+        // ── RGB333 tests ───────────────────────────────────────────────
+
+        [Fact]
+        public void RgbToRgb333_Black_IsZero()
+        {
+            Assert.Equal((ushort)0, ColorHelper.RgbToRgb333(0, 0, 0));
+        }
+
+        [Theory]
+        // From protocol doc: Red = data_lo=0x00, data_hi=0x38
+        [InlineData(255, 0, 0, 0x3800)]
+        // From protocol doc: Green = data_lo=0x01, data_hi=0xC0
+        [InlineData(0, 255, 0, 0xC001)]
+        // From protocol doc: Blue = data_lo=0x00, data_hi=0x07
+        [InlineData(0, 0, 255, 0x0700)]
+        // From protocol doc: Yellow = data_lo=0x01, data_hi=0xF8
+        [InlineData(255, 255, 0, 0xF801)]
+        public void RgbToRgb333_KnownColors_MatchProtocolDoc(byte r, byte g, byte b, ushort expected)
+        {
+            Assert.Equal(expected, ColorHelper.RgbToRgb333(r, g, b));
+        }
     }
 }
