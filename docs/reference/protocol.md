@@ -563,9 +563,9 @@ Toggles between standard and simplified tuning mode.
 [FF 03 06 devId 00 ... 00]
 ```
 
-#### Tuning Parameter Structure
+#### Tuning Payload Structure
 
-The tuning data structure is used in both READ responses and WRITE commands. It contains all tuning parameters at fixed offsets:
+The tuning payload is embedded in both READ responses and WRITE commands at different byte offsets (see [READ vs WRITE Report Layout](#read-vs-write-report-layout)). The offsets below are relative to the start of the payload, not the HID report:
 
 | Offset | Field | Type | Range | Description |
 |--------|-------|------|-------|-------------|
@@ -592,14 +592,13 @@ The tuning data structure is used in both READ responses and WRITE commands. It 
 | 20 | FUL | byte | 0–255 | Full Lock (steering angle) |
 | 21 | BIL | byte | 0–255 | Bilateral / Balance |
 | 22 | ROT | byte | 0–255 | Rotation |
-| 23–63 | Reserved | byte | — | Always zero |
 
 **Notes:**
 
 - **DRI (offset 7)** is the only signed byte in the structure.
 - **LIN vs FFS**: Two variants of this data structure exist in the official software — one names offset 5 `LIN`, the other calls it `FFS`. Same byte position, same semantics.
 - **APM (offset 17)**: Only populated on [APM-capable wheels](#apm-capable-wheels). Zero on all other wheels.
-- Bytes 23–63 are reserved and always zero.
+- Payload offsets 23–59 are reserved and always zero in WRITE commands (60 payload bytes at HID bytes 4–63). READ responses carry one additional trailing byte (offset 60 at HID byte 63). The SDK's internal managed struct is 65 bytes (offsets 0–64), but only offsets 0–59 appear on the wire in a WRITE.
 
 #### READ vs WRITE Report Layout
 
@@ -691,7 +690,7 @@ Quick reference mapping HID byte positions to tuning fields:
 | 24 | FUL | 20 | Full Lock |
 | 25 | BIL | 21 | Bilateral |
 | 26 | ROT | 22 | Rotation |
-| 27–63 | `0x00` | 23–63 | Reserved |
+| 27–63 | `0x00` | 23–59 | Reserved |
 
 #### Live Change Notifications
 
