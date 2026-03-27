@@ -54,6 +54,12 @@ namespace FanaBridge.Profiles
         /// <summary>Number of RevStripe LEDs — col01 RGB333 (typically 1).</summary>
         public int RevStripeLedCount { get; }
 
+        /// <summary>Number of legacy per-LED RGB rev LEDs — col01 subcmd 0x0A.</summary>
+        public int LegacyRevRgbLedCount { get; }
+
+        /// <summary>Number of legacy global-color rev LEDs — col01 subcmd 0x08 color+bitmask.</summary>
+        public int LegacyRevGlobalLedCount { get; }
+
         /// <summary>Rev + Flag count (including legacy rev and RevStripe) — used for LedModuleOptions.LedCount.</summary>
         public int RevFlagCount { get; }
 
@@ -75,6 +81,8 @@ namespace FanaBridge.Profiles
         public bool HasFlagLeds => FlagLedCount > 0;
         public bool HasLegacyRevLeds => LegacyRevLedCount > 0;
         public bool HasRevStripe => RevStripeLedCount > 0;
+        public bool HasLegacyRevRgb => LegacyRevRgbLedCount > 0;
+        public bool HasLegacyRevGlobal => LegacyRevGlobalLedCount > 0;
         public bool HasLeds => AllLedCount > 0;
         public bool HasEncoders { get; }
 
@@ -101,6 +109,8 @@ namespace FanaBridge.Profiles
             MonoLedCount = profile.MonoLedCount;
             LegacyRevLedCount = profile.LegacyRevLedCount;
             RevStripeLedCount = profile.RevStripeLedCount;
+            LegacyRevRgbLedCount = profile.LegacyRevRgbLedCount;
+            LegacyRevGlobalLedCount = profile.LegacyRevGlobalLedCount;
             RevFlagCount = profile.RevFlagCount;
             ButtonLedCount = profile.ButtonLedCount;
             AllLedCount = profile.TotalLedCount;

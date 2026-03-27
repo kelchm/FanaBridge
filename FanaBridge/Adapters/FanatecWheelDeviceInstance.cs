@@ -36,6 +36,7 @@ namespace FanaBridge.Adapters
 
         // LED module — null when wheel has no LEDs.
         private LedModuleSettings<FanatecLedManager> _ledModule;
+        private FanatecLedManager _manager;
 
         private bool _ledModuleInitialized;
 
@@ -70,7 +71,8 @@ namespace FanaBridge.Adapters
             if (allLeds == 0) return;
 
             var plugin = FanatecPlugin.Instance;
-            var manager = new FanatecLedManager(caps, plugin.Leds, plugin.LegacyLeds, plugin.Device);
+            _manager = new FanatecLedManager(caps, plugin.Leds, plugin.LegacyLeds, plugin.Device);
+            var manager = _manager;
             var options = new LedModuleOptions
             {
                 DeviceName = caps.ShortName ?? caps.Name,
@@ -268,6 +270,15 @@ namespace FanaBridge.Adapters
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
+            // Hot-swap the driver if the active profile changed (e.g. user
+            // picked a different override in the settings dropdown).
+            if (_manager != null)
+            {
+                var currentCaps = plugin.CurrentCapabilities;
+                if (currentCaps?.Profile != null)
+                    _manager.HotSwapIfNeeded(currentCaps);
+            }
+
             _ledModule?.Display();
         }
 

@@ -53,6 +53,8 @@ namespace FanaBridge.Adapters
         private readonly ushort[][] _colorBufs;  // [2][_colorSlotCount]
         private readonly byte[][] _intensityBufs; // [2][INTENSITY_PAYLOAD_SIZE]
         private readonly bool[][] _legacyRevBufs; // [2][LegacyRevLedCount]
+        private readonly byte[][] _legacyRevRgbBufs; // [2][LegacyRevRgbLedCount * 3]
+        private readonly bool[][] _legacyRevGlobalOnOff; // [2][LegacyRevGlobalLedCount]
         private readonly ushort[] _revStripeBufs; // [2] — one RGB333 value per slot
         private int _ping = 0;
 
@@ -102,6 +104,8 @@ namespace FanaBridge.Adapters
             _intensityBufs = new[] { new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE],
                                      new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE] };
             _legacyRevBufs = new[] { new bool[caps.LegacyRevLedCount], new bool[caps.LegacyRevLedCount] };
+            _legacyRevRgbBufs = new[] { new byte[caps.LegacyRevRgbLedCount * 3], new byte[caps.LegacyRevRgbLedCount * 3] };
+            _legacyRevGlobalOnOff = new[] { new bool[caps.LegacyRevGlobalLedCount], new bool[caps.LegacyRevGlobalLedCount] };
             _revStripeBufs = new ushort[2];
 
             _buttonColorConverter = caps.ColorFormat == ColorFormat.Rgb555
@@ -188,6 +192,8 @@ namespace FanaBridge.Adapters
             var colorBuf = _colorBufs[ping];
             var intensities = _intensityBufs[ping];
             var legacyRevBuf = _legacyRevBufs[ping];
+            var legacyRevRgbBuf = _legacyRevRgbBufs[ping];
+            var legacyRevGlobalOnOff = _legacyRevGlobalOnOff[ping];
             ushort revStripeColor = 0;
 
             Array.Clear(revColors, 0, revColors.Length);
@@ -195,6 +201,8 @@ namespace FanaBridge.Adapters
             Array.Clear(colorBuf, 0, colorBuf.Length);
             Array.Clear(intensities, 0, intensities.Length);
             Array.Clear(legacyRevBuf, 0, legacyRevBuf.Length);
+            Array.Clear(legacyRevRgbBuf, 0, legacyRevRgbBuf.Length);
+            Array.Clear(legacyRevGlobalOnOff, 0, legacyRevGlobalOnOff.Length);
 
             for (int i = 0; i < _ledChannels.Length; i++)
             {
@@ -234,11 +242,29 @@ namespace FanaBridge.Adapters
                     case LedChannel.RevStripe:
                         revStripeColor = ColorHelper.ToRgb333Premultiplied(color);
                         break;
+
+                    case LedChannel.LegacyRevGlobal:
+                        if (hw < legacyRevGlobalOnOff.Length)
+                            legacyRevGlobalOnOff[hw] = ColorHelper.ColorToIntensity(color) > 0;
+                        break;
+
+                    case LedChannel.LegacyRevRgb:
+                        int rgbBase = hw * 3;
+                        if (rgbBase + 2 < legacyRevRgbBuf.Length)
+                        {
+                            var (r, g, b) = ColorHelper.ColorToRgbBools(color);
+                            legacyRevRgbBuf[rgbBase] = r ? (byte)1 : (byte)0;
+                            legacyRevRgbBuf[rgbBase + 1] = g ? (byte)1 : (byte)0;
+                            legacyRevRgbBuf[rgbBase + 2] = b ? (byte)1 : (byte)0;
+                        }
+                        break;
                 }
             }
 
             bool sendColors = _colorSlotCount > 0 || _caps.MonoLedCount > 0;
             bool sendLegacyRev = _caps.HasLegacyRevLeds;
+            bool sendLegacyRevRgb = _caps.HasLegacyRevRgb;
+            bool sendLegacyRevGlobal = _caps.HasLegacyRevGlobal;
             bool sendRevStripe = _caps.HasRevStripe;
             var capturedRevStripeColor = revStripeColor;
 
@@ -260,6 +286,12 @@ namespace FanaBridge.Adapters
 
                     if (sendLegacyRev && _legacyLeds != null)
                         _legacyLeds.SetLegacyRevLeds(legacyRevBuf);
+
+                    if (sendLegacyRevRgb && _legacyLeds != null)
+                        _legacyLeds.SetLegacyRevRgb(legacyRevRgbBuf);
+
+                    if (sendLegacyRevGlobal && _legacyLeds != null)
+                        _legacyLeds.SetLegacyRevGlobal(0, legacyRevGlobalOnOff);
 
                     if (sendRevStripe && _legacyLeds != null)
                         _legacyLeds.SetRevStripeColor(capturedRevStripeColor);

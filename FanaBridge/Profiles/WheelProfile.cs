@@ -126,13 +126,21 @@ namespace FanaBridge.Profiles
         [JsonIgnore]
         public int RevStripeLedCount => Leds.Count(l => l.Channel == LedChannel.RevStripe);
 
+        /// <summary>Count of legacy per-LED RGB rev LEDs (col01 subcmd 0x0A).</summary>
+        [JsonIgnore]
+        public int LegacyRevRgbLedCount => Leds.Count(l => l.Channel == LedChannel.LegacyRevRgb);
+
+        /// <summary>Count of legacy global-color rev LEDs (col01 subcmd 0x08 color+bitmask).</summary>
+        [JsonIgnore]
+        public int LegacyRevGlobalLedCount => Leds.Count(l => l.Channel == LedChannel.LegacyRevGlobal);
+
         /// <summary>Count of "button" LEDs for SimHub (color + mono = everything except rev/flag).</summary>
         [JsonIgnore]
         public int ButtonLedCount => ColorLedCount + MonoLedCount;
 
         /// <summary>Rev + Flag count for SimHub's LedCount — includes all rev-like channels.</summary>
         [JsonIgnore]
-        public int RevFlagCount => RevLedCount + FlagLedCount + LegacyRevLedCount + RevStripeLedCount;
+        public int RevFlagCount => RevLedCount + FlagLedCount + LegacyRevLedCount + RevStripeLedCount + LegacyRevRgbLedCount + LegacyRevGlobalLedCount;
 
         /// <summary>True if this device has any LEDs at all.</summary>
         [JsonIgnore]

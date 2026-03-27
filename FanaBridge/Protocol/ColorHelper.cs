@@ -116,6 +116,21 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
+        /// Converts a Color to per-channel RGB booleans, with alpha premultiply.
+        /// Each channel is true if its premultiplied value is nonzero.
+        /// Used for col01 subcmd 0x0A per-LED RGB encoding (8 discrete colors).
+        /// </summary>
+        public static (bool R, bool G, bool B) ColorToRgbBools(System.Drawing.Color color)
+        {
+            double a = color.A / 255.0;
+            return (
+                Math.Round(color.R * a) > 0,
+                Math.Round(color.G * a) > 0,
+                Math.Round(color.B * a) > 0
+            );
+        }
+
+        /// <summary>
         /// Converts BGR565 to an HTML hex string (e.g. "#FF0000").
         /// Approximate — expands 5/6/5 bits back to 8-bit channels.
         /// </summary>

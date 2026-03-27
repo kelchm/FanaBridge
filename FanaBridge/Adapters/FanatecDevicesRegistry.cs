@@ -26,11 +26,11 @@ namespace FanaBridge.Adapters
             // Ensure profiles are loaded from disk
             WheelProfileStore.EnsureLoaded();
 
-            // De-duplicate by DeviceTypeId so that a user profile with the
-            // same match criteria as a built-in profile doesn't produce two
-            // descriptors with the same DeviceTypeID (which SimHub rejects).
-            // GetAll() returns built-in first, then user, so last-wins gives
-            // user profiles priority — matching the auto-resolution behaviour.
+            // Collect unique match keys (wheelType or wheelType_moduleType).
+            // Multiple profiles may share the same match — e.g. built-in +
+            // user test variants.  We register ONE DeviceInstance per match
+            // key, using the profile with the most LEDs so the SimHub module
+            // has enough slots for any profile the user might override to.
             var configs = new Dictionary<string, DeviceConfig>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var profile in WheelProfileStore.GetAll())
@@ -49,11 +49,26 @@ namespace FanaBridge.Adapters
                     Capabilities = new WheelCapabilities(profile),
                 };
 
-                if (configs.ContainsKey(config.DeviceTypeId))
+                // Keep the profile with the highest LED count for this device
+                // type so the SimHub LED module has enough slots for any
+                // override the user might select.
+                if (configs.TryGetValue(config.DeviceTypeId, out var existing))
                 {
+                    if (config.Capabilities.AllLedCount <= existing.Capabilities.AllLedCount)
+                    {
+                        SimHub.Logging.Current.Info(
+                            "FanatecDevicesRegistry: Profile '" + profile.Id +
+                            "' (" + profile.Source + ", " + config.Capabilities.AllLedCount +
+                            " LEDs) skipped — '" + existing.Profile.Id +
+                            "' (" + existing.Capabilities.AllLedCount + " LEDs) has more");
+                        continue;
+                    }
+
                     SimHub.Logging.Current.Info(
                         "FanatecDevicesRegistry: Profile '" + profile.Id +
-                        "' (" + profile.Source + ") supersedes earlier entry for " +
+                        "' (" + profile.Source + ", " + config.Capabilities.AllLedCount +
+                        " LEDs) supersedes '" + existing.Profile.Id +
+                        "' (" + existing.Capabilities.AllLedCount + " LEDs) for " +
                         config.DeviceTypeId);
                 }
 

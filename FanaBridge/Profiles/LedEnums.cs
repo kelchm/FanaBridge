@@ -18,6 +18,10 @@ namespace FanaBridge.Profiles
         LegacyRev,
         /// <summary>col01 subcmd 0x08 — single RGB333 color for the entire strip.</summary>
         RevStripe,
+        /// <summary>col01 subcmd 0x0A — per-LED RGB boolean (8 colors per LED).</summary>
+        LegacyRevRgb,
+        /// <summary>col01 subcmd 0x08 — global RGB333 color + per-LED on/off bitmask.</summary>
+        LegacyRevGlobal,
     }
 
     /// <summary>

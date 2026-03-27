@@ -22,7 +22,7 @@ namespace FanaBridge.Adapters
     /// </summary>
     public class FanatecLedManager : LedsGenericManager<FanatecLedDriver>
     {
-        private readonly WheelCapabilities _caps;
+        private WheelCapabilities _caps;
         private readonly LedEncoder _leds;
         private readonly LegacyLedEncoder _legacyLeds;
         private readonly IDeviceTransport _transport;
@@ -66,9 +66,30 @@ namespace FanaBridge.Adapters
                 ", flag=" + _caps.FlagLedCount + ", color=" + _caps.ColorLedCount +
                 ", mono=" + _caps.MonoLedCount +
                 ", legacyRev=" + _caps.LegacyRevLedCount +
+                ", legacyRevRgb=" + _caps.LegacyRevRgbLedCount +
+                ", legacyRevGlobal=" + _caps.LegacyRevGlobalLedCount +
                 ", revStripe=" + _caps.RevStripeLedCount + ")");
 
             return _driver;
+        }
+
+        /// <summary>
+        /// If the active profile changed, tears down the current driver so
+        /// the base class recreates it via <see cref="GetDriver"/> with
+        /// the new capabilities on the next frame.
+        /// Safe to call every frame — no-ops when the profile hasn't changed.
+        /// </summary>
+        public void HotSwapIfNeeded(WheelCapabilities newCaps)
+        {
+            if (newCaps?.Profile == null || newCaps.Profile == _caps.Profile)
+                return;
+
+            SimHub.Logging.Current.Info(
+                "FanatecLedManager: Swapping driver from '" +
+                (_caps.Name ?? "?") + "' to '" + (newCaps.Name ?? "?") + "'");
+
+            _caps = newCaps;
+            Close();
         }
 
         // IsConnected() and GetPhysicalMapper() are sealed in the base class

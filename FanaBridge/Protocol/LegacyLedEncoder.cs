@@ -24,12 +24,15 @@ namespace FanaBridge.Protocol
         private const byte SUBCMD_GLOBAL_ENABLE = 0x02;
         private const byte SUBCMD_REVSTRIPE_ENABLE = 0x06;
         private const byte SUBCMD_LED_DATA = 0x08;
+        private const byte SUBCMD_LED_RGB_DATA = 0x0A;
 
         private readonly IDeviceTransport _transport;
 
         // ── Dirty tracking ─────────────────────────────────────────────────
         private ushort _lastBitmask = 0xFFFF; // Sentinel — forces first send
         private ushort _lastRevStripeColor = 0xFFFF;
+        private uint _lastRgbPacked = 0xFFFFFFFF; // Sentinel for per-LED RGB
+        private uint _lastGlobalCombined = 0xFFFFFFFF; // Sentinel for global color (stores ushort, sentinel forces first send)
 
         // ── State tracking for enable sequences ────────────────────────────
         private bool _globalEnabled;
@@ -115,6 +118,107 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
+        /// Sets per-LED RGB boolean state for RGB-capable rims via col01 subcmd 0x0A.
+        /// Each LED gets 3 consecutive bytes (R, G, B) in <paramref name="rgbBools"/>,
+        /// where any nonzero value means "on" for that channel. Max 9 LEDs (27 bytes).
+        /// Sends a global enable on first use, then packs 27 bits into 4 data bytes.
+        /// Skips the HID write when the packed state hasn't changed.
+        /// </summary>
+        /// <param name="rgbBools">Flat array: [LED0.R, LED0.G, LED0.B, LED1.R, ...]. Max 27 bytes.</param>
+        public bool SetLegacyRevRgb(byte[] rgbBools)
+        {
+            if (rgbBools == null || rgbBools.Length == 0 || rgbBools.Length > 27) return false;
+
+            // Pack 27 booleans into 4 bytes, LSB-first
+            uint packed = 0;
+            for (int i = 0; i < rgbBools.Length; i++)
+            {
+                if (rgbBools[i] != 0)
+                    packed |= 1u << i;
+            }
+
+            // Dirty check
+            if (packed == _lastRgbPacked)
+                return true;
+
+            // Ensure global rev LEDs are enabled
+            if (!_globalEnabled)
+            {
+                SimHub.Logging.Current.Info("LegacyLedEncoder: Sending global enable for RevRgb path");
+                if (!SendGlobalEnable(true))
+                    return false;
+                _globalEnabled = true;
+            }
+
+            // Send: [RID, F8, 09, 0A, data0, data1, data2, data3]
+            byte d0 = (byte)(packed & 0xFF);
+            byte d1 = (byte)((packed >> 8) & 0xFF);
+            byte d2 = (byte)((packed >> 16) & 0xFF);
+            byte d3 = (byte)((packed >> 24) & 0xFF);
+            SimHub.Logging.Current.Info(
+                $"LegacyLedEncoder: SendRgb subcmd=0x0A data=[{d0:X2} {d1:X2} {d2:X2} {d3:X2}] packed=0x{packed:X8}");
+            bool ok = SendLedRgbData(d0, d1, d2, d3);
+            if (ok)
+                _lastRgbPacked = packed;
+            return ok;
+        }
+
+        /// <summary>
+        /// Sets per-LED on/off via subcmd 0x08 with the bitmask packed in RGB333
+        /// bit order. The PBME firmware interprets subcmd 0x08 data using the RGB333
+        /// layout as a 9-bit bitmask, with fixed per-LED colors:
+        /// <list type="bullet">
+        ///   <item>LEDs 0-2 → Green channel bits (G2,G1,G0) → Yellow</item>
+        ///   <item>LEDs 3-5 → Red channel bits (R2,R1,R0) → Red</item>
+        ///   <item>LEDs 6-8 → Blue channel bits (B2,B1,B0) → Blue</item>
+        /// </list>
+        /// </summary>
+        /// <param name="rgb333">Ignored — color is fixed by LED position on PBME.</param>
+        /// <param name="onOff">Per-LED on/off state. Max 9 LEDs.</param>
+        public bool SetLegacyRevGlobal(ushort rgb333, bool[] onOff)
+        {
+            if (onOff == null || onOff.Length == 0 || onOff.Length > 9) return false;
+
+            // Pack the 9-LED bitmask into RGB333 bit positions:
+            //   G channel: LED0→G2(MSB), LED1→G1, LED2→G0(LSB)
+            //   R channel: LED3→R2(MSB), LED4→R1, LED5→R0(LSB)
+            //   B channel: LED6→B2(MSB), LED7→B1, LED8→B0(LSB)
+            int g3 = (onOff.Length > 0 && onOff[0] ? 4 : 0)
+                   | (onOff.Length > 1 && onOff[1] ? 2 : 0)
+                   | (onOff.Length > 2 && onOff[2] ? 1 : 0);
+            int r3 = (onOff.Length > 3 && onOff[3] ? 4 : 0)
+                   | (onOff.Length > 4 && onOff[4] ? 2 : 0)
+                   | (onOff.Length > 5 && onOff[5] ? 1 : 0);
+            int b3 = (onOff.Length > 6 && onOff[6] ? 4 : 0)
+                   | (onOff.Length > 7 && onOff[7] ? 2 : 0)
+                   | (onOff.Length > 8 && onOff[8] ? 1 : 0);
+
+            byte dataHi = (byte)(((g3 & 0x03) << 6) | (r3 << 3) | b3);
+            byte dataLo = (byte)((g3 >> 2) & 0x01);
+            ushort packed = (ushort)((dataHi << 8) | dataLo);
+
+            // Dirty check
+            if (packed == _lastGlobalCombined)
+                return true;
+
+            // Ensure global rev LEDs are enabled
+            if (!_globalEnabled)
+            {
+                SimHub.Logging.Current.Info("LegacyLedEncoder: Sending global enable for RevGlobal path");
+                if (!SendGlobalEnable(true))
+                    return false;
+                _globalEnabled = true;
+            }
+
+            SimHub.Logging.Current.Info(
+                $"LegacyLedEncoder: SendGlobal rgb333=[{dataLo:X2} {dataHi:X2}] G={g3} R={r3} B={b3}");
+            bool ok = SendLedData(dataLo, dataHi);
+            if (ok)
+                _lastGlobalCombined = packed;
+            return ok;
+        }
+
+        /// <summary>
         /// Clears all legacy LEDs — turns off bitmask LEDs or RevStripe.
         /// </summary>
         public void Clear()
@@ -145,6 +249,8 @@ namespace FanaBridge.Protocol
         {
             _lastBitmask = 0xFFFF;
             _lastRevStripeColor = 0xFFFF;
+            _lastRgbPacked = 0xFFFFFFFF;
+            _lastGlobalCombined = 0xFFFFFFFF;
             _globalEnabled = false;
             _revStripeEnabled = false;
         }
@@ -179,6 +285,16 @@ namespace FanaBridge.Protocol
         private bool SendLedData(byte dataLo, byte dataHi)
         {
             BuildReport(SUBCMD_LED_DATA, dataLo, dataHi, 0x00, 0x00);
+            return _transport.SendCol01(_reportBuf);
+        }
+
+        /// <summary>
+        /// Sends per-LED RGB data via subcmd 0x0A.
+        /// [RID, F8, 09, 0A, d0, d1, d2, d3]
+        /// </summary>
+        private bool SendLedRgbData(byte d0, byte d1, byte d2, byte d3)
+        {
+            BuildReport(SUBCMD_LED_RGB_DATA, d0, d1, d2, d3);
             return _transport.SendCol01(_reportBuf);
         }
 
