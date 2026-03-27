@@ -1259,20 +1259,26 @@ namespace FanaBridge.UI
 
                 SaveProfile(profile, filePath);
 
-                // Hot-reload: re-read profiles and force capability re-evaluation
-                // so the new profile takes effect immediately without restarting SimHub.
+                // Hot-reload and activate the new profile as the current override.
+                // TODO: Replace this direct settings manipulation with an event-based
+                // approach — the wizard should notify that a profile was created, and
+                // the settings UI should handle activation and override persistence.
                 WheelProfileStore.Reload();
-                _plugin.SdkManager.RefreshCapabilities();
 
-                MessageBox.Show(
-                    "Profile saved!\n\n" +
-                    "LED and display output is active immediately — no restart needed for that.\n\n" +
-                    "To have this wheel appear in SimHub's Devices list, restart SimHub once.\n\n" +
-                    "If this profile works well, consider sharing it on GitHub so\n" +
-                    "others with the same wheel can benefit!",
-                    "Profile Saved",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
+                string matchKey = profile.Match?.WheelType;
+                if (!string.IsNullOrEmpty(profile.Match?.ModuleType))
+                    matchKey += "_" + profile.Match.ModuleType;
+                if (!string.IsNullOrEmpty(matchKey))
+                {
+                    string overrideKey = profile.Id + ":" + ProfileSource.User;
+                    _plugin.Settings.ProfileOverrides[matchKey] = overrideKey;
+                    _plugin.SaveSettings();
+                }
+
+                // Re-resolve with the new override active.
+                // The settings UI handles restart prompting via UpdateRestartNotice()
+                // after this dialog closes.
+                _plugin.SdkManager.RefreshCapabilities();
 
                 DialogResult = true;
                 Close();

@@ -23,12 +23,11 @@ namespace FanaBridge.UI
         private bool _suppressProfileChange;
 
         /// <summary>
-        /// The device name that SimHub registered at startup. SimHub caches
-        /// device descriptors, so this name won't change until a restart.
-        /// We track it to show a restart notice when the active profile has
-        /// a different name.
+        /// Capabilities that the SimHub LED module was built from at startup.
+        /// Used to detect whether a profile switch requires a restart (e.g.
+        /// LED count or display type changed).
         /// </summary>
-        private string _registeredDeviceName;
+        private WheelCapabilities _bootCaps;
 
         public SettingsControl()
         {
@@ -90,10 +89,8 @@ namespace FanaBridge.UI
         {
             Plugin.StateChanged += OnPluginStateChanged;
 
-            // Capture the device name SimHub registered at startup
-            var caps = Plugin.CurrentCapabilities;
-            if (caps?.Name != null)
-                _registeredDeviceName = caps.ShortName ?? caps.Name;
+            // Capture the capabilities the LED module was built from at startup
+            _bootCaps = Plugin.CurrentCapabilities;
 
             UpdateStatus();
         }
@@ -357,18 +354,42 @@ namespace FanaBridge.UI
                 return;
             }
 
+            // Check if capabilities changed in a way that requires restart
+            string restartReason = caps.GetRestartReason(_bootCaps);
+            if (restartReason != null)
+            {
+                txtRestartNotice.Visibility = Visibility.Visible;
+                PromptRestart(restartReason);
+                return;
+            }
+
+            // Check if the device name changed (cosmetic — doesn't need
+            // restart for functionality, but the Devices list is stale)
             string currentName = caps.ShortName ?? caps.Name;
+            string bootName = _bootCaps?.ShortName ?? _bootCaps?.Name;
+            bool nameChanged = bootName != null
+                && !string.Equals(currentName, bootName, StringComparison.OrdinalIgnoreCase);
 
-            // Show restart notice when the active profile differs from what
-            // SimHub registered at boot.  LED/display output hot-swaps
-            // immediately, but the device name and LED editor slot count
-            // only update after restart.
-            bool needsRestart = _registeredDeviceName == null
-                || !string.Equals(currentName, _registeredDeviceName, StringComparison.OrdinalIgnoreCase);
-
-            txtRestartNotice.Visibility = needsRestart
+            txtRestartNotice.Visibility = nameChanged
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+        }
+
+        private void PromptRestart(string reason)
+        {
+            var result = System.Windows.MessageBox.Show(
+                reason + ".\n\n" +
+                "LED and display output has switched immediately, but the SimHub " +
+                "LED editor and device list need a restart to update.\n\n" +
+                "Restart SimHub now?",
+                "Restart Required",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Question);
+
+            if (result == System.Windows.MessageBoxResult.Yes)
+            {
+                Plugin.PluginManager?.RequestApplicationExit(restart: true);
+            }
         }
 
         // =====================================================================

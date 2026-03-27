@@ -89,6 +89,25 @@ namespace FanaBridge.Profiles
         /// <summary>Whether this profile has been tested on physical hardware.</summary>
         public bool Verified { get; }
 
+        /// <summary>
+        /// Checks whether switching from <paramref name="other"/> to this
+        /// capabilities set requires a SimHub restart to fully apply.
+        /// Returns a human-readable reason string, or null if no restart is needed.
+        /// </summary>
+        public string GetRestartReason(WheelCapabilities other)
+        {
+            if (other == null)
+                return null;
+
+            if (RevFlagCount != other.RevFlagCount || ButtonLedCount != other.ButtonLedCount)
+                return "LED count changed (" + other.AllLedCount + " → " + AllLedCount + ")";
+
+            if (Display != other.Display)
+                return "Display type changed (" + other.Display + " → " + Display + ")";
+
+            return null;
+        }
+
         // ── Constructors ─────────────────────────────────────────────────
 
         /// <summary>

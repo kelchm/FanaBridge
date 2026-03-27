@@ -65,16 +65,29 @@ namespace FanaBridge.Adapters
                 return;
             _ledModuleInitialized = true;
 
-            // Use the currently-active profile (respecting any user override),
-            // falling back to the registry config if the plugin isn't ready yet.
-            var caps = FanatecPlugin.Instance?.CurrentCapabilities;
-            if (caps == null || caps == WheelCapabilities.None)
-                caps = _config.Capabilities;
+            // Use the currently-active profile (which respects user overrides)
+            // when it matches THIS device.  Otherwise fall back to the registry
+            // config — CurrentCapabilities is global and would leak the connected
+            // wheel's caps into unrelated device instances.
+            var caps = _config.Capabilities;
+            var plugin = FanatecPlugin.Instance;
+            if (plugin != null)
+            {
+                var sdk = plugin.SdkManager;
+                var current = plugin.CurrentCapabilities;
+                if (current?.Profile != null && current != WheelCapabilities.None
+                    && sdk != null
+                    && _config.WheelType == sdk.SteeringWheelType
+                    && _config.ModuleType == sdk.SubModuleType)
+                {
+                    caps = current;
+                }
+            }
             int allLeds = caps.AllLedCount;
 
             if (allLeds == 0) return;
 
-            var plugin = FanatecPlugin.Instance;
+            if (plugin == null) plugin = FanatecPlugin.Instance;
             _manager = new FanatecLedManager(caps, plugin.Leds, plugin.LegacyLeds, plugin.Device);
             var manager = _manager;
             var options = new LedModuleOptions
