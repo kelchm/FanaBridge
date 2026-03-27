@@ -23,7 +23,6 @@ The Fanatec ecosystem consists of four hardware categories:
   - [Wheel Protocol Summary](#wheel-protocol-summary)
 - [Hubs](#hubs)
   - [Hub Types](#hub-types)
-  - [Native Hub Capabilities](#native-hub-capabilities)
   - [Module Capabilities](#module-capabilities)
 - [Button Modules](#button-modules)
   - [Compositional Capability Model](#compositional-capability-model)
@@ -347,7 +346,7 @@ Hub (native features) + Module (provided features) = Effective capabilities
 This model is not hardcoded to specific modules. If a new module were released with different capabilities, any compatible hub would gain those capabilities by connecting it.
 
 
-> **Note:** Some hubs (CSWRUH, CSWRUHX) have a native 7-segment display. How this interacts with a module's display when both are present is [unverified](#native-hub-capabilities).
+> **Note:** Some hubs (CSWRUH, CSWRUHX) have a native 7-segment display. How this interacts with a module's display when both are present is [unverified](#hub-types).
 
 ### Module Types
 
@@ -372,7 +371,7 @@ The PBME is the more capable of the two modules, featuring a 2.7" 256x64 OLED di
 #### Device-Specific Notes
 
 - The OLED display operates in two modes: **ITM mode** (telemetry dashboards, pages 1–5, Device ID 3) and **legacy mode** (page 6, 7-segment-style content via col01). See [ITM Display](protocol.md#0x05--itm-display).
-- Supports `SevenSegmentModeEnable` for display ownership control. See [Display Ownership](protocol.md#0x18--display-ownership).
+- Supports display ownership control via subcmd `0x18`. See [Display Ownership](protocol.md#0x18--display-ownership).
 
 ### PBMR (Podium Button Module Rally)
 
@@ -390,4 +389,4 @@ The PBMR is a simpler module focused on rally-style controls with button and enc
 
 - Uses **RGB555** color encoding (5 bits per channel) instead of the standard RGB565, resulting in a slightly reduced color range.
 - The OLED display is only addressable via col01 7-segment commands despite being a dot-matrix display.
-- `SevenSegmentModeEnable` is a no-op. Display conflict management must be handled by pausing host writes.
+- Display ownership (subcmd `0x18`) is a no-op. Display conflict management must be handled by pausing host writes.
