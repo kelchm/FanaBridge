@@ -1,10 +1,20 @@
-# FanaBridge
+<p align="center">
+  <img src="FanaBridge/Resources/Images/plugin-icon.png" alt="FanaBridge" width="128" />
+</p>
+
+<h1 align="center">FanaBridge</h1>
+
+<p align="center">
+  A <a href="https://www.simhubdash.com/">SimHub</a> plugin that provides native LED and display control for Fanatec steering wheels via HID.
+</p>
+
+<p align="center">
+  <a href="https://discord.gg/vkGRCYkXfy"><img src="https://img.shields.io/discord/1486792131438706688?logo=discord&label=Discord" alt="Discord"></a>
+  <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/kelchm/FanaBridge" alt="GitHub Release"></a>
+  <a href="../../issues"><img src="https://img.shields.io/github/issues/kelchm/FanaBridge" alt="GitHub Issues"></a>
+</p>
 
 > **This is beta software.** Expect rough edges. Bug reports and feedback are welcome via [Issues](../../issues).
-
-A [SimHub](https://www.simhubdash.com/) plugin that provides native LED and display control for Fanatec steering wheels via HID.
-
-FanaBridge communicates directly with Fanatec wheel hardware, enabling SimHub to drive the RGB LEDs and displays on supported wheels.
 
 ## Features
 
@@ -92,6 +102,15 @@ dotnet build FanaBridge\FanaBridge.csproj -p:InstallToSimHub=true
 ```
 
 The `SimHubDir` property defaults to `C:\Program Files (x86)\SimHub\`. Override it in `Directory.Build.props.user` if your install is elsewhere.
+
+## Documentation
+
+Project documentation lives in [docs/](docs/):
+
+- [docs/reference/](docs/reference/) — Fanatec hardware and HID protocol reference
+  - [Devices](docs/reference/devices.md) — Hardware catalog (wheelbases, wheels, hubs, modules)
+  - [Protocol](docs/reference/protocol.md) — HID protocol reference (col01, col03, tuning, ITM, LEDs)
+- [Terminology](docs/terminology.md) — Glossary of Fanatec ecosystem concepts
 
 ## Disclaimer
 
