@@ -19,14 +19,22 @@ namespace FanaBridge.Adapters
     ///   • Routing through <c>PhysicalMapper</c> to <c>SendLeds()</c>
     ///   • Connection/reconnection lifecycle and events
     ///   • Force-refresh timers
+    ///
+    /// The LED module is built once at startup from whichever profile is
+    /// active at that time (built-in default, or user override if set).
+    /// The driver is rebuilt live when the active profile changes — see
+    /// <see cref="HotSwapIfNeeded"/>.  If the new profile has a different
+    /// LED count, the module's slot count is stale until SimHub restarts.
     /// </summary>
     public class FanatecLedManager : LedsGenericManager<FanatecLedDriver>
     {
-        private WheelCapabilities _caps;
         private readonly LedEncoder _leds;
         private readonly LegacyLedEncoder _legacyLeds;
         private readonly IDeviceTransport _transport;
-        private FanatecLedDriver _driver;
+
+        // Track which profile the current driver was built from,
+        // so HotSwapIfNeeded can detect changes.
+        private WheelProfile _lastDriverProfile;
 
         /// <summary>
         /// Parameterless constructor required by the <c>new()</c> constraint on
@@ -36,15 +44,17 @@ namespace FanaBridge.Adapters
         /// </summary>
         public FanatecLedManager()
         {
-            _caps = WheelCapabilities.None;
         }
 
         /// <summary>
         /// Creates a manager configured for a specific wheel's LED layout.
+        /// The <paramref name="caps"/> determine the LED module's slot capacity
+        /// (set once at startup from whichever profile is active at that time).
+        /// The driver built by <see cref="GetDriver"/> may use different caps
+        /// if the user switches profiles at runtime.
         /// </summary>
         public FanatecLedManager(WheelCapabilities caps, LedEncoder leds, LegacyLedEncoder legacyLeds, IDeviceTransport transport)
         {
-            _caps = caps ?? WheelCapabilities.None;
             _leds = leds;
             _legacyLeds = legacyLeds;
             _transport = transport;
@@ -54,42 +64,46 @@ namespace FanaBridge.Adapters
 
         /// <summary>
         /// Called by the base class when a connection is needed.
-        /// Creates the unified BA63-compatible driver with the wheel's capabilities.
+        /// Reads the currently-active capabilities from the plugin singleton
+        /// (respecting any user profile override) and builds a driver for them.
         /// </summary>
         public override FanatecLedDriver GetDriver()
         {
-            _driver = new FanatecLedDriver(_caps, _leds, _legacyLeds, _transport);
+            // Use the runtime-resolved profile, not the static registration caps
+            var caps = FanatecPlugin.Instance?.CurrentCapabilities ?? WheelCapabilities.None;
+            _lastDriverProfile = caps.Profile;
+
+            var driver = new FanatecLedDriver(caps, _leds, _legacyLeds, _transport);
 
             SimHub.Logging.Current.Info(
-                "FanatecLedManager: Created driver for " + (_caps.Name ?? "unknown") +
-                " (" + _caps.AllLedCount + " LEDs: rev=" + _caps.RevLedCount +
-                ", flag=" + _caps.FlagLedCount + ", color=" + _caps.ColorLedCount +
-                ", mono=" + _caps.MonoLedCount +
-                ", legacyRev=" + _caps.LegacyRevLedCount +
-                ", legacyRevRgb=" + _caps.LegacyRevRgbLedCount +
-                ", legacyRevGlobal=" + _caps.LegacyRevGlobalLedCount +
-                ", revStripe=" + _caps.RevStripeLedCount + ")");
+                "FanatecLedManager: Created driver for " + (caps.Name ?? "unknown") +
+                " (" + caps.AllLedCount + " LEDs: rev=" + caps.RevLedCount +
+                ", flag=" + caps.FlagLedCount + ", color=" + caps.ColorLedCount +
+                ", mono=" + caps.MonoLedCount +
+                ", legacyRev=" + caps.LegacyRevLedCount +
+                ", legacyRevRgb=" + caps.LegacyRevRgbLedCount +
+                ", legacyRevGlobal=" + caps.LegacyRevGlobalLedCount +
+                ", revStripe=" + caps.RevStripeLedCount + ")");
 
-            return _driver;
+            return driver;
         }
 
         /// <summary>
         /// If the active profile changed, tears down the current driver so
-        /// the base class recreates it via <see cref="GetDriver"/> with
-        /// the new capabilities on the next frame.
-        /// Safe to call every frame — no-ops when the profile hasn't changed.
+        /// the base class recreates it via <see cref="GetDriver"/> on the
+        /// next frame.  Safe to call every frame — no-ops when unchanged.
         /// </summary>
-        public void HotSwapIfNeeded(WheelCapabilities newCaps)
+        public void HotSwapIfNeeded(WheelCapabilities currentCaps)
         {
-            if (newCaps?.Profile == null || newCaps.Profile == _caps.Profile)
+            if (currentCaps?.Profile == null || currentCaps.Profile == _lastDriverProfile)
                 return;
 
             SimHub.Logging.Current.Info(
-                "FanatecLedManager: Swapping driver from '" +
-                (_caps.Name ?? "?") + "' to '" + (newCaps.Name ?? "?") + "'");
+                "FanatecLedManager: Active profile changed to '" +
+                (currentCaps.Name ?? "?") + "' — triggering driver rebuild");
 
-            _caps = newCaps;
             Close();
+            // _lastDriverProfile will be updated in the next GetDriver() call
         }
 
         // IsConnected() and GetPhysicalMapper() are sealed in the base class

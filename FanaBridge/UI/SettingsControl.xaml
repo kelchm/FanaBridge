@@ -105,7 +105,7 @@
                         <TextBlock x:Name="txtRestartNotice" Visibility="Collapsed"
                                    TextWrapping="Wrap" Margin="0,8,0,0"
                                    Foreground="#FFDDAA" FontStyle="Italic"
-                                   Text="&#x26A0;  Restart SimHub for this wheel to appear in the Devices list. LED and display output is active immediately." />
+                                   Text="&#x26A0;  LED and display output is active immediately. Restart SimHub to update the device name and LED editor slot count." />
                     </StackPanel>
                 </StackPanel>
             </styles:SHSection>

@@ -65,7 +65,11 @@ namespace FanaBridge.Adapters
                 return;
             _ledModuleInitialized = true;
 
-            var caps = _config.Capabilities;
+            // Use the currently-active profile (respecting any user override),
+            // falling back to the registry config if the plugin isn't ready yet.
+            var caps = FanatecPlugin.Instance?.CurrentCapabilities;
+            if (caps == null || caps == WheelCapabilities.None)
+                caps = _config.Capabilities;
             int allLeds = caps.AllLedCount;
 
             if (allLeds == 0) return;

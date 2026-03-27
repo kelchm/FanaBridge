@@ -26,11 +26,11 @@ namespace FanaBridge.Adapters
             // Ensure profiles are loaded from disk
             WheelProfileStore.EnsureLoaded();
 
-            // Collect unique match keys (wheelType or wheelType_moduleType).
-            // Multiple profiles may share the same match — e.g. built-in +
-            // user test variants.  We register ONE DeviceInstance per match
-            // key, using the profile with the most LEDs so the SimHub module
-            // has enough slots for any profile the user might override to.
+            // One DeviceInstance per device match key.  When multiple profiles
+            // share the same match (e.g. built-in + user test variants),
+            // the built-in profile wins for the device descriptor (name,
+            // type ID).  The actual LED/display capabilities used at runtime
+            // come from the currently-active profile (see FanatecLedManager.GetDriver).
             var configs = new Dictionary<string, DeviceConfig>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var profile in WheelProfileStore.GetAll())
@@ -49,27 +49,39 @@ namespace FanaBridge.Adapters
                     Capabilities = new WheelCapabilities(profile),
                 };
 
-                // Keep the profile with the highest LED count for this device
-                // type so the SimHub LED module has enough slots for any
-                // override the user might select.
                 if (configs.TryGetValue(config.DeviceTypeId, out var existing))
                 {
-                    if (config.Capabilities.AllLedCount <= existing.Capabilities.AllLedCount)
+                    // Built-in always wins — it defines the device's full capability
+                    if (existing.Profile.Source == ProfileSource.BuiltIn)
                     {
                         SimHub.Logging.Current.Info(
                             "FanatecDevicesRegistry: Profile '" + profile.Id +
-                            "' (" + profile.Source + ", " + config.Capabilities.AllLedCount +
-                            " LEDs) skipped — '" + existing.Profile.Id +
-                            "' (" + existing.Capabilities.AllLedCount + " LEDs) has more");
+                            "' (" + profile.Source + ") skipped — built-in '" +
+                            existing.Profile.Id + "' defines device " + config.DeviceTypeId);
                         continue;
                     }
 
-                    SimHub.Logging.Current.Info(
-                        "FanatecDevicesRegistry: Profile '" + profile.Id +
-                        "' (" + profile.Source + ", " + config.Capabilities.AllLedCount +
-                        " LEDs) supersedes '" + existing.Profile.Id +
-                        "' (" + existing.Capabilities.AllLedCount + " LEDs) for " +
-                        config.DeviceTypeId);
+                    // New profile is built-in, existing is user — promote built-in
+                    if (profile.Source == ProfileSource.BuiltIn)
+                    {
+                        SimHub.Logging.Current.Info(
+                            "FanatecDevicesRegistry: Built-in '" + profile.Id +
+                            "' replaces user '" + existing.Profile.Id +
+                            "' for device " + config.DeviceTypeId);
+                    }
+                    else
+                    {
+                        // Both are user profiles — keep the first one.
+                        // The registry only determines the device descriptor
+                        // (name, type ID). LED capability comes from the
+                        // currently-active profile at runtime.
+                        SimHub.Logging.Current.Info(
+                            "FanatecDevicesRegistry: Profile '" + profile.Id +
+                            "' (" + profile.Source + ") skipped — '" +
+                            existing.Profile.Id + "' already registered for " +
+                            config.DeviceTypeId);
+                        continue;
+                    }
                 }
 
                 configs[config.DeviceTypeId] = config;

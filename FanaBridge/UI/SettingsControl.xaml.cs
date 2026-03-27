@@ -359,9 +359,10 @@ namespace FanaBridge.UI
 
             string currentName = caps.ShortName ?? caps.Name;
 
-            // Show restart notice if:
-            // - No device was registered at startup (new profile just created for an unknown wheel), OR
-            // - The device name changed from what SimHub registered at boot
+            // Show restart notice when the active profile differs from what
+            // SimHub registered at boot.  LED/display output hot-swaps
+            // immediately, but the device name and LED editor slot count
+            // only update after restart.
             bool needsRestart = _registeredDeviceName == null
                 || !string.Equals(currentName, _registeredDeviceName, StringComparison.OrdinalIgnoreCase);
 

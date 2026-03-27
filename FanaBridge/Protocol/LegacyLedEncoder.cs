@@ -144,20 +144,17 @@ namespace FanaBridge.Protocol
             // Ensure global rev LEDs are enabled
             if (!_globalEnabled)
             {
-                SimHub.Logging.Current.Info("LegacyLedEncoder: Sending global enable for RevRgb path");
                 if (!SendGlobalEnable(true))
                     return false;
                 _globalEnabled = true;
             }
 
             // Send: [RID, F8, 09, 0A, data0, data1, data2, data3]
-            byte d0 = (byte)(packed & 0xFF);
-            byte d1 = (byte)((packed >> 8) & 0xFF);
-            byte d2 = (byte)((packed >> 16) & 0xFF);
-            byte d3 = (byte)((packed >> 24) & 0xFF);
-            SimHub.Logging.Current.Info(
-                $"LegacyLedEncoder: SendRgb subcmd=0x0A data=[{d0:X2} {d1:X2} {d2:X2} {d3:X2}] packed=0x{packed:X8}");
-            bool ok = SendLedRgbData(d0, d1, d2, d3);
+            bool ok = SendLedRgbData(
+                (byte)(packed & 0xFF),
+                (byte)((packed >> 8) & 0xFF),
+                (byte)((packed >> 16) & 0xFF),
+                (byte)((packed >> 24) & 0xFF));
             if (ok)
                 _lastRgbPacked = packed;
             return ok;
@@ -204,14 +201,11 @@ namespace FanaBridge.Protocol
             // Ensure global rev LEDs are enabled
             if (!_globalEnabled)
             {
-                SimHub.Logging.Current.Info("LegacyLedEncoder: Sending global enable for RevGlobal path");
                 if (!SendGlobalEnable(true))
                     return false;
                 _globalEnabled = true;
             }
 
-            SimHub.Logging.Current.Info(
-                $"LegacyLedEncoder: SendGlobal rgb333=[{dataLo:X2} {dataHi:X2}] G={g3} R={r3} B={b3}");
             bool ok = SendLedData(dataLo, dataHi);
             if (ok)
                 _lastGlobalCombined = packed;

@@ -283,17 +283,8 @@ namespace FanaBridge.Transport
             }
         }
 
-        private int _col01LogCounter;
-
         bool IDeviceTransport.SendCol01(byte[] data)
         {
-            // Sample every 100th report to avoid log spam
-            if (Interlocked.Increment(ref _col01LogCounter) % 100 == 1)
-            {
-                SimHub.Logging.Current.Info(
-                    "FanatecDevice: SendCol01 [" +
-                    string.Join(" ", data.Select(b => b.ToString("X2"))) + "]");
-            }
             lock (_writeLock)
             {
                 return SendDisplayReport(data);

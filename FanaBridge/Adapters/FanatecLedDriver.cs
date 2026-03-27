@@ -25,11 +25,17 @@ namespace FanaBridge.Adapters
     ///   [0 .. RevFlagCount-1]                     Rev + Flag LEDs
     ///   [RevFlagCount .. RevFlagCount+ButtonCount-1]  Button LEDs (color + mono)
     ///
-    /// Hardware dispatch:
-    ///   Rev LEDs    → subcmd 0x00 RGB565  (SetRevLedColors)
-    ///   Flag LEDs   → subcmd 0x01 RGB565  (SetFlagLedColors)
-    ///   Color LEDs  → subcmd 0x02 RGB565  (SetButtonLedState)
-    ///   Mono LEDs   → subcmd 0x03 intensity (SetButtonLedState)
+    /// Hardware dispatch (col03 — 64-byte reports):
+    ///   Rev LEDs       → subcmd 0x00 RGB565  (SetRevLedColors)
+    ///   Flag LEDs      → subcmd 0x01 RGB565  (SetFlagLedColors)
+    ///   Color LEDs     → subcmd 0x02 RGB565  (SetButtonLedState)
+    ///   Mono LEDs      → subcmd 0x03 intensity (SetButtonLedState)
+    ///
+    /// Hardware dispatch (col01 — 8-byte reports via LegacyLedEncoder):
+    ///   LegacyRev      → subcmd 0x08 bitmask (per-LED on/off)
+    ///   RevStripe       → subcmd 0x08 RGB333  (single color for entire strip)
+    ///   LegacyRevRgb   → subcmd 0x0A per-LED RGB booleans (8 colors)
+    ///   LegacyRevGlobal → subcmd 0x08 bitmask in RGB333 bit order (fixed per-LED colors)
     /// </summary>
     public class FanatecLedDriver : DriverBase, ILedButtonsDriver
     {

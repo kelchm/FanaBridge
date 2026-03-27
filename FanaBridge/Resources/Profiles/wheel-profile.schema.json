@@ -80,7 +80,7 @@
       "additionalProperties": false,
       "properties": {
         "channel": {
-          "description": "Hardware communication channel — determines the HID collection and encoding used. col03: \"rev\" = subcmd 0x00 (RPM strip), \"flag\" = subcmd 0x01 (status flags), \"color\" = subcmd 0x02 (RGB565/555 button area), \"mono\" = subcmd 0x03 (3-bit intensity). col01: \"legacyRev\" = bitmask on/off per LED, \"revStripe\" = single RGB333 color for entire strip, \"legacyRevRgb\" = subcmd 0x0A per-LED RGB boolean (8 colors per LED).",
+          "description": "Hardware communication channel — determines the HID collection and encoding. col03 (64-byte): \"rev\" = subcmd 0x00 RGB565 rev/shift LEDs, \"flag\" = subcmd 0x01 RGB565 status LEDs, \"color\" = subcmd 0x02 RGB565/555 button/encoder LEDs, \"mono\" = subcmd 0x03 3-bit intensity. col01 (8-byte): \"legacyRev\" = subcmd 0x08 bitmask on/off per LED, \"revStripe\" = subcmd 0x08 single RGB333 color for entire strip, \"legacyRevRgb\" = subcmd 0x0A per-LED RGB boolean (8 colors), \"legacyRevGlobal\" = subcmd 0x08 per-LED on/off in RGB333 bit order (fixed colors per position).",
           "type": "string",
           "enum": ["rev", "flag", "color", "mono", "legacyRev", "revStripe", "legacyRevRgb", "legacyRevGlobal"]
         },
