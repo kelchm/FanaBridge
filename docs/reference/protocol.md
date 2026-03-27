@@ -35,7 +35,7 @@ Fanatec wheelbases communicate with the host PC over USB HID (Human Interface De
     - [0x03 — SAVE](#0x03--save)
     - [0x04 — RESET](#0x04--reset)
     - [0x06 — TOGGLE](#0x06--toggle)
-    - [Tuning Parameter Structure](#tuning-parameter-structure)
+    - [Tuning Payload Structure](#tuning-payload-structure)
     - [READ vs WRITE Report Layout](#read-vs-write-report-layout)
     - [Read-Modify-Write Pattern](#read-modify-write-pattern)
     - [WRITE Report Byte Map](#write-report-byte-map)
@@ -130,22 +130,22 @@ The **command class** (byte[1]) determines the protocol domain:
 
 ## Collection Routing
 
-The HID collection is determined by the **first byte** of the output buffer:
+col01 and col03 are separate HID interfaces — the host opens and writes to each one independently. The two are distinguished by their framing:
 
-| First Byte | Collection | Report Size | Notes |
-|------------|-----------|-------------|-------|
-| `0xFF` | col03 | 64 bytes | Full buffer written as-is |
-| Any other | col01 | 8 bytes | First byte replaced with device report ID |
+| Collection | First Byte | Report Size |
+|------------|-----------|-------------|
+| col03 | `0xFF` | 64 bytes |
+| col01 | Device report ID | 8 bytes |
 
-This means the same send path can be used for both collections — the first byte acts as the routing key. When the first byte is not `0xFF`, it is overwritten with the device-specific report ID before writing to the col01 endpoint.
+> **Note:** The Fanatec SDK provides a single high-level send path that uses the first byte of the application buffer as a routing hint (`0xFF` → col03, anything else → col01 with the first byte replaced by the device report ID). This is an SDK convenience, not a wire-level mechanism.
 
-### col03 Path Derivation
+### col03 Endpoint Discovery
 
-Devices that support col03 derive the col03 endpoint path from the col01 path by:
-1. Replacing `"col01"` with `"col03"` in the device path string
-2. Replacing `"0000#"` with `"0002#"` in the path
+The col03 collection is a separate HID interface from col01. On Windows, col03 device paths typically contain `"col03"` in the path string and can also be identified by a 64-byte maximum output report length.
 
-Devices that do not support col03 have no col03 handle, and any `0xFF`-prefixed write will fail silently.
+Whether col03 availability is determined by the **wheelbase** (always present on modern bases) or the **wheel** (only present when a col03-capable rim is connected) has not been verified. In practice, col03 should be discovered dynamically at connection time rather than assumed.
+
+<!-- TODO: Verify col03 availability behavior — does a modern wheelbase always expose the col03 interface, or only when a col03-capable wheel is attached? -->
 
 ---
 
@@ -353,7 +353,7 @@ Sets the clutch bite point (CBP) engagement threshold for analog clutch paddles.
 | 5 | `0x01` | Enable flag (always `0x01`) |
 | 6 | CBP | CBP value (0–100, clamped) |
 
-CBP uses a **completely separate command path** from the [tuning menu](#0x03--tuning-menu) — it is not part of the tuning parameter structure.
+CBP uses a **completely separate command path** from the [tuning menu](#0x03--tuning-menu) — it is not part of the tuning payload structure.
 
 **Prerequisites:**
 - The connected steering wheel must have clutch paddles.
@@ -438,6 +438,8 @@ FF 01 01 [F0hi F0lo] [F1hi F1lo] ... [F5hi F5lo] 00...
 
 Button backlight RGB colors. Up to 12 RGB565 values. Only applies to devices with RGB-capable button LEDs (currently PSWBMW, GTSWX, and the PBMR module).
 
+> **Note — PBMR color inconsistency:** The PBMR is the only known device that interprets these RGB565 values as RGB555 (5 bits per channel, green MSB ignored). This means the 6th green bit (G5) is silently discarded. For example, `0x0400` (RGB565: R=0, G=32, B=0 — a dim green) renders as **black** on the PBMR because only G5 is set and it's the ignored bit. In practice, colors should be constructed with 5-bit green values (shift left by 6, not 5) to display correctly on PBMR. See [PBMR](devices.md#pbmr-podium-button-module-rally) for details.
+
 ```
 Byte:  [0]   [1]   [2]   [3..4]    ... [25..26]  [27]
        0xFF  0x01  0x02  LED0_RGB  ... LED11_RGB  commit
@@ -501,19 +503,19 @@ Byte:  [0]   [1]   [2]      [3]      [4..63]
 
 #### 0x00 — WRITE
 
-Sets tuning parameters. Fire-and-forget (no acknowledgment).
+Sets tuning parameters.
 
 ```
 [FF 03 00 devId data[0] data[1] ... data[59]]     (64 bytes)
 ```
 
-The tuning data starts at **byte[4]** in WRITE commands. See [Tuning Parameter Structure](#tuning-parameter-structure) for field offsets and [WRITE Report Byte Map](#write-report-byte-map) for the complete byte-level layout.
+The tuning data starts at **byte[4]** in WRITE commands. See [Tuning Payload Structure](#tuning-payload-structure) for field offsets and [WRITE Report Byte Map](#write-report-byte-map) for the complete byte-level layout.
 
-The device **rejects WRITE commands** that don't reflect the current state. Always use the [Read-Modify-Write Pattern](#read-modify-write-pattern).
+The device **rejects WRITE commands** that don't reflect the current state. Always use the [Read-Modify-Write Pattern](#read-modify-write-pattern). The WRITE itself produces no response — once sent, no trigger or acknowledgment is needed.
 
-> **Note:** The official software's tuning menu WRITE sends a single col03 HID report and returns immediately — no acknowledgment burst or trigger sequence is sent after a WRITE. FanaBridge currently sends a burst of 4 ON/OFF trigger pairs after tuning writes; this does not match the official software and should be considered experimental.
-
-The [report trigger mechanism](#0x06--report-trigger--ack) (col01 subcmd `0x06`) is used only for CBP operations, not for tuning menu writes. The tuning menu has its own trigger (subcmd `0x06` within the col03 `0x03` command class), but this is part of the **READ** path — it requests the device to send back its current tuning state.
+> **Subcmd `0x06` disambiguation:** Two unrelated commands share the number `0x06`. Neither is part of the WRITE flow:
+> - [TOGGLE](#0x06--toggle) (`FF 03 06`) — col03 tuning subcmd that switches between standard and simplified tuning mode.
+> - [Report Trigger](#0x06--report-trigger--ack) (`RID F8 09 01 06`) — col01 group 0x01 subcmd used for CBP operations.
 
 #### 0x01 — SELECT SETUP
 

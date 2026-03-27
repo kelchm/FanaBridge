@@ -92,7 +92,7 @@ The 8-byte input HID collection. Carries button states, encoder positions, and a
 The modern 64-byte HID collection. Used for: modern LED control (RGB565), ITM display commands, and tuning menu read/write. All col03 output reports start with `0xFF`. Not all devices support col03 — older wheelbases and wheels operate exclusively through col01.
 
 ### Collection Routing
-The SDK routes reports based on the first byte of the output buffer: `0xFF` → col03 (64-byte write), anything else → col01 (8-byte write, first byte replaced with device report ID). This allows a single send path for both collections.
+col01 and col03 are separate HID interfaces. The host opens and writes to each independently. The Fanatec SDK provides a single send path that uses the first byte of the application buffer as a routing hint (`0xFF` → col03, anything else → col01), but this is an SDK convenience — on the wire, the collection is determined by which interface the host writes to.
 
 ### Command Class
 The second byte of a col03 report, identifying the protocol domain: `0x01` = LED control, `0x02` = ITM enable / analysis page, `0x03` = tuning menu, `0x05` = ITM display (page set, param defs, value updates, keepalive).
