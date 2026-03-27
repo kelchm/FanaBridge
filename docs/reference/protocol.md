@@ -100,7 +100,7 @@ Byte:  [0]     [1]   [2]   [3]      [4]      [5]   [6]   [7]
        ReportID 0xF8  0x09  subcmd   data...
 ```
 
-The report ID byte (`0x00` or `0x01`) is device-specific and assigned during initialization. The constant prefix `0xF8 0x09` identifies this as a Fanatec control command.
+The report ID byte (`0x00` or `0x01`) is device-specific and assigned during initialization: use `0x01` on col03-capable devices and `0x00` on col01-only devices. The constant prefix `0xF8 0x09` identifies this as a Fanatec control command.
 
 **Subcmd groups:**
 

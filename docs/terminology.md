@@ -83,7 +83,7 @@ LEDs associated with rotary encoders on button modules. Controlled via the butto
 ## HID Protocol
 
 ### col01
-The legacy 8-byte HID collection. Used for: 7-segment display commands, legacy LED control, clutch bite point, display ownership, and the report trigger mechanism. All col01 output reports use the `[ReportID, 0xF8, 0x09, ...]` framing. The report ID is device-specific and assigned at initialization.
+The legacy 8-byte HID collection. Used for: 7-segment display commands, legacy LED control, clutch bite point, display ownership, and the report trigger mechanism. All col01 output reports use the `[ReportID, 0xF8, 0x09, ...]` framing. The report ID is device-specific and assigned at initialization: use `0x01` on col03-capable devices and `0x00` on col01-only devices.
 
 ### col02
 The 8-byte input HID collection. Carries button states, encoder positions, and axis values from device to host. Read by the OS HID driver and exposed as a standard game controller. Not directly controlled by the host.
