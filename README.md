@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="FanaBridge/Resources/Images/plugin-icon.png" alt="FanaBridge" width="128" />
+  <img src="docs/images/fanabridge.png" alt="FanaBridge" width="224" />
 </p>
 
 <h1 align="center">FanaBridge</h1>
