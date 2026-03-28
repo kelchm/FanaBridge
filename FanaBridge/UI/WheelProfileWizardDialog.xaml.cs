@@ -1270,6 +1270,7 @@ namespace FanaBridge.UI
                     matchKey += "_" + profile.Match.ModuleType;
                 if (!string.IsNullOrEmpty(matchKey))
                 {
+                    _plugin.Settings.ProfileOverrides ??= new Dictionary<string, string>();
                     string overrideKey = profile.Id + ":" + ProfileSource.User;
                     _plugin.Settings.ProfileOverrides[matchKey] = overrideKey;
                     _plugin.SaveSettings();
@@ -1327,7 +1328,7 @@ namespace FanaBridge.UI
             var profile = new WheelProfile
             {
                 Schema = "wheel-profile.schema.json",
-                SchemaVersion = 1,
+                SchemaVersion = 2,
                 Name = s.ProfileName,
                 ShortName = s.ProfileName.Length > 20
                     ? s.ProfileName.Substring(0, 20)

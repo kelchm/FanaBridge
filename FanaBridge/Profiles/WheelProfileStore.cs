@@ -364,6 +364,7 @@ namespace FanaBridge.Profiles
         public static List<WheelProfile> FindAllForWheel(
             string wheelType, string moduleType = null)
         {
+            wheelType = NormalizeWheelType(wheelType);
             var snap = GetSnapshot();
             var results = new List<WheelProfile>();
 
