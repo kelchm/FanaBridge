@@ -302,6 +302,14 @@ namespace FanaBridge.Profiles
                 // Override didn't resolve — fall through to auto
             }
 
+            // Normalize wheel type names that differ between the SimHub
+            // managed DLL enum and our profile IDs. The managed DLL
+            // (SimHub.FanatecManaged.dll) uses different names for some
+            // wheels than the Fanatec SDK sources we based our profiles on.
+            // This is a temporary workaround — see docs/reference/devices.md
+            // for the full analysis of naming divergence across SDK versions.
+            wheelType = NormalizeWheelType(wheelType);
+
             // 1. Try compound key first (hub + module)
             if (!string.IsNullOrEmpty(moduleType))
             {
@@ -497,6 +505,24 @@ namespace FanaBridge.Profiles
             if (enumName != null && enumName.StartsWith(prefix))
                 return enumName.Substring(prefix.Length);
             return enumName;
+        }
+
+        /// <summary>
+        /// Maps wheel type names that differ between the SimHub managed DLL
+        /// and our profile IDs. The SimHub DLL (SimHub.FanatecManaged.dll)
+        /// uses "BENTLEY" for the Podium Bentley GT3 (ID 21), while our
+        /// profile and the GCS enum / Fanatec UI assets use "PSWBENT".
+        ///
+        /// This workaround will be removed when a more robust matching strategy
+        /// replaces string-based matching (see docs/reference/devices.md).
+        /// </summary>
+        internal static string NormalizeWheelType(string wheelType)
+        {
+            switch (wheelType)
+            {
+                case "BENTLEY": return "PSWBENT";
+                default: return wheelType;
+            }
         }
     }
 }
