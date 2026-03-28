@@ -3,7 +3,7 @@
   "schemaVersion": 2,
   "id": "CSSWRS",
   "name": "Fanatec ClubSport Steering Wheel RS",
-  "shortName": "Fanatec RS",
+  "shortName": "Fanatec ClubSport RS",
   "match": {
     "wheelType": "CSSWRS"
   },

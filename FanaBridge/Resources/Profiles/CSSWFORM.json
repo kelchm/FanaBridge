@@ -1,11 +1,11 @@
 {
   "$schema": "wheel-profile.schema.json",
   "schemaVersion": 2,
-  "id": "DDRGT",
-  "name": "Fanatec GT DD PRO Steering Wheel",
-  "shortName": "Fanatec GT DD PRO",
+  "id": "CSSWFORM",
+  "name": "Fanatec ClubSport Steering Wheel Formula Carbon",
+  "shortName": "Fanatec ClubSport Formula Carbon",
   "match": {
-    "wheelType": "DDRGT"
+    "wheelType": "CSSWFORM"
   },
   "display": "basic",
   "verified": false,

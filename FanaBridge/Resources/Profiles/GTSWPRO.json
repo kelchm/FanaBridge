@@ -1,11 +1,11 @@
 {
   "$schema": "wheel-profile.schema.json",
   "schemaVersion": 2,
-  "id": "CSWRFORM",
-  "name": "Fanatec ClubSport Steering Wheel Formula Carbon",
-  "shortName": "Fanatec Formula Carbon",
+  "id": "GTSWPRO",
+  "name": "Fanatec GT DD PRO Steering Wheel",
+  "shortName": "Fanatec GT DD PRO",
   "match": {
-    "wheelType": "CSWRFORM"
+    "wheelType": "GTSWPRO"
   },
   "display": "basic",
   "verified": false,

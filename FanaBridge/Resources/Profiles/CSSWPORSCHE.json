@@ -1,11 +1,11 @@
 {
   "$schema": "wheel-profile.schema.json",
   "schemaVersion": 2,
-  "id": "CSWRBMW",
-  "name": "Fanatec ClubSport Steering Wheel BMW M3 GT2",
-  "shortName": "Fanatec BMW M3 GT2",
+  "id": "CSSWPORSCHE",
+  "name": "Fanatec ClubSport Steering Wheel Porsche 918 RSR",
+  "shortName": "Fanatec ClubSport Porsche 918 RSR",
   "match": {
-    "wheelType": "CSWRBMW"
+    "wheelType": "CSSWPORSCHE"
   },
   "display": "basic",
   "verified": false,

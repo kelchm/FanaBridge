@@ -3,7 +3,7 @@
   "schemaVersion": 2,
   "id": "CSSWFORMV3",
   "name": "Fanatec ClubSport Steering Wheel Formula V3",
-  "shortName": "Fanatec Formula V3",
+  "shortName": "Fanatec ClubSport Formula V3",
   "match": {
     "wheelType": "CSSWFORMV3"
   },

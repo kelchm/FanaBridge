@@ -1,11 +1,11 @@
 {
   "$schema": "wheel-profile.schema.json",
   "schemaVersion": 2,
-  "id": "CSLRWRC",
-  "name": "Fanatec CSL Elite Steering Wheel WRC",
-  "shortName": "Fanatec WRC",
+  "id": "CSLESWP1PS4",
+  "name": "Fanatec CSL Elite Steering Wheel P1 for PlayStation 4",
+  "shortName": "Fanatec CSL Elite P1 PS4",
   "match": {
-    "wheelType": "CSLRWRC"
+    "wheelType": "CSLESWP1PS4"
   },
   "display": "basic",
   "verified": false,

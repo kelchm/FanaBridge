@@ -3,7 +3,7 @@
   "schemaVersion": 2,
   "id": "PSWBENT",
   "name": "Fanatec Podium Steering Wheel Bentley GT3",
-  "shortName": "Fanatec Bentley GT3",
+  "shortName": "Fanatec Podium Bentley GT3",
   "match": {
     "wheelType": "PSWBENT"
   },
