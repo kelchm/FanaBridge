@@ -48,5 +48,69 @@ namespace FanaBridge.Tests
         {
             Assert.Equal(expected, ColorHelper.RgbToRgb333(r, g, b));
         }
+        // ── ColorToRgbBools tests ──────────────────────────────────────
+
+        [Fact]
+        public void ColorToRgbBools_OpaqueWhite_AllTrue()
+        {
+            var c = System.Drawing.Color.FromArgb(255, 255, 255, 255);
+            var (r, g, b) = ColorHelper.ColorToRgbBools(c);
+            Assert.True(r);
+            Assert.True(g);
+            Assert.True(b);
+        }
+
+        [Fact]
+        public void ColorToRgbBools_OpaqueBlack_AllFalse()
+        {
+            var c = System.Drawing.Color.FromArgb(255, 0, 0, 0);
+            var (r, g, b) = ColorHelper.ColorToRgbBools(c);
+            Assert.False(r);
+            Assert.False(g);
+            Assert.False(b);
+        }
+
+        [Fact]
+        public void ColorToRgbBools_FullyTransparent_AllFalse()
+        {
+            var c = System.Drawing.Color.FromArgb(0, 255, 255, 255);
+            var (r, g, b) = ColorHelper.ColorToRgbBools(c);
+            Assert.False(r);
+            Assert.False(g);
+            Assert.False(b);
+        }
+
+        [Fact]
+        public void ColorToRgbBools_LowAlpha_BelowRoundingThreshold_False()
+        {
+            // R=1, A=1 → premultiplied ≈ 0.004, rounds to 0 → false
+            var c = System.Drawing.Color.FromArgb(1, 1, 0, 0);
+            var (r, g, b) = ColorHelper.ColorToRgbBools(c);
+            Assert.False(r);
+            Assert.False(g);
+            Assert.False(b);
+        }
+
+        [Fact]
+        public void ColorToRgbBools_LowAlpha_AboveRoundingThreshold_True()
+        {
+            // R=255, A=1 → premultiplied = 1.0, rounds to 1 → true
+            var c = System.Drawing.Color.FromArgb(1, 255, 0, 0);
+            var (r, g, b) = ColorHelper.ColorToRgbBools(c);
+            Assert.True(r);
+            Assert.False(g);
+            Assert.False(b);
+        }
+
+        [Fact]
+        public void ColorToRgbBools_HalfAlpha_SelectiveChannels()
+        {
+            // A=128 → a ≈ 0.502; R=255 → 128.0 (true), G=0 → 0 (false), B=200 → 100.4 (true)
+            var c = System.Drawing.Color.FromArgb(128, 255, 0, 200);
+            var (r, g, b) = ColorHelper.ColorToRgbBools(c);
+            Assert.True(r);
+            Assert.False(g);
+            Assert.True(b);
+        }
     }
 }

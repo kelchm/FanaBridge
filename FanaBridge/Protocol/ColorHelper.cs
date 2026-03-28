@@ -117,7 +117,8 @@ namespace FanaBridge.Protocol
 
         /// <summary>
         /// Converts a Color to per-channel RGB booleans, with alpha premultiply.
-        /// Each channel is true if its premultiplied value is nonzero.
+        /// Each channel is true when its premultiplied value rounds to >= 1
+        /// (i.e. the raw value is >= 0.5).
         /// Used for col01 subcmd 0x0A per-LED RGB encoding (8 discrete colors).
         /// </summary>
         public static (bool R, bool G, bool B) ColorToRgbBools(System.Drawing.Color color)
