@@ -3,7 +3,7 @@
   "schemaVersion": 2,
   "id": "PHUB_PBME",
   "name": "Fanatec Podium Hub + Button Module Endurance",
-  "shortName": "Fanatec Podium Button Module Endurance (PHUB)",
+  "shortName": "Fanatec Podium Hub + BM Endurance",
   "match": {
     "wheelType": "PHUB",
     "moduleType": "PBME"

@@ -33,18 +33,9 @@
 - Customizable telemetry display and arbitrary text/messages (e.g., function layer activation)
 - ITM display support
 
-## Supported Wheels
+## Supported Devices
 
-Built-in profiles are included for:
-
-| Wheel / Configuration | LEDs | Display |
-|---|---|---|
-| ClubSport Steering Wheel Formula V2.5 | 9 rev + 6 flag LEDs | 3-digit |
-| Podium Steering Wheel BMW M4 GT3 | 12 color + 3 mono (encoders) | 3-digit |
-| Podium Hub + Button Module Endurance (BME) | 9 rev + 6 flag LEDs | ITM (basic support) |
-| Podium Hub + Button Module Rally (BMR) | 12 color LEDs | 3-digit |
-
-### Unsupported wheels
+Built-in profiles are included for 19 wheels and 2 hub + module combinations, covering most Fanatec steering wheels with LEDs or displays. See the [full supported devices list](docs/supported-devices.md) for details.
 
 If your wheel isn't listed, use the **Wheel Profile Wizard** (see [Usage](#usage)) to generate a profile. Created profiles can be [shared on GitHub](../../issues) to benefit other users.
 
@@ -107,6 +98,7 @@ The `SimHubDir` property defaults to `C:\Program Files (x86)\SimHub\`. Override 
 
 Project documentation lives in [docs/](docs/):
 
+- [Supported Devices](docs/supported-devices.md) — Complete list of wheels and hub/module combos with built-in profiles
 - [docs/reference/](docs/reference/) — Fanatec hardware and HID protocol reference
   - [Devices](docs/reference/devices.md) — Hardware catalog (wheelbases, wheels, hubs, modules)
   - [Protocol](docs/reference/protocol.md) — HID protocol reference (col01, col03, tuning, ITM, LEDs)

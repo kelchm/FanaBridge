@@ -3,7 +3,7 @@
   "schemaVersion": 2,
   "id": "PHUB_PBMR",
   "name": "Fanatec Podium Hub + Button Module Rally",
-  "shortName": "Fanatec Podium Button Module Rally (PHUB)",
+  "shortName": "Fanatec Podium Hub + BM Rally",
   "match": {
     "wheelType": "PHUB",
     "moduleType": "PBMR"
