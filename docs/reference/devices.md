@@ -14,6 +14,7 @@ The Fanatec ecosystem consists of four hardware categories:
 - [Device Identification](#device-identification)
 - [Wheelbases](#wheelbases)
 - [Wheels](#wheels)
+  - [Wheel Type Identifiers](#wheel-type-identifiers)
   - [Rev LEDs](#rev-leds)
   - [Flag LEDs](#flag-leds)
   - [RGB LED Support](#rgb-led-support)
@@ -124,27 +125,27 @@ Fanatec uses a single `STEERINGWHEEL_TYPE` enum for both wheels and hubs. See [H
 
 ### STEERINGWHEEL_TYPE Enum
 
-| ID | Enum Name | Display Name | Category |
-|----|-----------|-------------|----------|
-| 0 | UNINITIALIZED | (not connected) | — |
-| 1 | UNKNOWN | Unknown | Wheel |
-| 2 | CSWRBMW | ClubSport Steering Wheel BMW M3 GT2 | Wheel |
-| 3 | CSWRFORM | ClubSport Steering Wheel Formula Carbon | Wheel |
-| 4 | CSWRPORSCHE | ClubSport Steering Wheel Porsche 918 RSR | Wheel |
-| 5 | CSWRUH | ClubSport Steering Wheel Universal Hub | **Hub** |
-| 6 | CSWRUHX | ClubSport Steering Wheel Universal Hub for Xbox One | **Hub** |
-| 7 | CSLRP1X | CSL Elite Steering Wheel P1 for Xbox One | Wheel |
-| 8 | CSLRP1PS4 | CSL Elite Steering Wheel P1 for PlayStation 4 | Wheel |
-| 9 | CSLRMCL | CSL Elite Steering Wheel McLaren GT3 V1.0 | Wheel |
-| 10 | CSWRFORMV2 | ClubSport Steering Wheel Formula V2 | Wheel |
-| 11 | CSLRMCLV1_1 | CSL Elite Steering Wheel McLaren GT3 V2 | Wheel |
+| ID | FanaBridge Profile | Display Name | Category |
+|----|-------------------|--------------|----------|
+| 0 | — | (not connected) | — |
+| 1 | — | Unknown | — |
+| 2 | CSSWBMW | ClubSport Steering Wheel BMW M3 GT2 | Wheel |
+| 3 | CSSWFORM | ClubSport Steering Wheel Formula Carbon | Wheel |
+| 4 | CSSWPORSCHE | ClubSport Steering Wheel Porsche 918 RSR | Wheel |
+| 5 | — | ClubSport Universal Hub | **Hub** |
+| 6 | — | ClubSport Universal Hub for Xbox One | **Hub** |
+| 7 | CSLESWP1X | CSL Elite Steering Wheel P1 for Xbox One | Wheel |
+| 8 | CSLESWP1PS4 | CSL Elite Steering Wheel P1 for PlayStation 4 | Wheel |
+| 9 | CSLESWMCL | CSL Elite Steering Wheel McLaren GT3 V1.0 | Wheel |
+| 10 | CSSWFORMV2 | ClubSport Steering Wheel Formula V2 | Wheel |
+| 11 | CSLESWMCLV2 | CSL Elite Steering Wheel McLaren GT3 V2 | Wheel |
 | 12 | PHUB | Podium Hub | **Hub** |
-| 13 | DDRGT | GT DD PRO Steering Wheel | Wheel |
-| 14 | CSLUHUB | CSL Universal Hub | **Hub** |
-| 15 | CSLRWRC | CSL Elite Steering Wheel WRC | Wheel |
+| 13 | GTSWPRO | GT DD PRO Steering Wheel | Wheel |
+| 14 | — | CSL Universal Hub | **Hub** |
+| 15 | CSLESWWRC | CSL Elite Steering Wheel WRC | Wheel |
 | 16 | CSSWBMWV2 | ClubSport Steering Wheel BMW M3 GT2 V2 | Wheel |
 | 17 | CSSWRS | ClubSport Steering Wheel RS | Wheel |
-| 18 | CSUHV2 | ClubSport Steering Wheel Universal Hub V2 | **Hub** |
+| 18 | — | ClubSport Universal Hub V2 | **Hub** |
 | 19 | CSSWF1ESV2 | ClubSport Steering Wheel F1 Esports V2 | Wheel |
 | 20 | PSWBMW | Podium Steering Wheel BMW M4 GT3 | Wheel |
 | 21 | PSWBENT | Podium Steering Wheel Bentley GT3 | Wheel |
@@ -152,11 +153,62 @@ Fanatec uses a single `STEERINGWHEEL_TYPE` enum for both wheels and hubs. See [H
 | 23 | CSSWPVGT | CSL Elite Steering Wheel Porsche Vision GT | Wheel |
 | 24 | CSSWFORMV3 | ClubSport Steering Wheel Formula V3 | Wheel |
 | 25 | CSLSWGT3 | CSL Steering Wheel GT3 | Wheel |
-| 26 | SIDESWIPE | Sideswipe | **Hub** |
+| 26 | — | Sideswipe | **Hub** |
 
-> **Note:** The ClubSport Steering Wheel Formula V2.5 is a variant of CSWRFORMV2 (ID 10), distinguished by `RIM_FORMV2_TYPE.V25`. The FanatecLib enum has `P2111 = 27` for this variant, but the GameControlService treats it as a sub-type of ID 10. The SDK display name is "ClubSport Steering Wheel Formula V2.5".
+> **Note:** The ClubSport Steering Wheel Formula V2.5 is a variant of ID 10, distinguished by `RIM_FORMV2_TYPE.V25`. The FanatecLib enum has `P2111 = 27` for this variant, but the GameControlService treats it as a sub-type of ID 10. The SDK display name is "ClubSport Steering Wheel Formula V2.5".
 
 Wheels are self-contained rims with fixed hardware. Their capabilities are determined entirely by their built-in components — they cannot be extended with modules.
+
+### Wheel Type Identifiers
+
+The integer ID is the stable identifier for a wheel type. However, the **string names** for these IDs vary across different Fanatec SDK versions and the SimHub managed DLL. FanaBridge profile IDs do not always match the string the SDK reports at runtime.
+
+#### Naming Divergence
+
+Three naming systems exist across SDK sources:
+
+| Convention | Pattern | Example (ID 2) | Used By |
+|-----------|---------|-----------------|---------|
+| CSSW / CSLESW | "Steering Wheel" abbreviation | CSSWBMW, CSLESWP1X | SimHub DLL, GCS Enum, Fanatec UI |
+| CSWR / CSLR | "Wheel Rim" abbreviation | CSWRBMW, CSLRP1X | GCS Constants (older) |
+| Product name | Marketing/product name | DDRGT, BENTLEY | Mixed across sources |
+
+FanaBridge profiles primarily use the CSSW/CSLESW convention (matching the SimHub DLL and GCS Enum). One profile retains an older name that is handled via alias mapping at runtime:
+
+| FanaBridge Profile | SimHub DLL Reports | Resolved By |
+|-------------------|-------------------|-------------|
+| PSWBENT | BENTLEY | Alias in `WheelProfileStore.NormalizeWheelType()` |
+
+#### Cross-Reference Table
+
+For wheels where the identifier differs across sources:
+
+| ID | FanaBridge | SimHub DLL | GCS Enum | GCS Constants | Fanatec UI Asset |
+|----|-----------|-----------|----------|---------------|------------------|
+| 2 | CSSWBMW | CSSWBMW | CSSWBMW | CSWRBMW | CSSWBMW |
+| 3 | CSSWFORM | CSSWFORM | CSSWFORM | CSWRFORM | CSSWFORM |
+| 4 | CSSWPORSCHE | CSSWPORSCHE | CSSWPORSCHE | CSWRPORSCHE | CSSWPORSCHE |
+| 7 | CSLESWP1X | CSLESWP1X | CSLESWP1X | CSLRP1X | CSLESWP1X |
+| 8 | CSLESWP1PS4 | CSLESWP1PS4 | CSLESWP1PS4 | CSLRP1PS4 | CSLESWP1PS4 |
+| 9 | CSLESWMCL | CSLESWMCL | CSLESWMCL | CSLRMCL | CSLRMCL |
+| 11 | CSLESWMCLV2 | CSLESWMCLV2 | CSLESWMCLV2 | CSLRMCLV1_1 | CSLRMCL_V2 |
+| 13 | GTSWPRO | GTSWPRO | GTSWPRO | DDRGT | GTSWPRO |
+| 15 | CSLESWWRC | CSLESWWRC | CSLESWWRC | CSLRWRC | CSLESWWRC |
+| 21 | PSWBENT | BENTLEY | PSWBENT | BENTLEY | PSWBENT |
+
+IDs not listed (5, 6, 10, 12, 14, 16-20, 22) have consistent names across all sources.
+
+#### Wheels Not in SimHub DLL
+
+The following wheels are defined in newer SDK versions but absent from the current SimHub managed DLL. Profiles exist for these wheels but will not auto-match until SimHub updates its DLL:
+
+| ID | FanaBridge Profile | Wheel |
+|----|-------------------|-------|
+| 23 | CSSWPVGT | CSL Elite Steering Wheel Porsche Vision GT |
+| 24 | CSSWFORMV3 | ClubSport Steering Wheel Formula V3 |
+| 25 | CSLSWGT3 | CSL Steering Wheel GT3 |
+
+> **Note:** ID 24 is assigned to `CSLUHUBV2` (CSL Universal Hub V2) in the current SimHub DLL, but to `CSSWFORMV3` (Formula V3) in the newer GCS Enum. This indicates the ID was reassigned between SDK versions.
 
 ### Rev LEDs
 

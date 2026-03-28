@@ -1,0 +1,15 @@
+{
+  "$schema": "wheel-profile.schema.json",
+  "schemaVersion": 2,
+  "id": "CSLESWP1PS4",
+  "name": "Fanatec CSL Elite Steering Wheel P1 for PlayStation 4",
+  "shortName": "Fanatec CSL Elite P1 PS4",
+  "match": {
+    "wheelType": "CSLESWP1PS4"
+  },
+  "display": "basic",
+  "verified": false,
+  "leds": [
+    { "channel": "legacyRevStripe", "hwIndex": 0, "role": "rev", "label": "RevStripe" }
+  ]
+}

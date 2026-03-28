@@ -34,8 +34,9 @@ namespace FanaBridge.Adapters
         private readonly DeviceConfig _config;
         private JObject _customSettings = new JObject();
 
-        // LED module (col03) — null when wheel has no LEDs.
+        // LED module — null when wheel has no LEDs.
         private LedModuleSettings<FanatecLedManager> _ledModule;
+        private FanatecLedManager _manager;
 
         private bool _ledModuleInitialized;
 
@@ -64,13 +65,31 @@ namespace FanaBridge.Adapters
                 return;
             _ledModuleInitialized = true;
 
+            // Use the currently-active profile (which respects user overrides)
+            // when it matches THIS device.  Otherwise fall back to the registry
+            // config — CurrentCapabilities is global and would leak the connected
+            // wheel's caps into unrelated device instances.
             var caps = _config.Capabilities;
+            var plugin = FanatecPlugin.Instance;
+            if (plugin != null)
+            {
+                var sdk = plugin.SdkManager;
+                var current = plugin.CurrentCapabilities;
+                if (current?.Profile != null && current != WheelCapabilities.None
+                    && sdk != null
+                    && _config.WheelType == sdk.SteeringWheelType
+                    && _config.ModuleType == sdk.SubModuleType)
+                {
+                    caps = current;
+                }
+            }
             int allLeds = caps.AllLedCount;
 
             if (allLeds == 0) return;
 
-            var plugin = FanatecPlugin.Instance;
-            var manager = new FanatecLedManager(caps, plugin.Leds, plugin.Device);
+            if (plugin == null) plugin = FanatecPlugin.Instance;
+            _manager = new FanatecLedManager(caps, plugin.Leds, plugin.LegacyLeds, plugin.Device);
+            var manager = _manager;
             var options = new LedModuleOptions
             {
                 DeviceName = caps.ShortName ?? caps.Name,
@@ -90,8 +109,8 @@ namespace FanaBridge.Adapters
 
             SimHub.Logging.Current.Info(
                 "FanatecWheelDeviceInstance[" + caps.Name + "]: LED module created (" +
-                "rev=" + caps.RevLedCount + ", flag=" + caps.FlagLedCount +
-                ", color=" + caps.ColorLedCount + ", mono=" + caps.MonoLedCount +
+                "revRgb=" + caps.RevRgbCount + ", flagRgb=" + caps.FlagRgbCount +
+                ", buttonRgb=" + caps.ButtonRgbCount + ", buttonAuxIntensity=" + caps.ButtonAuxIntensityCount +
                 ", total=" + allLeds + ")");
         }
 
@@ -254,7 +273,7 @@ namespace FanaBridge.Adapters
             if (plugin.WizardActive)
                 return;
 
-            // ── Display ──────────────────────────────────────────────────
+            // ── Display (ITM falls back to basic 7-seg until ITM support is implemented) ──
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 if (_displayManager == null)
@@ -268,6 +287,15 @@ namespace FanaBridge.Adapters
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
+            // Hot-swap the driver if the active profile changed (e.g. user
+            // picked a different override in the settings dropdown).
+            if (_manager != null)
+            {
+                var currentCaps = plugin.CurrentCapabilities;
+                if (currentCaps?.Profile != null)
+                    _manager.HotSwapIfNeeded(currentCaps);
+            }
+
             _ledModule?.Display();
         }
 
@@ -306,7 +334,7 @@ namespace FanaBridge.Adapters
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 var screenPanel = new ScreenSettingsPanel();
-                screenPanel.Bind(_displaySettings);
+                screenPanel.Bind(_displaySettings, _config.Capabilities.Display);
                 screenPanel.SettingsChanged += () =>
                 {
                     // Sync back to JObject for persistence

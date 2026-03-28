@@ -1,0 +1,15 @@
+{
+  "$schema": "wheel-profile.schema.json",
+  "schemaVersion": 2,
+  "id": "CSLESWP1X",
+  "name": "Fanatec CSL Elite Steering Wheel P1 for Xbox One",
+  "shortName": "Fanatec CSL Elite P1 Xbox",
+  "match": {
+    "wheelType": "CSLESWP1X"
+  },
+  "display": "basic",
+  "verified": false,
+  "leds": [
+    { "channel": "legacyRevStripe", "hwIndex": 0, "role": "rev", "label": "RevStripe" }
+  ]
+}

@@ -1,6 +1,8 @@
 using System;
+using System.Windows;
 using System.Windows.Controls;
 using FanaBridge.Adapters;
+using FanaBridge.Profiles;
 
 namespace FanaBridge.UI
 {
@@ -21,7 +23,7 @@ namespace FanaBridge.UI
         /// Binds the panel to a DisplaySettings instance.
         /// Call once after construction, before the panel is displayed.
         /// </summary>
-        public void Bind(DisplaySettings settings)
+        public void Bind(DisplaySettings settings, DisplayType displayType = DisplayType.Basic)
         {
             _settings = settings ?? new DisplaySettings();
             _suppressEvents = true;
@@ -35,6 +37,11 @@ namespace FanaBridge.UI
                     break;
                 }
             }
+
+            // Show ITM info banner for wheels with graphical displays
+            borderItmInfo.Visibility = displayType == DisplayType.Itm
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
             _suppressEvents = false;
         }

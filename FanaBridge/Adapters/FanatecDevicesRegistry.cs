@@ -26,11 +26,11 @@ namespace FanaBridge.Adapters
             // Ensure profiles are loaded from disk
             WheelProfileStore.EnsureLoaded();
 
-            // De-duplicate by DeviceTypeId so that a user profile with the
-            // same match criteria as a built-in profile doesn't produce two
-            // descriptors with the same DeviceTypeID (which SimHub rejects).
-            // GetAll() returns built-in first, then user, so last-wins gives
-            // user profiles priority — matching the auto-resolution behaviour.
+            // One DeviceInstance per device match key.  When multiple profiles
+            // share the same match (e.g. built-in + user test variants),
+            // the built-in profile wins for the device descriptor (name,
+            // type ID).  The actual LED/display capabilities used at runtime
+            // come from the currently-active profile (see FanatecLedManager.GetDriver).
             var configs = new Dictionary<string, DeviceConfig>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var profile in WheelProfileStore.GetAll())
@@ -49,12 +49,39 @@ namespace FanaBridge.Adapters
                     Capabilities = new WheelCapabilities(profile),
                 };
 
-                if (configs.ContainsKey(config.DeviceTypeId))
+                if (configs.TryGetValue(config.DeviceTypeId, out var existing))
                 {
-                    SimHub.Logging.Current.Info(
-                        "FanatecDevicesRegistry: Profile '" + profile.Id +
-                        "' (" + profile.Source + ") supersedes earlier entry for " +
-                        config.DeviceTypeId);
+                    // Built-in always wins — it defines the device's full capability
+                    if (existing.Profile.Source == ProfileSource.BuiltIn)
+                    {
+                        SimHub.Logging.Current.Info(
+                            "FanatecDevicesRegistry: Profile '" + profile.Id +
+                            "' (" + profile.Source + ") skipped — built-in '" +
+                            existing.Profile.Id + "' defines device " + config.DeviceTypeId);
+                        continue;
+                    }
+
+                    // New profile is built-in, existing is user — promote built-in
+                    if (profile.Source == ProfileSource.BuiltIn)
+                    {
+                        SimHub.Logging.Current.Info(
+                            "FanatecDevicesRegistry: Built-in '" + profile.Id +
+                            "' replaces user '" + existing.Profile.Id +
+                            "' for device " + config.DeviceTypeId);
+                    }
+                    else
+                    {
+                        // Both are user profiles — keep the first one.
+                        // The registry only determines the device descriptor
+                        // (name, type ID). LED capability comes from the
+                        // currently-active profile at runtime.
+                        SimHub.Logging.Current.Info(
+                            "FanatecDevicesRegistry: Profile '" + profile.Id +
+                            "' (" + profile.Source + ") skipped — '" +
+                            existing.Profile.Id + "' already registered for " +
+                            config.DeviceTypeId);
+                        continue;
+                    }
                 }
 
                 configs[config.DeviceTypeId] = config;

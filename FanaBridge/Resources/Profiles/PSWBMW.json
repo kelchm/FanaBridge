@@ -1,28 +1,28 @@
 {
   "$schema": "wheel-profile.schema.json",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "PSWBMW",
   "name": "Fanatec Podium Steering Wheel BMW M4 GT3",
-  "shortName": "Fanatec BMW M4 GT3",
+  "shortName": "Fanatec Podium BMW M4 GT3",
   "match": {
     "wheelType": "PSWBMW"
   },
   "display": "basic",
   "leds": [
-    { "channel": "color", "hwIndex": 0,  "role": "button", "label": "Button 1" },
-    { "channel": "color", "hwIndex": 1,  "role": "button", "label": "Button 2" },
-    { "channel": "color", "hwIndex": 2,  "role": "button", "label": "Button 3" },
-    { "channel": "color", "hwIndex": 3,  "role": "button", "label": "Button 4" },
-    { "channel": "color", "hwIndex": 4,  "role": "button", "label": "Button 5" },
-    { "channel": "color", "hwIndex": 5,  "role": "button", "label": "Button 6" },
-    { "channel": "color", "hwIndex": 6,  "role": "button", "label": "Button 7" },
-    { "channel": "color", "hwIndex": 7,  "role": "button", "label": "Button 8" },
-    { "channel": "color", "hwIndex": 8,  "role": "button", "label": "Button 9" },
-    { "channel": "color", "hwIndex": 9,  "role": "button", "label": "Button 10" },
-    { "channel": "color", "hwIndex": 10, "role": "button", "label": "Button 11" },
-    { "channel": "color", "hwIndex": 11, "role": "button", "label": "Button 12" },
-    { "channel": "mono",  "hwIndex": 12, "role": "encoder", "label": "Center encoder" },
-    { "channel": "mono",  "hwIndex": 13, "role": "encoder", "label": "Left encoder" },
-    { "channel": "mono",  "hwIndex": 14, "role": "encoder", "label": "Right encoder" }
+    { "channel": "buttonRgb", "hwIndex": 0,  "role": "button", "label": "Button 1" },
+    { "channel": "buttonRgb", "hwIndex": 1,  "role": "button", "label": "Button 2" },
+    { "channel": "buttonRgb", "hwIndex": 2,  "role": "button", "label": "Button 3" },
+    { "channel": "buttonRgb", "hwIndex": 3,  "role": "button", "label": "Button 4" },
+    { "channel": "buttonRgb", "hwIndex": 4,  "role": "button", "label": "Button 5" },
+    { "channel": "buttonRgb", "hwIndex": 5,  "role": "button", "label": "Button 6" },
+    { "channel": "buttonRgb", "hwIndex": 6,  "role": "button", "label": "Button 7" },
+    { "channel": "buttonRgb", "hwIndex": 7,  "role": "button", "label": "Button 8" },
+    { "channel": "buttonRgb", "hwIndex": 8,  "role": "button", "label": "Button 9" },
+    { "channel": "buttonRgb", "hwIndex": 9,  "role": "button", "label": "Button 10" },
+    { "channel": "buttonRgb", "hwIndex": 10, "role": "button", "label": "Button 11" },
+    { "channel": "buttonRgb", "hwIndex": 11, "role": "button", "label": "Button 12" },
+    { "channel": "buttonAuxIntensity",  "hwIndex": 12, "role": "encoder", "label": "Center encoder" },
+    { "channel": "buttonAuxIntensity",  "hwIndex": 13, "role": "encoder", "label": "Left encoder" },
+    { "channel": "buttonAuxIntensity",  "hwIndex": 14, "role": "encoder", "label": "Right encoder" }
   ]
 }

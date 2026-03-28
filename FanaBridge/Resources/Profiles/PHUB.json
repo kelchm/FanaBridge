@@ -1,6 +1,6 @@
 {
   "$schema": "wheel-profile.schema.json",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "PHUB",
   "name": "Fanatec Podium Hub",
   "shortName": "Fanatec Podium Hub",

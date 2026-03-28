@@ -638,7 +638,7 @@ namespace FanaBridge.UI
                 {
                     mapping.Leds.Add(new InputMappingEntry
                     {
-                        Channel = LedChannel.Color,
+                        Channel = LedChannel.ButtonRgb,
                         HwIndex = i,
                         Label = "Color LED " + (i + 1),
                     });
@@ -649,7 +649,7 @@ namespace FanaBridge.UI
                 {
                     mapping.Leds.Add(new InputMappingEntry
                     {
-                        Channel = LedChannel.Mono,
+                        Channel = LedChannel.ButtonAuxIntensity,
                         HwIndex = monoStart + i,
                         Label = "Mono LED " + (i + 1),
                     });
@@ -957,12 +957,12 @@ namespace FanaBridge.UI
                 var colors = new ushort[12];
                 var intensities = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
 
-                if (entry.Channel == LedChannel.Color)
+                if (entry.Channel == LedChannel.ButtonRgb)
                 {
                     colors[entry.HwIndex] = ColorHelper.Colors.Cyan;
                     intensities[entry.HwIndex] = 7;
                 }
-                else if (entry.Channel == LedChannel.Mono)
+                else if (entry.Channel == LedChannel.ButtonAuxIntensity)
                 {
                     intensities[entry.HwIndex] = 7;
                 }
@@ -1259,20 +1259,27 @@ namespace FanaBridge.UI
 
                 SaveProfile(profile, filePath);
 
-                // Hot-reload: re-read profiles and force capability re-evaluation
-                // so the new profile takes effect immediately without restarting SimHub.
+                // Hot-reload and activate the new profile as the current override.
+                // TODO: Replace this direct settings manipulation with an event-based
+                // approach — the wizard should notify that a profile was created, and
+                // the settings UI should handle activation and override persistence.
                 WheelProfileStore.Reload();
-                _plugin.SdkManager.RefreshCapabilities();
 
-                MessageBox.Show(
-                    "Profile saved!\n\n" +
-                    "LED and display output is active immediately — no restart needed for that.\n\n" +
-                    "To have this wheel appear in SimHub's Devices list, restart SimHub once.\n\n" +
-                    "If this profile works well, consider sharing it on GitHub so\n" +
-                    "others with the same wheel can benefit!",
-                    "Profile Saved",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
+                string matchKey = profile.Match?.WheelType;
+                if (!string.IsNullOrEmpty(profile.Match?.ModuleType))
+                    matchKey += "_" + profile.Match.ModuleType;
+                if (!string.IsNullOrEmpty(matchKey))
+                {
+                    _plugin.Settings.ProfileOverrides ??= new Dictionary<string, string>();
+                    string overrideKey = profile.Id + ":" + ProfileSource.User;
+                    _plugin.Settings.ProfileOverrides[matchKey] = overrideKey;
+                    _plugin.SaveSettings();
+                }
+
+                // Re-resolve with the new override active.
+                // The settings UI handles restart prompting via UpdateRestartNotice()
+                // after this dialog closes.
+                _plugin.SdkManager.RefreshCapabilities();
 
                 DialogResult = true;
                 Close();
@@ -1321,7 +1328,7 @@ namespace FanaBridge.UI
             var profile = new WheelProfile
             {
                 Schema = "wheel-profile.schema.json",
-                SchemaVersion = 1,
+                SchemaVersion = 2,
                 Name = s.ProfileName,
                 ShortName = s.ProfileName.Length > 20
                     ? s.ProfileName.Substring(0, 20)
@@ -1346,7 +1353,7 @@ namespace FanaBridge.UI
             {
                 profile.Leds.Add(new LedDefinition
                 {
-                    Channel = LedChannel.Rev,
+                    Channel = LedChannel.RevRgb,
                     HwIndex = i,
                     Role = LedRole.Rev,
                     Label = "Rev LED " + (i + 1),
@@ -1358,7 +1365,7 @@ namespace FanaBridge.UI
             {
                 profile.Leds.Add(new LedDefinition
                 {
-                    Channel = LedChannel.Flag,
+                    Channel = LedChannel.FlagRgb,
                     HwIndex = i,
                     Role = LedRole.Flag,
                     Label = "Flag LED " + (i + 1),
@@ -1370,13 +1377,13 @@ namespace FanaBridge.UI
             {
                 var led = new LedDefinition
                 {
-                    Channel = LedChannel.Color,
+                    Channel = LedChannel.ButtonRgb,
                     HwIndex = i,
                     Role = LedRole.Button,
                     Label = "Button LED " + (i + 1),
                 };
 
-                ApplyInputMapping(led, LedChannel.Color, i);
+                ApplyInputMapping(led, LedChannel.ButtonRgb, i);
                 profile.Leds.Add(led);
             }
 
@@ -1397,13 +1404,13 @@ namespace FanaBridge.UI
             {
                 var led = new LedDefinition
                 {
-                    Channel = LedChannel.Mono,
+                    Channel = LedChannel.ButtonAuxIntensity,
                     HwIndex = monoStart + i,
                     Role = LedRole.Indicator,
                     Label = "Mono LED " + (i + 1),
                 };
 
-                ApplyInputMapping(led, LedChannel.Mono, monoStart + i);
+                ApplyInputMapping(led, LedChannel.ButtonAuxIntensity, monoStart + i);
                 profile.Leds.Add(led);
             }
 

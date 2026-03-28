@@ -30,6 +30,7 @@ namespace FanaBridge
         private ConnectionMonitor _connectionMonitor;
         private FanatecTuningController _tuning;
         private LedEncoder _leds;
+        private LegacyLedEncoder _legacyLeds;
         private DisplayEncoder _display;
 
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
@@ -60,8 +61,11 @@ namespace FanaBridge
         /// <summary>Shared HID device — used by DeviceInstance wrappers for hardware I/O.</summary>
         public FanatecDevice Device => _device;
 
-        /// <summary>Shared LED encoder — used by DeviceInstance LED drivers and wizard.</summary>
+        /// <summary>Shared LED encoder (col03) — used by DeviceInstance LED drivers and wizard.</summary>
         public LedEncoder Leds => _leds;
+
+        /// <summary>Shared legacy LED encoder (col01) — used by DeviceInstance LED drivers for legacy/RevStripe wheels.</summary>
+        public LegacyLedEncoder LegacyLeds => _legacyLeds;
 
         /// <summary>Shared display encoder — used by DeviceInstance display managers and wizard.</summary>
         public DisplayEncoder Display => _display;
@@ -88,6 +92,7 @@ namespace FanaBridge
             _sdk = new FanatecSdkManager();
             _device = new FanatecDevice();
             _leds = new LedEncoder(_device);
+            _legacyLeds = new LegacyLedEncoder(_device);
             _display = new DisplayEncoder(_device);
             _tuning = new FanatecTuningController(
                 _device,
@@ -131,8 +136,8 @@ namespace FanaBridge
             this.AttachDelegate("FanaBridge.WheelType", () => (int)_sdk.SteeringWheelType);
             this.AttachDelegate("FanaBridge.ModuleType", () => (int)_sdk.SubModuleType);
             this.AttachDelegate("FanaBridge.Capabilities.ButtonLedCount", () => _sdk.CurrentCapabilities.ButtonLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.ColorLedCount", () => _sdk.CurrentCapabilities.ColorLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.MonoLedCount", () => _sdk.CurrentCapabilities.MonoLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.ButtonRgbCount", () => _sdk.CurrentCapabilities.ButtonRgbCount);
+            this.AttachDelegate("FanaBridge.Capabilities.ButtonAuxIntensityCount", () => _sdk.CurrentCapabilities.ButtonAuxIntensityCount);
             this.AttachDelegate("FanaBridge.Capabilities.TotalLedCount", () => _sdk.CurrentCapabilities.AllLedCount);
             this.AttachDelegate("FanaBridge.Capabilities.DisplayType", () => _sdk.CurrentCapabilities.Display.ToString());
 
@@ -150,6 +155,7 @@ namespace FanaBridge
                 // last output.  Force a full resend on the next frame so the
                 // new DeviceInstance's first write always reaches hardware.
                 _leds.ForceDirty();
+                _legacyLeds.ForceDirty();
 
                 this.TriggerEvent("WheelChanged");
                 StateChanged?.Invoke();

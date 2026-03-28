@@ -279,17 +279,21 @@ namespace FanaBridge.Transport
                 : WheelCapabilities.None;
 
             SimHub.Logging.Current.Info(string.Format(
-                "FanatecSdkManager: {0} — Detected={1}, Type={2}, Module={3}, Override={4}, Caps={5} (Color={6}, Mono={7}, Rev={8}, Flag={9}, Display={10})",
+                "FanatecSdkManager: {0} — Detected={1}, Type={2}, Module={3}, Override={4}, Caps={5} (ButtonRgb={6}, ButtonAuxIntensity={7}, RevRgb={8}, FlagRgb={9}, LegacyRevOnOff={10}, LegacyRevStripe={11}, LegacyRev3Bit={12}, LegacyFlag3Bit={13}, Display={14})",
                 logContext,
                 WheelDetected,
                 SteeringWheelType,
                 SubModuleType,
                 overrideId ?? "(auto)",
                 CurrentCapabilities.Name ?? "(none)",
-                CurrentCapabilities.ColorLedCount,
-                CurrentCapabilities.MonoLedCount,
-                CurrentCapabilities.RevLedCount,
-                CurrentCapabilities.FlagLedCount,
+                CurrentCapabilities.ButtonRgbCount,
+                CurrentCapabilities.ButtonAuxIntensityCount,
+                CurrentCapabilities.RevRgbCount,
+                CurrentCapabilities.FlagRgbCount,
+                CurrentCapabilities.LegacyRevOnOffCount,
+                CurrentCapabilities.LegacyRevStripeCount,
+                CurrentCapabilities.LegacyRev3BitCount,
+                CurrentCapabilities.LegacyFlag3BitCount,
                 CurrentCapabilities.Display));
         }
 

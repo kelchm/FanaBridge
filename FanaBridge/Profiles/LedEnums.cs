@@ -2,18 +2,26 @@ namespace FanaBridge.Profiles
 {
     /// <summary>
     /// Hardware communication channel for a single LED.
-    /// Determines which col03 sub-command and encoding is used.
+    /// Determines which HID collection and sub-command is used.
     /// </summary>
     public enum LedChannel
     {
-        /// <summary>subcmd 0x00 — full RGB565 (Rev/RPM LEDs).</summary>
-        Rev,
-        /// <summary>subcmd 0x01 — full RGB565 (Flag/status LEDs).</summary>
-        Flag,
-        /// <summary>subcmd 0x02 — full RGB565 (button-area color LEDs).</summary>
-        Color,
-        /// <summary>subcmd 0x03 — 3-bit intensity only (monochrome LEDs).</summary>
-        Mono,
+        /// <summary>col03 subcmd 0x00 — per-LED RGB565 rev/RPM LEDs.</summary>
+        RevRgb,
+        /// <summary>col03 subcmd 0x01 — per-LED RGB565 flag/status LEDs.</summary>
+        FlagRgb,
+        /// <summary>col03 subcmd 0x02 — per-LED RGB565 button LEDs.</summary>
+        ButtonRgb,
+        /// <summary>col03 subcmd 0x03 — intensity-only auxiliary slots in the button payload (no color counterpart).</summary>
+        ButtonAuxIntensity,
+        /// <summary>col01 subcmd 0x08 — per-LED on/off bitmask for non-RGB rev LEDs.</summary>
+        LegacyRevOnOff,
+        /// <summary>col01 subcmd 0x08 — single RGB333 color for the entire LED strip.</summary>
+        LegacyRevStripe,
+        /// <summary>col01 subcmd 0x0A — per-LED 3-bit color for rev LEDs (1 bit per R/G/B, 7 colors + off).</summary>
+        LegacyRev3Bit,
+        /// <summary>col01 subcmd 0x0B — per-LED 3-bit color for flag LEDs (1 bit per R/G/B, 7 colors + off).</summary>
+        LegacyFlag3Bit,
     }
 
     /// <summary>

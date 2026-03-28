@@ -23,12 +23,12 @@ namespace FanaBridge.UI
         private bool _suppressProfileChange;
 
         /// <summary>
-        /// The device name that SimHub registered at startup. SimHub caches
-        /// device descriptors, so this name won't change until a restart.
-        /// We track it to show a restart notice when the active profile has
-        /// a different name.
+        /// Capabilities that the SimHub LED module was built from at startup.
+        /// Used to detect whether a profile switch requires a restart (e.g.
+        /// LED count or display type changed).
         /// </summary>
-        private string _registeredDeviceName;
+        private WheelCapabilities _bootCaps;
+        private bool _restartPromptDismissed;
 
         public SettingsControl()
         {
@@ -86,14 +86,42 @@ namespace FanaBridge.UI
                 ?.Value;
         }
 
+        private static string FormatCapabilities(WheelCapabilities caps)
+        {
+            var parts = new List<string>();
+
+            if (caps.RevRgbCount > 0)
+                parts.Add(caps.RevRgbCount + " rev RGB");
+            if (caps.FlagRgbCount > 0)
+                parts.Add(caps.FlagRgbCount + " flag RGB");
+            if (caps.ButtonRgbCount > 0)
+                parts.Add(caps.ButtonRgbCount + " button RGB");
+            if (caps.ButtonAuxIntensityCount > 0)
+                parts.Add(caps.ButtonAuxIntensityCount + " button aux");
+            if (caps.LegacyRevOnOffCount > 0)
+                parts.Add(caps.LegacyRevOnOffCount + " legacy rev on/off");
+            if (caps.LegacyRevStripeCount > 0)
+                parts.Add(caps.LegacyRevStripeCount + " legacy rev stripe");
+            if (caps.LegacyRev3BitCount > 0)
+                parts.Add(caps.LegacyRev3BitCount + " legacy rev 3-bit");
+            if (caps.LegacyFlag3BitCount > 0)
+                parts.Add(caps.LegacyFlag3BitCount + " legacy flag 3-bit");
+            if (caps.HasEncoders)
+                parts.Add("encoders");
+            if (caps.Display != DisplayType.None)
+                parts.Add("display: " + caps.Display.ToString().ToLowerInvariant());
+
+            return parts.Count > 0 ? string.Join(", ", parts) : "None";
+        }
+
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             Plugin.StateChanged += OnPluginStateChanged;
 
-            // Capture the device name SimHub registered at startup
-            var caps = Plugin.CurrentCapabilities;
-            if (caps?.Name != null)
-                _registeredDeviceName = caps.ShortName ?? caps.Name;
+            // Capture the capabilities the LED module was built from at startup.
+            // Only set once — tab reloads must not clobber the baseline.
+            if (_bootCaps == null)
+                _bootCaps = Plugin.CurrentCapabilities;
 
             UpdateStatus();
         }
@@ -120,6 +148,7 @@ namespace FanaBridge.UI
                 txtStatus.Text = "Disconnected";
                 txtWheelName.Text = "—";
                 txtCapabilities.Text = "—";
+                borderUnverifiedAlert.Visibility = Visibility.Collapsed;
                 UpdateProfilePicker(null, null, null);
                 return;
             }
@@ -139,6 +168,7 @@ namespace FanaBridge.UI
                 txtStatus.Text = "Connected — " + Plugin.WheelName;
                 txtWheelName.Text = "—";
                 txtCapabilities.Text = "—";
+                borderUnverifiedAlert.Visibility = Visibility.Collapsed;
                 // Still show the panel so the wizard button is accessible for unsupported wheels
                 UpdateProfilePicker(wheelCode, moduleCode, null);
                 return;
@@ -146,12 +176,12 @@ namespace FanaBridge.UI
 
             txtStatus.Text = "Connected";
             txtWheelName.Text = Plugin.WheelName;
-            txtCapabilities.Text = string.Format("{0} color LEDs, {1} mono LEDs, {2} rev, {3} flag, Display: {4}",
-                caps.ColorLedCount,
-                caps.MonoLedCount,
-                caps.RevLedCount,
-                caps.FlagLedCount,
-                caps.Display);
+            txtCapabilities.Text = FormatCapabilities(caps);
+
+            // Show unverified profile banner if applicable
+            borderUnverifiedAlert.Visibility = caps.Verified
+                ? Visibility.Collapsed
+                : Visibility.Visible;
 
             UpdateProfilePicker(wheelCode, moduleCode, caps);
         }
@@ -350,17 +380,49 @@ namespace FanaBridge.UI
                 return;
             }
 
+            // Check if capabilities changed in a way that requires restart
+            string restartReason = caps.GetRestartReason(_bootCaps);
+            if (restartReason != null)
+            {
+                txtRestartNotice.Visibility = Visibility.Visible;
+                if (!_restartPromptDismissed)
+                    PromptRestart(restartReason);
+                return;
+            }
+
+            // Check if the device name changed (cosmetic — doesn't need
+            // restart for functionality, but the Devices list is stale)
             string currentName = caps.ShortName ?? caps.Name;
+            string bootName = _bootCaps?.ShortName ?? _bootCaps?.Name;
+            bool nameChanged = bootName != null
+                && !string.Equals(currentName, bootName, StringComparison.OrdinalIgnoreCase);
 
-            // Show restart notice if:
-            // - No device was registered at startup (new profile just created for an unknown wheel), OR
-            // - The device name changed from what SimHub registered at boot
-            bool needsRestart = _registeredDeviceName == null
-                || !string.Equals(currentName, _registeredDeviceName, StringComparison.OrdinalIgnoreCase);
-
-            txtRestartNotice.Visibility = needsRestart
+            txtRestartNotice.Visibility = nameChanged
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+        }
+
+        private void PromptRestart(string reason)
+        {
+            var result = System.Windows.MessageBox.Show(
+                reason + ".\n\n" +
+                "LED and display output has switched immediately, but the SimHub " +
+                "LED editor and device list need a restart to update.\n\n" +
+                "Restart SimHub now?",
+                "Restart Required",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Question);
+
+            if (result == System.Windows.MessageBoxResult.No)
+            {
+                _restartPromptDismissed = true;
+                return;
+            }
+
+            if (result == System.Windows.MessageBoxResult.Yes)
+            {
+                Plugin.PluginManager?.RequestApplicationExit(restart: true);
+            }
         }
 
         // =====================================================================
@@ -451,6 +513,34 @@ namespace FanaBridge.UI
                 "**Module:** " + (profile.Match?.ModuleType ?? "None") + "\n\n" +
                 "Please drag and drop `" + fileName + "` into this issue.\n" +
                 "You can find it via **Open Profiles Folder** in the FanaBridge settings.");
+
+            string url = "https://github.com/kelchm/FanaBridge/issues/new" +
+                         "?title=" + title + "&labels=" + label + "&body=" + body;
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanaBridge: Failed to open GitHub: " + ex.Message);
+            }
+        }
+
+        private void BtnReportIssue_Click(object sender, RoutedEventArgs e)
+        {
+            var caps = Plugin?.CurrentCapabilities;
+            string profileId = caps?.Profile?.Id ?? "unknown";
+            string title = Uri.EscapeDataString("Feedback: " + profileId + " profile");
+            string label = Uri.EscapeDataString("wheel profile");
+            string body = Uri.EscapeDataString(
+                "## Profile Feedback\n\n" +
+                "**Profile:** " + profileId + "\n" +
+                "**Wheel:** " + (caps?.Name ?? "Unknown") + "\n\n" +
+                "Please describe your experience:\n" +
+                "- Did the LEDs work correctly?\n" +
+                "- Did the display work correctly?\n" +
+                "- Any issues or unexpected behavior?\n");
 
             string url = "https://github.com/kelchm/FanaBridge/issues/new" +
                          "?title=" + title + "&labels=" + label + "&body=" + body;

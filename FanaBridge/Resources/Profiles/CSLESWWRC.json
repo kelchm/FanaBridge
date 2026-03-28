@@ -1,0 +1,15 @@
+{
+  "$schema": "wheel-profile.schema.json",
+  "schemaVersion": 2,
+  "id": "CSLESWWRC",
+  "name": "Fanatec CSL Elite Steering Wheel WRC",
+  "shortName": "Fanatec CSL Elite WRC",
+  "match": {
+    "wheelType": "CSLESWWRC"
+  },
+  "display": "basic",
+  "verified": false,
+  "leds": [
+    { "channel": "legacyRevStripe", "hwIndex": 0, "role": "rev", "label": "RevStripe" }
+  ]
+}
