@@ -22,8 +22,9 @@ namespace FanaBridge.Profiles
 
         /// <summary>
         /// Profile format version.
-        /// Version 1: original channel names (rev, flag, color, mono, legacyRev, revStripe).
-        /// Version 2: renamed channels (revRgb, flagRgb, buttonRgb, buttonAuxIntensity, legacyRevOnOff, legacyRevStripe).
+        /// Version 1: original channel names (rev, flag, color, mono).
+        /// Version 2: renamed channels (revRgb, flagRgb, buttonRgb, buttonAuxIntensity) and
+        /// added legacy channels (legacyRevOnOff, legacyRevStripe, legacyRev3Bit, legacyFlag3Bit).
         /// </summary>
         [JsonProperty("schemaVersion", Order = -2)]
         public int SchemaVersion { get; set; }

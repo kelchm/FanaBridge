@@ -63,6 +63,15 @@
                     <TextBlock Text="Profile name:" FontWeight="Bold" Width="100" VerticalAlignment="Center"/>
                     <TextBox x:Name="txtProfileName" Width="300" />
                 </StackPanel>
+                <Border Background="#1AFFCC00" BorderBrush="#FFCC00" BorderThickness="1"
+                        CornerRadius="4" Padding="10,8" Margin="0,16,0,0">
+                    <TextBlock Foreground="#FFEEBB" FontSize="12" TextWrapping="Wrap">
+                        &#x26A0;  The Profile Wizard is not yet feature-complete. It cannot
+                        fully evaluate the LED control methods used by all wheels,
+                        especially older models. Support for these wheels is planned.
+                        In the meantime, a built-in profile is likely the better option.
+                    </TextBlock>
+                </Border>
             </StackPanel>
 
             <!-- Step 1: Display probe -->

@@ -86,12 +86,42 @@ namespace FanaBridge.UI
                 ?.Value;
         }
 
+        private static string FormatCapabilities(WheelCapabilities caps)
+        {
+            var parts = new List<string>();
+
+            if (caps.RevRgbCount > 0)
+                parts.Add(caps.RevRgbCount + " rev RGB");
+            if (caps.FlagRgbCount > 0)
+                parts.Add(caps.FlagRgbCount + " flag RGB");
+            if (caps.ButtonRgbCount > 0)
+                parts.Add(caps.ButtonRgbCount + " button RGB");
+            if (caps.ButtonAuxIntensityCount > 0)
+                parts.Add(caps.ButtonAuxIntensityCount + " button aux");
+            if (caps.LegacyRevOnOffCount > 0)
+                parts.Add(caps.LegacyRevOnOffCount + " legacy rev on/off");
+            if (caps.LegacyRevStripeCount > 0)
+                parts.Add(caps.LegacyRevStripeCount + " legacy rev stripe");
+            if (caps.LegacyRev3BitCount > 0)
+                parts.Add(caps.LegacyRev3BitCount + " legacy rev 3-bit");
+            if (caps.LegacyFlag3BitCount > 0)
+                parts.Add(caps.LegacyFlag3BitCount + " legacy flag 3-bit");
+            if (caps.HasEncoders)
+                parts.Add("encoders");
+            if (caps.Display != DisplayType.None)
+                parts.Add("display: " + caps.Display.ToString().ToLowerInvariant());
+
+            return parts.Count > 0 ? string.Join(", ", parts) : "None";
+        }
+
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             Plugin.StateChanged += OnPluginStateChanged;
 
-            // Capture the capabilities the LED module was built from at startup
-            _bootCaps = Plugin.CurrentCapabilities;
+            // Capture the capabilities the LED module was built from at startup.
+            // Only set once — tab reloads must not clobber the baseline.
+            if (_bootCaps == null)
+                _bootCaps = Plugin.CurrentCapabilities;
 
             UpdateStatus();
         }
@@ -146,12 +176,7 @@ namespace FanaBridge.UI
 
             txtStatus.Text = "Connected";
             txtWheelName.Text = Plugin.WheelName;
-            txtCapabilities.Text = string.Format("{0} button RGB, {1} button aux intensity, {2} rev RGB, {3} flag RGB, Display: {4}",
-                caps.ButtonRgbCount,
-                caps.ButtonAuxIntensityCount,
-                caps.RevRgbCount,
-                caps.FlagRgbCount,
-                caps.Display);
+            txtCapabilities.Text = FormatCapabilities(caps);
 
             // Show unverified profile banner if applicable
             borderUnverifiedAlert.Visibility = caps.Verified

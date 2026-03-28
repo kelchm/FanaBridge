@@ -88,8 +88,8 @@ namespace FanaBridge.Profiles
 
     /// <summary>
     /// JSON converter for <see cref="LedChannel"/> that accepts both v1 and v2
-    /// channel names. V1 names (rev, flag, color, mono, legacyRev, revStripe)
-    /// are silently mapped to their v2 equivalents during deserialization.
+    /// channel names. V1 names (rev, flag, color, mono) are mapped to their
+    /// v2 equivalents during deserialization.
     /// </summary>
     internal class LedChannelConverter : JsonConverter<LedChannel>
     {
