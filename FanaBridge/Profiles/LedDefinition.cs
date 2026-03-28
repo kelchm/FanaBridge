@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 
@@ -48,13 +49,14 @@ namespace FanaBridge.Profiles
     {
         /// <summary>Hardware communication channel.</summary>
         [JsonProperty("channel")]
+        [JsonConverter(typeof(LedChannelConverter))]
         public LedChannel Channel { get; set; }
 
         /// <summary>
         /// Index within the channel's protocol array.
-        /// For <see cref="LedChannel.Color"/>: slot in the subcmd 0x02 color array (0-11).
-        /// For <see cref="LedChannel.Mono"/>: byte index in the 16-byte intensity payload.
-        /// For <see cref="LedChannel.Rev"/>/<see cref="LedChannel.Flag"/>: slot in subcmd 0x00/0x01.
+        /// For <see cref="LedChannel.ButtonRgb"/>: slot in the subcmd 0x02 color array (0-11).
+        /// For <see cref="LedChannel.ButtonAuxIntensity"/>: byte index in the 16-byte intensity payload.
+        /// For <see cref="LedChannel.RevRgb"/>/<see cref="LedChannel.FlagRgb"/>: slot in subcmd 0x00/0x01.
         /// </summary>
         [JsonProperty("hwIndex")]
         public int HwIndex { get; set; }
@@ -82,5 +84,41 @@ namespace FanaBridge.Profiles
         /// </summary>
         [JsonProperty("inputMapping", NullValueHandling = NullValueHandling.Ignore)]
         public InputMapping InputMapping { get; set; }
+    }
+
+    /// <summary>
+    /// JSON converter for <see cref="LedChannel"/> that accepts both v1 and v2
+    /// channel names. V1 names (rev, flag, color, mono, legacyRev, revStripe)
+    /// are silently mapped to their v2 equivalents during deserialization.
+    /// </summary>
+    internal class LedChannelConverter : JsonConverter<LedChannel>
+    {
+        public override LedChannel ReadJson(JsonReader reader, Type objectType, LedChannel existingValue, bool hasExistingValue, JsonSerializer serializer)
+        {
+            string value = reader.Value as string;
+            if (value == null)
+                return default;
+
+            // Try v2 names first (standard enum parse, case-insensitive)
+            if (Enum.TryParse(value, true, out LedChannel channel))
+                return channel;
+
+            // Fall back to v1 name mapping (only names that shipped in v1)
+            switch (value.ToLowerInvariant())
+            {
+                case "rev": return LedChannel.RevRgb;
+                case "flag": return LedChannel.FlagRgb;
+                case "color": return LedChannel.ButtonRgb;
+                case "mono": return LedChannel.ButtonAuxIntensity;
+                default: return default;
+            }
+        }
+
+        public override void WriteJson(JsonWriter writer, LedChannel value, JsonSerializer serializer)
+        {
+            // Always write v2 names in camelCase
+            string name = value.ToString();
+            writer.WriteValue(char.ToLowerInvariant(name[0]) + name.Substring(1));
+        }
     }
 }

@@ -1,6 +1,6 @@
 {
   "$schema": "wheel-profile.schema.json",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "CSLSWGT3",
   "name": "Fanatec CSL Steering Wheel GT3",
   "shortName": "Fanatec CSL GT3",

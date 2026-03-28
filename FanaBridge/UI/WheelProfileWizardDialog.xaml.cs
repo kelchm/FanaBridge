@@ -638,7 +638,7 @@ namespace FanaBridge.UI
                 {
                     mapping.Leds.Add(new InputMappingEntry
                     {
-                        Channel = LedChannel.Color,
+                        Channel = LedChannel.ButtonRgb,
                         HwIndex = i,
                         Label = "Color LED " + (i + 1),
                     });
@@ -649,7 +649,7 @@ namespace FanaBridge.UI
                 {
                     mapping.Leds.Add(new InputMappingEntry
                     {
-                        Channel = LedChannel.Mono,
+                        Channel = LedChannel.ButtonAuxIntensity,
                         HwIndex = monoStart + i,
                         Label = "Mono LED " + (i + 1),
                     });
@@ -957,12 +957,12 @@ namespace FanaBridge.UI
                 var colors = new ushort[12];
                 var intensities = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
 
-                if (entry.Channel == LedChannel.Color)
+                if (entry.Channel == LedChannel.ButtonRgb)
                 {
                     colors[entry.HwIndex] = ColorHelper.Colors.Cyan;
                     intensities[entry.HwIndex] = 7;
                 }
-                else if (entry.Channel == LedChannel.Mono)
+                else if (entry.Channel == LedChannel.ButtonAuxIntensity)
                 {
                     intensities[entry.HwIndex] = 7;
                 }
@@ -1352,7 +1352,7 @@ namespace FanaBridge.UI
             {
                 profile.Leds.Add(new LedDefinition
                 {
-                    Channel = LedChannel.Rev,
+                    Channel = LedChannel.RevRgb,
                     HwIndex = i,
                     Role = LedRole.Rev,
                     Label = "Rev LED " + (i + 1),
@@ -1364,7 +1364,7 @@ namespace FanaBridge.UI
             {
                 profile.Leds.Add(new LedDefinition
                 {
-                    Channel = LedChannel.Flag,
+                    Channel = LedChannel.FlagRgb,
                     HwIndex = i,
                     Role = LedRole.Flag,
                     Label = "Flag LED " + (i + 1),
@@ -1376,13 +1376,13 @@ namespace FanaBridge.UI
             {
                 var led = new LedDefinition
                 {
-                    Channel = LedChannel.Color,
+                    Channel = LedChannel.ButtonRgb,
                     HwIndex = i,
                     Role = LedRole.Button,
                     Label = "Button LED " + (i + 1),
                 };
 
-                ApplyInputMapping(led, LedChannel.Color, i);
+                ApplyInputMapping(led, LedChannel.ButtonRgb, i);
                 profile.Leds.Add(led);
             }
 
@@ -1403,13 +1403,13 @@ namespace FanaBridge.UI
             {
                 var led = new LedDefinition
                 {
-                    Channel = LedChannel.Mono,
+                    Channel = LedChannel.ButtonAuxIntensity,
                     HwIndex = monoStart + i,
                     Role = LedRole.Indicator,
                     Label = "Mono LED " + (i + 1),
                 };
 
-                ApplyInputMapping(led, LedChannel.Mono, monoStart + i);
+                ApplyInputMapping(led, LedChannel.ButtonAuxIntensity, monoStart + i);
                 profile.Leds.Add(led);
             }
 

@@ -11,9 +11,9 @@
       "type": "string"
     },
     "schemaVersion": {
-      "description": "Profile format version. Must equal 1 for this schema. Increment when breaking changes to the format are needed, then update or replace this schema accordingly.",
+      "description": "Profile format version. Version 1: original channel names. Version 2: renamed channels (revRgb, flagRgb, buttonRgb, etc.).",
       "type": "integer",
-      "const": 1
+      "enum": [1, 2]
     },
     "id": {
       "description": "Unique profile identifier, typically matching the SDK type code(s) (e.g. \"PSWBMW\", \"PHUB_PBMR\").",
@@ -80,12 +80,12 @@
       "additionalProperties": false,
       "properties": {
         "channel": {
-          "description": "Hardware communication channel — determines the HID collection and encoding. col03 (64-byte): \"rev\" = subcmd 0x00 RGB565 rev/shift LEDs, \"flag\" = subcmd 0x01 RGB565 status LEDs, \"color\" = subcmd 0x02 RGB565/555 button/encoder LEDs, \"mono\" = subcmd 0x03 3-bit intensity. col01 (8-byte): \"legacyRev\" = subcmd 0x08 bitmask on/off per LED, \"revStripe\" = subcmd 0x08 single RGB333 color for entire strip, \"legacyRevRgb\" = subcmd 0x0A per-LED RGB boolean (8 colors), \"legacyRevGlobal\" = subcmd 0x08 per-LED on/off in RGB333 bit order (fixed colors per position).",
+          "description": "Hardware communication channel — determines the HID collection and encoding. col03 (64-byte): \"revRgb\" = subcmd 0x00 RGB565 rev/RPM LEDs, \"flagRgb\" = subcmd 0x01 RGB565 flag/status LEDs, \"buttonRgb\" = subcmd 0x02 RGB565 button LEDs, \"buttonAuxIntensity\" = subcmd 0x03 intensity-only auxiliary slots. col01 (8-byte): \"legacyRevOnOff\" = subcmd 0x08 per-LED on/off bitmask, \"legacyRevStripe\" = subcmd 0x08 single RGB333 color for entire strip, \"legacyRev3Bit\" = subcmd 0x0A per-LED 3-bit color (7 colors + off), \"legacyFlag3Bit\" = subcmd 0x0B per-LED 3-bit color for flag LEDs.",
           "type": "string",
-          "enum": ["rev", "flag", "color", "mono", "legacyRev", "revStripe", "legacyRevRgb", "legacyRevGlobal"]
+          "enum": ["revRgb", "flagRgb", "buttonRgb", "buttonAuxIntensity", "legacyRevOnOff", "legacyRevStripe", "legacyRev3Bit", "legacyFlag3Bit"]
         },
         "hwIndex": {
-          "description": "Zero-based index within the channel's protocol array (e.g. slot in the color array for subcmd 0x02, byte index in the mono payload for subcmd 0x03).",
+          "description": "Zero-based index within the channel's protocol array (e.g. slot in the buttonRgb color array for subcmd 0x02, byte index in the intensity payload for subcmd 0x03).",
           "type": "integer",
           "minimum": 0
         },

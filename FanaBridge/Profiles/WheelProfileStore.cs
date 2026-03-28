@@ -197,6 +197,16 @@ namespace FanaBridge.Profiles
                     profile.Source = ProfileSource.User;
                     profile.SourcePath = file;
 
+                    if (profile.SchemaVersion < WheelProfile.CurrentSchemaVersion)
+                    {
+                        SimHub.Logging.Current.Warn(
+                            "WheelProfileStore: User profile '" + profile.Id +
+                            "' uses schema version " + profile.SchemaVersion +
+                            " (current is " + WheelProfile.CurrentSchemaVersion +
+                            "). Old channel names were migrated automatically, " +
+                            "but please update the profile to use the current schema.");
+                    }
+
                     bool wasBuiltIn = byId.TryGetValue(profile.Id, out var existing)
                         && existing.Source == ProfileSource.BuiltIn;
                     bool wasUser = byId.TryGetValue(profile.Id, out var existingUser)

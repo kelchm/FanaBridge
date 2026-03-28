@@ -36,53 +36,53 @@ namespace FanaBridge.Profiles
 
         // ── Derived LED counts ───────────────────────────────────────────
 
-        /// <summary>Number of Rev (RPM) LEDs — subcmd 0x00.</summary>
-        public int RevLedCount { get; }
+        /// <summary>Number of RevRgb LEDs — col03 subcmd 0x00.</summary>
+        public int RevRgbCount { get; }
 
-        /// <summary>Number of Flag (status) LEDs — subcmd 0x01.</summary>
-        public int FlagLedCount { get; }
+        /// <summary>Number of FlagRgb LEDs — col03 subcmd 0x01.</summary>
+        public int FlagRgbCount { get; }
 
-        /// <summary>Number of RGB color LEDs — subcmd 0x02.</summary>
-        public int ColorLedCount { get; }
+        /// <summary>Number of ButtonRgb LEDs — col03 subcmd 0x02.</summary>
+        public int ButtonRgbCount { get; }
 
-        /// <summary>Number of monochrome intensity LEDs — subcmd 0x03.</summary>
-        public int MonoLedCount { get; }
+        /// <summary>Number of ButtonAuxIntensity LEDs — col03 subcmd 0x03 overflow slots.</summary>
+        public int ButtonAuxIntensityCount { get; }
 
-        /// <summary>Number of legacy non-RGB rev LEDs — col01 bitmask.</summary>
-        public int LegacyRevLedCount { get; }
+        /// <summary>Number of LegacyRevOnOff LEDs — col01 bitmask.</summary>
+        public int LegacyRevOnOffCount { get; }
 
-        /// <summary>Number of RevStripe LEDs — col01 RGB333 (typically 1).</summary>
-        public int RevStripeLedCount { get; }
+        /// <summary>Number of LegacyRevStripe LEDs — col01 RGB333 (typically 1).</summary>
+        public int LegacyRevStripeCount { get; }
 
-        /// <summary>Number of legacy per-LED RGB rev LEDs — col01 subcmd 0x0A.</summary>
-        public int LegacyRevRgbLedCount { get; }
+        /// <summary>Number of LegacyRev3Bit LEDs — col01 subcmd 0x0A.</summary>
+        public int LegacyRev3BitCount { get; }
 
-        /// <summary>Number of legacy global-color rev LEDs — col01 subcmd 0x08 color+bitmask.</summary>
-        public int LegacyRevGlobalLedCount { get; }
+        /// <summary>Number of LegacyFlag3Bit LEDs — col01 subcmd 0x0B.</summary>
+        public int LegacyFlag3BitCount { get; }
 
-        /// <summary>Rev + Flag count (including legacy rev and RevStripe) — used for LedModuleOptions.LedCount.</summary>
+        /// <summary>Rev + Flag count (all rev-like and flag-like channels) — used for LedModuleOptions.LedCount.</summary>
         public int RevFlagCount { get; }
 
-        /// <summary>Color + Mono count — "button" LEDs for SimHub.</summary>
+        /// <summary>ButtonRgb + ButtonAuxIntensity count — "button" LEDs for SimHub.</summary>
         public int ButtonLedCount { get; }
 
         /// <summary>Total LED count across all channels.</summary>
         public int AllLedCount { get; }
 
         /// <summary>
-        /// Pixel encoding for the Color LED channel.
+        /// Pixel encoding for the ButtonRgb channel.
         /// See <see cref="WheelProfile.ColorFormat"/>.
         /// </summary>
         public ColorFormat ColorFormat { get; }
 
         // ── Convenience flags ────────────────────────────────────────────
 
-        public bool HasRevLeds => RevLedCount > 0;
-        public bool HasFlagLeds => FlagLedCount > 0;
-        public bool HasLegacyRevLeds => LegacyRevLedCount > 0;
-        public bool HasRevStripe => RevStripeLedCount > 0;
-        public bool HasLegacyRevRgb => LegacyRevRgbLedCount > 0;
-        public bool HasLegacyRevGlobal => LegacyRevGlobalLedCount > 0;
+        public bool HasRevRgb => RevRgbCount > 0;
+        public bool HasFlagRgb => FlagRgbCount > 0;
+        public bool HasLegacyRevOnOff => LegacyRevOnOffCount > 0;
+        public bool HasLegacyRevStripe => LegacyRevStripeCount > 0;
+        public bool HasLegacyRev3Bit => LegacyRev3BitCount > 0;
+        public bool HasLegacyFlag3Bit => LegacyFlag3BitCount > 0;
         public bool HasLeds => AllLedCount > 0;
         public bool HasEncoders { get; }
 
@@ -122,14 +122,14 @@ namespace FanaBridge.Profiles
             ProfileSource = profile.Source;
             ProfileSourcePath = profile.SourcePath;
 
-            RevLedCount = profile.RevLedCount;
-            FlagLedCount = profile.FlagLedCount;
-            ColorLedCount = profile.ColorLedCount;
-            MonoLedCount = profile.MonoLedCount;
-            LegacyRevLedCount = profile.LegacyRevLedCount;
-            RevStripeLedCount = profile.RevStripeLedCount;
-            LegacyRevRgbLedCount = profile.LegacyRevRgbLedCount;
-            LegacyRevGlobalLedCount = profile.LegacyRevGlobalLedCount;
+            RevRgbCount = profile.RevRgbCount;
+            FlagRgbCount = profile.FlagRgbCount;
+            ButtonRgbCount = profile.ButtonRgbCount;
+            ButtonAuxIntensityCount = profile.ButtonAuxIntensityCount;
+            LegacyRevOnOffCount = profile.LegacyRevOnOffCount;
+            LegacyRevStripeCount = profile.LegacyRevStripeCount;
+            LegacyRev3BitCount = profile.LegacyRev3BitCount;
+            LegacyFlag3BitCount = profile.LegacyFlag3BitCount;
             RevFlagCount = profile.RevFlagCount;
             ButtonLedCount = profile.ButtonLedCount;
             AllLedCount = profile.TotalLedCount;

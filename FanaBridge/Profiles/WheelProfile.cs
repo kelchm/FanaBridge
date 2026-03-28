@@ -17,9 +17,13 @@ namespace FanaBridge.Profiles
         [JsonProperty("$schema", Order = -3)]
         public string Schema { get; set; }
 
+        /// <summary>Current schema version for new profiles.</summary>
+        public const int CurrentSchemaVersion = 2;
+
         /// <summary>
-        /// Profile format version.  Must be 1 for the current schema.
-        /// Increment when breaking format changes are made.
+        /// Profile format version.
+        /// Version 1: original channel names (rev, flag, color, mono, legacyRev, revStripe).
+        /// Version 2: renamed channels (revRgb, flagRgb, buttonRgb, buttonAuxIntensity, legacyRevOnOff, legacyRevStripe).
         /// </summary>
         [JsonProperty("schemaVersion", Order = -2)]
         public int SchemaVersion { get; set; }
@@ -102,45 +106,45 @@ namespace FanaBridge.Profiles
         [JsonIgnore]
         public int TotalLedCount => Leds.Count;
 
-        /// <summary>Count of Rev LEDs (subcmd 0x00).</summary>
+        /// <summary>Count of RevRgb LEDs (col03 subcmd 0x00).</summary>
         [JsonIgnore]
-        public int RevLedCount => Leds.Count(l => l.Channel == LedChannel.Rev);
+        public int RevRgbCount => Leds.Count(l => l.Channel == LedChannel.RevRgb);
 
-        /// <summary>Count of Flag LEDs (subcmd 0x01).</summary>
+        /// <summary>Count of FlagRgb LEDs (col03 subcmd 0x01).</summary>
         [JsonIgnore]
-        public int FlagLedCount => Leds.Count(l => l.Channel == LedChannel.Flag);
+        public int FlagRgbCount => Leds.Count(l => l.Channel == LedChannel.FlagRgb);
 
-        /// <summary>Count of RGB color LEDs (subcmd 0x02).</summary>
+        /// <summary>Count of ButtonRgb LEDs (col03 subcmd 0x02).</summary>
         [JsonIgnore]
-        public int ColorLedCount => Leds.Count(l => l.Channel == LedChannel.Color);
+        public int ButtonRgbCount => Leds.Count(l => l.Channel == LedChannel.ButtonRgb);
 
-        /// <summary>Count of monochrome intensity LEDs (subcmd 0x03).</summary>
+        /// <summary>Count of ButtonAuxIntensity LEDs (col03 subcmd 0x03 overflow slots).</summary>
         [JsonIgnore]
-        public int MonoLedCount => Leds.Count(l => l.Channel == LedChannel.Mono);
+        public int ButtonAuxIntensityCount => Leds.Count(l => l.Channel == LedChannel.ButtonAuxIntensity);
 
-        /// <summary>Count of legacy non-RGB rev LEDs (col01 bitmask).</summary>
+        /// <summary>Count of LegacyRevOnOff LEDs (col01 bitmask).</summary>
         [JsonIgnore]
-        public int LegacyRevLedCount => Leds.Count(l => l.Channel == LedChannel.LegacyRev);
+        public int LegacyRevOnOffCount => Leds.Count(l => l.Channel == LedChannel.LegacyRevOnOff);
 
-        /// <summary>Count of RevStripe LEDs (col01 RGB333, typically 1).</summary>
+        /// <summary>Count of LegacyRevStripe LEDs (col01 RGB333, typically 1).</summary>
         [JsonIgnore]
-        public int RevStripeLedCount => Leds.Count(l => l.Channel == LedChannel.RevStripe);
+        public int LegacyRevStripeCount => Leds.Count(l => l.Channel == LedChannel.LegacyRevStripe);
 
-        /// <summary>Count of legacy per-LED RGB rev LEDs (col01 subcmd 0x0A).</summary>
+        /// <summary>Count of LegacyRev3Bit LEDs (col01 subcmd 0x0A).</summary>
         [JsonIgnore]
-        public int LegacyRevRgbLedCount => Leds.Count(l => l.Channel == LedChannel.LegacyRevRgb);
+        public int LegacyRev3BitCount => Leds.Count(l => l.Channel == LedChannel.LegacyRev3Bit);
 
-        /// <summary>Count of legacy global-color rev LEDs (col01 subcmd 0x08 color+bitmask).</summary>
+        /// <summary>Count of LegacyFlag3Bit LEDs (col01 subcmd 0x0B).</summary>
         [JsonIgnore]
-        public int LegacyRevGlobalLedCount => Leds.Count(l => l.Channel == LedChannel.LegacyRevGlobal);
+        public int LegacyFlag3BitCount => Leds.Count(l => l.Channel == LedChannel.LegacyFlag3Bit);
 
-        /// <summary>Count of "button" LEDs for SimHub (color + mono = everything except rev/flag).</summary>
+        /// <summary>Count of "button" LEDs for SimHub (ButtonRgb + ButtonAuxIntensity).</summary>
         [JsonIgnore]
-        public int ButtonLedCount => ColorLedCount + MonoLedCount;
+        public int ButtonLedCount => ButtonRgbCount + ButtonAuxIntensityCount;
 
-        /// <summary>Rev + Flag count for SimHub's LedCount — includes all rev-like channels.</summary>
+        /// <summary>Rev + Flag count for SimHub's LedCount — includes all rev-like and flag-like channels.</summary>
         [JsonIgnore]
-        public int RevFlagCount => RevLedCount + FlagLedCount + LegacyRevLedCount + RevStripeLedCount + LegacyRevRgbLedCount + LegacyRevGlobalLedCount;
+        public int RevFlagCount => RevRgbCount + FlagRgbCount + LegacyRevOnOffCount + LegacyRevStripeCount + LegacyRev3BitCount + LegacyFlag3BitCount;
 
         /// <summary>True if this device has any LEDs at all.</summary>
         [JsonIgnore]

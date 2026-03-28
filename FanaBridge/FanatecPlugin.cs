@@ -136,8 +136,8 @@ namespace FanaBridge
             this.AttachDelegate("FanaBridge.WheelType", () => (int)_sdk.SteeringWheelType);
             this.AttachDelegate("FanaBridge.ModuleType", () => (int)_sdk.SubModuleType);
             this.AttachDelegate("FanaBridge.Capabilities.ButtonLedCount", () => _sdk.CurrentCapabilities.ButtonLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.ColorLedCount", () => _sdk.CurrentCapabilities.ColorLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.MonoLedCount", () => _sdk.CurrentCapabilities.MonoLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.ButtonRgbCount", () => _sdk.CurrentCapabilities.ButtonRgbCount);
+            this.AttachDelegate("FanaBridge.Capabilities.ButtonAuxIntensityCount", () => _sdk.CurrentCapabilities.ButtonAuxIntensityCount);
             this.AttachDelegate("FanaBridge.Capabilities.TotalLedCount", () => _sdk.CurrentCapabilities.AllLedCount);
             this.AttachDelegate("FanaBridge.Capabilities.DisplayType", () => _sdk.CurrentCapabilities.Display.ToString());
 

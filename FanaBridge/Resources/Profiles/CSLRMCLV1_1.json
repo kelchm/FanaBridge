@@ -1,6 +1,6 @@
 {
   "$schema": "wheel-profile.schema.json",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "CSLRMCLV1_1",
   "name": "Fanatec CSL Elite Steering Wheel McLaren GT3 V2",
   "shortName": "Fanatec McLaren GT3 V2",

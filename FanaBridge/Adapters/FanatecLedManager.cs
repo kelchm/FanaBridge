@@ -77,13 +77,13 @@ namespace FanaBridge.Adapters
 
             SimHub.Logging.Current.Info(
                 "FanatecLedManager: Created driver for " + (caps.Name ?? "unknown") +
-                " (" + caps.AllLedCount + " LEDs: rev=" + caps.RevLedCount +
-                ", flag=" + caps.FlagLedCount + ", color=" + caps.ColorLedCount +
-                ", mono=" + caps.MonoLedCount +
-                ", legacyRev=" + caps.LegacyRevLedCount +
-                ", legacyRevRgb=" + caps.LegacyRevRgbLedCount +
-                ", legacyRevGlobal=" + caps.LegacyRevGlobalLedCount +
-                ", revStripe=" + caps.RevStripeLedCount + ")");
+                " (" + caps.AllLedCount + " LEDs: revRgb=" + caps.RevRgbCount +
+                ", flagRgb=" + caps.FlagRgbCount + ", buttonRgb=" + caps.ButtonRgbCount +
+                ", buttonAuxIntensity=" + caps.ButtonAuxIntensityCount +
+                ", legacyRevOnOff=" + caps.LegacyRevOnOffCount +
+                ", legacyRev3Bit=" + caps.LegacyRev3BitCount +
+                ", legacyFlag3Bit=" + caps.LegacyFlag3BitCount +
+                ", legacyRevStripe=" + caps.LegacyRevStripeCount + ")");
 
             return driver;
         }

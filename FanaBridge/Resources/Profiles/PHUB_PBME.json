@@ -1,6 +1,6 @@
 {
   "$schema": "wheel-profile.schema.json",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "PHUB_PBME",
   "name": "Fanatec Podium Hub + Button Module Endurance",
   "shortName": "Fanatec Podium Hub + BME",
@@ -10,20 +10,20 @@
   },
   "display": "itm",
   "leds": [
-    { "channel": "rev",  "hwIndex": 0, "role": "rev",  "label": "Rev 1" },
-    { "channel": "rev",  "hwIndex": 1, "role": "rev",  "label": "Rev 2" },
-    { "channel": "rev",  "hwIndex": 2, "role": "rev",  "label": "Rev 3" },
-    { "channel": "rev",  "hwIndex": 3, "role": "rev",  "label": "Rev 4" },
-    { "channel": "rev",  "hwIndex": 4, "role": "rev",  "label": "Rev 5" },
-    { "channel": "rev",  "hwIndex": 5, "role": "rev",  "label": "Rev 6" },
-    { "channel": "rev",  "hwIndex": 6, "role": "rev",  "label": "Rev 7" },
-    { "channel": "rev",  "hwIndex": 7, "role": "rev",  "label": "Rev 8" },
-    { "channel": "rev",  "hwIndex": 8, "role": "rev",  "label": "Rev 9" },
-    { "channel": "flag", "hwIndex": 0, "role": "flag", "label": "Flag 1" },
-    { "channel": "flag", "hwIndex": 1, "role": "flag", "label": "Flag 2" },
-    { "channel": "flag", "hwIndex": 2, "role": "flag", "label": "Flag 3" },
-    { "channel": "flag", "hwIndex": 3, "role": "flag", "label": "Flag 4" },
-    { "channel": "flag", "hwIndex": 4, "role": "flag", "label": "Flag 5" },
-    { "channel": "flag", "hwIndex": 5, "role": "flag", "label": "Flag 6" }
+    { "channel": "revRgb",  "hwIndex": 0, "role": "rev",  "label": "Rev 1" },
+    { "channel": "revRgb",  "hwIndex": 1, "role": "rev",  "label": "Rev 2" },
+    { "channel": "revRgb",  "hwIndex": 2, "role": "rev",  "label": "Rev 3" },
+    { "channel": "revRgb",  "hwIndex": 3, "role": "rev",  "label": "Rev 4" },
+    { "channel": "revRgb",  "hwIndex": 4, "role": "rev",  "label": "Rev 5" },
+    { "channel": "revRgb",  "hwIndex": 5, "role": "rev",  "label": "Rev 6" },
+    { "channel": "revRgb",  "hwIndex": 6, "role": "rev",  "label": "Rev 7" },
+    { "channel": "revRgb",  "hwIndex": 7, "role": "rev",  "label": "Rev 8" },
+    { "channel": "revRgb",  "hwIndex": 8, "role": "rev",  "label": "Rev 9" },
+    { "channel": "flagRgb", "hwIndex": 0, "role": "flag", "label": "Flag 1" },
+    { "channel": "flagRgb", "hwIndex": 1, "role": "flag", "label": "Flag 2" },
+    { "channel": "flagRgb", "hwIndex": 2, "role": "flag", "label": "Flag 3" },
+    { "channel": "flagRgb", "hwIndex": 3, "role": "flag", "label": "Flag 4" },
+    { "channel": "flagRgb", "hwIndex": 4, "role": "flag", "label": "Flag 5" },
+    { "channel": "flagRgb", "hwIndex": 5, "role": "flag", "label": "Flag 6" }
   ]
 }

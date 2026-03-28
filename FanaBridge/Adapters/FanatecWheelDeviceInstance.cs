@@ -109,8 +109,8 @@ namespace FanaBridge.Adapters
 
             SimHub.Logging.Current.Info(
                 "FanatecWheelDeviceInstance[" + caps.Name + "]: LED module created (" +
-                "rev=" + caps.RevLedCount + ", flag=" + caps.FlagLedCount +
-                ", color=" + caps.ColorLedCount + ", mono=" + caps.MonoLedCount +
+                "revRgb=" + caps.RevRgbCount + ", flagRgb=" + caps.FlagRgbCount +
+                ", buttonRgb=" + caps.ButtonRgbCount + ", buttonAuxIntensity=" + caps.ButtonAuxIntensityCount +
                 ", total=" + allLeds + ")");
         }
 

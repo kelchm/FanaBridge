@@ -41,12 +41,12 @@ namespace FanaBridge.Tests
         // ── Bitmask rev LED tests ──────────────────────────────────────
 
         [Fact]
-        public void SetLegacyRevLeds_AllOff_SendsZeroBitmask()
+        public void SetLegacyRevOnOff_AllOff_SendsZeroBitmask()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
 
-            encoder.SetLegacyRevLeds(new bool[9]);
+            encoder.SetLegacyRevOnOff(new bool[9]);
 
             // Should have: 1 global enable + 1 LED data
             Assert.Equal(2, transport.Col01Reports.Count);
@@ -62,62 +62,65 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void SetLegacyRevLeds_AllOn_SendsFullBitmask()
+        public void SetLegacyRevOnOff_AllOn_SendsFullBitmask()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
             var allOn = new bool[] { true, true, true, true, true, true, true, true, true };
 
-            encoder.SetLegacyRevLeds(allOn);
+            encoder.SetLegacyRevOnOff(allOn);
 
-            // LED data report
+            // LED data report — bitmask in RGB333 bit order:
+            //   byte[4] = LED0 (bit 0) = 0x01
+            //   byte[5] = LED1(bit7)..LED8(bit0) = 0xFF
             var report = transport.Col01Reports[1];
             Assert.Equal(0x08, report[3]);
-            Assert.Equal(0xFF, report[4]); // lower 8 bits
-            Assert.Equal(0x01, report[5]); // bit 8
+            Assert.Equal(0x01, report[4]); // LED0
+            Assert.Equal(0xFF, report[5]); // LEDs 1-8
         }
 
         [Fact]
-        public void SetLegacyRevLeds_SpecificPattern_CorrectBitmask()
+        public void SetLegacyRevOnOff_SpecificPattern_CorrectBitmask()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
             // LEDs 0, 1, 2 on
             var pattern = new bool[] { true, true, true, false, false, false, false, false, false };
 
-            encoder.SetLegacyRevLeds(pattern);
+            encoder.SetLegacyRevOnOff(pattern);
 
+            // LEDs 0, 1, 2 on → byte[4]=LED0=0x01, byte[5]=LED1(bit7)|LED2(bit6)=0xC0
             var report = transport.Col01Reports[1];
-            Assert.Equal(0x07, report[4]); // 0b00000111
-            Assert.Equal(0x00, report[5]);
+            Assert.Equal(0x01, report[4]); // LED0
+            Assert.Equal(0xC0, report[5]); // LED1(bit7) + LED2(bit6)
         }
 
         [Fact]
-        public void SetLegacyRevLeds_SameValueTwice_SkipsSecondSend()
+        public void SetLegacyRevOnOff_SameValueTwice_SkipsSecondSend()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
             var pattern = new bool[] { true, false, false, false, false, false, false, false, false };
 
-            encoder.SetLegacyRevLeds(pattern);
+            encoder.SetLegacyRevOnOff(pattern);
             int countAfterFirst = transport.Col01Reports.Count;
 
-            encoder.SetLegacyRevLeds(pattern);
+            encoder.SetLegacyRevOnOff(pattern);
             Assert.Equal(countAfterFirst, transport.Col01Reports.Count); // No new report
         }
 
         [Fact]
-        public void SetLegacyRevLeds_DifferentValue_SendsAgain()
+        public void SetLegacyRevOnOff_DifferentValue_SendsAgain()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
             var pattern1 = new bool[] { true, false, false, false, false, false, false, false, false };
             var pattern2 = new bool[] { false, true, false, false, false, false, false, false, false };
 
-            encoder.SetLegacyRevLeds(pattern1);
+            encoder.SetLegacyRevOnOff(pattern1);
             int countAfterFirst = transport.Col01Reports.Count;
 
-            encoder.SetLegacyRevLeds(pattern2);
+            encoder.SetLegacyRevOnOff(pattern2);
             Assert.True(transport.Col01Reports.Count > countAfterFirst);
         }
 
@@ -162,10 +165,10 @@ namespace FanaBridge.Tests
             Assert.Equal(countAfterFirst, transport.Col01Reports.Count);
         }
 
-        // ── LegacyRevRgb tests (subcmd 0x0A) ─────────────────────────
+        // ── LegacyRev3Bit tests (subcmd 0x0A) ─────────────────────────
 
         [Fact]
-        public void SetLegacyRevRgb_AllRed_CorrectBitPacking()
+        public void SetLegacyRev3Bit_AllRed_CorrectBitPacking()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
@@ -179,7 +182,7 @@ namespace FanaBridge.Tests
                 buf[i * 3 + 2] = 0; // B
             }
 
-            encoder.SetLegacyRevRgb(buf);
+            encoder.SetLegacyRev3Bit(buf);
 
             // Global enable + RGB data = 2 reports
             Assert.Equal(2, transport.Col01Reports.Count);
@@ -210,7 +213,7 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void SetLegacyRevRgb_SdkDefaultPattern_YellowRedBlue()
+        public void SetLegacyRev3Bit_SdkDefaultPattern_YellowRedBlue()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
@@ -224,7 +227,7 @@ namespace FanaBridge.Tests
             // Blue: LEDs 6-8
             for (int i = 6; i < 9; i++) { buf[i * 3 + 2] = 1; }
 
-            encoder.SetLegacyRevRgb(buf);
+            encoder.SetLegacyRev3Bit(buf);
 
             var report = transport.Col01Reports[1];
             Assert.Equal(0x0A, report[3]);
@@ -262,12 +265,12 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void SetLegacyRevRgb_AllOff_SendsZeroData()
+        public void SetLegacyRev3Bit_AllOff_SendsZeroData()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
 
-            encoder.SetLegacyRevRgb(new byte[27]);
+            encoder.SetLegacyRev3Bit(new byte[27]);
 
             var report = transport.Col01Reports[1];
             Assert.Equal(0x0A, report[3]);
@@ -278,7 +281,7 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void SetLegacyRevRgb_SameStateTwice_SkipsSecondSend()
+        public void SetLegacyRev3Bit_SameStateTwice_SkipsSecondSend()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
@@ -286,10 +289,10 @@ namespace FanaBridge.Tests
             var buf = new byte[27];
             buf[0] = 1; // LED0 red
 
-            encoder.SetLegacyRevRgb(buf);
+            encoder.SetLegacyRev3Bit(buf);
             int countAfterFirst = transport.Col01Reports.Count;
 
-            encoder.SetLegacyRevRgb(buf);
+            encoder.SetLegacyRev3Bit(buf);
             Assert.Equal(countAfterFirst, transport.Col01Reports.Count);
         }
 
@@ -302,11 +305,11 @@ namespace FanaBridge.Tests
             var encoder = new LegacyLedEncoder(transport);
             var pattern = new bool[] { true, false, false, false, false, false, false, false, false };
 
-            encoder.SetLegacyRevLeds(pattern);
+            encoder.SetLegacyRevOnOff(pattern);
             int countAfterFirst = transport.Col01Reports.Count;
 
             encoder.ForceDirty();
-            encoder.SetLegacyRevLeds(pattern);
+            encoder.SetLegacyRevOnOff(pattern);
             Assert.True(transport.Col01Reports.Count > countAfterFirst);
         }
     }

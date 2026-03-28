@@ -145,11 +145,11 @@ namespace FanaBridge.UI
 
             txtStatus.Text = "Connected";
             txtWheelName.Text = Plugin.WheelName;
-            txtCapabilities.Text = string.Format("{0} color LEDs, {1} mono LEDs, {2} rev, {3} flag, Display: {4}",
-                caps.ColorLedCount,
-                caps.MonoLedCount,
-                caps.RevLedCount,
-                caps.FlagLedCount,
+            txtCapabilities.Text = string.Format("{0} button RGB, {1} button aux intensity, {2} rev RGB, {3} flag RGB, Display: {4}",
+                caps.ButtonRgbCount,
+                caps.ButtonAuxIntensityCount,
+                caps.RevRgbCount,
+                caps.FlagRgbCount,
                 caps.Display);
 
             // Show unverified profile banner if applicable
