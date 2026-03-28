@@ -206,6 +206,14 @@ namespace FanaBridge.Profiles
                             "). Old channel names were migrated automatically, " +
                             "but please update the profile to use the current schema.");
                     }
+                    else if (profile.SchemaVersion > WheelProfile.CurrentSchemaVersion)
+                    {
+                        SimHub.Logging.Current.Warn(
+                            "WheelProfileStore: User profile '" + profile.Id +
+                            "' uses newer schema version " + profile.SchemaVersion +
+                            " (current is " + WheelProfile.CurrentSchemaVersion +
+                            "). This build may not load it correctly.");
+                    }
 
                     bool wasBuiltIn = byId.TryGetValue(profile.Id, out var existing)
                         && existing.Source == ProfileSource.BuiltIn;

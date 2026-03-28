@@ -10,7 +10,7 @@
                     Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
                     CornerRadius="4" Padding="10,8" Margin="0,0,0,12">
                 <TextBlock Foreground="#AADDFF" FontSize="12" TextWrapping="Wrap">
-                    &#x2139;  This wheel has a graphical display. FanaBridge currently supports basic display mode only — full display support is planned.
+                    &#x2139;  This wheel has an ITM display. FanaBridge currently supports basic display mode only — full ITM display support is planned.
                 </TextBlock>
             </Border>
 

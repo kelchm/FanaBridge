@@ -13,7 +13,7 @@
     "schemaVersion": {
       "description": "Profile format version. Version 1: original channel names. Version 2: renamed channels (revRgb, flagRgb, buttonRgb, etc.).",
       "type": "integer",
-      "enum": [1, 2]
+      "enum": [2]
     },
     "id": {
       "description": "Unique profile identifier, typically matching the SDK type code(s) (e.g. \"PSWBMW\", \"PHUB_PBMR\").",

@@ -28,6 +28,7 @@ namespace FanaBridge.UI
         /// LED count or display type changed).
         /// </summary>
         private WheelCapabilities _bootCaps;
+        private bool _restartPromptDismissed;
 
         public SettingsControl()
         {
@@ -359,7 +360,8 @@ namespace FanaBridge.UI
             if (restartReason != null)
             {
                 txtRestartNotice.Visibility = Visibility.Visible;
-                PromptRestart(restartReason);
+                if (!_restartPromptDismissed)
+                    PromptRestart(restartReason);
                 return;
             }
 
@@ -385,6 +387,12 @@ namespace FanaBridge.UI
                 "Restart Required",
                 System.Windows.MessageBoxButton.YesNo,
                 System.Windows.MessageBoxImage.Question);
+
+            if (result == System.Windows.MessageBoxResult.No)
+            {
+                _restartPromptDismissed = true;
+                return;
+            }
 
             if (result == System.Windows.MessageBoxResult.Yes)
             {

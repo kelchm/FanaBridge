@@ -296,6 +296,125 @@ namespace FanaBridge.Tests
             Assert.Equal(countAfterFirst, transport.Col01Reports.Count);
         }
 
+        // ── LegacyFlag3Bit tests (subcmd 0x0B) ────────────────────────
+
+        [Fact]
+        public void SetLegacyFlag3Bit_AllRed_CorrectBitPacking()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            // 6 flag LEDs all red: R=1, G=0, B=0 for each
+            var buf = new byte[18];
+            for (int i = 0; i < 6; i++)
+            {
+                buf[i * 3] = 1;     // R
+                buf[i * 3 + 1] = 0; // G
+                buf[i * 3 + 2] = 0; // B
+            }
+
+            encoder.SetLegacyFlag3Bit(buf);
+
+            // Global enable + flag data = 2 reports
+            Assert.Equal(2, transport.Col01Reports.Count);
+
+            // Global enable
+            Assert.Equal(0x02, transport.Col01Reports[0][3]);
+            Assert.Equal(0x01, transport.Col01Reports[0][4]);
+
+            // Flag data: subcmd 0x0B
+            var report = transport.Col01Reports[1];
+            Assert.Equal(0x0B, report[3]);
+
+            // All red: bit pattern per LED is 001 (R=1,G=0,B=0)
+            // Same packing as Rev3Bit — LSB-first, 3 bits per LED
+            // LED0: bits 0-2 = 001, LED1: bits 3-5 = 001, LED2: bits 6-7 + next
+            // data[0] = 0b01_001_001 = 0x49
+            Assert.Equal(0x49, report[4]);
+            // data[1] = bits 8-15: LED2.B=0, LED3(001), LED4(001), LED5.R=1
+            //         = 0b10010010 = 0x92
+            Assert.Equal(0x92, report[5]);
+            // data[2] = bits 16-17: LED5.G=0, LED5.B=0 = 0x00
+            Assert.Equal(0x00, report[6]);
+        }
+
+        [Fact]
+        public void SetLegacyFlag3Bit_AllOff_SendsZeroData()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            encoder.SetLegacyFlag3Bit(new byte[18]);
+
+            var report = transport.Col01Reports[1];
+            Assert.Equal(0x0B, report[3]);
+            Assert.Equal(0x00, report[4]);
+            Assert.Equal(0x00, report[5]);
+            Assert.Equal(0x00, report[6]);
+            Assert.Equal(0x00, report[7]);
+        }
+
+        [Fact]
+        public void SetLegacyFlag3Bit_SameStateTwice_SkipsSecondSend()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            var buf = new byte[18];
+            buf[0] = 1; // LED0 red
+
+            encoder.SetLegacyFlag3Bit(buf);
+            int countAfterFirst = transport.Col01Reports.Count;
+
+            encoder.SetLegacyFlag3Bit(buf);
+            Assert.Equal(countAfterFirst, transport.Col01Reports.Count);
+        }
+
+        // ── Clear tests ───────────────────────────────────────────────
+
+        [Fact]
+        public void Clear_SendsZeroDataAndDisablesGlobal()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            // First enable by sending some data
+            encoder.SetLegacyRevOnOff(new bool[] { true, false, false, false, false, false, false, false, false });
+            int countBeforeClear = transport.Col01Reports.Count;
+
+            encoder.Clear();
+
+            // Clear should send: LED data (all off) + global disable = 2 reports
+            Assert.True(transport.Col01Reports.Count > countBeforeClear);
+
+            // Last LED data report should be all zeros (subcmd 0x08)
+            var dataReport = transport.Col01Reports[countBeforeClear];
+            Assert.Equal(0x08, dataReport[3]);
+            Assert.Equal(0x00, dataReport[4]);
+            Assert.Equal(0x00, dataReport[5]);
+
+            // Global disable: subcmd 0x02, enable=0x00
+            var disableReport = transport.Col01Reports[countBeforeClear + 1];
+            Assert.Equal(0x02, disableReport[3]);
+            Assert.Equal(0x00, disableReport[4]);
+        }
+
+        [Fact]
+        public void Clear_AllowsResendAfterwards()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+            var pattern = new bool[] { true, false, false, false, false, false, false, false, false };
+
+            encoder.SetLegacyRevOnOff(pattern);
+            encoder.Clear();
+            int countAfterClear = transport.Col01Reports.Count;
+
+            // Same pattern should send again after Clear (ForceDirty was called)
+            encoder.SetLegacyRevOnOff(pattern);
+            Assert.True(transport.Col01Reports.Count > countAfterClear);
+        }
+
         // ── ForceDirty tests ───────────────────────────────────────────
 
         [Fact]
