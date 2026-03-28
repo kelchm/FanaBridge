@@ -97,7 +97,7 @@ namespace FanaBridge.Profiles
         {
             string value = reader.Value as string;
             if (value == null)
-                return default;
+                throw new JsonSerializationException("LED channel must be a string.");
 
             // Try v2 names first (standard enum parse, case-insensitive)
             if (Enum.TryParse(value, true, out LedChannel channel))
@@ -110,7 +110,8 @@ namespace FanaBridge.Profiles
                 case "flag": return LedChannel.FlagRgb;
                 case "color": return LedChannel.ButtonRgb;
                 case "mono": return LedChannel.ButtonAuxIntensity;
-                default: return default;
+                default:
+                    throw new JsonSerializationException($"Unknown LED channel '{value}'.");
             }
         }
 
