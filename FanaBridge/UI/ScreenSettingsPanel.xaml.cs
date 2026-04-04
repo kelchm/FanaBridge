@@ -1,62 +1,559 @@
 using System;
+using System.Collections.Specialized;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using FanaBridge.Adapters;
 using FanaBridge.Profiles;
+using SimHub.Plugins.UI;
+using SHPropertiesPicker = SimHub.Plugins.OutputPlugins.Dash.WPFUI.PropertiesPicker;
 
 namespace FanaBridge.UI
 {
     public partial class ScreenSettingsPanel : UserControl
     {
         private DisplaySettings _settings;
+        private FanatecDisplayManager _displayManager;
         private bool _suppressEvents;
+        private DispatcherTimer _previewTimer;
+        private DispatcherTimer _scrollTimer;
+        private DisplayLayerCard _selectedCard;
 
-        /// <summary>Fired when the user changes a setting. The parent should persist.</summary>
+        private static readonly SolidColorBrush SelectedBorder = Frozen(Color.FromRgb(0x44, 0x88, 0xCC));
+        private static readonly SolidColorBrush NormalBorder = Frozen(Color.FromRgb(0x33, 0x33, 0x33));
+
         public event Action SettingsChanged;
 
         public ScreenSettingsPanel()
         {
             InitializeComponent();
+
+            // "Add layer" combo
+            cmbAddLayer.Items.Add(new ComboBoxItem { Content = "Add layer...", IsEnabled = false });
+            // Separator: Base
+            cmbAddLayer.Items.Add(new ComboBoxItem { Content = "── Base Displays ──", IsEnabled = false, FontStyle = FontStyles.Italic, Foreground = Brushes.Gray });
+            foreach (var entry in LayerCatalog.All.Where(l => l.Mode == DisplayLayerMode.Constant))
+                cmbAddLayer.Items.Add(new ComboBoxItem { Content = entry.Name, Tag = entry.CatalogKey });
+            // Separator: Overlays
+            cmbAddLayer.Items.Add(new ComboBoxItem { Content = "── Overlays ──", IsEnabled = false, FontStyle = FontStyles.Italic, Foreground = Brushes.Gray });
+            foreach (var entry in LayerCatalog.All.Where(l => l.Mode != DisplayLayerMode.Constant))
+                cmbAddLayer.Items.Add(new ComboBoxItem { Content = entry.Name, Tag = entry.CatalogKey });
+            // Separator: Custom
+            cmbAddLayer.Items.Add(new ComboBoxItem { Content = "── Custom ──", IsEnabled = false, FontStyle = FontStyles.Italic, Foreground = Brushes.Gray });
+            cmbAddLayer.Items.Add(new ComboBoxItem { Content = "Custom constant", Tag = "custom:Constant" });
+            cmbAddLayer.Items.Add(new ComboBoxItem { Content = "Custom on change", Tag = "custom:OnChange" });
+            cmbAddLayer.Items.Add(new ComboBoxItem { Content = "Custom while true", Tag = "custom:WhileTrue" });
+            cmbAddLayer.Items.Add(new ComboBoxItem { Content = "Static text", Tag = "custom:StaticText" });
+            cmbAddLayer.SelectedIndex = 0;
+
+            // Data source dropdown (for constant catalog layers)
+            foreach (var entry in LayerCatalog.All.Where(l => l.Mode == DisplayLayerMode.Constant))
+                cmbDataSource.Items.Add(new ComboBoxItem { Content = entry.Name, Tag = entry.CatalogKey });
+            cmbDataSource.Items.Add(new ComboBoxItem { Content = "Custom", Tag = "Custom" });
+
+            _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            _previewTimer.Tick += (s, e) => UpdateLivePreview();
+
+            _scrollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+            _scrollTimer.Tick += (s, e) => previewDisplay.ScrollTick();
+
+            Loaded += (s, e) => { _previewTimer.Start(); _scrollTimer.Start(); };
+            Unloaded += (s, e) => { _previewTimer.Stop(); _scrollTimer.Stop(); };
         }
 
-        /// <summary>
-        /// Binds the panel to a DisplaySettings instance.
-        /// Call once after construction, before the panel is displayed.
-        /// </summary>
-        public void Bind(DisplaySettings settings, DisplayType displayType = DisplayType.Basic)
+        public void Bind(DisplaySettings settings, DisplayType displayType = DisplayType.Basic,
+                         FanatecDisplayManager displayManager = null)
         {
-            _settings = settings ?? new DisplaySettings();
+            _settings = settings ?? DisplaySettings.CreateDefault();
+            _displayManager = displayManager;
             _suppressEvents = true;
 
-            string mode = _settings.DisplayMode ?? DisplaySettings.DefaultMode;
-            foreach (ComboBoxItem item in cmbDisplayMode.Items)
+            RebuildCardList();
+            _settings.Layers.CollectionChanged += Layers_CollectionChanged;
+
+            SelectComboByTag(cmbScrollSpeed, _settings.ScrollSpeedMs.ToString());
+            _scrollTimer.Interval = TimeSpan.FromMilliseconds(_settings.ScrollSpeedMs);
+
+            borderItmInfo.Visibility = displayType == DisplayType.Itm
+                ? Visibility.Visible : Visibility.Collapsed;
+
+            _suppressEvents = false;
+
+            // Select first card
+            if (layerStack.Children.Count > 0)
+                SelectCard(layerStack.Children[0] as DisplayLayerCard);
+
+            UpdateLivePreview();
+        }
+
+        // ── Card list management ─────────────────────────────────────
+
+        private void RebuildCardList()
+        {
+            layerStack.Children.Clear();
+            for (int i = 0; i < _settings.Layers.Count; i++)
+                AddCard(_settings.Layers[i], i);
+        }
+
+        private DisplayLayerCard AddCard(DisplayLayer layer, int index)
+        {
+            var card = new DisplayLayerCard { Layer = layer };
+            card.SetPriority(index + 1);
+            card.MouseLeftButtonDown += Card_MouseDown;
+            card.EnableChanged += () => NotifyChanged();
+            layerStack.Children.Add(card);
+            UpdateCardPreview(card);
+            return card;
+        }
+
+        private void Layers_CollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            RebuildCardList();
+        }
+
+        private void Card_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            SelectCard(sender as DisplayLayerCard);
+        }
+
+        private void SelectCard(DisplayLayerCard card)
+        {
+            // Deselect previous
+            if (_selectedCard != null)
             {
-                if ((string)item.Tag == mode)
-                {
-                    cmbDisplayMode.SelectedItem = item;
-                    break;
-                }
+                var border = _selectedCard.FindName("cardBorder") as Border;
+                if (border != null) border.BorderBrush = NormalBorder;
             }
 
-            // Show ITM info banner for wheels with graphical displays
-            borderItmInfo.Visibility = displayType == DisplayType.Itm
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+            _selectedCard = card;
+
+            if (card != null)
+            {
+                var border = card.FindName("cardBorder") as Border;
+                if (border != null) border.BorderBrush = SelectedBorder;
+            }
+
+            UpdateEditPanel();
+        }
+
+        private DisplayLayer SelectedLayer => _selectedCard?.Layer;
+
+        private void UpdateCardPreviews()
+        {
+            foreach (DisplayLayerCard card in layerStack.Children)
+                UpdateCardPreview(card);
+        }
+
+        private void UpdateCardPreview(DisplayLayerCard card)
+        {
+            if (card.Layer == null) return;
+
+            string text = EvaluateLayerForPreview(card.Layer);
+
+            if (card.Layer.CenterDisplay && card.Layer.IsGearFormat && text.Length == 1)
+                text = " " + text + " ";
+
+            card.SetPreviewText(text);
+        }
+
+        private string EvaluateLayerForPreview(DisplayLayer layer)
+        {
+            // Static text doesn't need the plugin manager at all
+            if (layer.Source == DisplaySource.FixedText)
+                return layer.FixedText ?? "---";
+
+            // Try via display manager first (has formatting logic)
+            var pm = FanatecPlugin.Instance?.PluginManager;
+            if (_displayManager != null && pm != null)
+            {
+                try { return _displayManager.EvaluateLayerPreview(pm, layer); }
+                catch { }
+            }
+
+            // Fallback: try reading the property directly
+            if (pm != null && !string.IsNullOrEmpty(layer.PropertyName))
+            {
+                try
+                {
+                    var val = pm.GetPropertyValue(layer.PropertyName);
+                    if (val != null) return val.ToString();
+                }
+                catch { }
+            }
+
+            return "---";
+        }
+
+        // ── Live combined preview ────────────────────────────────────
+
+        private void UpdateLivePreview()
+        {
+            if (_settings == null) return;
+
+            UpdateCardPreviews();
+
+            if (_displayManager != null && !string.IsNullOrEmpty(_displayManager.CurrentText))
+            {
+                // Hardware connected — show what the wheel is actually displaying
+                previewDisplay.SetText(_displayManager.CurrentText);
+                txtActiveLayer.Text = string.IsNullOrEmpty(_displayManager.ActiveScreenName)
+                    ? "" : "Active: " + _displayManager.ActiveScreenName;
+            }
+            else
+            {
+                // No hardware — simulate the layer stack using actual game state.
+                bool gameRunning = false;
+                var pm = FanatecPlugin.Instance?.PluginManager;
+                if (pm != null)
+                {
+                    try { gameRunning = pm.LastData != null && pm.LastData.GameRunning; }
+                    catch { }
+                }
+
+                // Find the first enabled constant layer matching current state.
+                string text = "---";
+                string name = "";
+
+                foreach (var layer in _settings.Layers)
+                {
+                    if (!layer.IsEnabled || layer.Mode != DisplayLayerMode.Constant) continue;
+                    bool visible = (gameRunning && layer.ShowWhenRunning)
+                                || (!gameRunning && layer.ShowWhenIdle);
+                    if (visible)
+                    {
+                        text = EvaluateLayerForPreview(layer);
+                        name = layer.Name;
+                        break;
+                    }
+                }
+
+                // Fallback: if nothing matched, show the first enabled constant layer
+                if (name == "")
+                {
+                    foreach (var layer in _settings.Layers)
+                    {
+                        if (!layer.IsEnabled || layer.Mode != DisplayLayerMode.Constant) continue;
+                        text = EvaluateLayerForPreview(layer);
+                        name = layer.Name;
+                        break;
+                    }
+                }
+
+                previewDisplay.SetText(text);
+                txtActiveLayer.Text = string.IsNullOrEmpty(name) ? "" : "Preview: " + name;
+            }
+        }
+
+        // ── Edit panel ───────────────────────────────────────────────
+
+        private void UpdateEditPanel()
+        {
+            var layer = SelectedLayer;
+            if (layer == null)
+            {
+                sectionEdit.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            sectionEdit.Visibility = Visibility.Visible;
+            _suppressEvents = true;
+
+            bool isCustom = layer.IsCustom;
+            bool isConstant = layer.Mode == DisplayLayerMode.Constant;
+            bool isOnChange = layer.Mode == DisplayLayerMode.OnChange;
+            bool isWhileTrue = layer.Mode == DisplayLayerMode.WhileTrue;
+            bool isFixedText = layer.Source == DisplaySource.FixedText;
+
+            // Data source dropdown (catalog constant layers)
+            panelDataSource.Visibility = (isConstant && !isCustom) ? Visibility.Visible : Visibility.Collapsed;
+            if (isConstant && !isCustom)
+                SelectComboByTag(cmbDataSource, layer.CatalogKey ?? "Custom");
+
+            // Custom fields
+            panelName.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
+            panelTrigger.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
+            panelWatch.Visibility = (isCustom && (isOnChange || isWhileTrue)) ? Visibility.Visible : Visibility.Collapsed;
+            panelDuration.Visibility = isOnChange ? Visibility.Visible : Visibility.Collapsed;
+            panelDisplaySource.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
+            panelProperty.Visibility = (isCustom && !isFixedText) ? Visibility.Visible : Visibility.Collapsed;
+            panelFixedText.Visibility = isFixedText ? Visibility.Visible : Visibility.Collapsed;
+            panelShowWhen.Visibility = isConstant ? Visibility.Visible : Visibility.Collapsed;
+
+            // Populate fields
+            txtName.Text = layer.Name ?? "";
+            SelectComboByTag(cmbTrigger, layer.Mode.ToString());
+            txtWatch.Text = layer.WatchProperty ?? "";
+            SelectComboByTag(cmbDuration, layer.DurationMs.ToString());
+            SelectComboByTag(cmbDisplaySource, layer.Source.ToString());
+            txtProperty.Text = layer.PropertyName ?? "";
+            txtFormat.Text = layer.Format ?? "";
+            txtFixedText.Text = layer.FixedText ?? "";
+            chkRunning.IsChecked = layer.ShowWhenRunning;
+            chkIdle.IsChecked = layer.ShowWhenIdle;
 
             _suppressEvents = false;
         }
 
-        private void CmbDisplayMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void NotifyChanged()
         {
-            if (_suppressEvents || _settings == null) return;
+            if (_suppressEvents) return;
+            // Refresh the selected card's visual state
+            _selectedCard?.Refresh();
+            SettingsChanged?.Invoke();
+            UpdateLivePreview();
+        }
 
-            var selected = cmbDisplayMode.SelectedItem as ComboBoxItem;
-            if (selected != null)
+        // ── Add / Remove / Reorder ───────────────────────────────────
+
+        private void CmbAddLayer_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || _settings == null || cmbAddLayer.SelectedIndex <= 0) return;
+            var tag = (cmbAddLayer.SelectedItem as ComboBoxItem)?.Tag as string;
+            if (string.IsNullOrEmpty(tag)) return;
+
+            DisplayLayer layer;
+            if (tag.StartsWith("custom:"))
             {
-                _settings.DisplayMode = (string)selected.Tag;
-                SettingsChanged?.Invoke();
+                string subtype = tag.Substring(7);
+                if (subtype == "StaticText")
+                {
+                    layer = new DisplayLayer
+                    {
+                        Name = "Static Text", Mode = DisplayLayerMode.Constant,
+                        Source = DisplaySource.FixedText, FixedText = "---",
+                        ShowWhenIdle = true, IsEnabled = true,
+                    };
+                }
+                else
+                {
+                    DisplayLayerMode mode;
+                    Enum.TryParse(subtype, out mode);
+                    layer = new DisplayLayer
+                    {
+                        Name = "Custom", Mode = mode,
+                        Source = mode == DisplayLayerMode.WhileTrue ? DisplaySource.FixedText : DisplaySource.Property,
+                        DurationMs = 2000, IsEnabled = true,
+                        ShowWhenRunning = mode == DisplayLayerMode.Constant,
+                    };
+                }
+            }
+            else
+            {
+                layer = LayerCatalog.CreateFromCatalog(tag);
+            }
+
+            if (layer != null)
+            {
+                _settings.Layers.Add(layer);
+                // RebuildCardList fires via CollectionChanged; select the new card
+                if (layerStack.Children.Count > 0)
+                    SelectCard(layerStack.Children[layerStack.Children.Count - 1] as DisplayLayerCard);
+                NotifyChanged();
+            }
+
+            _suppressEvents = true;
+            cmbAddLayer.SelectedIndex = 0;
+            _suppressEvents = false;
+        }
+
+        private void BtnRemove_Click(object s, RoutedEventArgs e)
+        {
+            if (SelectedLayer == null) return;
+            int idx = _settings.Layers.IndexOf(SelectedLayer);
+            _settings.Layers.Remove(SelectedLayer);
+            if (layerStack.Children.Count > 0)
+                SelectCard(layerStack.Children[Math.Min(idx, layerStack.Children.Count - 1)] as DisplayLayerCard);
+            else
+                SelectCard(null);
+            NotifyChanged();
+        }
+
+        private void BtnLeft_Click(object s, RoutedEventArgs e)
+        {
+            if (SelectedLayer == null) return;
+            int idx = _settings.Layers.IndexOf(SelectedLayer);
+            if (idx > 0)
+            {
+                _settings.Layers.Move(idx, idx - 1);
+                SelectCard(layerStack.Children[idx - 1] as DisplayLayerCard);
+                NotifyChanged();
             }
         }
 
+        private void BtnRight_Click(object s, RoutedEventArgs e)
+        {
+            if (SelectedLayer == null) return;
+            int idx = _settings.Layers.IndexOf(SelectedLayer);
+            if (idx < _settings.Layers.Count - 1)
+            {
+                _settings.Layers.Move(idx, idx + 1);
+                SelectCard(layerStack.Children[idx + 1] as DisplayLayerCard);
+                NotifyChanged();
+            }
+        }
+
+        // ── Edit event handlers ──────────────────────────────────────
+
+        private void CmbDataSource_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            var tag = (cmbDataSource.SelectedItem as ComboBoxItem)?.Tag as string;
+            if (tag == null) return;
+
+            if (tag == "Custom")
+            {
+                SelectedLayer.CatalogKey = null;
+            }
+            else
+            {
+                var template = LayerCatalog.FindByKey(tag);
+                if (template != null)
+                {
+                    SelectedLayer.CatalogKey = tag;
+                    SelectedLayer.Name = template.Name;
+                    SelectedLayer.PropertyName = template.PropertyName;
+                    SelectedLayer.Format = template.Format;
+                    SelectedLayer.Source = template.Source;
+                    SelectedLayer.CenterDisplay = template.CenterDisplay;
+                }
+            }
+            UpdateEditPanel();
+            NotifyChanged();
+        }
+
+        private void TxtName_TextChanged(object s, TextChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            SelectedLayer.Name = txtName.Text;
+            NotifyChanged();
+        }
+
+        private void CmbTrigger_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            var tag = (cmbTrigger.SelectedItem as ComboBoxItem)?.Tag as string;
+            DisplayLayerMode mode;
+            if (tag != null && Enum.TryParse(tag, out mode))
+            {
+                SelectedLayer.Mode = mode;
+                UpdateEditPanel();
+                NotifyChanged();
+            }
+        }
+
+        private void TxtWatch_TextChanged(object s, TextChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            SelectedLayer.WatchProperty = txtWatch.Text;
+            NotifyChanged();
+        }
+
+        private void BtnBrowseWatch_Click(object s, RoutedEventArgs e) => BrowseProperty(
+            r => { if (SelectedLayer != null) { SelectedLayer.WatchProperty = r; txtWatch.Text = r; NotifyChanged(); } });
+
+        private void CmbDuration_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            var tag = (cmbDuration.SelectedItem as ComboBoxItem)?.Tag as string;
+            if (tag != null) { SelectedLayer.DurationMs = int.Parse(tag); NotifyChanged(); }
+        }
+
+        private void CmbDisplaySource_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            var tag = (cmbDisplaySource.SelectedItem as ComboBoxItem)?.Tag as string;
+            DisplaySource src;
+            if (tag != null && Enum.TryParse(tag, out src))
+            {
+                SelectedLayer.Source = src;
+                UpdateEditPanel();
+                NotifyChanged();
+            }
+        }
+
+        private void TxtProperty_TextChanged(object s, TextChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            SelectedLayer.PropertyName = txtProperty.Text;
+            NotifyChanged();
+        }
+
+        private void BtnBrowseProperty_Click(object s, RoutedEventArgs e) => BrowseProperty(
+            r => { if (SelectedLayer != null) { SelectedLayer.PropertyName = r; txtProperty.Text = r; NotifyChanged(); } });
+
+        private void TxtFormat_TextChanged(object s, TextChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            SelectedLayer.Format = txtFormat.Text;
+            NotifyChanged();
+        }
+
+        private void TxtFixedText_TextChanged(object s, TextChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            SelectedLayer.FixedText = txtFixedText.Text;
+            NotifyChanged();
+        }
+
+        private void ChkRunning_Changed(object s, RoutedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            SelectedLayer.ShowWhenRunning = chkRunning.IsChecked == true;
+            NotifyChanged();
+        }
+
+        private void ChkIdle_Changed(object s, RoutedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            SelectedLayer.ShowWhenIdle = chkIdle.IsChecked == true;
+            NotifyChanged();
+        }
+
+        private void CmbScrollSpeed_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || _settings == null) return;
+            var tag = (cmbScrollSpeed.SelectedItem as ComboBoxItem)?.Tag as string;
+            if (tag != null)
+            {
+                _settings.ScrollSpeedMs = int.Parse(tag);
+                _scrollTimer.Interval = TimeSpan.FromMilliseconds(_settings.ScrollSpeedMs);
+                NotifyChanged();
+            }
+        }
+
+        // ── Helpers ──────────────────────────────────────────────────
+
+        private void BrowseProperty(Action<string> onResult)
+        {
+            try
+            {
+                var picker = new SHPropertiesPicker();
+                picker.ShowDialogWindow(this, () =>
+                {
+                    if (picker.Result != null)
+                        onResult(picker.Result.GetPropertyName());
+                });
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("ScreenSettingsPanel: PropertiesPicker failed: " + ex.Message);
+            }
+        }
+
+        private static void SelectComboByTag(ComboBox combo, string tagValue)
+        {
+            foreach (ComboBoxItem item in combo.Items)
+                if ((string)item.Tag == tagValue) { combo.SelectedItem = item; return; }
+        }
+
+        private static SolidColorBrush Frozen(Color c)
+        {
+            var b = new SolidColorBrush(c);
+            b.Freeze();
+            return b;
+        }
     }
 }
