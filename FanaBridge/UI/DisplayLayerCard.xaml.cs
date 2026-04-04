@@ -8,7 +8,7 @@ namespace FanaBridge.UI
 {
     /// <summary>
     /// Rich list item card for a DisplayLayer. Shows an inline 7-segment
-    /// mini-preview, layer name, and mode/timing pills.
+    /// mini-preview, layer name, summary, and mode pill.
     /// </summary>
     public partial class DisplayLayerCard : UserControl
     {
@@ -16,14 +16,14 @@ namespace FanaBridge.UI
         private static readonly SolidColorBrush PillOnChange = Frozen(Color.FromRgb(0x6A, 0x5A, 0x20));
         private static readonly SolidColorBrush PillWhileTrue = Frozen(Color.FromRgb(0x20, 0x4A, 0x6A));
         private static readonly SolidColorBrush PillExpression = Frozen(Color.FromRgb(0x5A, 0x2A, 0x6A));
+        private static readonly SolidColorBrush PillDisabled = Frozen(Color.FromRgb(0x4A, 0x20, 0x20));
         private static readonly SolidColorBrush TextConstant = Frozen(Color.FromRgb(0x66, 0xDD, 0x88));
         private static readonly SolidColorBrush TextOnChange = Frozen(Color.FromRgb(0xDD, 0xCC, 0x66));
         private static readonly SolidColorBrush TextWhileTrue = Frozen(Color.FromRgb(0x66, 0xBB, 0xDD));
         private static readonly SolidColorBrush TextExpression = Frozen(Color.FromRgb(0xCC, 0x88, 0xDD));
+        private static readonly SolidColorBrush TextDisabled = Frozen(Color.FromRgb(0xDD, 0x66, 0x66));
 
         private DisplayLayer _layer;
-
-        public event System.Action EnableChanged;
 
         public DisplayLayerCard()
         {
@@ -48,10 +48,9 @@ namespace FanaBridge.UI
         {
             if (_layer == null) return;
 
-            chkEnabled.IsChecked = _layer.IsEnabled;
             txtName.Text = _layer.Name ?? "";
 
-            // Mode pill
+            // Mode pill (includes timing for OnChange)
             switch (_layer.Mode)
             {
                 case DisplayLayerMode.Constant:
@@ -61,7 +60,7 @@ namespace FanaBridge.UI
                     break;
                 case DisplayLayerMode.OnChange:
                     pillMode.Background = PillOnChange;
-                    txtModePill.Text = "ON CHANGE";
+                    txtModePill.Text = "ON CHANGE \u2022 " + _layer.TimingLabel;
                     txtModePill.Foreground = TextOnChange;
                     break;
                 case DisplayLayerMode.WhileTrue:
@@ -76,19 +75,31 @@ namespace FanaBridge.UI
                     break;
             }
 
-            // Timing pill
-            if (_layer.Mode == DisplayLayerMode.OnChange)
-            {
-                pillTiming.Visibility = Visibility.Visible;
-                txtTimingPill.Text = _layer.TimingLabel;
-            }
-            else
-            {
-                pillTiming.Visibility = Visibility.Collapsed;
-            }
+            // Summary line
+            txtSummary.Text = GetSummary();
 
-            // Opacity for disabled layers
-            cardBorder.Opacity = _layer.IsEnabled ? 1.0 : 0.5;
+            // Enabled/disabled state
+            bool enabled = _layer.IsEnabled;
+            cardBorder.Opacity = enabled ? 1.0 : 0.5;
+            txtDisabledIcon.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private string GetSummary()
+        {
+            if (_layer.Source == DisplaySource.FixedText)
+                return _layer.FixedText ?? "";
+
+            if (_layer.Source == DisplaySource.Expression || _layer.Mode == DisplayLayerMode.Expression)
+                return "";
+
+            string prop = _layer.Mode == DisplayLayerMode.Constant
+                ? _layer.PropertyName
+                : _layer.WatchProperty;
+
+            if (string.IsNullOrEmpty(prop)) return "";
+
+            int lastDot = prop.LastIndexOf('.');
+            return lastDot >= 0 ? prop.Substring(lastDot + 1) : prop;
         }
 
         /// <summary>
@@ -100,14 +111,6 @@ namespace FanaBridge.UI
             miniDigit0.SetValue(encoded.Count > 0 ? encoded[0] : SevenSegment.Blank);
             miniDigit1.SetValue(encoded.Count > 1 ? encoded[1] : SevenSegment.Blank);
             miniDigit2.SetValue(encoded.Count > 2 ? encoded[2] : SevenSegment.Blank);
-        }
-
-        private void ChkEnabled_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_layer == null) return;
-            _layer.IsEnabled = chkEnabled.IsChecked == true;
-            cardBorder.Opacity = _layer.IsEnabled ? 1.0 : 0.5;
-            EnableChanged?.Invoke();
         }
 
         private static SolidColorBrush Frozen(Color c)

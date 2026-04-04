@@ -22,18 +22,10 @@ namespace FanaBridge.Adapters
             },
             new DisplayLayer
             {
-                CatalogKey = "SpeedKmh", Name = "Speed (km/h)",
+                CatalogKey = "Speed", Name = "Speed",
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.Property,
-                PropertyName = "DataCorePlugin.GameData.SpeedKmh",
-                DisplayFormat = DisplayFormat.Number,
-            },
-            new DisplayLayer
-            {
-                CatalogKey = "SpeedMph", Name = "Speed (mph)",
-                Mode = DisplayLayerMode.Constant,
-                Source = DisplaySource.Property,
-                PropertyName = "DataCorePlugin.GameData.SpeedMph",
+                PropertyName = "DataCorePlugin.GameData.SpeedLocal",
                 DisplayFormat = DisplayFormat.Number,
             },
             new DisplayLayer
@@ -46,7 +38,7 @@ namespace FanaBridge.Adapters
             },
             new DisplayLayer
             {
-                CatalogKey = "FuelPct", Name = "Fuel %",
+                CatalogKey = "FuelPct", Name = "Fuel",
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.Property,
                 PropertyName = "DataCorePlugin.GameData.FuelPercent",
@@ -80,7 +72,7 @@ namespace FanaBridge.Adapters
             // ── Conditional overlays ─────────────────────────────────
             new DisplayLayer
             {
-                CatalogKey = "GearChange", Name = "Gear change",
+                CatalogKey = "GearChange", Name = "Gear Change",
                 Mode = DisplayLayerMode.OnChange,
                 Source = DisplaySource.Property,
                 WatchProperty = "DataCorePlugin.GameData.Gear",
@@ -90,7 +82,7 @@ namespace FanaBridge.Adapters
             },
             new DisplayLayer
             {
-                CatalogKey = "PitLimiter", Name = "Pit limiter",
+                CatalogKey = "PitLimiter", Name = "Pit Limiter",
                 Mode = DisplayLayerMode.WhileTrue,
                 Source = DisplaySource.FixedText,
                 WatchProperty = "DataCorePlugin.GameData.PitLimiterOn",
@@ -99,7 +91,7 @@ namespace FanaBridge.Adapters
             },
             new DisplayLayer
             {
-                CatalogKey = "YellowFlag", Name = "Yellow flag",
+                CatalogKey = "YellowFlag", Name = "Yellow Flag",
                 Mode = DisplayLayerMode.WhileTrue,
                 Source = DisplaySource.FixedText,
                 WatchProperty = "DataCorePlugin.GameData.Flag_Yellow",
@@ -108,7 +100,7 @@ namespace FanaBridge.Adapters
             },
             new DisplayLayer
             {
-                CatalogKey = "BlueFlag", Name = "Blue flag",
+                CatalogKey = "BlueFlag", Name = "Blue Flag",
                 Mode = DisplayLayerMode.WhileTrue,
                 Source = DisplaySource.FixedText,
                 WatchProperty = "DataCorePlugin.GameData.Flag_Blue",
@@ -117,7 +109,7 @@ namespace FanaBridge.Adapters
             },
             new DisplayLayer
             {
-                CatalogKey = "DRS", Name = "DRS available",
+                CatalogKey = "DRS", Name = "DRS",
                 Mode = DisplayLayerMode.WhileTrue,
                 Source = DisplaySource.FixedText,
                 WatchProperty = "DataCorePlugin.GameData.DRSAvailable",
@@ -126,7 +118,7 @@ namespace FanaBridge.Adapters
             },
             new DisplayLayer
             {
-                CatalogKey = "LowFuel", Name = "Low fuel warning",
+                CatalogKey = "LowFuel", Name = "Low Fuel",
                 Mode = DisplayLayerMode.WhileTrue,
                 Source = DisplaySource.FixedText,
                 WatchProperty = "DataCorePlugin.GameData.FuelAlertActive",
@@ -137,7 +129,7 @@ namespace FanaBridge.Adapters
             // ── Expression-based overlays ────────────────────────────
             new DisplayLayer
             {
-                CatalogKey = "ShiftWarning", Name = "Shift warning",
+                CatalogKey = "ShiftWarning", Name = "Shift Warning",
                 Mode = DisplayLayerMode.Expression,
                 Source = DisplaySource.Expression,
                 Expression = "if([DataCorePlugin.GameData.CarSettings_RPMShiftLight2] == 1, "
@@ -148,7 +140,7 @@ namespace FanaBridge.Adapters
             },
             new DisplayLayer
             {
-                CatalogKey = "LowFuelBlink", Name = "Low fuel (blink)",
+                CatalogKey = "LowFuelBlink", Name = "Low Fuel (Blink)",
                 Mode = DisplayLayerMode.Expression,
                 Source = DisplaySource.Expression,
                 Expression = "if([DataCorePlugin.GameData.FuelAlertActive], "

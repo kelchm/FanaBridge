@@ -50,11 +50,11 @@ namespace FanaBridge.Adapters
             {
                 case "Speed":
                     // Replace gear base with speed
-                    EnableOrAdd(settings, "SpeedKmh", DisplayLayerMode.Constant);
+                    EnableOrAdd(settings, "Speed", DisplayLayerMode.Constant);
                     break;
 
                 case "GearAndSpeed":
-                    EnableOrAdd(settings, "SpeedKmh", DisplayLayerMode.Constant);
+                    EnableOrAdd(settings, "Speed", DisplayLayerMode.Constant);
                     EnableLayer(settings, "GearChange");
                     break;
 

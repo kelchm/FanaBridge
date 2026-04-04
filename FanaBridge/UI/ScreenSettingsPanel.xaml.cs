@@ -103,7 +103,6 @@ namespace FanaBridge.UI
             var card = new DisplayLayerCard { Layer = layer };
             card.SetPriority(index + 1);
             card.MouseLeftButtonDown += Card_MouseDown;
-            card.EnableChanged += () => NotifyChanged();
             layerStack.Children.Add(card);
             UpdateCardPreview(card);
             return card;
@@ -170,7 +169,7 @@ namespace FanaBridge.UI
         {
             // Static text doesn't need the plugin manager at all
             if (layer.Source == DisplaySource.FixedText)
-                return layer.FixedText ?? "---";
+                return layer.FixedText ?? "";
 
             // Try via display manager first (has formatting logic)
             var pm = FanatecPlugin.Instance?.PluginManager;
@@ -191,7 +190,7 @@ namespace FanaBridge.UI
                 catch { }
             }
 
-            return "---";
+            return "";
         }
 
         // ── Live combined preview ────────────────────────────────────
@@ -221,7 +220,7 @@ namespace FanaBridge.UI
                 }
 
                 // Find the first enabled constant layer matching current state.
-                string text = "---";
+                string text = "";
                 string name = "";
 
                 foreach (var layer in _settings.Layers)
@@ -267,6 +266,7 @@ namespace FanaBridge.UI
 
             borderEditPanel.Visibility = Visibility.Visible;
             txtEditHeader.Text = "Layer Settings \u2014 " + (layer.Name ?? "Untitled");
+            chkEnabled.IsChecked = layer.IsEnabled;
             _suppressEvents = true;
 
             bool isCustom = layer.IsCustom;
@@ -563,6 +563,15 @@ namespace FanaBridge.UI
             if (_suppressEvents || SelectedLayer == null) return;
             SelectedLayer.Expression = txtExpression.Text;
             NotifyChanged();
+        }
+
+        private void ChkEnabled_Changed(object s, RoutedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            SelectedLayer.IsEnabled = chkEnabled.IsChecked == true;
+            _selectedCard?.Refresh();
+            SettingsChanged?.Invoke();
+            UpdateLivePreview();
         }
 
         private void ChkRunning_Changed(object s, RoutedEventArgs e)

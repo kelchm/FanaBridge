@@ -140,13 +140,13 @@ namespace FanaBridge.Adapters
             // Display the winner.
             if (winner == null)
             {
-                SendText("---");
+                SendText("   ");
                 _activeLayerName = "";
                 return;
             }
 
             _activeLayerName = winner.Name ?? "";
-            string aligned = AlignText(winnerText ?? "---", winner.DisplayFormat);
+            string aligned = AlignText(winnerText ?? "   ", winner.DisplayFormat);
             if (winner.IsGearFormat)
             {
                 ResetScroll();
@@ -209,7 +209,7 @@ namespace FanaBridge.Adapters
             if (val == null && !string.IsNullOrEmpty(layer.PropertyName))
                 val = SafeGetProperty(pm, layer.PropertyName);
 
-            if (val == null) return "---";
+            if (val == null) return "";
             return FormatValue(val, layer.DisplayFormat);
         }
 
@@ -231,23 +231,23 @@ namespace FanaBridge.Adapters
             if (layer.Source == DisplaySource.Property && !string.IsNullOrEmpty(layer.PropertyName))
                 prop = layer.PropertyName;
 
-            if (string.IsNullOrEmpty(prop)) return "---";
+            if (string.IsNullOrEmpty(prop)) return "";
 
             object val = SafeGetProperty(pm, prop);
-            if (val == null) return "---";
+            if (val == null) return "";
             return FormatValue(val, layer.DisplayFormat);
         }
 
         private string EvaluateExpression(DisplayLayer layer)
         {
-            if (string.IsNullOrEmpty(layer.Expression)) return "---";
+            if (string.IsNullOrEmpty(layer.Expression)) return "";
             var engine = FanatecPlugin.Instance?.NCalcEngine;
-            if (engine == null) return "---";
+            if (engine == null) return "";
             try
             {
                 var expr = new ExpressionValue { Expression = layer.Expression };
                 var result = engine.ParseValue(expr);
-                if (result == null) return "---";
+                if (result == null) return "";
                 return FormatValue(result, layer.DisplayFormat);
             }
             catch { return "ERR"; }

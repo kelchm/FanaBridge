@@ -10,8 +10,8 @@ namespace FanaBridge.UI
     /// </summary>
     public partial class SevenSegmentDigit : UserControl
     {
-        private static readonly SolidColorBrush OnBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x88, 0x00));  // amber
-        private static readonly SolidColorBrush OffBrush = new SolidColorBrush(Color.FromRgb(0x22, 0x1A, 0x0A)); // dim
+        private static readonly SolidColorBrush OnBrush = new SolidColorBrush(Color.FromRgb(0xDD, 0xDD, 0xDD));  // white OLED
+        private static readonly SolidColorBrush OffBrush = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A)); // dim
 
         private Shape[] _segments;
         private byte _lastValue = 0xFF; // force initial paint

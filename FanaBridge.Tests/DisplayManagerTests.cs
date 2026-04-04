@@ -46,7 +46,7 @@ namespace FanaBridge.Tests
         {
             var settings = DisplaySettings.MigrateFromLegacy("Speed");
             var speedLayer = settings.Layers.FirstOrDefault(l =>
-                l.CatalogKey == "SpeedKmh" && l.Mode == DisplayLayerMode.Constant && l.IsEnabled);
+                l.CatalogKey == "Speed" && l.Mode == DisplayLayerMode.Constant && l.IsEnabled);
             Assert.NotNull(speedLayer);
         }
 
@@ -55,7 +55,7 @@ namespace FanaBridge.Tests
         {
             var settings = DisplaySettings.MigrateFromLegacy("GearAndSpeed");
             var speedLayer = settings.Layers.FirstOrDefault(l =>
-                l.CatalogKey == "SpeedKmh" && l.IsEnabled);
+                l.CatalogKey == "Speed" && l.IsEnabled);
             var gearOverlay = settings.Layers.FirstOrDefault(l =>
                 l.CatalogKey == "GearChange" && l.Mode == DisplayLayerMode.OnChange && l.IsEnabled);
             Assert.NotNull(speedLayer);
