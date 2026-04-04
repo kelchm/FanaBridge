@@ -122,7 +122,7 @@ namespace FanaBridge.Tests
         public void DisplayLayer_ModeLabel_ReturnsCorrectStrings()
         {
             var layer = new DisplayLayer { Mode = DisplayLayerMode.Constant };
-            Assert.Equal("CONSTANT", layer.ModeLabel);
+            Assert.Equal("ALWAYS", layer.ModeLabel);
             layer.Mode = DisplayLayerMode.OnChange;
             Assert.Equal("ON CHANGE", layer.ModeLabel);
             layer.Mode = DisplayLayerMode.WhileTrue;

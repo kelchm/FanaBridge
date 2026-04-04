@@ -353,9 +353,13 @@ namespace FanaBridge.UI
                     DisplaySource source = mode == DisplayLayerMode.Expression ? DisplaySource.Expression
                         : mode == DisplayLayerMode.WhileTrue ? DisplaySource.FixedText
                         : DisplaySource.Property;
+                    string defaultName = mode == DisplayLayerMode.Expression ? "Custom expression"
+                        : mode == DisplayLayerMode.WhileTrue ? "Custom overlay"
+                        : mode == DisplayLayerMode.OnChange ? "Custom overlay"
+                        : "Custom display";
                     layer = new DisplayLayer
                     {
-                        Name = "Custom", Mode = mode,
+                        Name = defaultName, Mode = mode,
                         Source = source,
                         DisplayFormat = mode == DisplayLayerMode.Expression ? DisplayFormat.Text : DisplayFormat.Number,
                         DurationMs = 2000, IsEnabled = true,

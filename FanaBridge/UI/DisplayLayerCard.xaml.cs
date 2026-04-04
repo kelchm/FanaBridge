@@ -56,7 +56,7 @@ namespace FanaBridge.UI
             {
                 case DisplayLayerMode.Constant:
                     pillMode.Background = PillConstant;
-                    txtModePill.Text = "CONSTANT";
+                    txtModePill.Text = "ALWAYS";
                     txtModePill.Foreground = TextConstant;
                     break;
                 case DisplayLayerMode.OnChange:

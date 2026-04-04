@@ -205,7 +205,7 @@ namespace FanaBridge.Adapters
             {
                 switch (Mode)
                 {
-                    case DisplayLayerMode.Constant: return "CONSTANT";
+                    case DisplayLayerMode.Constant: return "ALWAYS";
                     case DisplayLayerMode.OnChange: return "ON CHANGE";
                     case DisplayLayerMode.WhileTrue: return "WHILE TRUE";
                     case DisplayLayerMode.Expression: return "EXPRESSION";

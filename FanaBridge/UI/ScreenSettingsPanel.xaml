@@ -85,16 +85,16 @@
                                              Background="#2A2A2A" Foreground="White" BorderBrush="#444" />
                                 </StackPanel>
 
-                                <!-- Trigger type (custom layers only) -->
+                                <!-- Show mode (custom layers only) -->
                                 <StackPanel x:Name="panelTrigger" Orientation="Horizontal"
                                             Margin="0,0,0,6" Visibility="Collapsed">
-                                    <TextBlock Text="Trigger" Width="100" Foreground="#CCC"
+                                    <TextBlock Text="Show" Width="100" Foreground="#CCC"
                                                VerticalAlignment="Center" />
-                                    <ComboBox x:Name="cmbTrigger" Width="140"
+                                    <ComboBox x:Name="cmbTrigger" Width="180"
                                               SelectionChanged="CmbTrigger_SelectionChanged">
-                                        <ComboBoxItem Content="Constant" Tag="Constant" />
-                                        <ComboBoxItem Content="On change" Tag="OnChange" />
-                                        <ComboBoxItem Content="While true" Tag="WhileTrue" />
+                                        <ComboBoxItem Content="Always" Tag="Constant" />
+                                        <ComboBoxItem Content="When value changes" Tag="OnChange" />
+                                        <ComboBoxItem Content="While condition is true" Tag="WhileTrue" />
                                         <ComboBoxItem Content="Expression" Tag="Expression" />
                                     </ComboBox>
                                 </StackPanel>
@@ -124,10 +124,10 @@
                                     </ComboBox>
                                 </StackPanel>
 
-                                <!-- Display source -->
+                                <!-- Content source -->
                                 <StackPanel x:Name="panelDisplaySource" Orientation="Horizontal"
                                             Margin="0,0,0,6" Visibility="Collapsed">
-                                    <TextBlock Text="Display" Width="100" Foreground="#CCC"
+                                    <TextBlock Text="Content" Width="100" Foreground="#CCC"
                                                VerticalAlignment="Center" />
                                     <ComboBox x:Name="cmbDisplaySource" Width="140"
                                               SelectionChanged="CmbDisplaySource_SelectionChanged">
@@ -176,10 +176,10 @@
                                                Text="NCalc expression. Use [PropertyName] for properties." />
                                 </StackPanel>
 
-                                <!-- Display as -->
+                                <!-- Format -->
                                 <StackPanel x:Name="panelDisplayFormat" Orientation="Horizontal"
                                             Margin="0,0,0,6" Visibility="Collapsed">
-                                    <TextBlock Text="Display as" Width="100" Foreground="#CCC"
+                                    <TextBlock Text="Format" Width="100" Foreground="#CCC"
                                                VerticalAlignment="Center" />
                                     <ComboBox x:Name="cmbDisplayFormat" Width="140"
                                               SelectionChanged="CmbDisplayFormat_SelectionChanged">
