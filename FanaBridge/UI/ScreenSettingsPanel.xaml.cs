@@ -234,7 +234,8 @@ namespace FanaBridge.UI
                                 || (!gameRunning && layer.ShowWhenIdle);
                     if (visible)
                     {
-                        text = EvaluateLayerForPreview(layer);
+                        text = FanatecDisplayManager.AlignText(
+                            EvaluateLayerForPreview(layer), layer.DisplayFormat);
                         name = layer.Name;
                         break;
                     }
@@ -246,7 +247,8 @@ namespace FanaBridge.UI
                     foreach (var layer in _settings.Layers)
                     {
                         if (!layer.IsEnabled || layer.Mode != DisplayLayerMode.Constant) continue;
-                        text = EvaluateLayerForPreview(layer);
+                        text = FanatecDisplayManager.AlignText(
+                            EvaluateLayerForPreview(layer), layer.DisplayFormat);
                         name = layer.Name;
                         break;
                     }
