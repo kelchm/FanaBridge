@@ -165,6 +165,10 @@ namespace FanaBridge.UI
             card.SetPreviewText(text);
         }
 
+        // TODO: This method duplicates evaluation logic from FanatecDisplayManager.
+        // The display manager should be the single source of truth for all layer
+        // evaluation, formatting, and alignment — both runtime and UI preview.
+        // See: FanatecDisplayManager.EvaluateLayerPreview, GetDisplayText, FormatValue
         private string EvaluateLayerForPreview(DisplayLayer layer)
         {
             // Static text doesn't need the plugin manager at all
