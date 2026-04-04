@@ -110,13 +110,11 @@ namespace FanaBridge.Tests
         // ── DisplayLayer ────────────────────────────────────────────────
 
         [Fact]
-        public void DisplayLayer_IsGearFormat_CaseInsensitive()
+        public void DisplayLayer_IsGearFormat_MatchesEnum()
         {
-            var layer = new DisplayLayer { Format = "GEAR" };
+            var layer = new DisplayLayer { DisplayFormat = DisplayFormat.Gear };
             Assert.True(layer.IsGearFormat);
-            layer.Format = "Gear";
-            Assert.True(layer.IsGearFormat);
-            layer.Format = "{0:0}";
+            layer.DisplayFormat = DisplayFormat.Number;
             Assert.False(layer.IsGearFormat);
         }
 

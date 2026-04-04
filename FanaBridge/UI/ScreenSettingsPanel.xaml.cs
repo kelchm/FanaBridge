@@ -24,6 +24,8 @@ namespace FanaBridge.UI
 
         private static readonly SolidColorBrush SelectedBorder = Frozen(Color.FromRgb(0x44, 0x88, 0xCC));
         private static readonly SolidColorBrush NormalBorder = Frozen(Color.FromRgb(0x33, 0x33, 0x33));
+        private static readonly SolidColorBrush SelectedBackground = Frozen(Color.FromRgb(0x33, 0x33, 0x33));
+        private static readonly SolidColorBrush NormalBackground = Frozen(Color.FromRgb(0x25, 0x25, 0x25));
 
         public event Action SettingsChanged;
 
@@ -46,13 +48,12 @@ namespace FanaBridge.UI
             cmbAddLayer.Items.Add(new ComboBoxItem { Content = "Custom constant", Tag = "custom:Constant" });
             cmbAddLayer.Items.Add(new ComboBoxItem { Content = "Custom on change", Tag = "custom:OnChange" });
             cmbAddLayer.Items.Add(new ComboBoxItem { Content = "Custom while true", Tag = "custom:WhileTrue" });
+            cmbAddLayer.Items.Add(new ComboBoxItem { Content = "Custom expression", Tag = "custom:Expression" });
             cmbAddLayer.Items.Add(new ComboBoxItem { Content = "Static text", Tag = "custom:StaticText" });
             cmbAddLayer.SelectedIndex = 0;
 
-            // Data source dropdown (for constant catalog layers)
-            foreach (var entry in LayerCatalog.All.Where(l => l.Mode == DisplayLayerMode.Constant))
-                cmbDataSource.Items.Add(new ComboBoxItem { Content = entry.Name, Tag = entry.CatalogKey });
-            cmbDataSource.Items.Add(new ComboBoxItem { Content = "Custom", Tag = "Custom" });
+            // Template dropdown (for catalog layers — rebuilt dynamically based on layer mode)
+            RebuildTemplateDropdown(DisplayLayerMode.Constant);
 
             _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _previewTimer.Tick += (s, e) => UpdateLivePreview();
@@ -74,8 +75,7 @@ namespace FanaBridge.UI
             RebuildCardList();
             _settings.Layers.CollectionChanged += Layers_CollectionChanged;
 
-            SelectComboByTag(cmbScrollSpeed, _settings.ScrollSpeedMs.ToString());
-            _scrollTimer.Interval = TimeSpan.FromMilliseconds(_settings.ScrollSpeedMs);
+            // Scroll timer uses a fixed interval for the live preview
 
             borderItmInfo.Visibility = displayType == DisplayType.Itm
                 ? Visibility.Visible : Visibility.Collapsed;
@@ -125,7 +125,11 @@ namespace FanaBridge.UI
             if (_selectedCard != null)
             {
                 var border = _selectedCard.FindName("cardBorder") as Border;
-                if (border != null) border.BorderBrush = NormalBorder;
+                if (border != null)
+                {
+                    border.BorderBrush = NormalBorder;
+                    border.Background = NormalBackground;
+                }
             }
 
             _selectedCard = card;
@@ -133,7 +137,11 @@ namespace FanaBridge.UI
             if (card != null)
             {
                 var border = card.FindName("cardBorder") as Border;
-                if (border != null) border.BorderBrush = SelectedBorder;
+                if (border != null)
+                {
+                    border.BorderBrush = SelectedBorder;
+                    border.Background = SelectedBackground;
+                }
             }
 
             UpdateEditPanel();
@@ -153,8 +161,7 @@ namespace FanaBridge.UI
 
             string text = EvaluateLayerForPreview(card.Layer);
 
-            if (card.Layer.CenterDisplay && card.Layer.IsGearFormat && text.Length == 1)
-                text = " " + text + " ";
+            text = FanatecDisplayManager.AlignText(text, card.Layer.DisplayFormat);
 
             card.SetPreviewText(text);
         }
@@ -254,33 +261,43 @@ namespace FanaBridge.UI
             var layer = SelectedLayer;
             if (layer == null)
             {
-                sectionEdit.Visibility = Visibility.Collapsed;
+                borderEditPanel.Visibility = Visibility.Collapsed;
                 return;
             }
 
-            sectionEdit.Visibility = Visibility.Visible;
+            borderEditPanel.Visibility = Visibility.Visible;
+            txtEditHeader.Text = "Layer Settings \u2014 " + (layer.Name ?? "Untitled");
             _suppressEvents = true;
 
             bool isCustom = layer.IsCustom;
             bool isConstant = layer.Mode == DisplayLayerMode.Constant;
             bool isOnChange = layer.Mode == DisplayLayerMode.OnChange;
             bool isWhileTrue = layer.Mode == DisplayLayerMode.WhileTrue;
+            bool isExpressionMode = layer.Mode == DisplayLayerMode.Expression;
             bool isFixedText = layer.Source == DisplaySource.FixedText;
+            bool isProperty = layer.Source == DisplaySource.Property;
 
-            // Data source dropdown (catalog constant layers)
-            panelDataSource.Visibility = (isConstant && !isCustom) ? Visibility.Visible : Visibility.Collapsed;
-            if (isConstant && !isCustom)
-                SelectComboByTag(cmbDataSource, layer.CatalogKey ?? "Custom");
+            // Template dropdown (any catalog layer)
+            panelTemplate.Visibility = !isCustom ? Visibility.Visible : Visibility.Collapsed;
+            if (!isCustom)
+            {
+                RebuildTemplateDropdown(layer.Mode);
+                SelectComboByTag(cmbTemplate, layer.CatalogKey ?? "Custom");
+            }
 
-            // Custom fields
+            // Editing fields — Expression mode shows only expression + display format
             panelName.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
             panelTrigger.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
-            panelWatch.Visibility = (isCustom && (isOnChange || isWhileTrue)) ? Visibility.Visible : Visibility.Collapsed;
-            panelDuration.Visibility = isOnChange ? Visibility.Visible : Visibility.Collapsed;
-            panelDisplaySource.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
-            panelProperty.Visibility = (isCustom && !isFixedText) ? Visibility.Visible : Visibility.Collapsed;
-            panelFixedText.Visibility = isFixedText ? Visibility.Visible : Visibility.Collapsed;
-            panelShowWhen.Visibility = isConstant ? Visibility.Visible : Visibility.Collapsed;
+            panelWatch.Visibility = (isCustom && !isExpressionMode && (isOnChange || isWhileTrue)) ? Visibility.Visible : Visibility.Collapsed;
+            panelDuration.Visibility = (isOnChange && !isExpressionMode) ? Visibility.Visible : Visibility.Collapsed;
+            panelDisplaySource.Visibility = (isCustom && !isExpressionMode) ? Visibility.Visible : Visibility.Collapsed;
+            panelProperty.Visibility = (isCustom && !isExpressionMode && isProperty) ? Visibility.Visible : Visibility.Collapsed;
+            panelFixedText.Visibility = (isCustom && !isExpressionMode && isFixedText) ? Visibility.Visible : Visibility.Collapsed;
+            panelExpression.Visibility = (isCustom && isExpressionMode) || (!isCustom && isExpressionMode) ? Visibility.Visible : Visibility.Collapsed;
+            panelDisplayFormat.Visibility = (isCustom && !isFixedText) || isExpressionMode ? Visibility.Visible : Visibility.Collapsed;
+            bool isText = layer.DisplayFormat == DisplayFormat.Text;
+            panelScrollSpeed.Visibility = (isCustom && isText) ? Visibility.Visible : Visibility.Collapsed;
+            panelShowWhen.Visibility = (isConstant && !isExpressionMode) ? Visibility.Visible : Visibility.Collapsed;
 
             // Populate fields
             txtName.Text = layer.Name ?? "";
@@ -289,8 +306,10 @@ namespace FanaBridge.UI
             SelectComboByTag(cmbDuration, layer.DurationMs.ToString());
             SelectComboByTag(cmbDisplaySource, layer.Source.ToString());
             txtProperty.Text = layer.PropertyName ?? "";
-            txtFormat.Text = layer.Format ?? "";
             txtFixedText.Text = layer.FixedText ?? "";
+            txtExpression.Text = layer.Expression ?? "";
+            SelectComboByTag(cmbDisplayFormat, layer.DisplayFormat.ToString());
+            SelectComboByTag(cmbLayerScrollSpeed, layer.ScrollSpeedMs.ToString());
             chkRunning.IsChecked = layer.ShowWhenRunning;
             chkIdle.IsChecked = layer.ShowWhenIdle;
 
@@ -331,10 +350,14 @@ namespace FanaBridge.UI
                 {
                     DisplayLayerMode mode;
                     Enum.TryParse(subtype, out mode);
+                    DisplaySource source = mode == DisplayLayerMode.Expression ? DisplaySource.Expression
+                        : mode == DisplayLayerMode.WhileTrue ? DisplaySource.FixedText
+                        : DisplaySource.Property;
                     layer = new DisplayLayer
                     {
                         Name = "Custom", Mode = mode,
-                        Source = mode == DisplayLayerMode.WhileTrue ? DisplaySource.FixedText : DisplaySource.Property,
+                        Source = source,
+                        DisplayFormat = mode == DisplayLayerMode.Expression ? DisplayFormat.Text : DisplayFormat.Number,
                         DurationMs = 2000, IsEnabled = true,
                         ShowWhenRunning = mode == DisplayLayerMode.Constant,
                     };
@@ -397,10 +420,10 @@ namespace FanaBridge.UI
 
         // ── Edit event handlers ──────────────────────────────────────
 
-        private void CmbDataSource_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void CmbTemplate_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_suppressEvents || SelectedLayer == null) return;
-            var tag = (cmbDataSource.SelectedItem as ComboBoxItem)?.Tag as string;
+            var tag = (cmbTemplate.SelectedItem as ComboBoxItem)?.Tag as string;
             if (tag == null) return;
 
             if (tag == "Custom")
@@ -414,14 +437,34 @@ namespace FanaBridge.UI
                 {
                     SelectedLayer.CatalogKey = tag;
                     SelectedLayer.Name = template.Name;
-                    SelectedLayer.PropertyName = template.PropertyName;
-                    SelectedLayer.Format = template.Format;
+                    SelectedLayer.Mode = template.Mode;
                     SelectedLayer.Source = template.Source;
-                    SelectedLayer.CenterDisplay = template.CenterDisplay;
+                    SelectedLayer.PropertyName = template.PropertyName;
+                    SelectedLayer.DisplayFormat = template.DisplayFormat;
+                    SelectedLayer.FixedText = template.FixedText;
+                    SelectedLayer.Expression = template.Expression;
+                    SelectedLayer.ScrollSpeedMs = template.ScrollSpeedMs;
+                    SelectedLayer.WatchProperty = template.WatchProperty;
+                    SelectedLayer.DurationMs = template.DurationMs;
+                    SelectedLayer.ShowWhenRunning = template.ShowWhenRunning;
+                    SelectedLayer.ShowWhenIdle = template.ShowWhenIdle;
                 }
             }
             UpdateEditPanel();
             NotifyChanged();
+        }
+
+        private void RebuildTemplateDropdown(DisplayLayerMode mode)
+        {
+            cmbTemplate.Items.Clear();
+            bool isBase = mode == DisplayLayerMode.Constant;
+
+            foreach (var entry in LayerCatalog.All.Where(l =>
+                isBase ? l.Mode == DisplayLayerMode.Constant : l.Mode != DisplayLayerMode.Constant))
+            {
+                cmbTemplate.Items.Add(new ComboBoxItem { Content = entry.Name, Tag = entry.CatalogKey });
+            }
+            cmbTemplate.Items.Add(new ComboBoxItem { Content = "Custom", Tag = "Custom" });
         }
 
         private void TxtName_TextChanged(object s, TextChangedEventArgs e)
@@ -484,17 +527,37 @@ namespace FanaBridge.UI
         private void BtnBrowseProperty_Click(object s, RoutedEventArgs e) => BrowseProperty(
             r => { if (SelectedLayer != null) { SelectedLayer.PropertyName = r; txtProperty.Text = r; NotifyChanged(); } });
 
-        private void TxtFormat_TextChanged(object s, TextChangedEventArgs e)
+        private void CmbDisplayFormat_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_suppressEvents || SelectedLayer == null) return;
-            SelectedLayer.Format = txtFormat.Text;
-            NotifyChanged();
+            var tag = (cmbDisplayFormat.SelectedItem as ComboBoxItem)?.Tag as string;
+            DisplayFormat fmt;
+            if (tag != null && Enum.TryParse(tag, out fmt))
+            {
+                SelectedLayer.DisplayFormat = fmt;
+                UpdateEditPanel();
+                NotifyChanged();
+            }
+        }
+
+        private void CmbLayerScrollSpeed_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            var tag = (cmbLayerScrollSpeed.SelectedItem as ComboBoxItem)?.Tag as string;
+            if (tag != null) { SelectedLayer.ScrollSpeedMs = int.Parse(tag); NotifyChanged(); }
         }
 
         private void TxtFixedText_TextChanged(object s, TextChangedEventArgs e)
         {
             if (_suppressEvents || SelectedLayer == null) return;
             SelectedLayer.FixedText = txtFixedText.Text;
+            NotifyChanged();
+        }
+
+        private void TxtExpression_TextChanged(object s, TextChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            SelectedLayer.Expression = txtExpression.Text;
             NotifyChanged();
         }
 
@@ -510,18 +573,6 @@ namespace FanaBridge.UI
             if (_suppressEvents || SelectedLayer == null) return;
             SelectedLayer.ShowWhenIdle = chkIdle.IsChecked == true;
             NotifyChanged();
-        }
-
-        private void CmbScrollSpeed_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (_suppressEvents || _settings == null) return;
-            var tag = (cmbScrollSpeed.SelectedItem as ComboBoxItem)?.Tag as string;
-            if (tag != null)
-            {
-                _settings.ScrollSpeedMs = int.Parse(tag);
-                _scrollTimer.Interval = TimeSpan.FromMilliseconds(_settings.ScrollSpeedMs);
-                NotifyChanged();
-            }
         }
 
         // ── Helpers ──────────────────────────────────────────────────

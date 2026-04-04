@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using FanaBridge.Protocol;
 using GameReaderCommon;
 using SimHub.Plugins;
+using SimHub.Plugins.OutputPlugins.Dash.GLCDTemplating;
+using SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon;
 
 namespace FanaBridge.Adapters
 {
@@ -104,6 +106,18 @@ namespace FanaBridge.Adapters
                         }
                         break;
 
+                    case DisplayLayerMode.Expression:
+                        if (gameRunning && winner == null)
+                        {
+                            string exprText = EvaluateExpression(layer);
+                            if (!string.IsNullOrEmpty(exprText))
+                            {
+                                winner = layer;
+                                winnerText = exprText;
+                            }
+                        }
+                        break;
+
                     case DisplayLayerMode.Constant:
                         bool visible = (gameRunning && layer.ShowWhenRunning)
                                     || (!gameRunning && layer.ShowWhenIdle);
@@ -132,14 +146,15 @@ namespace FanaBridge.Adapters
             }
 
             _activeLayerName = winner.Name ?? "";
-            if (winner.CenterDisplay && winner.IsGearFormat)
+            string aligned = AlignText(winnerText ?? "---", winner.DisplayFormat);
+            if (winner.IsGearFormat)
             {
                 ResetScroll();
                 SendGear(winnerText ?? "N");
             }
             else
             {
-                SendTextOrScroll(winnerText ?? "---");
+                SendTextOrScroll(aligned);
             }
         }
 
@@ -187,12 +202,15 @@ namespace FanaBridge.Adapters
             if (layer.Source == DisplaySource.FixedText)
                 return layer.FixedText ?? "";
 
+            if (layer.Source == DisplaySource.Expression)
+                return EvaluateExpression(layer);
+
             object val = state.CurrentValue;
             if (val == null && !string.IsNullOrEmpty(layer.PropertyName))
                 val = SafeGetProperty(pm, layer.PropertyName);
 
             if (val == null) return "---";
-            return FormatValue(val, layer.Format);
+            return FormatValue(val, layer.DisplayFormat);
         }
 
         /// <summary>
@@ -204,6 +222,9 @@ namespace FanaBridge.Adapters
             if (layer.Source == DisplaySource.FixedText)
                 return layer.FixedText ?? "";
 
+            if (layer.Source == DisplaySource.Expression)
+                return EvaluateExpression(layer);
+
             string prop = layer.Mode == DisplayLayerMode.Constant
                 ? layer.PropertyName : layer.WatchProperty;
 
@@ -214,7 +235,22 @@ namespace FanaBridge.Adapters
 
             object val = SafeGetProperty(pm, prop);
             if (val == null) return "---";
-            return FormatValue(val, layer.Format);
+            return FormatValue(val, layer.DisplayFormat);
+        }
+
+        private string EvaluateExpression(DisplayLayer layer)
+        {
+            if (string.IsNullOrEmpty(layer.Expression)) return "---";
+            var engine = FanatecPlugin.Instance?.NCalcEngine;
+            if (engine == null) return "---";
+            try
+            {
+                var expr = new ExpressionValue { Expression = layer.Expression };
+                var result = engine.ParseValue(expr);
+                if (result == null) return "---";
+                return FormatValue(result, layer.DisplayFormat);
+            }
+            catch { return "ERR"; }
         }
 
         private LayerState GetState(DisplayLayer layer)
@@ -255,21 +291,60 @@ namespace FanaBridge.Adapters
 
         // ── Formatting ───────────────────────────────────────────────
 
-        private static string FormatValue(object value, string format)
+        private static string FormatValue(object value, DisplayFormat format)
         {
-            if (string.IsNullOrEmpty(format)) return value.ToString();
-            if (string.Equals(format, "gear", StringComparison.OrdinalIgnoreCase))
-                return FormatGear(value);
+            switch (format)
+            {
+                case DisplayFormat.Gear:
+                    return FormatGear(value);
+                case DisplayFormat.Number:
+                    return FormatNumeric(value, "0");
+                case DisplayFormat.Decimal:
+                    return FormatNumeric(value, "0.0");
+                case DisplayFormat.Time:
+                    if (value is TimeSpan ts) return ts.ToString("ss\\.f");
+                    return FormatNumeric(value, "0.0");
+                case DisplayFormat.Text:
+                default:
+                    return value?.ToString() ?? "";
+            }
+        }
+
+        private static string FormatNumeric(object value, string fmt)
+        {
             try
             {
-                string fmt = format.Replace("{0:", "").Replace("}", "");
                 if (value is double d) return d.ToString(fmt);
                 if (value is float f) return f.ToString(fmt);
                 if (value is int i) return i.ToString(fmt);
-                if (value is TimeSpan ts) return ts.ToString(fmt);
-                return string.Format(format, value);
+                if (value is long l) return l.ToString(fmt);
+                return value.ToString();
             }
             catch { return value.ToString(); }
+        }
+
+        /// <summary>
+        /// Aligns a formatted string for the 3-character display.
+        /// Gear = centered, Number/Decimal/Time = right-aligned, Text = left-aligned.
+        /// </summary>
+        internal static string AlignText(string text, DisplayFormat format)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length >= 3) return text;
+            switch (format)
+            {
+                case DisplayFormat.Gear:
+                    // Center: pad equally on both sides
+                    return text.Length == 1 ? " " + text + " " :
+                           text.Length == 2 ? " " + text : text;
+                case DisplayFormat.Number:
+                case DisplayFormat.Decimal:
+                case DisplayFormat.Time:
+                    // Right-align
+                    return text.PadLeft(3);
+                case DisplayFormat.Text:
+                default:
+                    return text;
+            }
         }
 
         private static string FormatGear(object value)

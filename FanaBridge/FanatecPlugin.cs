@@ -5,6 +5,7 @@ using FanaBridge.Transport;
 using FanaBridge.UI;
 using GameReaderCommon;
 using SimHub.Plugins;
+using SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon;
 using System;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -32,6 +33,10 @@ namespace FanaBridge
         private LedEncoder _leds;
         private LegacyLedEncoder _legacyLeds;
         private DisplayEncoder _display;
+        private NCalcEngineBase _nCalcEngine;
+
+        /// <summary>Shared NCalc engine for evaluating display layer expressions.</summary>
+        public NCalcEngineBase NCalcEngine => _nCalcEngine;
 
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
         public event Action StateChanged;
@@ -88,6 +93,8 @@ namespace FanaBridge
             Settings = this.ReadCommonSettings<FanatecPluginSettings>(
                 "FanaBridgeSettings",
                 () => new FanatecPluginSettings());
+
+            _nCalcEngine = new NCalcEngineBase();
 
             _sdk = new FanatecSdkManager();
             _device = new FanatecDevice();

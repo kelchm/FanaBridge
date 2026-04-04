@@ -17,64 +17,64 @@ namespace FanaBridge.Adapters
                 CatalogKey = "Gear", Name = "Gear",
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.Property,
-                PropertyName = "DataCorePlugin.GameData.NewData.Gear",
-                Format = "gear", CenterDisplay = true,
+                PropertyName = "DataCorePlugin.GameData.Gear",
+                DisplayFormat = DisplayFormat.Gear,
             },
             new DisplayLayer
             {
                 CatalogKey = "SpeedKmh", Name = "Speed (km/h)",
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.Property,
-                PropertyName = "DataCorePlugin.GameData.NewData.SpeedKmh",
-                Format = "{0:0}",
+                PropertyName = "DataCorePlugin.GameData.SpeedKmh",
+                DisplayFormat = DisplayFormat.Number,
             },
             new DisplayLayer
             {
                 CatalogKey = "SpeedMph", Name = "Speed (mph)",
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.Property,
-                PropertyName = "DataCorePlugin.GameData.NewData.SpeedMph",
-                Format = "{0:0}",
+                PropertyName = "DataCorePlugin.GameData.SpeedMph",
+                DisplayFormat = DisplayFormat.Number,
             },
             new DisplayLayer
             {
                 CatalogKey = "Lap", Name = "Current Lap",
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.Property,
-                PropertyName = "DataCorePlugin.GameData.NewData.CurrentLap",
-                Format = "{0:0}",
+                PropertyName = "DataCorePlugin.GameData.CurrentLap",
+                DisplayFormat = DisplayFormat.Number,
             },
             new DisplayLayer
             {
                 CatalogKey = "FuelPct", Name = "Fuel %",
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.Property,
-                PropertyName = "DataCorePlugin.GameData.NewData.FuelPercent",
-                Format = "{0:0}",
+                PropertyName = "DataCorePlugin.GameData.FuelPercent",
+                DisplayFormat = DisplayFormat.Number,
             },
             new DisplayLayer
             {
                 CatalogKey = "Position", Name = "Position",
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.Property,
-                PropertyName = "DataCorePlugin.GameData.NewData.Position",
-                Format = "{0:0}",
+                PropertyName = "DataCorePlugin.GameData.Position",
+                DisplayFormat = DisplayFormat.Number,
             },
             new DisplayLayer
             {
                 CatalogKey = "LapTime", Name = "Lap Time",
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.Property,
-                PropertyName = "DataCorePlugin.GameData.NewData.CurrentLapTime",
-                Format = "ss\\.f",
+                PropertyName = "DataCorePlugin.GameData.CurrentLapTime",
+                DisplayFormat = DisplayFormat.Time,
             },
             new DisplayLayer
             {
                 CatalogKey = "BestLap", Name = "Best Lap",
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.Property,
-                PropertyName = "DataCorePlugin.GameData.NewData.BestLapTime",
-                Format = "ss\\.f",
+                PropertyName = "DataCorePlugin.GameData.BestLapTime",
+                DisplayFormat = DisplayFormat.Time,
             },
 
             // ── Conditional overlays ─────────────────────────────────
@@ -83,9 +83,9 @@ namespace FanaBridge.Adapters
                 CatalogKey = "GearChange", Name = "Gear change",
                 Mode = DisplayLayerMode.OnChange,
                 Source = DisplaySource.Property,
-                WatchProperty = "DataCorePlugin.GameData.NewData.Gear",
-                PropertyName = "DataCorePlugin.GameData.NewData.Gear",
-                Format = "gear", CenterDisplay = true,
+                WatchProperty = "DataCorePlugin.GameData.Gear",
+                PropertyName = "DataCorePlugin.GameData.Gear",
+                DisplayFormat = DisplayFormat.Gear,
                 DurationMs = 2000,
             },
             new DisplayLayer
@@ -93,40 +93,67 @@ namespace FanaBridge.Adapters
                 CatalogKey = "PitLimiter", Name = "Pit limiter",
                 Mode = DisplayLayerMode.WhileTrue,
                 Source = DisplaySource.FixedText,
-                WatchProperty = "DataCorePlugin.GameData.NewData.PitLimiterOn",
+                WatchProperty = "DataCorePlugin.GameData.PitLimiterOn",
                 FixedText = "PIT",
+                DisplayFormat = DisplayFormat.Text,
             },
             new DisplayLayer
             {
                 CatalogKey = "YellowFlag", Name = "Yellow flag",
                 Mode = DisplayLayerMode.WhileTrue,
                 Source = DisplaySource.FixedText,
-                WatchProperty = "DataCorePlugin.GameData.NewData.Flag_Yellow",
+                WatchProperty = "DataCorePlugin.GameData.Flag_Yellow",
                 FixedText = "YEL",
+                DisplayFormat = DisplayFormat.Text,
             },
             new DisplayLayer
             {
                 CatalogKey = "BlueFlag", Name = "Blue flag",
                 Mode = DisplayLayerMode.WhileTrue,
                 Source = DisplaySource.FixedText,
-                WatchProperty = "DataCorePlugin.GameData.NewData.Flag_Blue",
+                WatchProperty = "DataCorePlugin.GameData.Flag_Blue",
                 FixedText = "BLU",
+                DisplayFormat = DisplayFormat.Text,
             },
             new DisplayLayer
             {
                 CatalogKey = "DRS", Name = "DRS available",
                 Mode = DisplayLayerMode.WhileTrue,
                 Source = DisplaySource.FixedText,
-                WatchProperty = "DataCorePlugin.GameData.NewData.DRSAvailable",
+                WatchProperty = "DataCorePlugin.GameData.DRSAvailable",
                 FixedText = "DRS",
+                DisplayFormat = DisplayFormat.Text,
             },
             new DisplayLayer
             {
                 CatalogKey = "LowFuel", Name = "Low fuel warning",
                 Mode = DisplayLayerMode.WhileTrue,
                 Source = DisplaySource.FixedText,
-                WatchProperty = "DataCorePlugin.GameData.NewData.FuelAlertActive",
+                WatchProperty = "DataCorePlugin.GameData.FuelAlertActive",
                 FixedText = "FUL",
+                DisplayFormat = DisplayFormat.Text,
+            },
+
+            // ── Expression-based overlays ────────────────────────────
+            new DisplayLayer
+            {
+                CatalogKey = "ShiftWarning", Name = "Shift warning",
+                Mode = DisplayLayerMode.Expression,
+                Source = DisplaySource.Expression,
+                Expression = "if([DataCorePlugin.GameData.CarSettings_RPMShiftLight2] == 1, "
+                           + "if(blink('shiftflash', 150, true), "
+                           + "' ' + [DataCorePlugin.GameData.Gear] + ' ', "
+                           + "'[' + [DataCorePlugin.GameData.Gear] + ']'), '')",
+                DisplayFormat = DisplayFormat.Text,
+            },
+            new DisplayLayer
+            {
+                CatalogKey = "LowFuelBlink", Name = "Low fuel (blink)",
+                Mode = DisplayLayerMode.Expression,
+                Source = DisplaySource.Expression,
+                Expression = "if([DataCorePlugin.GameData.FuelAlertActive], "
+                           + "if(blink('fuelblink', 500, true), 'FUL', '   '), '')",
+                DisplayFormat = DisplayFormat.Text,
             },
         };
 
@@ -150,13 +177,14 @@ namespace FanaBridge.Adapters
                 Mode = t.Mode,
                 Source = t.Source,
                 PropertyName = t.PropertyName,
-                Format = t.Format,
+                DisplayFormat = t.DisplayFormat,
                 FixedText = t.FixedText,
-                CenterDisplay = t.CenterDisplay,
+                Expression = t.Expression,
                 WatchProperty = t.WatchProperty,
                 DurationMs = t.DurationMs,
                 ShowWhenRunning = t.ShowWhenRunning,
                 ShowWhenIdle = t.ShowWhenIdle,
+                ScrollSpeedMs = t.ScrollSpeedMs,
                 IsEnabled = true,
             };
         }

@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:FanaBridge.UI"
              Margin="0,0,6,6" VerticalAlignment="Top" Width="90">
-    <Border x:Name="cardBorder" Background="#252525" BorderBrush="#333" BorderThickness="1"
+    <Border x:Name="cardBorder" Background="#252525" BorderBrush="#333" BorderThickness="2"
             CornerRadius="4" Padding="4,5" Cursor="Hand">
         <StackPanel HorizontalAlignment="Center">
             <!-- Top row: checkbox + priority badge -->

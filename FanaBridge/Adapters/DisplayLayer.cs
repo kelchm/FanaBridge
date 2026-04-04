@@ -20,6 +20,9 @@ namespace FanaBridge.Adapters
 
         /// <summary>Active while a condition property is truthy.</summary>
         WhileTrue,
+
+        /// <summary>Active when expression returns non-empty. Expression controls both activation and display.</summary>
+        Expression,
     }
 
     /// <summary>
@@ -33,6 +36,32 @@ namespace FanaBridge.Adapters
 
         /// <summary>Show a fixed string.</summary>
         FixedText,
+
+        /// <summary>Show the result of an NCalc/JavaScript expression.</summary>
+        Expression,
+    }
+
+    /// <summary>
+    /// How a property value is formatted for the 3-character 7-segment display.
+    /// Also determines default alignment and scroll behavior.
+    /// </summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public enum DisplayFormat
+    {
+        /// <summary>Rounded integer, right-aligned, no scroll. E.g. speed, lap, position.</summary>
+        Number,
+
+        /// <summary>One decimal place, right-aligned, no scroll. E.g. fuel %.</summary>
+        Decimal,
+
+        /// <summary>Time as ss.f, right-aligned, no scroll. E.g. lap times.</summary>
+        Time,
+
+        /// <summary>Gear mapping (R/N/1/2...), centered, no scroll.</summary>
+        Gear,
+
+        /// <summary>Raw toString, left-aligned, scrolls if &gt;3 chars.</summary>
+        Text,
     }
 
     /// <summary>
@@ -49,9 +78,10 @@ namespace FanaBridge.Adapters
         // Data source
         private DisplaySource _source = DisplaySource.Property;
         private string _propertyName = "";
-        private string _format = "";
+        private DisplayFormat _displayFormat = DisplayFormat.Number;
         private string _fixedText = "";
-        private bool _centerDisplay;
+        private string _expression = "";
+        private int _scrollSpeedMs = 250;
 
         // Trigger (OnChange / WhileTrue)
         private string _watchProperty = "";
@@ -103,11 +133,11 @@ namespace FanaBridge.Adapters
             set { if (_propertyName != value) { _propertyName = value; OnPropertyChanged(); } }
         }
 
-        /// <summary>Format string. "gear" for centered gear display.</summary>
-        public string Format
+        /// <summary>How the value is formatted and aligned on the display.</summary>
+        public DisplayFormat DisplayFormat
         {
-            get => _format;
-            set { if (_format != value) { _format = value; OnPropertyChanged(); } }
+            get => _displayFormat;
+            set { if (_displayFormat != value) { _displayFormat = value; OnPropertyChanged(); } }
         }
 
         /// <summary>Fixed text when Source is FixedText.</summary>
@@ -117,11 +147,18 @@ namespace FanaBridge.Adapters
             set { if (_fixedText != value) { _fixedText = value; OnPropertyChanged(); } }
         }
 
-        /// <summary>Center the value on the 3-digit display.</summary>
-        public bool CenterDisplay
+        /// <summary>NCalc or JavaScript expression (when Source is Expression).</summary>
+        public string Expression
         {
-            get => _centerDisplay;
-            set { if (_centerDisplay != value) { _centerDisplay = value; OnPropertyChanged(); } }
+            get => _expression;
+            set { if (_expression != value) { _expression = value; OnPropertyChanged(); } }
+        }
+
+        /// <summary>Scroll speed in ms per step (Text format only). 0 = no scroll.</summary>
+        public int ScrollSpeedMs
+        {
+            get => _scrollSpeedMs;
+            set { if (_scrollSpeedMs != value) { _scrollSpeedMs = value; OnPropertyChanged(); } }
         }
 
         /// <summary>Property to watch for OnChange/WhileTrue triggers.</summary>
@@ -154,8 +191,7 @@ namespace FanaBridge.Adapters
 
         /// <summary>Whether this uses the special gear display.</summary>
         [JsonIgnore]
-        public bool IsGearFormat =>
-            string.Equals(Format, "gear", StringComparison.OrdinalIgnoreCase);
+        public bool IsGearFormat => _displayFormat == DisplayFormat.Gear;
 
         /// <summary>Whether this is a user-created custom layer.</summary>
         [JsonIgnore]
@@ -172,6 +208,7 @@ namespace FanaBridge.Adapters
                     case DisplayLayerMode.Constant: return "CONSTANT";
                     case DisplayLayerMode.OnChange: return "ON CHANGE";
                     case DisplayLayerMode.WhileTrue: return "WHILE TRUE";
+                    case DisplayLayerMode.Expression: return "EXPRESSION";
                     default: return "";
                 }
             }

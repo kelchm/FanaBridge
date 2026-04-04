@@ -24,165 +24,203 @@
                 </StackPanel>
             </styles:SHSubSection>
 
-            <!-- Unified layer stack -->
+            <!-- Display Layers — unified split panel -->
             <styles:SHSubSection Title="Display Layers">
                 <StackPanel>
-                    <!-- Priority direction hint -->
-                    <Grid Margin="0,0,0,4">
-                        <TextBlock Foreground="#666" FontSize="10" HorizontalAlignment="Left"
-                                   Text="&#x25C0; Higher priority" />
-                        <TextBlock Foreground="#555" FontSize="10" HorizontalAlignment="Right"
-                                   Text="Lower priority &#x25B6;" />
-                    </Grid>
-
-                    <!-- Layer cards (horizontal wrap) -->
-                    <Border Background="#1A1A1A" BorderBrush="#333" BorderThickness="1"
-                            CornerRadius="4" Padding="6" MinHeight="40">
-                        <WrapPanel x:Name="layerStack" Orientation="Horizontal" />
-                    </Border>
-
-                    <!-- Toolbar -->
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                    <!-- Toolbar: add / remove / reorder -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                         <ComboBox x:Name="cmbAddLayer" Width="170" Margin="0,0,4,0"
                                   SelectionChanged="CmbAddLayer_SelectionChanged" />
-                        <Button Content="Remove" Width="60" Margin="0,0,4,0"
+                        <Button Content="Remove" Width="60" Margin="0,0,8,0"
                                 Click="BtnRemove_Click" />
                         <Button Content="&#x25C0;" Width="28" Margin="0,0,2,0"
                                 Click="BtnLeft_Click" ToolTip="Move left (higher priority)" />
                         <Button Content="&#x25B6;" Width="28"
                                 Click="BtnRight_Click" ToolTip="Move right (lower priority)" />
                     </StackPanel>
-                </StackPanel>
-            </styles:SHSubSection>
 
-            <!-- Edit panel for selected layer -->
-            <styles:SHSubSection x:Name="sectionEdit" Title="Layer Settings" Visibility="Collapsed">
-                <StackPanel>
-                    <!-- Data source (Constant layers with catalog key) -->
-                    <StackPanel x:Name="panelDataSource" Orientation="Horizontal"
-                                Margin="0,0,0,6" Visibility="Collapsed">
-                        <TextBlock Text="Data Source" Width="100" Foreground="#CCC"
-                                   VerticalAlignment="Center" />
-                        <ComboBox x:Name="cmbDataSource" Width="200"
-                                  SelectionChanged="CmbDataSource_SelectionChanged" />
-                    </StackPanel>
+                    <!-- Split panel container -->
+                    <Border Background="#1A1A1A" BorderBrush="#333" BorderThickness="1"
+                            CornerRadius="4">
+                        <StackPanel>
+                            <!-- Upper: layer card selector -->
+                            <StackPanel Margin="6,6,6,0">
+                                <!-- Priority direction hint -->
+                                <Grid Margin="0,0,0,4">
+                                    <TextBlock Foreground="#666" FontSize="10" HorizontalAlignment="Left"
+                                               Text="&#x25C0; Higher priority" />
+                                    <TextBlock Foreground="#555" FontSize="10" HorizontalAlignment="Right"
+                                               Text="Lower priority &#x25B6;" />
+                                </Grid>
 
-                    <!-- Name (custom layers only) -->
-                    <StackPanel x:Name="panelName" Orientation="Horizontal"
-                                Margin="0,0,0,6" Visibility="Collapsed">
-                        <TextBlock Text="Name" Width="100" Foreground="#CCC"
-                                   VerticalAlignment="Center" />
-                        <TextBox x:Name="txtName" Width="200" TextChanged="TxtName_TextChanged"
-                                 Background="#2A2A2A" Foreground="White" BorderBrush="#444" />
-                    </StackPanel>
+                                <WrapPanel x:Name="layerStack" Orientation="Horizontal" />
+                            </StackPanel>
 
-                    <!-- Trigger type (custom layers only) -->
-                    <StackPanel x:Name="panelTrigger" Orientation="Horizontal"
-                                Margin="0,0,0,6" Visibility="Collapsed">
-                        <TextBlock Text="Trigger" Width="100" Foreground="#CCC"
-                                   VerticalAlignment="Center" />
-                        <ComboBox x:Name="cmbTrigger" Width="140"
-                                  SelectionChanged="CmbTrigger_SelectionChanged">
-                            <ComboBoxItem Content="Constant" Tag="Constant" />
-                            <ComboBoxItem Content="On change" Tag="OnChange" />
-                            <ComboBoxItem Content="While true" Tag="WhileTrue" />
-                        </ComboBox>
-                    </StackPanel>
+                            <!-- Divider (dashed) -->
+                            <Line X1="0" X2="1" Stretch="Fill" Margin="8,6,8,0"
+                                  Stroke="#444" StrokeThickness="1"
+                                  StrokeDashArray="4 3" SnapsToDevicePixels="True" />
 
-                    <!-- Watch property (OnChange/WhileTrue) -->
-                    <StackPanel x:Name="panelWatch" Orientation="Horizontal"
-                                Margin="0,0,0,6" Visibility="Collapsed">
-                        <TextBlock Text="Watch" Width="100" Foreground="#CCC"
-                                   VerticalAlignment="Center" />
-                        <TextBox x:Name="txtWatch" Width="260" TextChanged="TxtWatch_TextChanged"
-                                 Background="#2A2A2A" Foreground="White" BorderBrush="#444" />
-                        <Button Content="Browse..." Margin="4,0,0,0" Click="BtnBrowseWatch_Click" />
-                    </StackPanel>
+                            <!-- Lower: settings for selected layer -->
+                            <StackPanel x:Name="borderEditPanel" Visibility="Collapsed"
+                                        Margin="10,8,10,10">
+                                <TextBlock x:Name="txtEditHeader" FontSize="13" FontWeight="SemiBold"
+                                           Foreground="#CCC" Margin="0,0,0,8" />
 
-                    <!-- Duration (OnChange only) -->
-                    <StackPanel x:Name="panelDuration" Orientation="Horizontal"
-                                Margin="0,0,0,6" Visibility="Collapsed">
-                        <TextBlock Text="Duration" Width="100" Foreground="#CCC"
-                                   VerticalAlignment="Center" />
-                        <ComboBox x:Name="cmbDuration" Width="80"
-                                  SelectionChanged="CmbDuration_SelectionChanged">
-                            <ComboBoxItem Content="1.0s" Tag="1000" />
-                            <ComboBoxItem Content="1.5s" Tag="1500" />
-                            <ComboBoxItem Content="2.0s" Tag="2000" />
-                            <ComboBoxItem Content="3.0s" Tag="3000" />
-                            <ComboBoxItem Content="5.0s" Tag="5000" />
-                        </ComboBox>
-                    </StackPanel>
+                                <!-- Template (catalog layers) -->
+                                <StackPanel x:Name="panelTemplate" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Template" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="cmbTemplate" Width="200"
+                                              SelectionChanged="CmbTemplate_SelectionChanged" />
+                                </StackPanel>
 
-                    <!-- Display source -->
-                    <StackPanel x:Name="panelDisplaySource" Orientation="Horizontal"
-                                Margin="0,0,0,6" Visibility="Collapsed">
-                        <TextBlock Text="Display" Width="100" Foreground="#CCC"
-                                   VerticalAlignment="Center" />
-                        <ComboBox x:Name="cmbDisplaySource" Width="140"
-                                  SelectionChanged="CmbDisplaySource_SelectionChanged">
-                            <ComboBoxItem Content="Property value" Tag="Property" />
-                            <ComboBoxItem Content="Fixed text" Tag="FixedText" />
-                        </ComboBox>
-                    </StackPanel>
+                                <!-- Name (custom layers only) -->
+                                <StackPanel x:Name="panelName" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Name" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <TextBox x:Name="txtName" Width="200" TextChanged="TxtName_TextChanged"
+                                             Background="#2A2A2A" Foreground="White" BorderBrush="#444" />
+                                </StackPanel>
 
-                    <!-- Property path (custom Property source) -->
-                    <StackPanel x:Name="panelProperty" Visibility="Collapsed">
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                            <TextBlock Text="Property" Width="100" Foreground="#CCC"
-                                       VerticalAlignment="Center" />
-                            <TextBox x:Name="txtProperty" Width="260"
-                                     TextChanged="TxtProperty_TextChanged"
-                                     Background="#2A2A2A" Foreground="White" BorderBrush="#444" />
-                            <Button Content="Browse..." Margin="4,0,0,0"
-                                    Click="BtnBrowseProperty_Click" />
+                                <!-- Trigger type (custom layers only) -->
+                                <StackPanel x:Name="panelTrigger" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Trigger" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="cmbTrigger" Width="140"
+                                              SelectionChanged="CmbTrigger_SelectionChanged">
+                                        <ComboBoxItem Content="Constant" Tag="Constant" />
+                                        <ComboBoxItem Content="On change" Tag="OnChange" />
+                                        <ComboBoxItem Content="While true" Tag="WhileTrue" />
+                                        <ComboBoxItem Content="Expression" Tag="Expression" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <!-- Watch property (OnChange/WhileTrue) -->
+                                <StackPanel x:Name="panelWatch" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Watch" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <TextBox x:Name="txtWatch" Width="260" TextChanged="TxtWatch_TextChanged"
+                                             Background="#2A2A2A" Foreground="White" BorderBrush="#444" />
+                                    <Button Content="Browse..." Margin="4,0,0,0" Click="BtnBrowseWatch_Click" />
+                                </StackPanel>
+
+                                <!-- Duration (OnChange only) -->
+                                <StackPanel x:Name="panelDuration" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Duration" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="cmbDuration" Width="80"
+                                              SelectionChanged="CmbDuration_SelectionChanged">
+                                        <ComboBoxItem Content="1.0s" Tag="1000" />
+                                        <ComboBoxItem Content="1.5s" Tag="1500" />
+                                        <ComboBoxItem Content="2.0s" Tag="2000" />
+                                        <ComboBoxItem Content="3.0s" Tag="3000" />
+                                        <ComboBoxItem Content="5.0s" Tag="5000" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <!-- Display source -->
+                                <StackPanel x:Name="panelDisplaySource" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Display" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="cmbDisplaySource" Width="140"
+                                              SelectionChanged="CmbDisplaySource_SelectionChanged">
+                                        <ComboBoxItem Content="Property value" Tag="Property" />
+                                        <ComboBoxItem Content="Fixed text" Tag="FixedText" />
+                                        <ComboBoxItem Content="Expression" Tag="Expression" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <!-- Property path (custom Property source) -->
+                                <StackPanel x:Name="panelProperty" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Property" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <TextBox x:Name="txtProperty" Width="260"
+                                             TextChanged="TxtProperty_TextChanged"
+                                             Background="#2A2A2A" Foreground="White" BorderBrush="#444" />
+                                    <Button Content="Browse..." Margin="4,0,0,0"
+                                            Click="BtnBrowseProperty_Click" />
+                                </StackPanel>
+
+                                <!-- Fixed text -->
+                                <StackPanel x:Name="panelFixedText" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Text" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <TextBox x:Name="txtFixedText" Width="200"
+                                             TextChanged="TxtFixedText_TextChanged"
+                                             Background="#2A2A2A" Foreground="White" BorderBrush="#444" />
+                                </StackPanel>
+
+                                <!-- Expression -->
+                                <StackPanel x:Name="panelExpression" Visibility="Collapsed">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                        <TextBlock Text="Expression" Width="100" Foreground="#CCC"
+                                                   VerticalAlignment="Center" />
+                                        <TextBox x:Name="txtExpression" Width="360"
+                                                 TextChanged="TxtExpression_TextChanged"
+                                                 AcceptsReturn="True" TextWrapping="Wrap"
+                                                 MinHeight="50" MaxHeight="120"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Background="#2A2A2A" Foreground="White" BorderBrush="#444"
+                                                 FontFamily="Consolas" FontSize="11" />
+                                    </StackPanel>
+                                    <TextBlock Foreground="#666" FontSize="10" Margin="100,0,0,6"
+                                               Text="NCalc expression. Use [PropertyName] for properties." />
+                                </StackPanel>
+
+                                <!-- Display as -->
+                                <StackPanel x:Name="panelDisplayFormat" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Display as" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="cmbDisplayFormat" Width="140"
+                                              SelectionChanged="CmbDisplayFormat_SelectionChanged">
+                                        <ComboBoxItem Content="Number" Tag="Number" />
+                                        <ComboBoxItem Content="Decimal" Tag="Decimal" />
+                                        <ComboBoxItem Content="Time" Tag="Time" />
+                                        <ComboBoxItem Content="Gear" Tag="Gear" />
+                                        <ComboBoxItem Content="Text" Tag="Text" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <!-- Scroll speed (Text format only) -->
+                                <StackPanel x:Name="panelScrollSpeed" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Scroll speed" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="cmbLayerScrollSpeed" Width="100"
+                                              SelectionChanged="CmbLayerScrollSpeed_SelectionChanged">
+                                        <ComboBoxItem Content="Fast" Tag="100" />
+                                        <ComboBoxItem Content="Normal" Tag="250" />
+                                        <ComboBoxItem Content="Slow" Tag="500" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <!-- Show when (Constant only) -->
+                                <StackPanel x:Name="panelShowWhen" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Show when" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <CheckBox x:Name="chkRunning" Content="In session" Margin="0,0,12,0"
+                                              Foreground="#CCC"
+                                              Checked="ChkRunning_Changed" Unchecked="ChkRunning_Changed" />
+                                    <CheckBox x:Name="chkIdle" Content="Idle" Foreground="#CCC"
+                                              Checked="ChkIdle_Changed" Unchecked="ChkIdle_Changed" />
+                                </StackPanel>
+                            </StackPanel>
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                            <TextBlock Text="Format" Width="100" Foreground="#CCC"
-                                       VerticalAlignment="Center" />
-                            <TextBox x:Name="txtFormat" Width="140"
-                                     TextChanged="TxtFormat_TextChanged"
-                                     Background="#2A2A2A" Foreground="White" BorderBrush="#444" />
-                        </StackPanel>
-                    </StackPanel>
-
-                    <!-- Fixed text -->
-                    <StackPanel x:Name="panelFixedText" Orientation="Horizontal"
-                                Margin="0,0,0,6" Visibility="Collapsed">
-                        <TextBlock Text="Text" Width="100" Foreground="#CCC"
-                                   VerticalAlignment="Center" />
-                        <TextBox x:Name="txtFixedText" Width="200"
-                                 TextChanged="TxtFixedText_TextChanged"
-                                 Background="#2A2A2A" Foreground="White" BorderBrush="#444" />
-                    </StackPanel>
-
-                    <!-- Show when (Constant only) -->
-                    <StackPanel x:Name="panelShowWhen" Orientation="Horizontal"
-                                Margin="0,0,0,6" Visibility="Collapsed">
-                        <TextBlock Text="Show when" Width="100" Foreground="#CCC"
-                                   VerticalAlignment="Center" />
-                        <CheckBox x:Name="chkRunning" Content="In session" Margin="0,0,12,0"
-                                  Foreground="#CCC"
-                                  Checked="ChkRunning_Changed" Unchecked="ChkRunning_Changed" />
-                        <CheckBox x:Name="chkIdle" Content="Idle" Foreground="#CCC"
-                                  Checked="ChkIdle_Changed" Unchecked="ChkIdle_Changed" />
-                    </StackPanel>
+                    </Border>
                 </StackPanel>
             </styles:SHSubSection>
 
-            <!-- Display Options -->
-            <styles:SHSubSection Title="Display Options">
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="Scroll speed:" Foreground="#999" VerticalAlignment="Center"
-                               Margin="0,0,6,0" />
-                    <ComboBox x:Name="cmbScrollSpeed" Width="80"
-                              SelectionChanged="CmbScrollSpeed_SelectionChanged">
-                        <ComboBoxItem Content="Fast" Tag="100" />
-                        <ComboBoxItem Content="Normal" Tag="250" IsSelected="True" />
-                        <ComboBoxItem Content="Slow" Tag="500" />
-                    </ComboBox>
-                </StackPanel>
-            </styles:SHSubSection>
 
         </StackPanel>
     </ScrollViewer>
