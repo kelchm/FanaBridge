@@ -22,6 +22,16 @@ namespace FanaBridge.Adapters
         // Per-layer runtime state (keyed by layer reference).
         private Dictionary<DisplayLayer, LayerState> _layerStates = new Dictionary<DisplayLayer, LayerState>();
 
+        // Active layer tracking for UI indicators.
+        private DisplayLayer _winningLayer;
+        private HashSet<DisplayLayer> _activeLayers = new HashSet<DisplayLayer>();
+
+        /// <summary>The layer currently controlling the display, or null.</summary>
+        public DisplayLayer WinningLayer => _winningLayer;
+
+        /// <summary>Whether a layer is currently active (condition met), regardless of whether it won.</summary>
+        public bool IsLayerActive(DisplayLayer layer) => _activeLayers.Contains(layer);
+
         // Cycling among Constant layers.
         private int _constantCycleIndex;
 
@@ -72,6 +82,7 @@ namespace FanaBridge.Adapters
             // Scan layers top-to-bottom for the first active one.
             DisplayLayer winner = null;
             string winnerText = null;
+            _activeLayers.Clear();
 
             // Track constant layers for cycling.
             var activeConstants = new List<DisplayLayer>();
@@ -87,6 +98,7 @@ namespace FanaBridge.Adapters
                     case DisplayLayerMode.WhileTrue:
                         if (gameRunning && EvalWhileTrue(pluginManager, layer, state))
                         {
+                            _activeLayers.Add(layer);
                             if (winner == null)
                             {
                                 winner = layer;
@@ -98,6 +110,7 @@ namespace FanaBridge.Adapters
                     case DisplayLayerMode.OnChange:
                         if (gameRunning && EvalOnChange(pluginManager, layer, state))
                         {
+                            _activeLayers.Add(layer);
                             if (winner == null)
                             {
                                 winner = layer;
@@ -107,13 +120,17 @@ namespace FanaBridge.Adapters
                         break;
 
                     case DisplayLayerMode.Expression:
-                        if (gameRunning && winner == null)
+                        if (gameRunning)
                         {
                             string exprText = EvaluateExpression(layer);
                             if (!string.IsNullOrEmpty(exprText))
                             {
-                                winner = layer;
-                                winnerText = exprText;
+                                _activeLayers.Add(layer);
+                                if (winner == null)
+                                {
+                                    winner = layer;
+                                    winnerText = exprText;
+                                }
                             }
                         }
                         break;
@@ -127,6 +144,10 @@ namespace FanaBridge.Adapters
                 }
             }
 
+            // Mark all visible constants as active.
+            foreach (var c in activeConstants)
+                _activeLayers.Add(c);
+
             // If no overlay won, use the cycled constant layer.
             if (winner == null && activeConstants.Count > 0)
             {
@@ -136,6 +157,8 @@ namespace FanaBridge.Adapters
                 EvalPropertyValue(pluginManager, winner, state);
                 winnerText = GetDisplayText(pluginManager, winner, state);
             }
+
+            _winningLayer = winner;
 
             // Display the winner.
             if (winner == null)

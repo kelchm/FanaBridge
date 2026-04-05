@@ -55,7 +55,7 @@ namespace FanaBridge.UI
             // Template dropdown (for catalog layers — rebuilt dynamically based on layer mode)
             RebuildTemplateDropdown(DisplayLayerMode.Constant);
 
-            _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
             _previewTimer.Tick += (s, e) => UpdateLivePreview();
 
             _scrollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -159,10 +159,20 @@ namespace FanaBridge.UI
             if (card.Layer == null) return;
 
             string text = EvaluateLayerForPreview(card.Layer);
-
             text = FanatecDisplayManager.AlignText(text, card.Layer.DisplayFormat);
-
             card.SetPreviewText(text);
+
+            // Status dot
+            if (_displayManager != null)
+            {
+                bool isWinning = _displayManager.WinningLayer == card.Layer;
+                bool isActive = _displayManager.IsLayerActive(card.Layer);
+                card.SetStatus(card.Layer.IsEnabled, isWinning, isActive);
+            }
+            else
+            {
+                card.SetStatus(card.Layer.IsEnabled, false, false);
+            }
         }
 
         // TODO: This method duplicates evaluation logic from FanatecDisplayManager.

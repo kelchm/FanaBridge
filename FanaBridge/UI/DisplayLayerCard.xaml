@@ -44,11 +44,11 @@
                 </Border>
             </StackPanel>
 
-            <!-- Disabled indicator (bottom-right corner overlay) -->
-            <TextBlock x:Name="txtDisabledIcon" Text="&#x1F6AB;"
-                       FontSize="11" Foreground="#DD6666"
-                       HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                       Margin="0,0,0,0" Visibility="Collapsed" />
+            <!-- Status dot (bottom-left) -->
+            <Ellipse x:Name="dotStatus" Width="8" Height="8"
+                     HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                     Margin="0,0,0,0"
+                     ToolTip="Inactive" />
         </Grid>
     </Border>
 </UserControl>

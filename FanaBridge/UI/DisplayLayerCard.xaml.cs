@@ -79,9 +79,7 @@ namespace FanaBridge.UI
             txtSummary.Text = GetSummary();
 
             // Enabled/disabled state
-            bool enabled = _layer.IsEnabled;
-            cardBorder.Opacity = enabled ? 1.0 : 0.5;
-            txtDisabledIcon.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+            cardBorder.Opacity = _layer.IsEnabled ? 1.0 : 0.5;
         }
 
         private string GetSummary()
@@ -111,6 +109,38 @@ namespace FanaBridge.UI
             miniDigit0.SetValue(encoded.Count > 0 ? encoded[0] : SevenSegment.Blank);
             miniDigit1.SetValue(encoded.Count > 1 ? encoded[1] : SevenSegment.Blank);
             miniDigit2.SetValue(encoded.Count > 2 ? encoded[2] : SevenSegment.Blank);
+        }
+
+        private static readonly SolidColorBrush DotWinning = Frozen(Color.FromRgb(0x66, 0xDD, 0x88));   // green
+        private static readonly SolidColorBrush DotActive = Frozen(Color.FromRgb(0xDD, 0xCC, 0x66));    // amber
+        private static readonly SolidColorBrush DotInactive = Frozen(Color.FromRgb(0x55, 0x55, 0x55));  // gray
+        private static readonly SolidColorBrush DotDisabled = Frozen(Color.FromRgb(0xDD, 0x66, 0x66));  // red
+
+        /// <summary>
+        /// Updates the status dot color and tooltip.
+        /// </summary>
+        public void SetStatus(bool isEnabled, bool isWinning, bool isActive)
+        {
+            if (!isEnabled)
+            {
+                dotStatus.Fill = DotDisabled;
+                dotStatus.ToolTip = "Disabled";
+            }
+            else if (isWinning)
+            {
+                dotStatus.Fill = DotWinning;
+                dotStatus.ToolTip = "Active — currently displayed";
+            }
+            else if (isActive)
+            {
+                dotStatus.Fill = DotActive;
+                dotStatus.ToolTip = "Active — overridden by higher priority";
+            }
+            else
+            {
+                dotStatus.Fill = DotInactive;
+                dotStatus.ToolTip = "Inactive";
+            }
         }
 
         private static SolidColorBrush Frozen(Color c)
