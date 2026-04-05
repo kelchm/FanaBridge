@@ -21,6 +21,11 @@ namespace FanaBridge.UI
         private DispatcherTimer _previewTimer;
         private DispatcherTimer _scrollTimer;
         private DisplayLayerCard _selectedCard;
+        private Point _dragStartPoint;
+        private double _dragCardOriginX;
+        private bool _isDragging;
+        private int _dragCurrentIndex;
+        private DisplayLayerCard _dragCard;
 
         private static readonly SolidColorBrush SelectedBorder = Frozen(Color.FromRgb(0x44, 0x88, 0xCC));
         private static readonly SolidColorBrush NormalBorder = Frozen(Color.FromRgb(0x33, 0x33, 0x33));
@@ -103,6 +108,8 @@ namespace FanaBridge.UI
             var card = new DisplayLayerCard { Layer = layer };
             card.SetPriority(index + 1);
             card.MouseLeftButtonDown += Card_MouseDown;
+            card.MouseMove += Card_MouseMove;
+            card.MouseLeftButtonUp += Card_MouseUp;
             layerStack.Children.Add(card);
             UpdateCardPreview(card);
             return card;
@@ -115,7 +122,147 @@ namespace FanaBridge.UI
 
         private void Card_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            SelectCard(sender as DisplayLayerCard);
+            var card = sender as DisplayLayerCard;
+            SelectCard(card);
+            _dragStartPoint = e.GetPosition(layerStack);
+            _dragCard = card;
+            _isDragging = false;
+            _dragCurrentIndex = layerStack.Children.IndexOf(card);
+
+            // Record the card's layout origin for offset calculation
+            var cardTransform = card.TransformToAncestor(layerStack);
+            _dragCardOriginX = cardTransform.Transform(new Point(0, 0)).X;
+
+            card.CaptureMouse();
+        }
+
+        private void Card_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (_dragCard == null || e.LeftButton != MouseButtonState.Pressed) return;
+
+            var pos = e.GetPosition(layerStack);
+            double dx = pos.X - _dragStartPoint.X;
+
+            if (!_isDragging && Math.Abs(dx) > 8)
+            {
+                _isDragging = true;
+                Panel.SetZIndex(_dragCard, 10);
+                _dragCard.Opacity = 0.85;
+                _dragCard.Cursor = Cursors.SizeWE;
+            }
+
+            if (!_isDragging) return;
+
+            // Move the dragged card with the mouse via RenderTransform
+            _dragCard.RenderTransform = new TranslateTransform(dx, 0);
+
+            // Determine where the card would drop based on its visual center
+            double cardCenterX = _dragCardOriginX + dx + _dragCard.ActualWidth / 2;
+            int targetIdx = GetDropIndex(cardCenterX);
+
+            if (targetIdx != _dragCurrentIndex)
+                _dragCurrentIndex = targetIdx;
+
+            // Animate other cards: cards between source and target shift to fill/make room
+            int sourceIdx = layerStack.Children.IndexOf(_dragCard);
+            double cardWidth = _dragCard.ActualWidth + _dragCard.Margin.Left + _dragCard.Margin.Right;
+
+            for (int i = 0; i < layerStack.Children.Count; i++)
+            {
+                var child = layerStack.Children[i] as DisplayLayerCard;
+                if (child == null || child == _dragCard) continue;
+
+                double offset = 0;
+
+                if (_dragCurrentIndex <= sourceIdx)
+                {
+                    // Dragging left: cards between target..source shift right
+                    if (i >= _dragCurrentIndex && i < sourceIdx)
+                        offset = cardWidth;
+                }
+                else
+                {
+                    // Dragging right: cards between source..target shift left
+                    if (i > sourceIdx && i <= _dragCurrentIndex)
+                        offset = -cardWidth;
+                }
+
+                var tt = child.RenderTransform as TranslateTransform;
+                if (tt == null)
+                {
+                    tt = new TranslateTransform();
+                    child.RenderTransform = tt;
+                }
+                tt.BeginAnimation(TranslateTransform.XProperty,
+                    new System.Windows.Media.Animation.DoubleAnimation(
+                        offset, new Duration(TimeSpan.FromMilliseconds(150)))
+                    {
+                        EasingFunction = new System.Windows.Media.Animation.QuadraticEase()
+                    });
+            }
+        }
+
+        private void Card_MouseUp(object sender, MouseButtonEventArgs e)
+        {
+            var card = sender as DisplayLayerCard;
+            card.ReleaseMouseCapture();
+
+            if (_isDragging)
+            {
+                // Commit the reorder
+                int sourceIdx = _settings.Layers.IndexOf(_dragCard.Layer);
+                if (_dragCurrentIndex != sourceIdx)
+                {
+                    _suppressEvents = true;
+                    _settings.Layers.Move(sourceIdx, _dragCurrentIndex);
+                    _suppressEvents = false;
+                    RebuildCardList();
+                    // Re-select the moved card
+                    if (_dragCurrentIndex < layerStack.Children.Count)
+                        SelectCard(layerStack.Children[_dragCurrentIndex] as DisplayLayerCard);
+                    NotifyChanged();
+                }
+                else
+                {
+                    // Reset transforms — no move happened
+                    ResetDragTransforms();
+                }
+
+                _isDragging = false;
+            }
+
+            _dragCard = null;
+        }
+
+        private void ResetDragTransforms()
+        {
+            foreach (DisplayLayerCard child in layerStack.Children)
+            {
+                child.RenderTransform = null;
+                child.Opacity = child.Layer.IsEnabled ? 1.0 : 0.5;
+                child.Cursor = Cursors.Hand;
+                Panel.SetZIndex(child, 0);
+            }
+        }
+
+        private int GetDropIndex(double cardCenterX)
+        {
+            // Use layout slot positions (ignoring RenderTransform) for stable hit testing
+            double slotX = 0;
+            for (int i = 0; i < layerStack.Children.Count; i++)
+            {
+                var child = layerStack.Children[i] as FrameworkElement;
+                if (child == null) continue;
+
+                double slotWidth = child.ActualWidth + child.Margin.Left + child.Margin.Right;
+                double slotCenter = slotX + slotWidth / 2;
+
+                if (cardCenterX < slotCenter)
+                    return i;
+
+                slotX += slotWidth;
+            }
+            return layerStack.Children.Count - 1;
         }
 
         private void SelectCard(DisplayLayerCard card)
