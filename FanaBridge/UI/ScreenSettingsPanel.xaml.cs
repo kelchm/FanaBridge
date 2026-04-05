@@ -15,7 +15,7 @@ namespace FanaBridge.UI
     public partial class ScreenSettingsPanel : UserControl
     {
         private DisplaySettings _settings;
-        private SegmentDisplayController _displayManager;
+        private SegmentDisplayController _displayController;
         private LayerStackEvaluator _previewEvaluator = new LayerStackEvaluator();
         private bool _suppressEvents;
         private DispatcherTimer _previewTimer;
@@ -77,14 +77,14 @@ namespace FanaBridge.UI
         }
 
         public void Bind(DisplaySettings settings, DisplayType displayType = DisplayType.Basic,
-                         SegmentDisplayController displayManager = null)
+                         SegmentDisplayController displayController = null)
         {
             // Unsubscribe from previous settings to avoid leaking handlers
             if (_settings != null)
                 _settings.Layers.CollectionChanged -= Layers_CollectionChanged;
 
             _settings = settings ?? DisplaySettings.CreateDefault();
-            _displayManager = displayManager;
+            _displayController = displayController;
             _suppressEvents = true;
 
             RebuildCardList();
@@ -324,17 +324,17 @@ namespace FanaBridge.UI
             if (card.Layer == null) return;
 
             var pm = FanatecPlugin.Instance?.PluginManager;
-            var evaluator = _displayManager?.Evaluator ?? _previewEvaluator;
+            var evaluator = _displayController?.Evaluator ?? _previewEvaluator;
 
             string text = evaluator.EvaluateLayer(pm, card.Layer);
             text = SegmentRendering.AlignText(text, card.Layer.DisplayFormat);
             card.SetPreviewText(text);
 
             // Status dot
-            if (_displayManager != null)
+            if (_displayController != null)
             {
-                bool isWinning = _displayManager.WinningLayer == card.Layer;
-                bool isActive = _displayManager.IsLayerActive(card.Layer);
+                bool isWinning = _displayController.WinningLayer == card.Layer;
+                bool isActive = _displayController.IsLayerActive(card.Layer);
                 card.SetStatus(card.Layer.IsEnabled, isWinning, isActive);
             }
             else
@@ -351,12 +351,12 @@ namespace FanaBridge.UI
 
             UpdateCardPreviews();
 
-            if (_displayManager != null && !string.IsNullOrEmpty(_displayManager.CurrentText))
+            if (_displayController != null && !string.IsNullOrEmpty(_displayController.CurrentText))
             {
                 // Hardware connected — show what the wheel is actually displaying
-                previewDisplay.SetText(_displayManager.CurrentText);
-                txtActiveLayer.Text = string.IsNullOrEmpty(_displayManager.ActiveScreenName)
-                    ? "" : "Active: " + _displayManager.ActiveScreenName;
+                previewDisplay.SetText(_displayController.CurrentText);
+                txtActiveLayer.Text = string.IsNullOrEmpty(_displayController.ActiveScreenName)
+                    ? "" : "Active: " + _displayController.ActiveScreenName;
             }
             else
             {

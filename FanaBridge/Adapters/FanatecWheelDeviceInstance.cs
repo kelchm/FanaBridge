@@ -40,8 +40,8 @@ namespace FanaBridge.Adapters
 
         private bool _ledModuleInitialized;
 
-        // Display manager — null when the wheel has no display.
-        private SegmentDisplayController _displayManager;
+        // Display controller — null when the wheel has no display.
+        private SegmentDisplayController _displayController;
         private DisplaySettings _displaySettings = DisplaySettings.CreateDefault();
 
         // Track connection state transitions for cleanup on disconnect.
@@ -288,7 +288,7 @@ namespace FanaBridge.Adapters
                 SimHub.Logging.Current.Warn("FanatecWheelDeviceInstance: Failed to restore display settings, using defaults: " + ex.Message);
                 _displaySettings = DisplaySettings.CreateDefault();
             }
-            _displayManager?.UpdateSettings(_displaySettings);
+            _displayController?.UpdateSettings(_displaySettings);
         }
 
         public override void DataUpdate(PluginManager pluginManager, ref GameData data)
@@ -302,7 +302,7 @@ namespace FanaBridge.Adapters
                     "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                     "]: Lost connection");
 
-                _displayManager?.Clear();
+                _displayController?.Clear();
             }
 
             _wasConnected = isConnected;
@@ -325,14 +325,14 @@ namespace FanaBridge.Adapters
             // ── Display (ITM falls back to basic 7-seg until ITM support is implemented) ──
             if (_config.Capabilities.Display != DisplayType.None)
             {
-                if (_displayManager == null)
+                if (_displayController == null)
                 {
-                    _displayManager = new SegmentDisplayController(plugin.SegmentEncoder, _displaySettings);
+                    _displayController = new SegmentDisplayController(plugin.SegmentEncoder, _displaySettings);
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
                 }
 
-                _displayManager.Update(pluginManager, data);
+                _displayController.Update(pluginManager, data);
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
@@ -353,7 +353,7 @@ namespace FanaBridge.Adapters
             SimHub.Logging.Current.Info(
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: End called");
 
-            _displayManager?.Clear();
+            _displayController?.Clear();
             _ledModule?.FinalizeModule();
         }
 
@@ -372,11 +372,11 @@ namespace FanaBridge.Adapters
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 var next = new DynamicButtonAction("Next Screen",
-                    (pm, inputName) => _displayManager?.NextScreen());
+                    (pm, inputName) => _displayController?.NextScreen());
                 actions.Add(next);
 
                 var prev = new DynamicButtonAction("Previous Screen",
-                    (pm, inputName) => _displayManager?.PreviousScreen());
+                    (pm, inputName) => _displayController?.PreviousScreen());
                 actions.Add(prev);
             }
 
@@ -400,18 +400,18 @@ namespace FanaBridge.Adapters
             }
 
             // Screen settings tab (only for wheels with a display).
-            // _displayManager may be null here if DataUpdate() hasn't run yet;
+            // _displayController may be null here if DataUpdate() hasn't run yet;
             // ScreenSettingsPanel.Bind accepts null and falls back to preview-only mode.
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 var screenPanel = new ScreenSettingsPanel();
-                screenPanel.Bind(_displaySettings, _config.Capabilities.Display, _displayManager);
+                screenPanel.Bind(_displaySettings, _config.Capabilities.Display, _displayController);
                 screenPanel.SettingsChanged += () =>
                 {
                     // Sync back to JObject for persistence
                     _customSettings["layers"] = JArray.FromObject(_displaySettings.Layers);
                     _customSettings["scrollSpeedMs"] = _displaySettings.ScrollSpeedMs;
-                    _displayManager?.UpdateSettings(_displaySettings);
+                    _displayController?.UpdateSettings(_displaySettings);
                 };
 
                 yield return new DeviceSettingControl(

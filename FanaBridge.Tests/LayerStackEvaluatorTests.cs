@@ -1,174 +1,12 @@
-using System.Collections.Generic;
-using System.Linq;
+using System;
 using FanaBridge.Adapters;
 using Xunit;
 
 namespace FanaBridge.Tests
 {
-    public class DisplayManagerTests
+    public class LayerStackEvaluatorTests
     {
-        // ── SegmentRendering.TruncateTo3 ────────────────────────────────
-
-        [Theory]
-        [InlineData("123", "123")]
-        [InlineData("12345", "123")]
-        [InlineData("", "")]
-        [InlineData("AB", "AB")]
-        public void TruncateTo3_TruncatesAtThreeDisplayChars(string input, string expected)
-        {
-            Assert.Equal(expected, SegmentRendering.TruncateTo3(input));
-        }
-
-        [Fact]
-        public void TruncateTo3_DotsDoNotCountAsDisplayChars()
-        {
-            Assert.Equal("1.23", SegmentRendering.TruncateTo3("1.234"));
-        }
-
-        [Fact]
-        public void TruncateTo3_NullReturnsEmpty()
-        {
-            Assert.Equal("", SegmentRendering.TruncateTo3(null));
-        }
-
-        // ── MigrateFromLegacy ───────────────────────────────────────────
-
-        [Fact]
-        public void MigrateFromLegacy_Gear_HasGearConstantLayer()
-        {
-            var settings = DisplaySettings.MigrateFromLegacy("Gear");
-            var gearLayer = settings.Layers.FirstOrDefault(l =>
-                l.CatalogKey == "Gear" && l.Mode == DisplayLayerMode.Constant && l.IsEnabled);
-            Assert.NotNull(gearLayer);
-        }
-
-        [Fact]
-        public void MigrateFromLegacy_Speed_HasSpeedConstantLayer()
-        {
-            var settings = DisplaySettings.MigrateFromLegacy("Speed");
-            var speedLayer = settings.Layers.FirstOrDefault(l =>
-                l.CatalogKey == "Speed" && l.Mode == DisplayLayerMode.Constant && l.IsEnabled);
-            Assert.NotNull(speedLayer);
-        }
-
-        [Fact]
-        public void MigrateFromLegacy_GearAndSpeed_HasSpeedAndGearChangeOverlay()
-        {
-            var settings = DisplaySettings.MigrateFromLegacy("GearAndSpeed");
-            var speedLayer = settings.Layers.FirstOrDefault(l =>
-                l.CatalogKey == "Speed" && l.IsEnabled);
-            var gearOverlay = settings.Layers.FirstOrDefault(l =>
-                l.CatalogKey == "GearChange" && l.Mode == DisplayLayerMode.OnChange && l.IsEnabled);
-            Assert.NotNull(speedLayer);
-            Assert.NotNull(gearOverlay);
-        }
-
-        [Fact]
-        public void MigrateFromLegacy_UnknownDefaultsToGear()
-        {
-            var settings = DisplaySettings.MigrateFromLegacy("SomethingWeird");
-            var gearLayer = settings.Layers.FirstOrDefault(l =>
-                l.CatalogKey == "Gear" && l.IsEnabled);
-            Assert.NotNull(gearLayer);
-        }
-
-        // ── CreateDefault ───────────────────────────────────────────────
-
-        [Fact]
-        public void CreateDefault_HasLayers()
-        {
-            var settings = DisplaySettings.CreateDefault();
-            Assert.True(settings.Layers.Count > 0);
-            Assert.Contains(settings.Layers, l => l.CatalogKey == "Gear");
-        }
-
-        // ── LayerCatalog ────────────────────────────────────────────────
-
-        [Fact]
-        public void LayerCatalog_HasBothConstantAndConditionalEntries()
-        {
-            Assert.Contains(LayerCatalog.All, l => l.Mode == DisplayLayerMode.Constant);
-            Assert.Contains(LayerCatalog.All, l => l.Mode == DisplayLayerMode.OnChange);
-            Assert.Contains(LayerCatalog.All, l => l.Mode == DisplayLayerMode.WhileTrue);
-        }
-
-        [Fact]
-        public void LayerCatalog_CreateFromCatalog_ReturnsCopy()
-        {
-            var a = LayerCatalog.CreateFromCatalog("Gear");
-            var b = LayerCatalog.CreateFromCatalog("Gear");
-            Assert.NotSame(a, b);
-            Assert.Equal(a.Name, b.Name);
-            Assert.Equal(a.CatalogKey, b.CatalogKey);
-            Assert.True(a.IsEnabled);
-            Assert.True(b.IsEnabled);
-        }
-
-        [Fact]
-        public void LayerCatalog_FindByKey_ReturnsNull_ForUnknown()
-        {
-            Assert.Null(LayerCatalog.FindByKey("DoesNotExist"));
-        }
-
-        // ── DisplayLayer ────────────────────────────────────────────────
-
-        [Fact]
-        public void DisplayLayer_IsGearFormat_MatchesEnum()
-        {
-            var layer = new DisplayLayer { DisplayFormat = DisplayFormat.Gear };
-            Assert.True(layer.IsGearFormat);
-            layer.DisplayFormat = DisplayFormat.Number;
-            Assert.False(layer.IsGearFormat);
-        }
-
-        [Fact]
-        public void DisplayLayer_ModeLabel_ReturnsCorrectStrings()
-        {
-            var layer = new DisplayLayer { Mode = DisplayLayerMode.Constant };
-            Assert.Equal("ALWAYS", layer.ModeLabel);
-            layer.Mode = DisplayLayerMode.OnChange;
-            Assert.Equal("ON CHANGE", layer.ModeLabel);
-            layer.Mode = DisplayLayerMode.WhileTrue;
-            Assert.Equal("WHILE TRUE", layer.ModeLabel);
-        }
-
-        [Fact]
-        public void DisplayLayer_TimingLabel_OnlyForOnChange()
-        {
-            var layer = new DisplayLayer { Mode = DisplayLayerMode.OnChange, DurationMs = 2000 };
-            Assert.Equal("2s", layer.TimingLabel);
-            layer.Mode = DisplayLayerMode.Constant;
-            Assert.Equal("", layer.TimingLabel);
-        }
-
-        [Fact]
-        public void DisplayLayer_PropertyChanged_Fires()
-        {
-            var layer = new DisplayLayer();
-            string changedProp = null;
-            layer.PropertyChanged += (s, e) => changedProp = e.PropertyName;
-            layer.Name = "Test";
-            Assert.Equal("Name", changedProp);
-        }
-
-        // ── SegmentRendering.EncodeText ─────────────────────────────────
-
-        [Fact]
-        public void EncodeText_DotFoldsIntoPredecessor()
-        {
-            var encoded = SegmentRendering.EncodeText("1.2");
-            Assert.Equal(2, encoded.Count);
-            Assert.True((encoded[0] & 0x80) != 0); // dot bit set on first char
-        }
-
-        [Fact]
-        public void EncodeText_EmptyReturnsEmpty()
-        {
-            Assert.Empty(SegmentRendering.EncodeText(""));
-            Assert.Empty(SegmentRendering.EncodeText(null));
-        }
-
-        // ── LayerStackEvaluator ─────────────────────────────────────────
+        // ── Evaluate ───────────────────────────────────────────────────
 
         [Fact]
         public void Evaluate_NoLayers_ReturnsEmpty()
@@ -251,7 +89,7 @@ namespace FanaBridge.Tests
             Assert.Equal("", evaluator.EvaluateLayer(null, null));
         }
 
-        // ── LayerStackEvaluator static helpers ──────────────────────────
+        // ── IsTruthy ───────────────────────────────────────────────────
 
         [Theory]
         [InlineData(true, true)]
@@ -272,6 +110,8 @@ namespace FanaBridge.Tests
         {
             Assert.Equal(expected, LayerStackEvaluator.IsTruthy(value));
         }
+
+        // ── FormatValue ────────────────────────────────────────────────
 
         [Fact]
         public void FormatValue_Gear_MapsCorrectly()
@@ -298,28 +138,28 @@ namespace FanaBridge.Tests
         [Fact]
         public void FormatValue_Time_DefaultFormat()
         {
-            var ts = System.TimeSpan.FromSeconds(65.3);
+            var ts = TimeSpan.FromSeconds(65.3);
             Assert.Equal("05.3", LayerStackEvaluator.FormatValue(ts, DisplayFormat.Time));
         }
 
         [Fact]
         public void FormatValue_Time_MinutesSeconds()
         {
-            var ts = System.TimeSpan.FromSeconds(65.3);
+            var ts = TimeSpan.FromSeconds(65.3);
             Assert.Equal("1.05", LayerStackEvaluator.FormatValue(ts, DisplayFormat.Time, @"m\.ss"));
         }
 
         [Fact]
         public void FormatValue_Time_MinutesSecondsTenths()
         {
-            var ts = System.TimeSpan.FromSeconds(65.3);
+            var ts = TimeSpan.FromSeconds(65.3);
             Assert.Equal("1.05.3", LayerStackEvaluator.FormatValue(ts, DisplayFormat.Time, @"m\.ss\.f"));
         }
 
         [Fact]
         public void FormatValue_Time_InvalidFormat_FallsBack()
         {
-            var ts = System.TimeSpan.FromSeconds(5);
+            var ts = TimeSpan.FromSeconds(5);
             // Invalid format should fall back to default ss.f
             Assert.Equal("05.0", LayerStackEvaluator.FormatValue(ts, DisplayFormat.Time, "zzz_invalid"));
         }
@@ -330,7 +170,7 @@ namespace FanaBridge.Tests
             Assert.Equal("4.2", LayerStackEvaluator.FormatValue(4.2, DisplayFormat.Time));
         }
 
-        // ── LayerStackEvaluator – priority ordering ────────────────────
+        // ── Priority ordering ──────────────────────────────────────────
 
         [Fact]
         public void Evaluate_ConstantBeforeOnChange_ConstantWins()
@@ -353,7 +193,7 @@ namespace FanaBridge.Tests
             settings.Layers.Add(constant);  // index 0 – highest priority
             settings.Layers.Add(onChange);   // index 1
 
-            evaluator.ForceActiveUntil(onChange, System.DateTime.UtcNow.AddSeconds(10));
+            evaluator.ForceActiveUntil(onChange, DateTime.UtcNow.AddSeconds(10));
             var result = evaluator.Evaluate(null, true, settings);
 
             Assert.Same(constant, result.Winner);
@@ -381,7 +221,7 @@ namespace FanaBridge.Tests
             settings.Layers.Add(onChange);   // index 0 – highest priority
             settings.Layers.Add(constant);   // index 1
 
-            evaluator.ForceActiveUntil(onChange, System.DateTime.UtcNow.AddSeconds(10));
+            evaluator.ForceActiveUntil(onChange, DateTime.UtcNow.AddSeconds(10));
             var result = evaluator.Evaluate(null, true, settings);
 
             Assert.Same(onChange, result.Winner);
@@ -503,7 +343,7 @@ namespace FanaBridge.Tests
             settings.Layers.Add(c2);       // index 1
             settings.Layers.Add(onChange);  // index 2 – lowest
 
-            evaluator.ForceActiveUntil(onChange, System.DateTime.UtcNow.AddSeconds(10));
+            evaluator.ForceActiveUntil(onChange, DateTime.UtcNow.AddSeconds(10));
 
             // Cycle to C2 — constant still wins over lower-priority overlay
             evaluator.NextScreen();
@@ -540,7 +380,7 @@ namespace FanaBridge.Tests
             settings.Layers.Add(onChange);  // index 1
             settings.Layers.Add(c2);       // index 2
 
-            evaluator.ForceActiveUntil(onChange, System.DateTime.UtcNow.AddSeconds(10));
+            evaluator.ForceActiveUntil(onChange, DateTime.UtcNow.AddSeconds(10));
 
             // C1 is at index 0 (highest), so constant still wins
             var result = evaluator.Evaluate(null, true, settings);
