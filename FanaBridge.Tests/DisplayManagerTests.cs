@@ -294,5 +294,222 @@ namespace FanaBridge.Tests
             Assert.Equal("4.2", LayerStackEvaluator.FormatValue(4.2, DisplayFormat.Decimal));
             Assert.Equal("4.0", LayerStackEvaluator.FormatValue(4.0, DisplayFormat.Decimal));
         }
+
+        // ── LayerStackEvaluator – priority ordering ────────────────────
+
+        [Fact]
+        public void Evaluate_ConstantBeforeOnChange_ConstantWins()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+
+            var constant = new DisplayLayer
+            {
+                Name = "Always", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "WIN",
+                ShowWhenRunning = true, IsEnabled = true,
+            };
+            var onChange = new DisplayLayer
+            {
+                Name = "Overlay", Mode = DisplayLayerMode.OnChange,
+                Source = DisplaySource.FixedText, FixedText = "OVR",
+                WatchProperty = "Prop", DurationMs = 5000, IsEnabled = true,
+            };
+            settings.Layers.Add(constant);  // index 0 – highest priority
+            settings.Layers.Add(onChange);   // index 1
+
+            evaluator.ForceActiveUntil(onChange, System.DateTime.UtcNow.AddSeconds(10));
+            var result = evaluator.Evaluate(null, true, settings);
+
+            Assert.Same(constant, result.Winner);
+            Assert.Equal("WIN", result.Text);
+        }
+
+        [Fact]
+        public void Evaluate_OnChangeBeforeConstant_OnChangeWins()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+
+            var onChange = new DisplayLayer
+            {
+                Name = "Overlay", Mode = DisplayLayerMode.OnChange,
+                Source = DisplaySource.FixedText, FixedText = "OVR",
+                WatchProperty = "Prop", DurationMs = 5000, IsEnabled = true,
+            };
+            var constant = new DisplayLayer
+            {
+                Name = "Always", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "BAS",
+                ShowWhenRunning = true, IsEnabled = true,
+            };
+            settings.Layers.Add(onChange);   // index 0 – highest priority
+            settings.Layers.Add(constant);   // index 1
+
+            evaluator.ForceActiveUntil(onChange, System.DateTime.UtcNow.AddSeconds(10));
+            var result = evaluator.Evaluate(null, true, settings);
+
+            Assert.Same(onChange, result.Winner);
+            Assert.Equal("OVR", result.Text);
+        }
+
+        [Fact]
+        public void Evaluate_OnChangeInactive_ConstantWinsRegardlessOfPosition()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+
+            var onChange = new DisplayLayer
+            {
+                Name = "Overlay", Mode = DisplayLayerMode.OnChange,
+                Source = DisplaySource.FixedText, FixedText = "OVR",
+                WatchProperty = "Prop", DurationMs = 5000, IsEnabled = true,
+            };
+            var constant = new DisplayLayer
+            {
+                Name = "Always", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "BAS",
+                ShowWhenRunning = true, IsEnabled = true,
+            };
+            settings.Layers.Add(onChange);   // index 0 – but not active
+            settings.Layers.Add(constant);   // index 1
+
+            // Don't force OnChange active — it should be inactive
+            var result = evaluator.Evaluate(null, true, settings);
+
+            Assert.Same(constant, result.Winner);
+            Assert.Equal("BAS", result.Text);
+        }
+
+        [Fact]
+        public void Evaluate_TwoConstants_CycleSelectsSecond()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+
+            var first = new DisplayLayer
+            {
+                Name = "C1", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "AA",
+                ShowWhenIdle = true, IsEnabled = true,
+            };
+            var second = new DisplayLayer
+            {
+                Name = "C2", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "BB",
+                ShowWhenIdle = true, IsEnabled = true,
+            };
+            settings.Layers.Add(first);
+            settings.Layers.Add(second);
+
+            // Default cycle index is 0 → first constant
+            var result = evaluator.Evaluate(null, false, settings);
+            Assert.Equal("AA", result.Text);
+
+            // Advance to second
+            evaluator.NextScreen();
+            result = evaluator.Evaluate(null, false, settings);
+            Assert.Equal("BB", result.Text);
+        }
+
+        [Fact]
+        public void Evaluate_ConstantCycle_WrapsAround()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+
+            var first = new DisplayLayer
+            {
+                Name = "C1", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "AA",
+                ShowWhenIdle = true, IsEnabled = true,
+            };
+            var second = new DisplayLayer
+            {
+                Name = "C2", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "BB",
+                ShowWhenIdle = true, IsEnabled = true,
+            };
+            settings.Layers.Add(first);
+            settings.Layers.Add(second);
+
+            // Advance past the end — should wrap back to first
+            evaluator.NextScreen();
+            evaluator.NextScreen();
+            var result = evaluator.Evaluate(null, false, settings);
+            Assert.Equal("AA", result.Text);
+        }
+
+        [Fact]
+        public void Evaluate_HighPriorityConstant_BeatsLowerOverlay_WithCycling()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+
+            var c1 = new DisplayLayer
+            {
+                Name = "C1", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "C1",
+                ShowWhenRunning = true, IsEnabled = true,
+            };
+            var c2 = new DisplayLayer
+            {
+                Name = "C2", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "C2",
+                ShowWhenRunning = true, IsEnabled = true,
+            };
+            var onChange = new DisplayLayer
+            {
+                Name = "Overlay", Mode = DisplayLayerMode.OnChange,
+                Source = DisplaySource.FixedText, FixedText = "OVR",
+                WatchProperty = "Prop", DurationMs = 5000, IsEnabled = true,
+            };
+            settings.Layers.Add(c1);       // index 0 – highest
+            settings.Layers.Add(c2);       // index 1
+            settings.Layers.Add(onChange);  // index 2 – lowest
+
+            evaluator.ForceActiveUntil(onChange, System.DateTime.UtcNow.AddSeconds(10));
+
+            // Cycle to C2 — constant still wins over lower-priority overlay
+            evaluator.NextScreen();
+            var result = evaluator.Evaluate(null, true, settings);
+            Assert.Equal("C2", result.Text);
+            Assert.Contains(onChange, result.ActiveLayers);
+        }
+
+        [Fact]
+        public void Evaluate_OverlayBetweenConstants_OverlayWinsWhenActive()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+
+            var c1 = new DisplayLayer
+            {
+                Name = "C1", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "C1",
+                ShowWhenRunning = true, IsEnabled = true,
+            };
+            var onChange = new DisplayLayer
+            {
+                Name = "Overlay", Mode = DisplayLayerMode.OnChange,
+                Source = DisplaySource.FixedText, FixedText = "OVR",
+                WatchProperty = "Prop", DurationMs = 5000, IsEnabled = true,
+            };
+            var c2 = new DisplayLayer
+            {
+                Name = "C2", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "C2",
+                ShowWhenRunning = true, IsEnabled = true,
+            };
+            settings.Layers.Add(c1);       // index 0
+            settings.Layers.Add(onChange);  // index 1
+            settings.Layers.Add(c2);       // index 2
+
+            evaluator.ForceActiveUntil(onChange, System.DateTime.UtcNow.AddSeconds(10));
+
+            // C1 is at index 0 (highest), so constant still wins
+            var result = evaluator.Evaluate(null, true, settings);
+            Assert.Equal("C1", result.Text);
+        }
     }
 }

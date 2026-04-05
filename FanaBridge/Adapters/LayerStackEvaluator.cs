@@ -63,6 +63,15 @@ namespace FanaBridge.Adapters
         public void PreviousScreen() =>
             System.Threading.Interlocked.Decrement(ref _constantCycleIndex);
 
+        /// <summary>Pre-seeds layer state so the layer is treated as active
+        /// until <paramref name="until"/>. Test-only seam.</summary>
+        internal void ForceActiveUntil(DisplayLayer layer, DateTime until)
+        {
+            var state = GetState(layer);
+            state.LastValue = "";          // non-null so EvalOnChange doesn't suppress
+            state.ActiveUntil = until;
+        }
+
         /// <summary>
         /// Evaluates the full layer stack and returns the winning layer with its
         /// formatted (but not aligned) display text. Called once per frame.
@@ -73,12 +82,16 @@ namespace FanaBridge.Adapters
             if (settings == null) return LayerStackResult.Empty;
 
             DisplayLayer winner = null;
+            int winnerIndex = int.MaxValue;
             string winnerText = null;
             var active = new HashSet<DisplayLayer>();
             var activeConstants = new List<DisplayLayer>();
+            int firstConstantIndex = -1;
 
+            int index = -1;
             foreach (var layer in settings.Layers)
             {
+                index++;
                 if (!layer.IsEnabled) continue;
 
                 var state = GetState(layer);
@@ -92,6 +105,7 @@ namespace FanaBridge.Adapters
                             if (winner == null)
                             {
                                 winner = layer;
+                                winnerIndex = index;
                                 winnerText = GetDisplayText(pm, layer, state);
                             }
                         }
@@ -104,6 +118,7 @@ namespace FanaBridge.Adapters
                             if (winner == null)
                             {
                                 winner = layer;
+                                winnerIndex = index;
                                 winnerText = GetDisplayText(pm, layer, state);
                             }
                         }
@@ -119,6 +134,7 @@ namespace FanaBridge.Adapters
                                 if (winner == null)
                                 {
                                     winner = layer;
+                                    winnerIndex = index;
                                     winnerText = exprText;
                                 }
                             }
@@ -129,7 +145,11 @@ namespace FanaBridge.Adapters
                         bool visible = (gameRunning && layer.ShowWhenRunning)
                                     || (!gameRunning && layer.ShowWhenIdle);
                         if (visible)
+                        {
                             activeConstants.Add(layer);
+                            if (firstConstantIndex < 0)
+                                firstConstantIndex = index;
+                        }
                         break;
                 }
             }
@@ -138,18 +158,23 @@ namespace FanaBridge.Adapters
             foreach (var c in activeConstants)
                 active.Add(c);
 
-            // If no overlay won, use the cycled constant layer.
-            if (winner == null && activeConstants.Count > 0)
+            // Pick the cycled constant representative.
+            if (activeConstants.Count > 0)
             {
                 int idx = _constantCycleIndex;
                 idx = ((idx % activeConstants.Count) + activeConstants.Count)
                       % activeConstants.Count;
                 System.Threading.Interlocked.Exchange(ref _constantCycleIndex, idx);
 
-                winner = activeConstants[idx];
-                var state = GetState(winner);
-                EvalPropertyValue(pm, winner, state);
-                winnerText = GetDisplayText(pm, winner, state);
+                // The cycled constant wins if it has higher priority (lower
+                // position) than the best overlay, or if no overlay is active.
+                if (firstConstantIndex < winnerIndex)
+                {
+                    winner = activeConstants[idx];
+                    var cState = GetState(winner);
+                    EvalPropertyValue(pm, winner, cState);
+                    winnerText = GetDisplayText(pm, winner, cState);
+                }
             }
 
             return new LayerStackResult(winner, winnerText, active);
