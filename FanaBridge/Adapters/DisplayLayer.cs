@@ -154,7 +154,7 @@ namespace FanaBridge.Adapters
             set { if (_expression != value) { _expression = value; OnPropertyChanged(); } }
         }
 
-        /// <summary>Scroll speed in ms per step (Text format only). 0 = no scroll.</summary>
+        /// <summary>Scroll speed in ms per step (Text format only). 0 = use global setting.</summary>
         public int ScrollSpeedMs
         {
             get => _scrollSpeedMs;

@@ -235,13 +235,8 @@ namespace FanaBridge.UI
                 int sourceIdx = _settings.Layers.IndexOf(_dragCard.Layer);
                 if (_dragCurrentIndex != sourceIdx)
                 {
-                    _suppressEvents = true;
+                    // Move triggers CollectionChanged which rebuilds cards and preserves selection.
                     _settings.Layers.Move(sourceIdx, _dragCurrentIndex);
-                    _suppressEvents = false;
-                    RebuildCardList();
-                    // Re-select the moved card
-                    if (_dragCurrentIndex < layerStack.Children.Count)
-                        SelectCard(layerStack.Children[_dragCurrentIndex] as DisplayLayerCard);
                     NotifyChanged();
                 }
                 else
