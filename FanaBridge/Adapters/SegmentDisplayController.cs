@@ -102,9 +102,18 @@ namespace FanaBridge.Adapters
             }
             else
             {
-                string aligned = SegmentRendering.AlignText(result.Text ?? "   ",
-                                                             winner.DisplayFormat);
-                SendTextOrScroll(aligned, winner.ScrollSpeedMs);
+                var overflow = SegmentRendering.ResolveOverflow(winner.Overflow, winner.DisplayFormat);
+                string text = SegmentRendering.ApplyOverflow(result.Text ?? "   ", overflow);
+                string aligned = SegmentRendering.AlignText(text, winner.DisplayFormat);
+                if (overflow != OverflowStrategy.Scroll)
+                {
+                    ResetScroll();
+                    SendText(aligned);
+                }
+                else
+                {
+                    SendTextOrScroll(aligned, winner.ScrollSpeedMs);
+                }
             }
         }
 

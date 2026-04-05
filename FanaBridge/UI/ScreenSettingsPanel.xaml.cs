@@ -327,6 +327,8 @@ namespace FanaBridge.UI
             var evaluator = _displayController?.Evaluator ?? _previewEvaluator;
 
             string text = evaluator.EvaluateLayer(pm, card.Layer);
+            var overflow = SegmentRendering.ResolveOverflow(card.Layer.Overflow, card.Layer.DisplayFormat);
+            text = SegmentRendering.ApplyOverflow(text, overflow);
             text = SegmentRendering.AlignText(text, card.Layer.DisplayFormat);
             card.SetPreviewText(text);
 
@@ -370,9 +372,13 @@ namespace FanaBridge.UI
                 }
 
                 var result = _previewEvaluator.Evaluate(pm, gameRunning, _settings);
-                string text = result.Winner != null
-                    ? SegmentRendering.AlignText(result.Text, result.Winner.DisplayFormat)
-                    : "";
+                string text = "";
+                if (result.Winner != null)
+                {
+                    var overflow = SegmentRendering.ResolveOverflow(result.Winner.Overflow, result.Winner.DisplayFormat);
+                    text = SegmentRendering.ApplyOverflow(result.Text, overflow);
+                    text = SegmentRendering.AlignText(text, result.Winner.DisplayFormat);
+                }
                 string name = result.Winner?.Name ?? "";
 
                 previewDisplay.SetText(text);
@@ -425,7 +431,10 @@ namespace FanaBridge.UI
             bool isTime = layer.DisplayFormat == DisplayFormat.Time;
             bool isGear = layer.DisplayFormat == DisplayFormat.Gear;
             panelTimeFormat.Visibility = panelDisplayFormat.Visibility == Visibility.Visible && isTime ? Visibility.Visible : Visibility.Collapsed;
-            panelScrollSpeed.Visibility = (isCustom && !isGear) ? Visibility.Visible : Visibility.Collapsed;
+            bool showOverflow = isCustom && !isGear;
+            panelOverflow.Visibility = showOverflow ? Visibility.Visible : Visibility.Collapsed;
+            var resolvedOverflow = SegmentRendering.ResolveOverflow(layer.Overflow, layer.DisplayFormat);
+            panelScrollSpeed.Visibility = (showOverflow && resolvedOverflow == OverflowStrategy.Scroll) ? Visibility.Visible : Visibility.Collapsed;
             panelShowWhen.Visibility = (isConstant && !isExpressionMode) ? Visibility.Visible : Visibility.Collapsed;
 
             // Populate fields
@@ -439,6 +448,7 @@ namespace FanaBridge.UI
             txtExpression.Text = layer.Expression ?? "";
             SelectComboByTag(cmbDisplayFormat, layer.DisplayFormat.ToString());
             SelectComboByTag(cmbTimeFormat, layer.TimeFormat ?? @"ss\.f");
+            SelectComboByTag(cmbOverflow, layer.Overflow.ToString());
             SelectComboByTag(cmbLayerScrollSpeed, layer.ScrollSpeedMs.ToString());
             chkRunning.IsChecked = layer.ShowWhenRunning;
             chkIdle.IsChecked = layer.ShowWhenIdle;
@@ -576,6 +586,7 @@ namespace FanaBridge.UI
                     SelectedLayer.PropertyName = template.PropertyName;
                     SelectedLayer.DisplayFormat = template.DisplayFormat;
                     SelectedLayer.TimeFormat = template.TimeFormat;
+                    SelectedLayer.Overflow = template.Overflow;
                     SelectedLayer.FixedText = template.FixedText;
                     SelectedLayer.Expression = template.Expression;
                     SelectedLayer.ScrollSpeedMs = template.ScrollSpeedMs;
@@ -683,6 +694,19 @@ namespace FanaBridge.UI
             if (tag != null)
             {
                 SelectedLayer.TimeFormat = tag;
+                NotifyChanged();
+            }
+        }
+
+        private void CmbOverflow_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            var tag = (cmbOverflow.SelectedItem as ComboBoxItem)?.Tag as string;
+            OverflowStrategy overflow;
+            if (tag != null && Enum.TryParse(tag, out overflow))
+            {
+                SelectedLayer.Overflow = overflow;
+                UpdateEditPanel();
                 NotifyChanged();
             }
         }

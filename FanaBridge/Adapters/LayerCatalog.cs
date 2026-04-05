@@ -171,6 +171,7 @@ namespace FanaBridge.Adapters
                 PropertyName = t.PropertyName,
                 DisplayFormat = t.DisplayFormat,
                 TimeFormat = t.TimeFormat,
+                Overflow = t.Overflow,
                 FixedText = t.FixedText,
                 Expression = t.Expression,
                 WatchProperty = t.WatchProperty,

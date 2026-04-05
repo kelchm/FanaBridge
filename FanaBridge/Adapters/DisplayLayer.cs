@@ -65,6 +65,25 @@ namespace FanaBridge.Adapters
     }
 
     /// <summary>
+    /// What happens when formatted text exceeds the 3-segment display capacity.
+    /// </summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public enum OverflowStrategy
+    {
+        /// <summary>Resolve automatically based on DisplayFormat: Text scrolls, Time truncates left, others truncate right.</summary>
+        Auto,
+
+        /// <summary>Text scrolls across the display with configurable speed.</summary>
+        Scroll,
+
+        /// <summary>Drop leftmost segments, keep rightmost. E.g. "1.05.3" becomes "05.3".</summary>
+        TruncateLeft,
+
+        /// <summary>Drop rightmost segments, keep leftmost. E.g. "1.05.3" becomes "1.05".</summary>
+        TruncateRight,
+    }
+
+    /// <summary>
     /// A single layer in the display stack. Layers are evaluated top-to-bottom;
     /// the first active layer wins. Constant layers cycle among themselves.
     /// </summary>
@@ -80,6 +99,7 @@ namespace FanaBridge.Adapters
         private string _propertyName = "";
         private DisplayFormat _displayFormat = DisplayFormat.Number;
         private string _timeFormat = @"ss\.f";
+        private OverflowStrategy _overflow = OverflowStrategy.Auto;
         private string _fixedText = "";
         private string _expression = "";
         private int _scrollSpeedMs = 250;
@@ -146,6 +166,13 @@ namespace FanaBridge.Adapters
         {
             get => _timeFormat;
             set { if (_timeFormat != value) { _timeFormat = value; OnPropertyChanged(); } }
+        }
+
+        /// <summary>What happens when content exceeds the 3-segment display. Default Auto.</summary>
+        public OverflowStrategy Overflow
+        {
+            get => _overflow;
+            set { if (_overflow != value) { _overflow = value; OnPropertyChanged(); } }
         }
 
         /// <summary>Fixed text when Source is FixedText.</summary>

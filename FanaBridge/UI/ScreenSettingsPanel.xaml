@@ -212,6 +212,20 @@
                                     </ComboBox>
                                 </StackPanel>
 
+                                <!-- Overflow strategy -->
+                                <StackPanel x:Name="panelOverflow" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Overflow" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="cmbOverflow" Width="140"
+                                              SelectionChanged="CmbOverflow_SelectionChanged">
+                                        <ComboBoxItem Content="Auto" Tag="Auto" />
+                                        <ComboBoxItem Content="Scroll" Tag="Scroll" />
+                                        <ComboBoxItem Content="Truncate left" Tag="TruncateLeft" />
+                                        <ComboBoxItem Content="Truncate right" Tag="TruncateRight" />
+                                    </ComboBox>
+                                </StackPanel>
+
                                 <!-- Scroll speed -->
                                 <StackPanel x:Name="panelScrollSpeed" Orientation="Horizontal"
                                             Margin="0,0,0,6" Visibility="Collapsed">

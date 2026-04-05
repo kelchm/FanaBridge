@@ -40,17 +40,59 @@ namespace FanaBridge.Adapters
         /// Truncates text to fit 3 display segments. Dots and commas fold into the
         /// preceding segment and do not count toward the limit.
         /// </summary>
-        internal static string TruncateTo3(string text)
+        internal static string TruncateTo3(string text, OverflowStrategy overflow = OverflowStrategy.TruncateRight)
         {
             if (string.IsNullOrEmpty(text)) return "";
-            int chars = 0, cutoff = text.Length;
+
+            // Build a map of segment boundaries: each entry is the start index
+            // of a segment, including any trailing dot/comma that folds into it.
+            var segments = new List<int>();
             for (int i = 0; i < text.Length; i++)
             {
-                if ((text[i] == '.' || text[i] == ',') && chars > 0) continue;
-                chars++;
-                if (chars > 3) { cutoff = i; break; }
+                if ((text[i] == '.' || text[i] == ',') && segments.Count > 0)
+                    continue; // folds into previous segment
+                segments.Add(i);
             }
-            return text.Substring(0, cutoff);
+            if (segments.Count <= 3) return text;
+
+            if (overflow == OverflowStrategy.TruncateLeft)
+            {
+                // Keep the last 3 segments
+                return text.Substring(segments[segments.Count - 3]);
+            }
+            else
+            {
+                // Keep the first 3 segments — end is the start of segment 4
+                return text.Substring(0, segments[3]);
+            }
+        }
+
+        /// <summary>
+        /// Resolves <see cref="OverflowStrategy.Auto"/> to a concrete strategy
+        /// based on the display format.
+        /// </summary>
+        internal static OverflowStrategy ResolveOverflow(OverflowStrategy overflow, DisplayFormat format)
+        {
+            if (overflow != OverflowStrategy.Auto) return overflow;
+            return format == DisplayFormat.Text ? OverflowStrategy.Scroll
+                 : format == DisplayFormat.Time ? OverflowStrategy.TruncateLeft
+                 : OverflowStrategy.TruncateRight;
+        }
+
+        /// <summary>
+        /// Applies the overflow strategy to text that may exceed 3 segments.
+        /// Returns the text unchanged for Scroll (the controller handles scrolling).
+        /// </summary>
+        internal static string ApplyOverflow(string text, OverflowStrategy overflow)
+        {
+            switch (overflow)
+            {
+                case OverflowStrategy.TruncateLeft:
+                case OverflowStrategy.TruncateRight:
+                    return TruncateTo3(text, overflow);
+                default:
+                    return text;
+            }
         }
 
         /// <summary>
