@@ -13,10 +13,10 @@
                                Foreground="White" TextTrimming="CharacterEllipsis"
                                VerticalAlignment="Center" Margin="0,0,22,0" />
                     <Border x:Name="badgePriority" Background="#333" CornerRadius="2"
-                            Width="16" Height="16" HorizontalAlignment="Right"
+                            MinWidth="16" Height="16" Padding="3,0" HorizontalAlignment="Right"
                             VerticalAlignment="Center">
                         <TextBlock x:Name="txtPriority" FontSize="9" FontWeight="Bold"
-                                   Foreground="#888" HorizontalAlignment="Center"
+                                   Foreground="#888" HorizontalAlignment="Center" TextAlignment="Center"
                                    VerticalAlignment="Center" />
                     </Border>
                 </Grid>

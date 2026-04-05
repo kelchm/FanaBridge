@@ -8,7 +8,6 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using FanaBridge.Adapters;
 using FanaBridge.Profiles;
-using SimHub.Plugins.UI;
 using SHPropertiesPicker = SimHub.Plugins.OutputPlugins.Dash.WPFUI.PropertiesPicker;
 
 namespace FanaBridge.UI
@@ -691,7 +690,8 @@ namespace FanaBridge.UI
         {
             if (_suppressEvents || SelectedLayer == null) return;
             var tag = (cmbDuration.SelectedItem as ComboBoxItem)?.Tag as string;
-            if (tag != null) { SelectedLayer.DurationMs = int.Parse(tag); NotifyChanged(); }
+            int val;
+            if (tag != null && int.TryParse(tag, out val)) { SelectedLayer.DurationMs = val; NotifyChanged(); }
         }
 
         private void CmbDisplaySource_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -734,7 +734,8 @@ namespace FanaBridge.UI
         {
             if (_suppressEvents || SelectedLayer == null) return;
             var tag = (cmbLayerScrollSpeed.SelectedItem as ComboBoxItem)?.Tag as string;
-            if (tag != null) { SelectedLayer.ScrollSpeedMs = int.Parse(tag); NotifyChanged(); }
+            int val;
+            if (tag != null && int.TryParse(tag, out val)) { SelectedLayer.ScrollSpeedMs = val; NotifyChanged(); }
         }
 
         private void TxtFixedText_TextChanged(object s, TextChangedEventArgs e)

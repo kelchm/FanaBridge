@@ -16,12 +16,10 @@ namespace FanaBridge.UI
         private static readonly SolidColorBrush PillOnChange = Frozen(Color.FromRgb(0x6A, 0x5A, 0x20));
         private static readonly SolidColorBrush PillWhileTrue = Frozen(Color.FromRgb(0x20, 0x4A, 0x6A));
         private static readonly SolidColorBrush PillExpression = Frozen(Color.FromRgb(0x5A, 0x2A, 0x6A));
-        private static readonly SolidColorBrush PillDisabled = Frozen(Color.FromRgb(0x4A, 0x20, 0x20));
         private static readonly SolidColorBrush TextConstant = Frozen(Color.FromRgb(0x66, 0xDD, 0x88));
         private static readonly SolidColorBrush TextOnChange = Frozen(Color.FromRgb(0xDD, 0xCC, 0x66));
         private static readonly SolidColorBrush TextWhileTrue = Frozen(Color.FromRgb(0x66, 0xBB, 0xDD));
         private static readonly SolidColorBrush TextExpression = Frozen(Color.FromRgb(0xCC, 0x88, 0xDD));
-        private static readonly SolidColorBrush TextDisabled = Frozen(Color.FromRgb(0xDD, 0x66, 0x66));
 
         private DisplayLayer _layer;
 
