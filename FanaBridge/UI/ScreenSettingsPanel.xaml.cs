@@ -15,7 +15,8 @@ namespace FanaBridge.UI
     public partial class ScreenSettingsPanel : UserControl
     {
         private DisplaySettings _settings;
-        private FanatecDisplayManager _displayManager;
+        private SegmentDisplayController _displayManager;
+        private LayerStackEvaluator _previewEvaluator = new LayerStackEvaluator();
         private bool _suppressEvents;
         private DispatcherTimer _previewTimer;
         private DispatcherTimer _scrollTimer;
@@ -76,7 +77,7 @@ namespace FanaBridge.UI
         }
 
         public void Bind(DisplaySettings settings, DisplayType displayType = DisplayType.Basic,
-                         FanatecDisplayManager displayManager = null)
+                         SegmentDisplayController displayManager = null)
         {
             // Unsubscribe from previous settings to avoid leaking handlers
             if (_settings != null)
@@ -322,8 +323,11 @@ namespace FanaBridge.UI
         {
             if (card.Layer == null) return;
 
-            string text = EvaluateLayerForPreview(card.Layer);
-            text = FanatecDisplayManager.AlignText(text, card.Layer.DisplayFormat);
+            var pm = FanatecPlugin.Instance?.PluginManager;
+            var evaluator = _displayManager?.Evaluator ?? _previewEvaluator;
+
+            string text = evaluator.EvaluateLayer(pm, card.Layer);
+            text = SegmentRendering.AlignText(text, card.Layer.DisplayFormat);
             card.SetPreviewText(text);
 
             // Status dot
@@ -337,38 +341,6 @@ namespace FanaBridge.UI
             {
                 card.SetStatus(card.Layer.IsEnabled, false, false);
             }
-        }
-
-        // TODO: This method duplicates evaluation logic from FanatecDisplayManager.
-        // The display manager should be the single source of truth for all layer
-        // evaluation, formatting, and alignment — both runtime and UI preview.
-        // See: FanatecDisplayManager.EvaluateLayerPreview, GetDisplayText, FormatValue
-        private string EvaluateLayerForPreview(DisplayLayer layer)
-        {
-            // Static text doesn't need the plugin manager at all
-            if (layer.Source == DisplaySource.FixedText)
-                return layer.FixedText ?? "";
-
-            // Try via display manager first (has formatting logic)
-            var pm = FanatecPlugin.Instance?.PluginManager;
-            if (_displayManager != null && pm != null)
-            {
-                try { return _displayManager.EvaluateLayerPreview(pm, layer); }
-                catch (Exception ex) { SimHub.Logging.Current.Warn("ScreenSettingsPanel: preview eval failed for " + (layer.Name ?? "?") + ": " + ex.Message); }
-            }
-
-            // Fallback: try reading the property directly
-            if (pm != null && !string.IsNullOrEmpty(layer.PropertyName))
-            {
-                try
-                {
-                    var val = pm.GetPropertyValue(layer.PropertyName);
-                    if (val != null) return val.ToString();
-                }
-                catch (Exception ex) { SimHub.Logging.Current.Warn("ScreenSettingsPanel: property read failed for " + layer.PropertyName + ": " + ex.Message); }
-            }
-
-            return "";
         }
 
         // ── Live combined preview ────────────────────────────────────
@@ -388,45 +360,20 @@ namespace FanaBridge.UI
             }
             else
             {
-                // No hardware — simulate the layer stack using actual game state.
-                bool gameRunning = false;
+                // No hardware — evaluate the full layer stack including overlays.
                 var pm = FanatecPlugin.Instance?.PluginManager;
+                bool gameRunning = false;
                 if (pm != null)
                 {
                     try { gameRunning = pm.LastData != null && pm.LastData.GameRunning; }
                     catch (Exception ex) { SimHub.Logging.Current.Warn("ScreenSettingsPanel: game state check failed: " + ex.Message); }
                 }
 
-                // Find the first enabled constant layer matching current state.
-                string text = "";
-                string name = "";
-
-                foreach (var layer in _settings.Layers)
-                {
-                    if (!layer.IsEnabled || layer.Mode != DisplayLayerMode.Constant) continue;
-                    bool visible = (gameRunning && layer.ShowWhenRunning)
-                                || (!gameRunning && layer.ShowWhenIdle);
-                    if (visible)
-                    {
-                        text = FanatecDisplayManager.AlignText(
-                            EvaluateLayerForPreview(layer), layer.DisplayFormat);
-                        name = layer.Name;
-                        break;
-                    }
-                }
-
-                // Fallback: if nothing matched, show the first enabled constant layer
-                if (name == "")
-                {
-                    foreach (var layer in _settings.Layers)
-                    {
-                        if (!layer.IsEnabled || layer.Mode != DisplayLayerMode.Constant) continue;
-                        text = FanatecDisplayManager.AlignText(
-                            EvaluateLayerForPreview(layer), layer.DisplayFormat);
-                        name = layer.Name;
-                        break;
-                    }
-                }
+                var result = _previewEvaluator.Evaluate(pm, gameRunning, _settings);
+                string text = result.Winner != null
+                    ? SegmentRendering.AlignText(result.Text, result.Winner.DisplayFormat)
+                    : "";
+                string name = result.Winner?.Name ?? "";
 
                 previewDisplay.SetText(text);
                 txtActiveLayer.Text = string.IsNullOrEmpty(name) ? "" : "Preview: " + name;

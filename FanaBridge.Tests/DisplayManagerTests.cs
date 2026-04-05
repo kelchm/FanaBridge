@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using FanaBridge.Adapters;
 using Xunit;
@@ -6,7 +7,7 @@ namespace FanaBridge.Tests
 {
     public class DisplayManagerTests
     {
-        // ── TruncateTo3 ─────────────────────────────────────────────────
+        // ── SegmentRendering.TruncateTo3 ────────────────────────────────
 
         [Theory]
         [InlineData("123", "123")]
@@ -15,19 +16,19 @@ namespace FanaBridge.Tests
         [InlineData("AB", "AB")]
         public void TruncateTo3_TruncatesAtThreeDisplayChars(string input, string expected)
         {
-            Assert.Equal(expected, FanatecDisplayManager.TruncateTo3(input));
+            Assert.Equal(expected, SegmentRendering.TruncateTo3(input));
         }
 
         [Fact]
         public void TruncateTo3_DotsDoNotCountAsDisplayChars()
         {
-            Assert.Equal("1.23", FanatecDisplayManager.TruncateTo3("1.234"));
+            Assert.Equal("1.23", SegmentRendering.TruncateTo3("1.234"));
         }
 
         [Fact]
         public void TruncateTo3_NullReturnsEmpty()
         {
-            Assert.Equal("", FanatecDisplayManager.TruncateTo3(null));
+            Assert.Equal("", SegmentRendering.TruncateTo3(null));
         }
 
         // ── MigrateFromLegacy ───────────────────────────────────────────
@@ -150,12 +151,12 @@ namespace FanaBridge.Tests
             Assert.Equal("Name", changedProp);
         }
 
-        // ── EncodeText ──────────────────────────────────────────────────
+        // ── SegmentRendering.EncodeText ─────────────────────────────────
 
         [Fact]
         public void EncodeText_DotFoldsIntoPredecessor()
         {
-            var encoded = FanatecDisplayManager.EncodeText("1.2");
+            var encoded = SegmentRendering.EncodeText("1.2");
             Assert.Equal(2, encoded.Count);
             Assert.True((encoded[0] & 0x80) != 0); // dot bit set on first char
         }
@@ -163,8 +164,135 @@ namespace FanaBridge.Tests
         [Fact]
         public void EncodeText_EmptyReturnsEmpty()
         {
-            Assert.Empty(FanatecDisplayManager.EncodeText(""));
-            Assert.Empty(FanatecDisplayManager.EncodeText(null));
+            Assert.Empty(SegmentRendering.EncodeText(""));
+            Assert.Empty(SegmentRendering.EncodeText(null));
+        }
+
+        // ── LayerStackEvaluator ─────────────────────────────────────────
+
+        [Fact]
+        public void Evaluate_NoLayers_ReturnsEmpty()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+            var result = evaluator.Evaluate(null, false, settings);
+            Assert.Null(result.Winner);
+            Assert.Equal("", result.Text);
+            Assert.Empty(result.ActiveLayers);
+        }
+
+        [Fact]
+        public void Evaluate_SingleConstantLayer_ShowWhenIdle()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+            var layer = new DisplayLayer
+            {
+                Name = "Test", Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "TST",
+                ShowWhenIdle = true, IsEnabled = true,
+            };
+            settings.Layers.Add(layer);
+
+            var result = evaluator.Evaluate(null, false, settings);
+            Assert.Same(layer, result.Winner);
+            Assert.Equal("TST", result.Text);
+            Assert.Contains(layer, result.ActiveLayers);
+        }
+
+        [Fact]
+        public void Evaluate_DisabledLayer_IsSkipped()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+            settings.Layers.Add(new DisplayLayer
+            {
+                Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "OFF",
+                ShowWhenIdle = true, IsEnabled = false,
+            });
+
+            var result = evaluator.Evaluate(null, false, settings);
+            Assert.Null(result.Winner);
+        }
+
+        [Fact]
+        public void Evaluate_ConstantLayer_RespectsShowWhenFlags()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var settings = new DisplaySettings();
+            settings.Layers.Add(new DisplayLayer
+            {
+                Mode = DisplayLayerMode.Constant,
+                Source = DisplaySource.FixedText, FixedText = "RUN",
+                ShowWhenRunning = true, ShowWhenIdle = false, IsEnabled = true,
+            });
+
+            // Not running — should not show
+            var result = evaluator.Evaluate(null, false, settings);
+            Assert.Null(result.Winner);
+        }
+
+        [Fact]
+        public void EvaluateLayer_FixedText_ReturnsText()
+        {
+            var evaluator = new LayerStackEvaluator();
+            var layer = new DisplayLayer
+            {
+                Source = DisplaySource.FixedText, FixedText = "PIT",
+            };
+            Assert.Equal("PIT", evaluator.EvaluateLayer(null, layer));
+        }
+
+        [Fact]
+        public void EvaluateLayer_NullLayer_ReturnsEmpty()
+        {
+            var evaluator = new LayerStackEvaluator();
+            Assert.Equal("", evaluator.EvaluateLayer(null, null));
+        }
+
+        // ── LayerStackEvaluator static helpers ──────────────────────────
+
+        [Theory]
+        [InlineData(true, true)]
+        [InlineData(false, false)]
+        [InlineData(1, true)]
+        [InlineData(0, false)]
+        [InlineData(1.5, true)]
+        [InlineData(0.0, false)]
+        [InlineData("yes", true)]
+        [InlineData("", false)]
+        [InlineData("0", false)]
+        [InlineData("false", false)]
+        [InlineData("False", false)]
+        [InlineData("FALSE", false)]
+        [InlineData("true", true)]
+        [InlineData(null, false)]
+        public void IsTruthy_CoversAllTypes(object value, bool expected)
+        {
+            Assert.Equal(expected, LayerStackEvaluator.IsTruthy(value));
+        }
+
+        [Fact]
+        public void FormatValue_Gear_MapsCorrectly()
+        {
+            Assert.Equal("R", LayerStackEvaluator.FormatValue(-1, DisplayFormat.Gear));
+            Assert.Equal("N", LayerStackEvaluator.FormatValue(0, DisplayFormat.Gear));
+            Assert.Equal("3", LayerStackEvaluator.FormatValue(3, DisplayFormat.Gear));
+        }
+
+        [Fact]
+        public void FormatValue_Number_RoundsToInteger()
+        {
+            Assert.Equal("42", LayerStackEvaluator.FormatValue(42, DisplayFormat.Number));
+            Assert.Equal("43", LayerStackEvaluator.FormatValue(42.7, DisplayFormat.Number));
+        }
+
+        [Fact]
+        public void FormatValue_Decimal_OneDecimalPlace()
+        {
+            Assert.Equal("4.2", LayerStackEvaluator.FormatValue(4.2, DisplayFormat.Decimal));
+            Assert.Equal("4.0", LayerStackEvaluator.FormatValue(4.0, DisplayFormat.Decimal));
         }
     }
 }

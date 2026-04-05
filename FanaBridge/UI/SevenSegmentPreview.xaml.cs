@@ -33,7 +33,7 @@ namespace FanaBridge.UI
         /// </summary>
         public void SetText(string text)
         {
-            var encoded = FanatecDisplayManager.EncodeText(text ?? "");
+            var encoded = SegmentRendering.EncodeText(text ?? "");
 
             if (encoded.Count <= 3)
             {

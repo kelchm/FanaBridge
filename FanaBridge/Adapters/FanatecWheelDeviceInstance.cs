@@ -41,7 +41,7 @@ namespace FanaBridge.Adapters
         private bool _ledModuleInitialized;
 
         // Display manager — null when the wheel has no display.
-        private FanatecDisplayManager _displayManager;
+        private SegmentDisplayController _displayManager;
         private DisplaySettings _displaySettings = DisplaySettings.CreateDefault();
 
         // Track connection state transitions for cleanup on disconnect.
@@ -312,7 +312,7 @@ namespace FanaBridge.Adapters
             {
                 if (_displayManager == null)
                 {
-                    _displayManager = new FanatecDisplayManager(plugin.Display, _displaySettings);
+                    _displayManager = new SegmentDisplayController(plugin.SegmentEncoder, _displaySettings);
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
                 }

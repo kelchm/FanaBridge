@@ -13,6 +13,9 @@
     <Reference Include="Newtonsoft.Json">
       <HintPath>$(SimHubDir)Newtonsoft.Json.dll</HintPath>
     </Reference>
+    <Reference Include="SimHub.Plugins">
+      <HintPath>$(SimHubDir)SimHub.Plugins.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>

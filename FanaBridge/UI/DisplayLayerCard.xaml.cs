@@ -112,7 +112,7 @@ namespace FanaBridge.UI
         /// </summary>
         public void SetPreviewText(string text)
         {
-            var encoded = FanatecDisplayManager.EncodeText(text ?? "");
+            var encoded = SegmentRendering.EncodeText(text ?? "");
             miniDigit0.SetValue(encoded.Count > 0 ? encoded[0] : SevenSegment.Blank);
             miniDigit1.SetValue(encoded.Count > 1 ? encoded[1] : SevenSegment.Blank);
             miniDigit2.SetValue(encoded.Count > 2 ? encoded[2] : SevenSegment.Blank);
