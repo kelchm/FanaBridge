@@ -67,10 +67,10 @@ namespace FanaBridge.Adapters
         public string ActiveScreenName => _activeLayerName;
 
         /// <summary>Cycle to the next constant base layer.</summary>
-        public void NextScreen() => _constantCycleIndex++;
+        public void NextScreen() => System.Threading.Interlocked.Increment(ref _constantCycleIndex);
 
         /// <summary>Cycle to the previous constant base layer.</summary>
-        public void PreviousScreen() => _constantCycleIndex--;
+        public void PreviousScreen() => System.Threading.Interlocked.Decrement(ref _constantCycleIndex);
 
         /// <summary>
         /// Evaluates the layer stack and updates the display. Called once per frame.
@@ -177,7 +177,7 @@ namespace FanaBridge.Adapters
             }
             else
             {
-                SendTextOrScroll(aligned);
+                SendTextOrScroll(aligned, winner.ScrollSpeedMs);
             }
         }
 
@@ -228,9 +228,15 @@ namespace FanaBridge.Adapters
             if (layer.Source == DisplaySource.Expression)
                 return EvaluateExpression(layer);
 
-            object val = state.CurrentValue;
-            if (val == null && !string.IsNullOrEmpty(layer.PropertyName))
+            object val;
+            if (layer.Source == DisplaySource.Property && !string.IsNullOrEmpty(layer.PropertyName))
                 val = SafeGetProperty(pm, layer.PropertyName);
+            else
+            {
+                val = state.CurrentValue;
+                if (val == null && !string.IsNullOrEmpty(layer.PropertyName))
+                    val = SafeGetProperty(pm, layer.PropertyName);
+            }
 
             if (val == null) return "";
             return FormatValue(val, layer.DisplayFormat);
@@ -412,7 +418,7 @@ namespace FanaBridge.Adapters
             _display.DisplayText(text);
         }
 
-        private void SendTextOrScroll(string text)
+        private void SendTextOrScroll(string text, int layerScrollSpeedMs = 0)
         {
             var encoded = EncodeText(text);
             if (encoded.Count <= 3) { ResetScroll(); SendText(text); return; }
@@ -429,7 +435,8 @@ namespace FanaBridge.Adapters
                 _scrollFrameCounter = 0;
             }
 
-            int step = Math.Max(1, _settings.ScrollSpeedMs / 16);
+            int speedMs = layerScrollSpeedMs > 0 ? layerScrollSpeedMs : _settings.ScrollSpeedMs;
+            int step = Math.Max(1, speedMs / 16);
             if (++_scrollFrameCounter >= step)
             {
                 _scrollFrameCounter = 0;

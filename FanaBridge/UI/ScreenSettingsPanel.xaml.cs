@@ -427,10 +427,10 @@ namespace FanaBridge.UI
                 return;
             }
 
+            _suppressEvents = true;
             borderEditPanel.Visibility = Visibility.Visible;
             txtEditHeader.Text = "Layer Settings \u2014 " + (layer.Name ?? "Untitled");
             chkEnabled.IsChecked = layer.IsEnabled;
-            _suppressEvents = true;
 
             bool isCustom = layer.IsCustom;
             bool isConstant = layer.Mode == DisplayLayerMode.Constant;
