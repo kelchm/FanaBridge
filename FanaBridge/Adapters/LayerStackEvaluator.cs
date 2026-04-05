@@ -207,7 +207,7 @@ namespace FanaBridge.Adapters
 
             object val = SafeGetProperty(pm, prop);
             if (val == null) return "";
-            return FormatValue(val, layer.DisplayFormat);
+            return FormatValue(val, layer.DisplayFormat, layer.TimeFormat);
         }
 
         // ── Layer condition evaluation ──────────────────────────────
@@ -262,7 +262,7 @@ namespace FanaBridge.Adapters
             }
 
             if (val == null) return "";
-            return FormatValue(val, layer.DisplayFormat);
+            return FormatValue(val, layer.DisplayFormat, layer.TimeFormat);
         }
 
         private string EvaluateExpression(DisplayLayer layer)
@@ -275,7 +275,7 @@ namespace FanaBridge.Adapters
                 var expr = new ExpressionValue { Expression = layer.Expression };
                 var result = engine.ParseValue(expr);
                 if (result == null) return "";
-                return FormatValue(result, layer.DisplayFormat);
+                return FormatValue(result, layer.DisplayFormat, layer.TimeFormat);
             }
             catch { return "ERR"; }
         }
@@ -320,7 +320,8 @@ namespace FanaBridge.Adapters
 
         // ── Formatting ──────────────────────────────────────────────
 
-        internal static string FormatValue(object value, DisplayFormat format)
+        internal static string FormatValue(object value, DisplayFormat format,
+                                            string timeFormat = @"ss\.f")
         {
             switch (format)
             {
@@ -331,7 +332,11 @@ namespace FanaBridge.Adapters
                 case DisplayFormat.Decimal:
                     return FormatNumeric(value, "0.0");
                 case DisplayFormat.Time:
-                    if (value is TimeSpan ts) return ts.ToString("ss\\.f");
+                    if (value is TimeSpan ts)
+                    {
+                        try { return ts.ToString(timeFormat ?? @"ss\.f"); }
+                        catch { return ts.ToString(@"ss\.f"); }
+                    }
                     return FormatNumeric(value, "0.0");
                 case DisplayFormat.Text:
                 default:

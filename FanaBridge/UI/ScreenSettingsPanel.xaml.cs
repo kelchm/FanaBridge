@@ -422,8 +422,10 @@ namespace FanaBridge.UI
             panelFixedText.Visibility = (isCustom && !isExpressionMode && isFixedText) ? Visibility.Visible : Visibility.Collapsed;
             panelExpression.Visibility = (isCustom && isExpressionMode) || (!isCustom && isExpressionMode) ? Visibility.Visible : Visibility.Collapsed;
             panelDisplayFormat.Visibility = (isCustom && !isFixedText) || isExpressionMode ? Visibility.Visible : Visibility.Collapsed;
-            bool isText = layer.DisplayFormat == DisplayFormat.Text;
-            panelScrollSpeed.Visibility = (isCustom && isText) ? Visibility.Visible : Visibility.Collapsed;
+            bool isTime = layer.DisplayFormat == DisplayFormat.Time;
+            bool isGear = layer.DisplayFormat == DisplayFormat.Gear;
+            panelTimeFormat.Visibility = panelDisplayFormat.Visibility == Visibility.Visible && isTime ? Visibility.Visible : Visibility.Collapsed;
+            panelScrollSpeed.Visibility = (isCustom && !isGear) ? Visibility.Visible : Visibility.Collapsed;
             panelShowWhen.Visibility = (isConstant && !isExpressionMode) ? Visibility.Visible : Visibility.Collapsed;
 
             // Populate fields
@@ -436,6 +438,7 @@ namespace FanaBridge.UI
             txtFixedText.Text = layer.FixedText ?? "";
             txtExpression.Text = layer.Expression ?? "";
             SelectComboByTag(cmbDisplayFormat, layer.DisplayFormat.ToString());
+            SelectComboByTag(cmbTimeFormat, layer.TimeFormat ?? @"ss\.f");
             SelectComboByTag(cmbLayerScrollSpeed, layer.ScrollSpeedMs.ToString());
             chkRunning.IsChecked = layer.ShowWhenRunning;
             chkIdle.IsChecked = layer.ShowWhenIdle;
@@ -572,6 +575,7 @@ namespace FanaBridge.UI
                     SelectedLayer.Source = template.Source;
                     SelectedLayer.PropertyName = template.PropertyName;
                     SelectedLayer.DisplayFormat = template.DisplayFormat;
+                    SelectedLayer.TimeFormat = template.TimeFormat;
                     SelectedLayer.FixedText = template.FixedText;
                     SelectedLayer.Expression = template.Expression;
                     SelectedLayer.ScrollSpeedMs = template.ScrollSpeedMs;
@@ -668,6 +672,17 @@ namespace FanaBridge.UI
             {
                 SelectedLayer.DisplayFormat = fmt;
                 UpdateEditPanel();
+                NotifyChanged();
+            }
+        }
+
+        private void CmbTimeFormat_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || SelectedLayer == null) return;
+            var tag = (cmbTimeFormat.SelectedItem as ComboBoxItem)?.Tag as string;
+            if (tag != null)
+            {
+                SelectedLayer.TimeFormat = tag;
                 NotifyChanged();
             }
         }

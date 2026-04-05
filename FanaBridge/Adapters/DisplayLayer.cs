@@ -79,6 +79,7 @@ namespace FanaBridge.Adapters
         private DisplaySource _source = DisplaySource.Property;
         private string _propertyName = "";
         private DisplayFormat _displayFormat = DisplayFormat.Number;
+        private string _timeFormat = @"ss\.f";
         private string _fixedText = "";
         private string _expression = "";
         private int _scrollSpeedMs = 250;
@@ -138,6 +139,13 @@ namespace FanaBridge.Adapters
         {
             get => _displayFormat;
             set { if (_displayFormat != value) { _displayFormat = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsGearFormat)); } }
+        }
+
+        /// <summary>TimeSpan format string used when DisplayFormat is Time. Default "ss\.f".</summary>
+        public string TimeFormat
+        {
+            get => _timeFormat;
+            set { if (_timeFormat != value) { _timeFormat = value; OnPropertyChanged(); } }
         }
 
         /// <summary>Fixed text when Source is FixedText.</summary>

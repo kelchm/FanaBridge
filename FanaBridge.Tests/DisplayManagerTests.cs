@@ -295,6 +295,41 @@ namespace FanaBridge.Tests
             Assert.Equal("4.0", LayerStackEvaluator.FormatValue(4.0, DisplayFormat.Decimal));
         }
 
+        [Fact]
+        public void FormatValue_Time_DefaultFormat()
+        {
+            var ts = System.TimeSpan.FromSeconds(65.3);
+            Assert.Equal("05.3", LayerStackEvaluator.FormatValue(ts, DisplayFormat.Time));
+        }
+
+        [Fact]
+        public void FormatValue_Time_MinutesSeconds()
+        {
+            var ts = System.TimeSpan.FromSeconds(65.3);
+            Assert.Equal("1.05", LayerStackEvaluator.FormatValue(ts, DisplayFormat.Time, @"m\.ss"));
+        }
+
+        [Fact]
+        public void FormatValue_Time_MinutesSecondsTenths()
+        {
+            var ts = System.TimeSpan.FromSeconds(65.3);
+            Assert.Equal("1.05.3", LayerStackEvaluator.FormatValue(ts, DisplayFormat.Time, @"m\.ss\.f"));
+        }
+
+        [Fact]
+        public void FormatValue_Time_InvalidFormat_FallsBack()
+        {
+            var ts = System.TimeSpan.FromSeconds(5);
+            // Invalid format should fall back to default ss.f
+            Assert.Equal("05.0", LayerStackEvaluator.FormatValue(ts, DisplayFormat.Time, "zzz_invalid"));
+        }
+
+        [Fact]
+        public void FormatValue_Time_NonTimeSpan_FormatsAsDecimal()
+        {
+            Assert.Equal("4.2", LayerStackEvaluator.FormatValue(4.2, DisplayFormat.Time));
+        }
+
         // ── LayerStackEvaluator – priority ordering ────────────────────
 
         [Fact]

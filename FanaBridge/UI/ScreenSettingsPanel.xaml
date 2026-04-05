@@ -199,7 +199,20 @@
                                     </ComboBox>
                                 </StackPanel>
 
-                                <!-- Scroll speed (Text format only) -->
+                                <!-- Time format (Time only) -->
+                                <StackPanel x:Name="panelTimeFormat" Orientation="Horizontal"
+                                            Margin="0,0,0,6" Visibility="Collapsed">
+                                    <TextBlock Text="Time format" Width="100" Foreground="#CCC"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox x:Name="cmbTimeFormat" Width="140"
+                                              SelectionChanged="CmbTimeFormat_SelectionChanged">
+                                        <ComboBoxItem Content="ss.f" Tag="ss\.f" />
+                                        <ComboBoxItem Content="m.ss" Tag="m\.ss" />
+                                        <ComboBoxItem Content="m.ss.f" Tag="m\.ss\.f" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <!-- Scroll speed -->
                                 <StackPanel x:Name="panelScrollSpeed" Orientation="Horizontal"
                                             Margin="0,0,0,6" Visibility="Collapsed">
                                     <TextBlock Text="Scroll speed" Width="100" Foreground="#CCC"
