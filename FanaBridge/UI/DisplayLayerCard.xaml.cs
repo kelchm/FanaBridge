@@ -44,7 +44,14 @@ namespace FanaBridge.UI
         /// <summary>Refreshes all visual state from the bound layer.</summary>
         public void Refresh()
         {
-            if (_layer == null) return;
+            if (_layer == null)
+            {
+                txtName.Text = "";
+                txtModePill.Text = "";
+                txtSummary.Text = "";
+                cardBorder.Opacity = 0.5;
+                return;
+            }
 
             txtName.Text = _layer.Name ?? "";
 
