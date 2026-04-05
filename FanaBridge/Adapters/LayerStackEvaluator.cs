@@ -46,10 +46,12 @@ namespace FanaBridge.Adapters
 
         private int _constantCycleIndex;
 
-        /// <summary>Resets all per-layer state and cycling position.</summary>
+        /// <summary>Resets all per-layer state and cycling position.
+        /// Swaps a fresh dictionary rather than clearing in-place to avoid
+        /// racing with a concurrent Evaluate() call iterating the old one.</summary>
         public void Reset()
         {
-            _layerStates.Clear();
+            _layerStates = new Dictionary<DisplayLayer, LayerState>();
             _constantCycleIndex = 0;
         }
 

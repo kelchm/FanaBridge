@@ -49,6 +49,12 @@ namespace FanaBridge.UI
                 txtName.Text = "";
                 txtModePill.Text = "";
                 txtSummary.Text = "";
+                pillMode.Background = null;
+                txtModePill.Foreground = null;
+                miniDigit0.SetValue(SevenSegment.Blank);
+                miniDigit1.SetValue(SevenSegment.Blank);
+                miniDigit2.SetValue(SevenSegment.Blank);
+                dotStatus.Fill = DotInactive;
                 cardBorder.Opacity = 0.5;
                 return;
             }

@@ -243,34 +243,49 @@ namespace FanaBridge.Adapters
                 }
             }
 
-            // Restore display settings — migrate from legacy formats if needed
-            if (_customSettings["layers"] != null)
+            // Restore display settings — migrate from legacy formats if needed.
+            // Wrapped in try/catch so a malformed entry doesn't prevent device loading.
+            try
             {
-                // Current format: unified layers
-                _displaySettings = new DisplaySettings();
-                var layersArray = _customSettings["layers"] as JArray;
-                if (layersArray != null)
+                if (_customSettings["layers"] != null)
                 {
-                    foreach (var token in layersArray)
+                    _displaySettings = new DisplaySettings();
+                    var layersArray = _customSettings["layers"] as JArray;
+                    if (layersArray != null)
                     {
-                        var layer = token.ToObject<DisplayLayer>();
-                        if (layer != null)
-                            _displaySettings.Layers.Add(layer);
+                        foreach (var token in layersArray)
+                        {
+                            try
+                            {
+                                var layer = token.ToObject<DisplayLayer>();
+                                if (layer != null)
+                                    _displaySettings.Layers.Add(layer);
+                            }
+                            catch (System.Exception ex)
+                            {
+                                SimHub.Logging.Current.Warn("FanatecWheelDeviceInstance: Skipping malformed layer: " + ex.Message);
+                            }
+                        }
                     }
+                    var speedToken = _customSettings["scrollSpeedMs"];
+                    if (speedToken != null)
+                        _displaySettings.ScrollSpeedMs = speedToken.Value<int>();
                 }
-                if (_customSettings["scrollSpeedMs"] != null)
-                    _displaySettings.ScrollSpeedMs = (int)_customSettings["scrollSpeedMs"];
+                else if (_customSettings["displayMode"] != null)
+                {
+                    _displaySettings = DisplaySettings.MigrateFromLegacy(
+                        (string)_customSettings["displayMode"]);
+                    SimHub.Logging.Current.Info(
+                        "FanatecWheelDeviceInstance: Migrated legacy displayMode to layer-based settings");
+                }
+                else
+                {
+                    _displaySettings = DisplaySettings.CreateDefault();
+                }
             }
-            else if (_customSettings["displayMode"] != null)
+            catch (System.Exception ex)
             {
-                // Legacy v1 format — migrate
-                _displaySettings = DisplaySettings.MigrateFromLegacy(
-                    (string)_customSettings["displayMode"]);
-                SimHub.Logging.Current.Info(
-                    "FanatecWheelDeviceInstance: Migrated legacy displayMode to layer-based settings");
-            }
-            else
-            {
+                SimHub.Logging.Current.Warn("FanatecWheelDeviceInstance: Failed to restore display settings, using defaults: " + ex.Message);
                 _displaySettings = DisplaySettings.CreateDefault();
             }
             _displayManager?.UpdateSettings(_displaySettings);

@@ -65,6 +65,8 @@ namespace FanaBridge.Adapters
         {
             _settings = settings ?? DisplaySettings.CreateDefault();
             _evaluator.Reset();
+            _winningLayer = null;
+            _activeLayers = new HashSet<DisplayLayer>();
             _lastSentKey = null;
             _currentText = "";
             _activeLayerName = "";
@@ -110,6 +112,8 @@ namespace FanaBridge.Adapters
         public void Clear()
         {
             _display.ClearDisplay();
+            _winningLayer = null;
+            _activeLayers = new HashSet<DisplayLayer>();
             _currentText = "";
             _activeLayerName = "";
             _evaluator.Reset();
