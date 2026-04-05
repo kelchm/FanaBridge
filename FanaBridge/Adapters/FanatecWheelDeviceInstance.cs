@@ -41,8 +41,8 @@ namespace FanaBridge.Adapters
         private bool _ledModuleInitialized;
 
         // Display manager — null when the wheel has no display.
-        private FanatecDisplayDriver _displayManager;
-        private DisplaySettings _displaySettings = new DisplaySettings();
+        private SegmentDisplayController _displayManager;
+        private DisplaySettings _displaySettings = DisplaySettings.CreateDefault();
 
         // Track connection state transitions for cleanup on disconnect.
         private bool _wasConnected;
@@ -127,9 +127,8 @@ namespace FanaBridge.Adapters
             {
                 ["wheelType"] = _config.WheelType.ToString(),
                 ["moduleType"] = _config.ModuleType.ToString(),
-                ["displayMode"] = DisplaySettings.DefaultMode,
             };
-            _displaySettings = new DisplaySettings();
+            _displaySettings = DisplaySettings.CreateDefault();
 
             if (_ledModule != null)
                 _ledModule.LoadDefaults();
@@ -185,14 +184,20 @@ namespace FanaBridge.Adapters
                 }
             }
 
-            // Custom settings (display mode, wheel/module identity)
+            // Custom settings (wheel/module identity)
             if (_customSettings != null)
             {
                 foreach (var prop in _customSettings.Properties())
                 {
+                    // Skip legacy displayMode — we now serialize screens
+                    if (prop.Name == "displayMode") continue;
                     result[prop.Name] = prop.Value.DeepClone();
                 }
             }
+
+            // Serialize current display settings
+            result["layers"] = JArray.FromObject(_displaySettings.Layers);
+            result["scrollSpeedMs"] = _displaySettings.ScrollSpeedMs;
 
             return result;
         }
@@ -206,7 +211,10 @@ namespace FanaBridge.Adapters
 
             // Extract custom settings
             _customSettings = new JObject();
-            foreach (var key in new[] { "wheelType", "moduleType", "displayMode" })
+            foreach (var key in new[] { "wheelType", "moduleType",
+                                        "layers", "screens", "overlays",
+                                        "scrollSpeedMs", "gearOverlayEnabled",
+                                        "gearOverlayDurationMs", "displayMode" })
             {
                 if (obj[key] != null)
                     _customSettings[key] = obj[key].DeepClone();
@@ -235,10 +243,51 @@ namespace FanaBridge.Adapters
                 }
             }
 
-            _displaySettings = new DisplaySettings
+            // Restore display settings — migrate from legacy formats if needed.
+            // Wrapped in try/catch so a malformed entry doesn't prevent device loading.
+            try
             {
-                DisplayMode = (string)_customSettings["displayMode"] ?? DisplaySettings.DefaultMode,
-            };
+                if (_customSettings["layers"] != null)
+                {
+                    _displaySettings = new DisplaySettings();
+                    var layersArray = _customSettings["layers"] as JArray;
+                    if (layersArray != null)
+                    {
+                        foreach (var token in layersArray)
+                        {
+                            try
+                            {
+                                var layer = token.ToObject<DisplayLayer>();
+                                if (layer != null)
+                                    _displaySettings.Layers.Add(layer);
+                            }
+                            catch (System.Exception ex)
+                            {
+                                SimHub.Logging.Current.Warn("FanatecWheelDeviceInstance: Skipping malformed layer: " + ex.Message);
+                            }
+                        }
+                    }
+                    var speedToken = _customSettings["scrollSpeedMs"];
+                    if (speedToken != null)
+                        _displaySettings.ScrollSpeedMs = speedToken.Value<int>();
+                }
+                else if (_customSettings["displayMode"] != null)
+                {
+                    _displaySettings = DisplaySettings.MigrateFromLegacy(
+                        (string)_customSettings["displayMode"]);
+                    SimHub.Logging.Current.Info(
+                        "FanatecWheelDeviceInstance: Migrated legacy displayMode to layer-based settings");
+                }
+                else
+                {
+                    _displaySettings = DisplaySettings.CreateDefault();
+                }
+            }
+            catch (System.Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanatecWheelDeviceInstance: Failed to restore display settings, using defaults: " + ex.Message);
+                _displaySettings = DisplaySettings.CreateDefault();
+            }
             _displayManager?.UpdateSettings(_displaySettings);
         }
 
@@ -278,12 +327,12 @@ namespace FanaBridge.Adapters
             {
                 if (_displayManager == null)
                 {
-                    _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
+                    _displayManager = new SegmentDisplayController(plugin.SegmentEncoder, _displaySettings);
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
                 }
 
-                _displayManager.Update(data);
+                _displayManager.Update(pluginManager, data);
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
@@ -311,7 +360,27 @@ namespace FanaBridge.Adapters
         public override IEnumerable<DynamicButtonAction> GetDynamicButtonActions()
         {
             EnsureLedModuleInitialized();
-            return _ledModule?.GetDynamicActions() ?? Enumerable.Empty<DynamicButtonAction>();
+
+            var actions = new List<DynamicButtonAction>();
+
+            // LED actions
+            var ledActions = _ledModule?.GetDynamicActions();
+            if (ledActions != null)
+                actions.AddRange(ledActions);
+
+            // Display screen cycling actions
+            if (_config.Capabilities.Display != DisplayType.None)
+            {
+                var next = new DynamicButtonAction("Next Screen",
+                    (pm, inputName) => _displayManager?.NextScreen());
+                actions.Add(next);
+
+                var prev = new DynamicButtonAction("Previous Screen",
+                    (pm, inputName) => _displayManager?.PreviousScreen());
+                actions.Add(prev);
+            }
+
+            return actions;
         }
 
         public override IEnumerable<DeviceSettingControl> GetSettingsControls()
@@ -330,15 +399,18 @@ namespace FanaBridge.Adapters
                     true);
             }
 
-            // Screen settings tab (only for wheels with a display)
+            // Screen settings tab (only for wheels with a display).
+            // _displayManager may be null here if DataUpdate() hasn't run yet;
+            // ScreenSettingsPanel.Bind accepts null and falls back to preview-only mode.
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 var screenPanel = new ScreenSettingsPanel();
-                screenPanel.Bind(_displaySettings, _config.Capabilities.Display);
+                screenPanel.Bind(_displaySettings, _config.Capabilities.Display, _displayManager);
                 screenPanel.SettingsChanged += () =>
                 {
                     // Sync back to JObject for persistence
-                    _customSettings["displayMode"] = _displaySettings.DisplayMode;
+                    _customSettings["layers"] = JArray.FromObject(_displaySettings.Layers);
+                    _customSettings["scrollSpeedMs"] = _displaySettings.ScrollSpeedMs;
                     _displayManager?.UpdateSettings(_displaySettings);
                 };
 

@@ -7,7 +7,7 @@ namespace FanaBridge.Protocol
     /// Encodes and sends display control reports for the Fanatec
     /// 3-digit 7-segment display via the col01 HID interface.
     /// </summary>
-    public class DisplayEncoder
+    public class SegmentEncoder
     {
         private const int REPORT_LENGTH = 8;
 
@@ -17,7 +17,7 @@ namespace FanaBridge.Protocol
         private readonly byte[] _reportBuf = new byte[REPORT_LENGTH];
         private readonly byte[] _textSegs = new byte[3];
 
-        public DisplayEncoder(IDeviceTransport transport)
+        public SegmentEncoder(IDeviceTransport transport)
         {
             _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         }

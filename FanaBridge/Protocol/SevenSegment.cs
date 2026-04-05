@@ -32,10 +32,12 @@ namespace FanaBridge.Protocol
         public const byte Digit9 = 0x6F;
 
         // Symbols
-        public const byte Dot    = 0x80;
-        public const byte Blank  = 0x00;
-        public const byte Dash   = 0x40;
-        public const byte Under  = 0x08;
+        public const byte Dot       = 0x80;
+        public const byte Blank     = 0x00;
+        public const byte Dash      = 0x40;
+        public const byte Under     = 0x08;
+        public const byte LBracket  = 0x39;  // [
+        public const byte RBracket  = 0x0F;  // ]
 
         // Letters (7-segment approximations)
         public const byte A = 0x77;
@@ -70,7 +72,7 @@ namespace FanaBridge.Protocol
         /// </summary>
         public static byte CharToSegment(char ch)
         {
-            char upper = char.ToUpper(ch);
+            char upper = char.ToUpperInvariant(ch);
 
             // Digits
             if (upper >= '0' && upper <= '9')
@@ -114,6 +116,8 @@ namespace FanaBridge.Protocol
                 case '.': return Dot;
                 case ',': return Dot;
                 case ' ': return Blank;
+                case '[': return LBracket;
+                case ']': return RBracket;
 
                 default: return Blank;
             }
