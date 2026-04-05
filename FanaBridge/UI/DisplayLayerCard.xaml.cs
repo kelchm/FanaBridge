@@ -88,9 +88,11 @@ namespace FanaBridge.UI
             if (_layer.Source == DisplaySource.Expression || _layer.Mode == DisplayLayerMode.Expression)
                 return "";
 
-            string prop = _layer.Mode == DisplayLayerMode.Constant
+            string prop = _layer.Source == DisplaySource.Property && !string.IsNullOrEmpty(_layer.PropertyName)
                 ? _layer.PropertyName
-                : _layer.WatchProperty;
+                : _layer.Mode == DisplayLayerMode.Constant
+                    ? _layer.PropertyName
+                    : _layer.WatchProperty;
 
             if (string.IsNullOrEmpty(prop)) return "";
 

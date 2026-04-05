@@ -320,7 +320,14 @@ namespace FanaBridge.Adapters
             if (value is long l) return l != 0;
             if (value is double d) return d != 0;
             if (value is float f) return f != 0;
-            if (value is string s) return s.Length > 0 && s != "0" && s != "False";
+            if (value is string s)
+            {
+                s = s.Trim();
+                if (s.Length == 0) return false;
+                if (bool.TryParse(s, out var parsedBool)) return parsedBool;
+                if (s == "0") return false;
+                return true;
+            }
             return true;
         }
 
