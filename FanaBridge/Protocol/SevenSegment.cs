@@ -72,7 +72,7 @@ namespace FanaBridge.Protocol
         /// </summary>
         public static byte CharToSegment(char ch)
         {
-            char upper = char.ToUpper(ch);
+            char upper = char.ToUpperInvariant(ch);
 
             // Digits
             if (upper >= '0' && upper <= '9')

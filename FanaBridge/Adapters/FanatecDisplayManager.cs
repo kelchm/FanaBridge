@@ -23,8 +23,9 @@ namespace FanaBridge.Adapters
         private Dictionary<DisplayLayer, LayerState> _layerStates = new Dictionary<DisplayLayer, LayerState>();
 
         // Active layer tracking for UI indicators.
-        private DisplayLayer _winningLayer;
-        private HashSet<DisplayLayer> _activeLayers = new HashSet<DisplayLayer>();
+        // These are published as snapshots at the end of Update() so UI reads are safe.
+        private volatile DisplayLayer _winningLayer;
+        private volatile HashSet<DisplayLayer> _activeLayers = new HashSet<DisplayLayer>();
 
         /// <summary>The layer currently controlling the display, or null.</summary>
         public DisplayLayer WinningLayer => _winningLayer;
@@ -84,10 +85,10 @@ namespace FanaBridge.Adapters
         {
             bool gameRunning = data.GameRunning && data.NewData != null;
 
-            // Scan layers top-to-bottom for the first active one.
+            // Build active set into a fresh snapshot so UI reads never see a half-cleared set.
             DisplayLayer winner = null;
             string winnerText = null;
-            _activeLayers.Clear();
+            var active = new HashSet<DisplayLayer>();
 
             // Track constant layers for cycling.
             var activeConstants = new List<DisplayLayer>();
@@ -103,7 +104,7 @@ namespace FanaBridge.Adapters
                     case DisplayLayerMode.WhileTrue:
                         if (gameRunning && EvalWhileTrue(pluginManager, layer, state))
                         {
-                            _activeLayers.Add(layer);
+                            active.Add(layer);
                             if (winner == null)
                             {
                                 winner = layer;
@@ -115,7 +116,7 @@ namespace FanaBridge.Adapters
                     case DisplayLayerMode.OnChange:
                         if (gameRunning && EvalOnChange(pluginManager, layer, state))
                         {
-                            _activeLayers.Add(layer);
+                            active.Add(layer);
                             if (winner == null)
                             {
                                 winner = layer;
@@ -130,7 +131,7 @@ namespace FanaBridge.Adapters
                             string exprText = EvaluateExpression(layer);
                             if (!string.IsNullOrEmpty(exprText))
                             {
-                                _activeLayers.Add(layer);
+                                active.Add(layer);
                                 if (winner == null)
                                 {
                                     winner = layer;
@@ -151,18 +152,22 @@ namespace FanaBridge.Adapters
 
             // Mark all visible constants as active.
             foreach (var c in activeConstants)
-                _activeLayers.Add(c);
+                active.Add(c);
 
             // If no overlay won, use the cycled constant layer.
             if (winner == null && activeConstants.Count > 0)
             {
-                _constantCycleIndex = ((_constantCycleIndex % activeConstants.Count) + activeConstants.Count) % activeConstants.Count;
-                winner = activeConstants[_constantCycleIndex];
+                int idx = _constantCycleIndex;
+                idx = ((idx % activeConstants.Count) + activeConstants.Count) % activeConstants.Count;
+                System.Threading.Interlocked.Exchange(ref _constantCycleIndex, idx);
+                winner = activeConstants[idx];
                 var state = GetState(winner);
                 EvalPropertyValue(pluginManager, winner, state);
                 winnerText = GetDisplayText(pluginManager, winner, state);
             }
 
+            // Publish snapshots so UI reads see consistent state.
+            _activeLayers = active;
             _winningLayer = winner;
 
             // Display the winner.
@@ -206,6 +211,9 @@ namespace FanaBridge.Adapters
             return IsTruthy(val);
         }
 
+        // The null check on LastValue deliberately suppresses the first-frame trigger:
+        // on initialization LastValue is null, so the first observed value is recorded
+        // without activating the overlay. Only subsequent changes fire the timer.
         private bool EvalOnChange(PluginManager pm, DisplayLayer layer, LayerState state)
         {
             object val = SafeGetProperty(pm, layer.WatchProperty);

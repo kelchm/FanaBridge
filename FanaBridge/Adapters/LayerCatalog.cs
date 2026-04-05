@@ -149,17 +149,17 @@ namespace FanaBridge.Adapters
             },
         };
 
-        /// <summary>Finds a catalog entry by key, or null.</summary>
+        /// <summary>Finds a catalog entry by key and returns a deep copy, or null.</summary>
         public static DisplayLayer FindByKey(string key)
         {
-            if (string.IsNullOrEmpty(key)) return null;
-            return All.FirstOrDefault(e => e.CatalogKey == key);
+            return CreateFromCatalog(key);
         }
 
         /// <summary>Creates a deep copy of a catalog entry.</summary>
         public static DisplayLayer CreateFromCatalog(string key)
         {
-            var t = FindByKey(key);
+            if (string.IsNullOrEmpty(key)) return null;
+            var t = All.FirstOrDefault(e => e.CatalogKey == key);
             if (t == null) return null;
 
             return new DisplayLayer

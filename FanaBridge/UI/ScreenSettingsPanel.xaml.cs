@@ -359,7 +359,7 @@ namespace FanaBridge.UI
             if (_displayManager != null && pm != null)
             {
                 try { return _displayManager.EvaluateLayerPreview(pm, layer); }
-                catch { }
+                catch (Exception ex) { SimHub.Logging.Current.Warn("ScreenSettingsPanel: preview eval failed for " + (layer.Name ?? "?") + ": " + ex.Message); }
             }
 
             // Fallback: try reading the property directly
@@ -370,7 +370,7 @@ namespace FanaBridge.UI
                     var val = pm.GetPropertyValue(layer.PropertyName);
                     if (val != null) return val.ToString();
                 }
-                catch { }
+                catch (Exception ex) { SimHub.Logging.Current.Warn("ScreenSettingsPanel: property read failed for " + layer.PropertyName + ": " + ex.Message); }
             }
 
             return "";
@@ -399,7 +399,7 @@ namespace FanaBridge.UI
                 if (pm != null)
                 {
                     try { gameRunning = pm.LastData != null && pm.LastData.GameRunning; }
-                    catch { }
+                    catch (Exception ex) { SimHub.Logging.Current.Warn("ScreenSettingsPanel: game state check failed: " + ex.Message); }
                 }
 
                 // Find the first enabled constant layer matching current state.

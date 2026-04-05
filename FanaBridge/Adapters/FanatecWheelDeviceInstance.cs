@@ -384,7 +384,9 @@ namespace FanaBridge.Adapters
                     true);
             }
 
-            // Screen settings tab (only for wheels with a display)
+            // Screen settings tab (only for wheels with a display).
+            // _displayManager may be null here if DataUpdate() hasn't run yet;
+            // ScreenSettingsPanel.Bind accepts null and falls back to preview-only mode.
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 var screenPanel = new ScreenSettingsPanel();

@@ -99,6 +99,8 @@ namespace FanaBridge.Tests
             Assert.NotSame(a, b);
             Assert.Equal(a.Name, b.Name);
             Assert.Equal(a.CatalogKey, b.CatalogKey);
+            Assert.True(a.IsEnabled);
+            Assert.True(b.IsEnabled);
         }
 
         [Fact]
