@@ -58,6 +58,11 @@ namespace FanaBridge.Adapters
         {
             _settings = settings ?? DisplaySettings.CreateDefault();
             _layerStates.Clear();
+            _constantCycleIndex = 0;
+            _lastSentKey = null;
+            _currentText = "";
+            _activeLayerName = "";
+            ResetScroll();
         }
 
         /// <summary>Current displayed text.</summary>
@@ -358,18 +363,20 @@ namespace FanaBridge.Adapters
         /// </summary>
         internal static string AlignText(string text, DisplayFormat format)
         {
-            if (string.IsNullOrEmpty(text) || text.Length >= 3) return text;
+            if (string.IsNullOrEmpty(text)) return text;
+            int segmentCount = EncodeText(text).Count;
+            if (segmentCount >= 3) return text;
             switch (format)
             {
                 case DisplayFormat.Gear:
                     // Center: pad equally on both sides
-                    return text.Length == 1 ? " " + text + " " :
-                           text.Length == 2 ? " " + text : text;
+                    return segmentCount == 1 ? " " + text + " " :
+                           segmentCount == 2 ? " " + text : text;
                 case DisplayFormat.Number:
                 case DisplayFormat.Decimal:
                 case DisplayFormat.Time:
                     // Right-align
-                    return text.PadLeft(3);
+                    return new string(' ', 3 - segmentCount) + text;
                 case DisplayFormat.Text:
                 default:
                     return text;
@@ -404,18 +411,30 @@ namespace FanaBridge.Adapters
         {
             string key = "G:" + gearText;
             if (key == _lastSentKey) return;
-            _lastSentKey = key;
-            _display.DisplayGear(ParseGearInt(gearText));
-            _currentText = gearText;
+            if (_display.DisplayGear(ParseGearInt(gearText)))
+            {
+                _lastSentKey = key;
+                _currentText = gearText;
+            }
+            else
+            {
+                _lastSentKey = null;
+            }
         }
 
         private void SendText(string text)
         {
             string key = "T:" + text;
             if (key == _lastSentKey) return;
-            _lastSentKey = key;
-            _currentText = text;
-            _display.DisplayText(text);
+            if (_display.DisplayText(text))
+            {
+                _lastSentKey = key;
+                _currentText = text;
+            }
+            else
+            {
+                _lastSentKey = null;
+            }
         }
 
         private void SendTextOrScroll(string text, int layerScrollSpeedMs = 0)
@@ -441,10 +460,12 @@ namespace FanaBridge.Adapters
             {
                 _scrollFrameCounter = 0;
                 if (_scrollPos > _scrollFrames.Count - 3) _scrollPos = 0;
-                _display.SetDisplay(_scrollFrames[_scrollPos], _scrollFrames[_scrollPos + 1], _scrollFrames[_scrollPos + 2]);
-                _lastSentKey = null;
-                _currentText = text;
-                _scrollPos++;
+                if (_display.SetDisplay(_scrollFrames[_scrollPos], _scrollFrames[_scrollPos + 1], _scrollFrames[_scrollPos + 2]))
+                {
+                    _lastSentKey = null;
+                    _currentText = text;
+                    _scrollPos++;
+                }
             }
         }
 

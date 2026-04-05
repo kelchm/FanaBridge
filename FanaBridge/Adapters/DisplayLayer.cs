@@ -102,7 +102,7 @@ namespace FanaBridge.Adapters
         public string CatalogKey
         {
             get => _catalogKey;
-            set { if (_catalogKey != value) { _catalogKey = value; OnPropertyChanged(); } }
+            set { if (_catalogKey != value) { _catalogKey = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsCustom)); } }
         }
 
         /// <summary>Master enable/disable.</summary>
@@ -116,7 +116,7 @@ namespace FanaBridge.Adapters
         public DisplayLayerMode Mode
         {
             get => _mode;
-            set { if (_mode != value) { _mode = value; OnPropertyChanged(); } }
+            set { if (_mode != value) { _mode = value; OnPropertyChanged(); OnPropertyChanged(nameof(ModeLabel)); OnPropertyChanged(nameof(TimingLabel)); } }
         }
 
         /// <summary>How the display value is obtained.</summary>
@@ -137,7 +137,7 @@ namespace FanaBridge.Adapters
         public DisplayFormat DisplayFormat
         {
             get => _displayFormat;
-            set { if (_displayFormat != value) { _displayFormat = value; OnPropertyChanged(); } }
+            set { if (_displayFormat != value) { _displayFormat = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsGearFormat)); } }
         }
 
         /// <summary>Fixed text when Source is FixedText.</summary>
@@ -172,7 +172,7 @@ namespace FanaBridge.Adapters
         public int DurationMs
         {
             get => _durationMs;
-            set { if (_durationMs != value) { _durationMs = value; OnPropertyChanged(); } }
+            set { if (_durationMs != value) { _durationMs = value; OnPropertyChanged(); OnPropertyChanged(nameof(TimingLabel)); } }
         }
 
         /// <summary>Show when a game session is active (Constant mode).</summary>

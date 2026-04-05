@@ -67,12 +67,22 @@ namespace FanaBridge.UI
             _scrollTimer.Tick += (s, e) => previewDisplay.ScrollTick();
 
             Loaded += (s, e) => { _previewTimer.Start(); _scrollTimer.Start(); };
-            Unloaded += (s, e) => { _previewTimer.Stop(); _scrollTimer.Stop(); };
+            Unloaded += (s, e) =>
+            {
+                _previewTimer.Stop();
+                _scrollTimer.Stop();
+                if (_settings != null)
+                    _settings.Layers.CollectionChanged -= Layers_CollectionChanged;
+            };
         }
 
         public void Bind(DisplaySettings settings, DisplayType displayType = DisplayType.Basic,
                          FanatecDisplayManager displayManager = null)
         {
+            // Unsubscribe from previous settings to avoid leaking handlers
+            if (_settings != null)
+                _settings.Layers.CollectionChanged -= Layers_CollectionChanged;
+
             _settings = settings ?? DisplaySettings.CreateDefault();
             _displayManager = displayManager;
             _suppressEvents = true;
@@ -117,7 +127,20 @@ namespace FanaBridge.UI
 
         private void Layers_CollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
         {
+            var selectedLayer = _selectedCard?.Layer;
             RebuildCardList();
+
+            // Re-select the card for the previously selected layer
+            DisplayLayerCard match = null;
+            if (selectedLayer != null)
+            {
+                foreach (DisplayLayerCard card in layerStack.Children)
+                {
+                    if (ReferenceEquals(card.Layer, selectedLayer))
+                    { match = card; break; }
+                }
+            }
+            SelectCard(match);
         }
 
         private void Card_MouseDown(object sender, MouseButtonEventArgs e)
