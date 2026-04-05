@@ -91,7 +91,6 @@ namespace FanaBridge.Adapters
     {
         private string _name = "";
         private string _catalogKey;
-        private bool _isEnabled = true;
         private DisplayLayerMode _mode = DisplayLayerMode.Constant;
 
         // Data source
@@ -108,7 +107,7 @@ namespace FanaBridge.Adapters
         private string _watchProperty = "";
         private int _durationMs = 2000;
 
-        // Visibility (Constant mode)
+        // Visibility
         private bool _showWhenRunning = true;
         private bool _showWhenIdle;
 
@@ -126,12 +125,9 @@ namespace FanaBridge.Adapters
             set { if (_catalogKey != value) { _catalogKey = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsCustom)); } }
         }
 
-        /// <summary>Master enable/disable.</summary>
-        public bool IsEnabled
-        {
-            get => _isEnabled;
-            set { if (_isEnabled != value) { _isEnabled = value; OnPropertyChanged(); } }
-        }
+        /// <summary>True when the layer is visible in at least one state (running or idle).</summary>
+        [JsonIgnore]
+        public bool IsEnabled => _showWhenRunning || _showWhenIdle;
 
         /// <summary>When this layer activates.</summary>
         public DisplayLayerMode Mode
@@ -210,18 +206,18 @@ namespace FanaBridge.Adapters
             set { if (_durationMs != value) { _durationMs = value; OnPropertyChanged(); OnPropertyChanged(nameof(TimingLabel)); } }
         }
 
-        /// <summary>Show when a game session is active (Constant mode).</summary>
+        /// <summary>Show when a game session is active.</summary>
         public bool ShowWhenRunning
         {
             get => _showWhenRunning;
-            set { if (_showWhenRunning != value) { _showWhenRunning = value; OnPropertyChanged(); } }
+            set { if (_showWhenRunning != value) { _showWhenRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsEnabled)); } }
         }
 
-        /// <summary>Show when no game is running (Constant mode).</summary>
+        /// <summary>Show when no game is running.</summary>
         public bool ShowWhenIdle
         {
             get => _showWhenIdle;
-            set { if (_showWhenIdle != value) { _showWhenIdle = value; OnPropertyChanged(); } }
+            set { if (_showWhenIdle != value) { _showWhenIdle = value; OnPropertyChanged(); OnPropertyChanged(nameof(IsEnabled)); } }
         }
 
         /// <summary>Whether this uses the special gear display.</summary>

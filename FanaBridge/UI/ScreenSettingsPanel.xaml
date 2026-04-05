@@ -68,11 +68,15 @@
                                            Foreground="#CCC" Margin="0,0,0,8" />
 
                                 <!-- Enabled -->
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                <StackPanel x:Name="panelShowWhen" Orientation="Horizontal"
+                                            Margin="0,0,0,6">
                                     <TextBlock Text="Enabled" Width="100" Foreground="#CCC"
                                                VerticalAlignment="Center" />
-                                    <CheckBox x:Name="chkEnabled"
-                                              Checked="ChkEnabled_Changed" Unchecked="ChkEnabled_Changed" />
+                                    <CheckBox x:Name="chkRunning" Content="In Game" Margin="0,0,12,0"
+                                              Foreground="#CCC"
+                                              Checked="ChkRunning_Changed" Unchecked="ChkRunning_Changed" />
+                                    <CheckBox x:Name="chkIdle" Content="Idle" Foreground="#CCC"
+                                              Checked="ChkIdle_Changed" Unchecked="ChkIdle_Changed" />
                                 </StackPanel>
 
                                 <!-- Template (catalog layers) -->
@@ -237,18 +241,6 @@
                                         <ComboBoxItem Content="Normal" Tag="250" />
                                         <ComboBoxItem Content="Slow" Tag="500" />
                                     </ComboBox>
-                                </StackPanel>
-
-                                <!-- Show when (Constant only) -->
-                                <StackPanel x:Name="panelShowWhen" Orientation="Horizontal"
-                                            Margin="0,0,0,6" Visibility="Collapsed">
-                                    <TextBlock Text="Show when" Width="100" Foreground="#CCC"
-                                               VerticalAlignment="Center" />
-                                    <CheckBox x:Name="chkRunning" Content="In session" Margin="0,0,12,0"
-                                              Foreground="#CCC"
-                                              Checked="ChkRunning_Changed" Unchecked="ChkRunning_Changed" />
-                                    <CheckBox x:Name="chkIdle" Content="Idle" Foreground="#CCC"
-                                              Checked="ChkIdle_Changed" Unchecked="ChkIdle_Changed" />
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>

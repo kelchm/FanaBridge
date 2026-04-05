@@ -37,11 +37,17 @@
                            TextTrimming="CharacterEllipsis" MaxWidth="106"
                            Margin="0,0,0,4" />
 
-                <!-- Mode pill -->
-                <Border x:Name="pillMode" CornerRadius="3" Padding="4,1"
-                        HorizontalAlignment="Center">
-                    <TextBlock x:Name="txtModePill" FontSize="7.5" FontWeight="SemiBold" />
-                </Border>
+                <!-- Mode pill + scope tag -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Border x:Name="pillMode" CornerRadius="3" Padding="4,1">
+                        <TextBlock x:Name="txtModePill" FontSize="7.5" FontWeight="SemiBold" />
+                    </Border>
+                    <Border x:Name="pillScope" CornerRadius="3" Padding="4,1" Margin="3,0,0,0"
+                            Background="#333" Visibility="Collapsed">
+                        <TextBlock x:Name="txtScopePill" FontSize="7.5" FontWeight="SemiBold"
+                                   Foreground="#999" />
+                    </Border>
+                </StackPanel>
             </StackPanel>
 
             <!-- Status dot (bottom-left) -->

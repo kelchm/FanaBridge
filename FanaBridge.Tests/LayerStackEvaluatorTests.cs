@@ -28,7 +28,7 @@ namespace FanaBridge.Tests
             {
                 Name = "Test", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "TST",
-                ShowWhenIdle = true, IsEnabled = true,
+                ShowWhenIdle = true,
             };
             settings.Layers.Add(layer);
 
@@ -47,7 +47,7 @@ namespace FanaBridge.Tests
             {
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "OFF",
-                ShowWhenIdle = true, IsEnabled = false,
+                ShowWhenRunning = false, ShowWhenIdle = false,
             });
 
             var result = evaluator.Evaluate(null, false, settings);
@@ -63,7 +63,7 @@ namespace FanaBridge.Tests
             {
                 Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "RUN",
-                ShowWhenRunning = true, ShowWhenIdle = false, IsEnabled = true,
+                ShowWhenRunning = true, ShowWhenIdle = false,
             });
 
             // Not running — should not show
@@ -182,13 +182,13 @@ namespace FanaBridge.Tests
             {
                 Name = "Always", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "WIN",
-                ShowWhenRunning = true, IsEnabled = true,
+                ShowWhenRunning = true,
             };
             var onChange = new DisplayLayer
             {
                 Name = "Overlay", Mode = DisplayLayerMode.OnChange,
                 Source = DisplaySource.FixedText, FixedText = "OVR",
-                WatchProperty = "Prop", DurationMs = 5000, IsEnabled = true,
+                WatchProperty = "Prop", DurationMs = 5000,
             };
             settings.Layers.Add(constant);  // index 0 – highest priority
             settings.Layers.Add(onChange);   // index 1
@@ -210,13 +210,13 @@ namespace FanaBridge.Tests
             {
                 Name = "Overlay", Mode = DisplayLayerMode.OnChange,
                 Source = DisplaySource.FixedText, FixedText = "OVR",
-                WatchProperty = "Prop", DurationMs = 5000, IsEnabled = true,
+                WatchProperty = "Prop", DurationMs = 5000,
             };
             var constant = new DisplayLayer
             {
                 Name = "Always", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "BAS",
-                ShowWhenRunning = true, IsEnabled = true,
+                ShowWhenRunning = true,
             };
             settings.Layers.Add(onChange);   // index 0 – highest priority
             settings.Layers.Add(constant);   // index 1
@@ -238,13 +238,13 @@ namespace FanaBridge.Tests
             {
                 Name = "Overlay", Mode = DisplayLayerMode.OnChange,
                 Source = DisplaySource.FixedText, FixedText = "OVR",
-                WatchProperty = "Prop", DurationMs = 5000, IsEnabled = true,
+                WatchProperty = "Prop", DurationMs = 5000,
             };
             var constant = new DisplayLayer
             {
                 Name = "Always", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "BAS",
-                ShowWhenRunning = true, IsEnabled = true,
+                ShowWhenRunning = true,
             };
             settings.Layers.Add(onChange);   // index 0 – but not active
             settings.Layers.Add(constant);   // index 1
@@ -266,13 +266,13 @@ namespace FanaBridge.Tests
             {
                 Name = "C1", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "AA",
-                ShowWhenIdle = true, IsEnabled = true,
+                ShowWhenIdle = true,
             };
             var second = new DisplayLayer
             {
                 Name = "C2", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "BB",
-                ShowWhenIdle = true, IsEnabled = true,
+                ShowWhenIdle = true,
             };
             settings.Layers.Add(first);
             settings.Layers.Add(second);
@@ -297,13 +297,13 @@ namespace FanaBridge.Tests
             {
                 Name = "C1", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "AA",
-                ShowWhenIdle = true, IsEnabled = true,
+                ShowWhenIdle = true,
             };
             var second = new DisplayLayer
             {
                 Name = "C2", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "BB",
-                ShowWhenIdle = true, IsEnabled = true,
+                ShowWhenIdle = true,
             };
             settings.Layers.Add(first);
             settings.Layers.Add(second);
@@ -325,19 +325,19 @@ namespace FanaBridge.Tests
             {
                 Name = "C1", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "C1",
-                ShowWhenRunning = true, IsEnabled = true,
+                ShowWhenRunning = true,
             };
             var c2 = new DisplayLayer
             {
                 Name = "C2", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "C2",
-                ShowWhenRunning = true, IsEnabled = true,
+                ShowWhenRunning = true,
             };
             var onChange = new DisplayLayer
             {
                 Name = "Overlay", Mode = DisplayLayerMode.OnChange,
                 Source = DisplaySource.FixedText, FixedText = "OVR",
-                WatchProperty = "Prop", DurationMs = 5000, IsEnabled = true,
+                WatchProperty = "Prop", DurationMs = 5000,
             };
             settings.Layers.Add(c1);       // index 0 – highest
             settings.Layers.Add(c2);       // index 1
@@ -362,19 +362,19 @@ namespace FanaBridge.Tests
             {
                 Name = "C1", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "C1",
-                ShowWhenRunning = true, IsEnabled = true,
+                ShowWhenRunning = true,
             };
             var onChange = new DisplayLayer
             {
                 Name = "Overlay", Mode = DisplayLayerMode.OnChange,
                 Source = DisplaySource.FixedText, FixedText = "OVR",
-                WatchProperty = "Prop", DurationMs = 5000, IsEnabled = true,
+                WatchProperty = "Prop", DurationMs = 5000,
             };
             var c2 = new DisplayLayer
             {
                 Name = "C2", Mode = DisplayLayerMode.Constant,
                 Source = DisplaySource.FixedText, FixedText = "C2",
-                ShowWhenRunning = true, IsEnabled = true,
+                ShowWhenRunning = true,
             };
             settings.Layers.Add(c1);       // index 0
             settings.Layers.Add(onChange);  // index 1

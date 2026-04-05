@@ -179,7 +179,6 @@ namespace FanaBridge.Adapters
                 ShowWhenRunning = t.ShowWhenRunning,
                 ShowWhenIdle = t.ShowWhenIdle,
                 ScrollSpeedMs = t.ScrollSpeedMs,
-                IsEnabled = true,
             };
         }
 

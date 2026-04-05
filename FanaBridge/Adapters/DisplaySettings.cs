@@ -44,7 +44,10 @@ namespace FanaBridge.Adapters
 
             // Disable all layers first, then enable what the legacy mode implies
             foreach (var layer in settings.Layers)
-                layer.IsEnabled = false;
+            {
+                layer.ShowWhenRunning = false;
+                layer.ShowWhenIdle = false;
+            }
 
             switch (displayMode)
             {
@@ -70,18 +73,18 @@ namespace FanaBridge.Adapters
         private static void EnableLayer(DisplaySettings settings, string key)
         {
             foreach (var l in settings.Layers)
-                if (l.CatalogKey == key) { l.IsEnabled = true; return; }
+                if (l.CatalogKey == key) { l.ShowWhenRunning = true; return; }
         }
 
         private static void EnableOrAdd(DisplaySettings settings, string key, DisplayLayerMode mode)
         {
             foreach (var l in settings.Layers)
-                if (l.CatalogKey == key) { l.IsEnabled = true; return; }
+                if (l.CatalogKey == key) { l.ShowWhenRunning = true; return; }
 
             var layer = LayerCatalog.CreateFromCatalog(key);
             if (layer != null)
             {
-                layer.IsEnabled = true;
+                layer.ShowWhenRunning = true;
                 settings.Layers.Add(layer);
             }
         }

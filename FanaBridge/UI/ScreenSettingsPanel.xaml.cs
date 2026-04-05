@@ -400,8 +400,6 @@ namespace FanaBridge.UI
             _suppressEvents = true;
             borderEditPanel.Visibility = Visibility.Visible;
             txtEditHeader.Text = "Layer Settings \u2014 " + (layer.Name ?? "Untitled");
-            chkEnabled.IsChecked = layer.IsEnabled;
-
             bool isCustom = layer.IsCustom;
             bool isConstant = layer.Mode == DisplayLayerMode.Constant;
             bool isOnChange = layer.Mode == DisplayLayerMode.OnChange;
@@ -435,8 +433,6 @@ namespace FanaBridge.UI
             panelOverflow.Visibility = showOverflow ? Visibility.Visible : Visibility.Collapsed;
             var resolvedOverflow = SegmentRendering.ResolveOverflow(layer.Overflow, layer.DisplayFormat);
             panelScrollSpeed.Visibility = (showOverflow && resolvedOverflow == OverflowStrategy.Scroll) ? Visibility.Visible : Visibility.Collapsed;
-            panelShowWhen.Visibility = (isConstant && !isExpressionMode) ? Visibility.Visible : Visibility.Collapsed;
-
             // Populate fields
             txtName.Text = layer.Name ?? "";
             SelectComboByTag(cmbTrigger, layer.Mode.ToString());
@@ -483,7 +479,7 @@ namespace FanaBridge.UI
                     {
                         Name = "Static Text", Mode = DisplayLayerMode.Constant,
                         Source = DisplaySource.FixedText, FixedText = "---",
-                        ShowWhenIdle = true, IsEnabled = true,
+                        ShowWhenRunning = true, ShowWhenIdle = true,
                     };
                 }
                 else
@@ -502,8 +498,7 @@ namespace FanaBridge.UI
                         Name = defaultName, Mode = mode,
                         Source = source,
                         DisplayFormat = mode == DisplayLayerMode.Expression ? DisplayFormat.Text : DisplayFormat.Number,
-                        DurationMs = 2000, IsEnabled = true,
-                        ShowWhenRunning = mode == DisplayLayerMode.Constant,
+                        DurationMs = 2000, ShowWhenRunning = true,
                     };
                 }
             }
@@ -733,14 +728,6 @@ namespace FanaBridge.UI
             NotifyChanged();
         }
 
-        private void ChkEnabled_Changed(object s, RoutedEventArgs e)
-        {
-            if (_suppressEvents || SelectedLayer == null) return;
-            SelectedLayer.IsEnabled = chkEnabled.IsChecked == true;
-            _selectedCard?.Refresh();
-            SettingsChanged?.Invoke();
-            UpdateLivePreview();
-        }
 
         private void ChkRunning_Changed(object s, RoutedEventArgs e)
         {

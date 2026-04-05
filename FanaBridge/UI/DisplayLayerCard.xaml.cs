@@ -86,6 +86,22 @@ namespace FanaBridge.UI
                     break;
             }
 
+            // Scope pill — only shown when the layer is limited to one state
+            if (_layer.ShowWhenRunning && !_layer.ShowWhenIdle)
+            {
+                pillScope.Visibility = Visibility.Visible;
+                txtScopePill.Text = "IN GAME";
+            }
+            else if (!_layer.ShowWhenRunning && _layer.ShowWhenIdle)
+            {
+                pillScope.Visibility = Visibility.Visible;
+                txtScopePill.Text = "IDLE";
+            }
+            else
+            {
+                pillScope.Visibility = Visibility.Collapsed;
+            }
+
             // Summary line
             txtSummary.Text = GetSummary();
 

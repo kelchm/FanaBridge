@@ -96,10 +96,14 @@ namespace FanaBridge.Adapters
 
                 var state = GetState(layer);
 
+                bool visible = (gameRunning && layer.ShowWhenRunning)
+                            || (!gameRunning && layer.ShowWhenIdle);
+                if (!visible) continue;
+
                 switch (layer.Mode)
                 {
                     case DisplayLayerMode.WhileTrue:
-                        if (gameRunning && EvalWhileTrue(pm, layer, state))
+                        if (EvalWhileTrue(pm, layer, state))
                         {
                             active.Add(layer);
                             if (winner == null)
@@ -112,7 +116,7 @@ namespace FanaBridge.Adapters
                         break;
 
                     case DisplayLayerMode.OnChange:
-                        if (gameRunning && EvalOnChange(pm, layer, state))
+                        if (EvalOnChange(pm, layer, state))
                         {
                             active.Add(layer);
                             if (winner == null)
@@ -125,7 +129,6 @@ namespace FanaBridge.Adapters
                         break;
 
                     case DisplayLayerMode.Expression:
-                        if (gameRunning)
                         {
                             string exprText = EvaluateExpression(layer);
                             if (!string.IsNullOrEmpty(exprText))
@@ -142,9 +145,6 @@ namespace FanaBridge.Adapters
                         break;
 
                     case DisplayLayerMode.Constant:
-                        bool visible = (gameRunning && layer.ShowWhenRunning)
-                                    || (!gameRunning && layer.ShowWhenIdle);
-                        if (visible)
                         {
                             activeConstants.Add(layer);
                             if (firstConstantIndex < 0)
