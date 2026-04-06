@@ -120,6 +120,7 @@ namespace FanaBridge.UI
             card.MouseLeftButtonDown += Card_MouseDown;
             card.MouseMove += Card_MouseMove;
             card.MouseLeftButtonUp += Card_MouseUp;
+            card.LostMouseCapture += Card_LostMouseCapture;
             layerStack.Children.Add(card);
             UpdateCardPreview(card);
             return card;
@@ -159,9 +160,29 @@ namespace FanaBridge.UI
             card.CaptureMouse();
         }
 
+        private void Card_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            if (_dragCard != null)
+            {
+                ResetDragTransforms();
+                _isDragging = false;
+                _dragCard = null;
+            }
+        }
+
         private void Card_MouseMove(object sender, MouseEventArgs e)
         {
-            if (_dragCard == null || e.LeftButton != MouseButtonState.Pressed) return;
+            if (_dragCard == null) return;
+
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                // Mouse was released but MouseUp didn't fire (e.g. lost capture)
+                _dragCard.ReleaseMouseCapture();
+                ResetDragTransforms();
+                _isDragging = false;
+                _dragCard = null;
+                return;
+            }
 
             var pos = e.GetPosition(layerStack);
             double dx = pos.X - _dragStartPoint.X;
@@ -228,7 +249,6 @@ namespace FanaBridge.UI
         private void Card_MouseUp(object sender, MouseButtonEventArgs e)
         {
             var card = sender as DisplayLayerCard;
-            card.ReleaseMouseCapture();
 
             if (_isDragging)
             {
@@ -249,7 +269,9 @@ namespace FanaBridge.UI
                 _isDragging = false;
             }
 
+            // Clear _dragCard before releasing capture so LostMouseCapture is a no-op
             _dragCard = null;
+            card.ReleaseMouseCapture();
         }
 
         private void ResetDragTransforms()
@@ -383,6 +405,13 @@ namespace FanaBridge.UI
 
                 previewDisplay.SetText(text);
                 txtActiveLayer.Text = string.IsNullOrEmpty(name) ? "" : "Preview: " + name;
+
+                // Sync preview scroll speed to the winning layer's effective speed.
+                int scrollMs = result.Winner != null && result.Winner.ScrollSpeedMs > 0
+                    ? result.Winner.ScrollSpeedMs
+                    : _settings.ScrollSpeedMs;
+                if (_scrollTimer.Interval.TotalMilliseconds != scrollMs)
+                    _scrollTimer.Interval = TimeSpan.FromMilliseconds(scrollMs);
             }
         }
 

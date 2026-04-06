@@ -13,6 +13,7 @@ namespace FanaBridge.Adapters
     /// </summary>
     public class SegmentDisplayController
     {
+        private readonly object _lock = new object();
         private readonly SegmentEncoder _display;
         private readonly LayerStackEvaluator _evaluator = new LayerStackEvaluator();
         private DisplaySettings _settings;
@@ -63,14 +64,17 @@ namespace FanaBridge.Adapters
 
         public void UpdateSettings(DisplaySettings settings)
         {
-            _settings = settings ?? DisplaySettings.CreateDefault();
-            _evaluator.Reset();
-            _winningLayer = null;
-            _activeLayers = new HashSet<DisplayLayer>();
-            _lastSentKey = null;
-            _currentText = "";
-            _activeLayerName = "";
-            ResetScroll();
+            lock (_lock)
+            {
+                _settings = settings ?? DisplaySettings.CreateDefault();
+                _evaluator.Reset();
+                _winningLayer = null;
+                _activeLayers = new HashSet<DisplayLayer>();
+                _lastSentKey = null;
+                _currentText = "";
+                _activeLayerName = "";
+                ResetScroll();
+            }
         }
 
         /// <summary>
@@ -78,41 +82,44 @@ namespace FanaBridge.Adapters
         /// </summary>
         public void Update(PluginManager pluginManager, GameData data)
         {
-            bool gameRunning = data.GameRunning && data.NewData != null;
-            var result = _evaluator.Evaluate(pluginManager, gameRunning, _settings);
-
-            // Publish snapshots so UI reads see consistent state.
-            _activeLayers = result.ActiveLayers;
-            _winningLayer = result.Winner;
-
-            if (result.Winner == null)
+            lock (_lock)
             {
-                SendText("   ");
-                _activeLayerName = "";
-                return;
-            }
+                bool gameRunning = data.GameRunning && data.NewData != null;
+                var result = _evaluator.Evaluate(pluginManager, gameRunning, _settings);
 
-            var winner = result.Winner;
-            _activeLayerName = winner.Name ?? "";
+                // Publish snapshots so UI reads see consistent state.
+                _activeLayers = result.ActiveLayers;
+                _winningLayer = result.Winner;
 
-            if (winner.IsGearFormat)
-            {
-                ResetScroll();
-                SendGear(result.Text ?? "N");
-            }
-            else
-            {
-                var overflow = SegmentRendering.ResolveOverflow(winner.Overflow, winner.DisplayFormat);
-                string text = SegmentRendering.ApplyOverflow(result.Text ?? "   ", overflow);
-                string aligned = SegmentRendering.AlignText(text, winner.DisplayFormat);
-                if (overflow != OverflowStrategy.Scroll)
+                if (result.Winner == null)
+                {
+                    SendText("   ");
+                    _activeLayerName = "";
+                    return;
+                }
+
+                var winner = result.Winner;
+                _activeLayerName = winner.Name ?? "";
+
+                if (winner.IsGearFormat)
                 {
                     ResetScroll();
-                    SendText(aligned);
+                    SendGear(result.Text ?? "N");
                 }
                 else
                 {
-                    SendTextOrScroll(aligned, winner.ScrollSpeedMs);
+                    var overflow = SegmentRendering.ResolveOverflow(winner.Overflow, winner.DisplayFormat);
+                    string text = SegmentRendering.ApplyOverflow(result.Text ?? "   ", overflow);
+                    string aligned = SegmentRendering.AlignText(text, winner.DisplayFormat);
+                    if (overflow != OverflowStrategy.Scroll)
+                    {
+                        ResetScroll();
+                        SendText(aligned);
+                    }
+                    else
+                    {
+                        SendTextOrScroll(aligned, winner.ScrollSpeedMs);
+                    }
                 }
             }
         }
@@ -120,14 +127,17 @@ namespace FanaBridge.Adapters
         /// <summary>Blanks the display and resets all state.</summary>
         public void Clear()
         {
-            _display.ClearDisplay();
-            _winningLayer = null;
-            _activeLayers = new HashSet<DisplayLayer>();
-            _currentText = "";
-            _activeLayerName = "";
-            _evaluator.Reset();
-            _lastSentKey = null;
-            ResetScroll();
+            lock (_lock)
+            {
+                _display.ClearDisplay();
+                _winningLayer = null;
+                _activeLayers = new HashSet<DisplayLayer>();
+                _currentText = "";
+                _activeLayerName = "";
+                _evaluator.Reset();
+                _lastSentKey = null;
+                ResetScroll();
+            }
         }
 
         // ── Display output ───────────────────────────────────────────
