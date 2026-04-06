@@ -5,6 +5,7 @@ using FanaBridge.Transport;
 using FanaBridge.UI;
 using GameReaderCommon;
 using SimHub.Plugins;
+using SimHub.Plugins.OutputPlugins.Dash.TemplatingCommon;
 using System;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -31,7 +32,11 @@ namespace FanaBridge
         private FanatecTuningController _tuning;
         private LedEncoder _leds;
         private LegacyLedEncoder _legacyLeds;
-        private DisplayEncoder _display;
+        private SegmentEncoder _segmentEncoder;
+        private NCalcEngineBase _nCalcEngine;
+
+        /// <summary>Shared NCalc engine for evaluating display layer expressions.</summary>
+        public NCalcEngineBase NCalcEngine => _nCalcEngine;
 
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
         public event Action StateChanged;
@@ -67,8 +72,8 @@ namespace FanaBridge
         /// <summary>Shared legacy LED encoder (col01) — used by DeviceInstance LED drivers for legacy/RevStripe wheels.</summary>
         public LegacyLedEncoder LegacyLeds => _legacyLeds;
 
-        /// <summary>Shared display encoder — used by DeviceInstance display managers and wizard.</summary>
-        public DisplayEncoder Display => _display;
+        /// <summary>Shared 7-segment encoder (col01) — used by SegmentDisplayController.</summary>
+        public SegmentEncoder SegmentEncoder => _segmentEncoder;
 
         /// <summary>Shared tuning controller — used by TuningSettingsPanel for encoder config.</summary>
         public FanatecTuningController Tuning => _tuning;
@@ -89,11 +94,13 @@ namespace FanaBridge
                 "FanaBridgeSettings",
                 () => new FanatecPluginSettings());
 
+            _nCalcEngine = new NCalcEngineBase();
+
             _sdk = new FanatecSdkManager();
             _device = new FanatecDevice();
             _leds = new LedEncoder(_device);
             _legacyLeds = new LegacyLedEncoder(_device);
-            _display = new DisplayEncoder(_device);
+            _segmentEncoder = new SegmentEncoder(_device);
             _tuning = new FanatecTuningController(
                 _device,
                 msg => SimHub.Logging.Current.Warn(msg),
@@ -185,7 +192,7 @@ namespace FanaBridge
             {
                 try
                 {
-                    _display.ClearDisplay();
+                    _segmentEncoder.ClearDisplay();
                 }
                 catch (Exception ex)
                 {

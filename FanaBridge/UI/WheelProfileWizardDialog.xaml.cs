@@ -277,7 +277,7 @@ namespace FanaBridge.UI
         private void SetAllLedsOff()
         {
             SetAllLeds();
-            try { _plugin.Display?.ClearDisplay(); } catch { }
+            try { _plugin.SegmentEncoder?.ClearDisplay(); } catch { }
         }
 
         /// <summary>Turns off every LED channel and clears the display.
@@ -292,7 +292,7 @@ namespace FanaBridge.UI
             SetAllLeds(); // all LEDs off
             try
             {
-                _plugin.Display?.SetDisplay(
+                _plugin.SegmentEncoder?.SetDisplay(
                     SevenSegment.Digit8,
                     SevenSegment.Digit8,
                     SevenSegment.Digit8);
@@ -304,7 +304,7 @@ namespace FanaBridge.UI
         {
             // Clear the display — the "888" test pattern from the previous
             // display-detection step should not linger.
-            try { _plugin.Display?.ClearDisplay(); } catch { }
+            try { _plugin.SegmentEncoder?.ClearDisplay(); } catch { }
 
             var colors = new ushort[9];
             for (int i = 0; i < colors.Length; i++)
