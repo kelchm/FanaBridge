@@ -21,7 +21,7 @@ on:
         value: ${{ jobs.build.outputs.artifact-name }}
 
 env:
-  SIMHUB_VERSION: '9.11.3'
+  SIMHUB_VERSION: '9.11.9'
 
 permissions:
   contents: read

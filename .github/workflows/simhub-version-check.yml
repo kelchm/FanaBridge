@@ -1,0 +1,75 @@
+name: SimHub Version Check
+
+on:
+  schedule:
+    # Runs every Monday at 08:00 UTC
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get pinned SimHub version
+        id: pinned
+        run: |
+          version=$(grep -oP "SIMHUB_VERSION:\s*'\K[^']+" .github/workflows/build.yml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Pinned SimHub version: $version"
+
+      - name: Get latest SimHub release
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest=$(gh release list --repo SHWotever/SimHub --limit 1 --json tagName --jq '.[0].tagName')
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+          echo "Latest SimHub version: $latest"
+
+      - name: Open issue if version is outdated
+        if: steps.pinned.outputs.version != steps.latest.outputs.version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PINNED: ${{ steps.pinned.outputs.version }}
+          LATEST: ${{ steps.latest.outputs.version }}
+        run: |
+          title="Update CI to SimHub $LATEST (currently pinned to $PINNED)"
+
+          # Skip if an open issue with this title already exists
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --json title | jq -r --arg t "$title" '.[] | select(.title == $t) | .title' | head -1)
+          if [[ -n "$existing" ]]; then
+            echo "Issue already open: $existing"
+            exit 0
+          fi
+
+          body="## SimHub version out of date
+
+The CI pipeline is pinned to SimHub **$PINNED** but the latest release is **$LATEST**.
+
+### Action required
+
+Update \`SIMHUB_VERSION\` in \`.github/workflows/build.yml\` from \`$PINNED\` to \`$LATEST\`.
+
+Also review the \`M_FS_WHEEL_SWTYPE\` enum in the new \`SimHub.FanatecManaged.dll\` for any added, removed, or renamed wheel type entries that may affect profile matching (see \`docs/reference/devices.md\` — *Wheel Type Identifiers* section).
+
+*This issue was opened automatically by the [SimHub Version Check]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/simhub-version-check.yml) workflow.*"
+
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$title" \
+            --body "$body" \
+            --label "dependencies"
+          echo "Created issue: $title"
+
+      - name: Report up to date
+        if: steps.pinned.outputs.version == steps.latest.outputs.version
+        run: |
+          echo "CI is already pinned to the latest SimHub release (${{ steps.pinned.outputs.version }}). Nothing to do."
