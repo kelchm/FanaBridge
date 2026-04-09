@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading;
 using FanaBridge.Profiles;
 using FanatecManaged;
 using HidSharp;
@@ -194,6 +195,12 @@ namespace FanaBridge.Transport
         // ── Polling ──────────────────────────────────────────────────────
 
         /// <summary>
+        /// Backoff delays (ms) used by <see cref="PollWheelIdentityWithModuleRetry"/>
+        /// when the sub-module type is UNINITIALIZED after initial connection.
+        /// </summary>
+        internal static readonly int[] ModuleRetryDelaysMs = { 100, 200, 500 };
+
+        /// <summary>
         /// Optional callback that returns a profile override ID for a given
         /// wheel match key (e.g. "PHUB_PBMR").  Set by the plugin to integrate
         /// with <see cref="FanatecPluginSettings.ProfileOverrides"/>.
@@ -231,6 +238,39 @@ namespace FanaBridge.Transport
             }
 
             return changed;
+        }
+
+        /// <summary>
+        /// Polls the SDK for wheel identity, retrying with backoff when the wheel
+        /// is detected but the sub-module type is still UNINITIALIZED.  Handles the
+        /// PHUB + PBMR/PBME race condition where the USB-C module takes up to ~500 ms
+        /// to enumerate after the hub itself appears on the HID bus.
+        ///
+        /// The delays in <see cref="ModuleRetryDelaysMs"/> are used between retries.
+        /// Stops early once the module is identified (no longer UNINITIALIZED).
+        /// </summary>
+        /// <returns>True if any poll produced a state change.</returns>
+        public bool PollWheelIdentityWithModuleRetry()
+        {
+            bool anyChanged = PollWheelIdentity();
+
+            if (!WheelDetected)
+                return anyChanged;
+
+            foreach (int delayMs in ModuleRetryDelaysMs)
+            {
+                if (SubModuleType != M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED)
+                    break;
+
+                SimHub.Logging.Current.Info(
+                    $"FanatecSdkManager: Module still UNINITIALIZED, retrying in {delayMs} ms");
+                Thread.Sleep(delayMs);
+
+                bool changed = PollWheelIdentity();
+                anyChanged = anyChanged || changed;
+            }
+
+            return anyChanged;
         }
 
         /// <summary>

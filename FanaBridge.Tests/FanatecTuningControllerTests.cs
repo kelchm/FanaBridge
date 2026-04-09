@@ -275,5 +275,73 @@ namespace FanaBridge.Tests
             Assert.Throws<ArgumentNullException>(
                 () => new FanatecTuningController(null));
         }
+
+        // ── SendModuleDetectionTrigger ───────────────────────────────────
+
+        [Fact]
+        public void SendModuleDetectionTrigger_SendsTwoCol01Reports()
+        {
+            var transport = new StubTransport();
+            var controller = new FanatecTuningController(transport);
+
+            bool ok = controller.SendModuleDetectionTrigger();
+
+            Assert.True(ok);
+            Assert.Equal(2, transport.SentCol01Reports.Count);
+        }
+
+        [Fact]
+        public void SendModuleDetectionTrigger_OnPacket_HasCorrectStructure()
+        {
+            var transport = new StubTransport();
+            var controller = new FanatecTuningController(transport);
+            controller.SendModuleDetectionTrigger();
+
+            var onPacket = transport.SentCol01Reports[0];
+            Assert.Equal(0x01, onPacket[0]);  // Report ID
+            Assert.Equal(0xF8, onPacket[1]);
+            Assert.Equal(0x09, onPacket[2]);
+            Assert.Equal(0x01, onPacket[3]);  // Group 0x01
+            Assert.Equal(FanatecTuningController.COL01_TUNING_ACK, onPacket[4]);  // 0x06
+            Assert.Equal(0xFF, onPacket[5]);  // Enable flag ON
+            Assert.Equal(FanatecTuningController.MODULE_DETECTION_SUBID, onPacket[6]);  // 0x01
+            Assert.Equal(0x00, onPacket[7]);
+        }
+
+        [Fact]
+        public void SendModuleDetectionTrigger_OffPacket_HasCorrectStructure()
+        {
+            var transport = new StubTransport();
+            var controller = new FanatecTuningController(transport);
+            controller.SendModuleDetectionTrigger();
+
+            var offPacket = transport.SentCol01Reports[1];
+            Assert.Equal(0x01, offPacket[0]);  // Report ID
+            Assert.Equal(0xF8, offPacket[1]);
+            Assert.Equal(0x09, offPacket[2]);
+            Assert.Equal(0x01, offPacket[3]);  // Group 0x01
+            Assert.Equal(FanatecTuningController.COL01_TUNING_ACK, offPacket[4]);  // 0x06
+            Assert.Equal(0x00, offPacket[5]);  // Enable flag OFF
+            Assert.Equal(0x00, offPacket[6]);
+            Assert.Equal(0x00, offPacket[7]);
+        }
+
+        [Fact]
+        public void SendModuleDetectionTrigger_DoesNotSendCol03Reports()
+        {
+            var transport = new StubTransport();
+            var controller = new FanatecTuningController(transport);
+            controller.SendModuleDetectionTrigger();
+
+            Assert.Empty(transport.SentCol03Reports);
+        }
+
+        [Fact]
+        public void SendModuleDetectionTrigger_SubIdDiffersFromCbpSubId()
+        {
+            // SubId=1 (module detection) must differ from SubId=2 (CBP)
+            Assert.NotEqual(FanatecTuningController.MODULE_DETECTION_SUBID, (byte)0x02);
+            Assert.Equal((byte)0x01, FanatecTuningController.MODULE_DETECTION_SUBID);
+        }
     }
 }

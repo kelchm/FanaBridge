@@ -3,6 +3,7 @@ using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using FanaBridge.UI;
+using FanatecManaged;
 using GameReaderCommon;
 using SimHub.Plugins;
 using System;
@@ -245,6 +246,18 @@ namespace FanaBridge
                     SimHub.Logging.Current.Warn("FanaBridge: SDK connected but HID open failed");
                     _sdk.Disconnect();
                     return false;
+                }
+
+                // Hub+module race: if the wheel is detected but the sub-module type
+                // is UNINITIALIZED the USB-C module may still be enumerating (~50-200 ms).
+                // Send the SubId=1 trigger to prompt firmware module detection refresh,
+                // then re-poll with backoff until the module is identified.
+                if (_sdk.WheelDetected
+                    && _sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED)
+                {
+                    SimHub.Logging.Current.Info("FanaBridge: Hub module not yet detected, sending SubId=1 trigger");
+                    _tuning.SendModuleDetectionTrigger();
+                    _sdk.PollWheelIdentityWithModuleRetry();
                 }
 
                 SimHub.Logging.Current.Info($"FanaBridge: Connected to {_sdk.ProductName} (PID 0x{_sdk.ConnectedProductId:X4})");
