@@ -31,6 +31,8 @@ namespace FanaBridge.Protocol
         internal const int ACK_BURST_COUNT = 4;
         internal const int ACK_BURST_DELAY_MS = 1;
 
+        internal const byte MODULE_DETECTION_SUBID = 0x01;
+
         private readonly IDeviceTransport _transport;
         private readonly Action<string> _logWarn;
         private readonly Action<string> _logInfo;
@@ -136,6 +138,45 @@ namespace FanaBridge.Protocol
             using (_transport.BeginBatch())
             {
                 return ReadTuningState(DEVICE_ID_BMR);
+            }
+        }
+
+        /// <summary>
+        /// Sends the col01 SubId=1 ON/OFF trigger pair to prompt firmware
+        /// module detection refresh (PHUB + PBMR/PBME race condition fix).
+        ///
+        /// Should be called immediately after initial connection when the wheel
+        /// is detected but the sub-module type is still UNINITIALIZED, to prompt
+        /// the firmware to re-enumerate the USB-C button module.
+        /// </summary>
+        /// <returns>True if both the ON and OFF packets were sent successfully.</returns>
+        public bool SendModuleDetectionTrigger()
+        {
+            using (_transport.BeginBatch())
+            {
+                var onPacket = new byte[8];
+                onPacket[0] = 0x01;
+                onPacket[1] = 0xF8;
+                onPacket[2] = 0x09;
+                onPacket[3] = 0x01;
+                onPacket[4] = COL01_TUNING_ACK;
+                onPacket[5] = 0xFF;
+                onPacket[6] = MODULE_DETECTION_SUBID;
+                onPacket[7] = 0x00;
+
+                var offPacket = new byte[8];
+                offPacket[0] = 0x01;
+                offPacket[1] = 0xF8;
+                offPacket[2] = 0x09;
+                offPacket[3] = 0x01;
+                offPacket[4] = COL01_TUNING_ACK;
+                offPacket[5] = 0x00;
+                offPacket[6] = 0x00;
+                offPacket[7] = 0x00;
+
+                bool ok = _transport.SendCol01(onPacket);
+                ok &= _transport.SendCol01(offPacket);
+                return ok;
             }
         }
 
