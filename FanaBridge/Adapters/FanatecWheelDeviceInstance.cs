@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using FanaBridge;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
+using FanaBridge.SegmentDisplay;
+using FanaBridge.Shared;
 using FanaBridge.Transport;
 using FanaBridge.UI;
 using FanatecManaged;
 using GameReaderCommon;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
 using SimHub.Plugins.Devices;
@@ -40,9 +44,10 @@ namespace FanaBridge.Adapters
 
         private bool _ledModuleInitialized;
 
-        // Display manager — null when the wheel has no display.
-        private FanatecDisplayDriver _displayManager;
-        private DisplaySettings _displaySettings = new DisplaySettings();
+        // Display — null when the wheel has no display.
+        private SegmentDisplayController _displayController;
+        private SegmentDisplaySettings _segmentDisplaySettings;
+        private SimHubPropertyProvider _propertyProvider;
 
         // Track connection state transitions for cleanup on disconnect.
         private bool _wasConnected;
@@ -127,9 +132,8 @@ namespace FanaBridge.Adapters
             {
                 ["wheelType"] = _config.WheelType.ToString(),
                 ["moduleType"] = _config.ModuleType.ToString(),
-                ["displayMode"] = DisplaySettings.DefaultMode,
             };
-            _displaySettings = new DisplaySettings();
+            _segmentDisplaySettings = SegmentDisplaySettings.CreateDefault();
 
             if (_ledModule != null)
                 _ledModule.LoadDefaults();
@@ -206,7 +210,7 @@ namespace FanaBridge.Adapters
 
             // Extract custom settings
             _customSettings = new JObject();
-            foreach (var key in new[] { "wheelType", "moduleType", "displayMode" })
+            foreach (var key in new[] { "wheelType", "moduleType", "displayMode", "segmentDisplay" })
             {
                 if (obj[key] != null)
                     _customSettings[key] = obj[key].DeepClone();
@@ -235,11 +239,21 @@ namespace FanaBridge.Adapters
                 }
             }
 
-            _displaySettings = new DisplaySettings
+            // Restore segment display settings — new format or migrate from legacy
+            var segToken = _customSettings["segmentDisplay"];
+            if (segToken != null)
             {
-                DisplayMode = (string)_customSettings["displayMode"] ?? DisplaySettings.DefaultMode,
-            };
-            _displayManager?.UpdateSettings(_displaySettings);
+                try { _segmentDisplaySettings = segToken.ToObject<SegmentDisplaySettings>(); }
+                catch { _segmentDisplaySettings = SegmentDisplaySettings.CreateDefault(); }
+            }
+            else
+            {
+                string displayMode = (string)_customSettings["displayMode"];
+                _segmentDisplaySettings = displayMode != null
+                    ? SegmentDisplaySettings.MigrateFromLegacy(displayMode)
+                    : SegmentDisplaySettings.CreateDefault();
+            }
+            _displayController?.UpdateSettings(_segmentDisplaySettings);
         }
 
         public override void DataUpdate(PluginManager pluginManager, ref GameData data)
@@ -253,7 +267,7 @@ namespace FanaBridge.Adapters
                     "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                     "]: Lost connection");
 
-                _displayManager?.Clear();
+                _displayController?.Clear();
             }
 
             _wasConnected = isConnected;
@@ -273,17 +287,26 @@ namespace FanaBridge.Adapters
             if (plugin.WizardActive)
                 return;
 
-            // ── Display (ITM falls back to basic 7-seg until ITM support is implemented) ──
+            // ── Display ─────────────────────────────────────────────────────
             if (_config.Capabilities.Display != DisplayType.None)
             {
-                if (_displayManager == null)
+                if (_displayController == null)
                 {
-                    _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
+                    var hwDisplay = new HardwareSegmentDisplay(plugin.Display);
+                    _displayController = new SegmentDisplayController(
+                        hwDisplay,
+                        _segmentDisplaySettings ?? SegmentDisplaySettings.CreateDefault());
                     SimHub.Logging.Current.Info(
-                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
+                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                        "]: Created segment display controller");
                 }
 
-                _displayManager.Update(data);
+                if (_propertyProvider == null)
+                    _propertyProvider = new SimHubPropertyProvider(pluginManager);
+
+                bool gameRunning = data.GameRunning && data.NewData != null;
+                long nowMs = Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency;
+                _displayController.Update(_propertyProvider, null, gameRunning, nowMs);
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
@@ -304,7 +327,7 @@ namespace FanaBridge.Adapters
             SimHub.Logging.Current.Info(
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: End called");
 
-            _displayManager?.Clear();
+            _displayController?.Clear();
             _ledModule?.FinalizeModule();
         }
 
@@ -333,13 +356,17 @@ namespace FanaBridge.Adapters
             // Screen settings tab (only for wheels with a display)
             if (_config.Capabilities.Display != DisplayType.None)
             {
+                if (_segmentDisplaySettings == null)
+                    _segmentDisplaySettings = SegmentDisplaySettings.CreateDefault();
+
                 var screenPanel = new ScreenSettingsPanel();
-                screenPanel.Bind(_displaySettings, _config.Capabilities.Display);
+                screenPanel.Bind(_segmentDisplaySettings, _config.Capabilities.Display, _displayController);
                 screenPanel.SettingsChanged += () =>
                 {
-                    // Sync back to JObject for persistence
-                    _customSettings["displayMode"] = _displaySettings.DisplayMode;
-                    _displayManager?.UpdateSettings(_displaySettings);
+                    // Persist new-format settings to JObject
+                    _customSettings["segmentDisplay"] = JToken.FromObject(_segmentDisplaySettings);
+                    _customSettings.Remove("displayMode"); // remove legacy key
+                    _displayController?.UpdateSettings(_segmentDisplaySettings);
                 };
 
                 yield return new DeviceSettingControl(

@@ -66,17 +66,6 @@ namespace FanaBridge.UI
         }
 
         /// <summary>
-        /// Legacy bind method for backward compatibility during transition.
-        /// Accepts the old DisplaySettings and shows the ITM banner based on display type.
-        /// Will be removed in Phase 9 when integration is complete.
-        /// </summary>
-        public void Bind(Adapters.DisplaySettings settings, DisplayType displayType = DisplayType.Basic)
-        {
-            string mode = settings?.DisplayMode ?? Adapters.DisplaySettings.DefaultMode;
-            Bind(SegmentDisplaySettings.MigrateFromLegacy(mode), displayType);
-        }
-
-        /// <summary>
         /// Binds the panel to settings. Call once after construction.
         /// </summary>
         public void Bind(SegmentDisplaySettings settings, DisplayType displayType = DisplayType.Basic,
