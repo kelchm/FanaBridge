@@ -4,7 +4,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
     /// Data carried through the render pipeline for a single frame.
     /// Each stage reads and produces a new frame.
     /// </summary>
-    public struct DisplayFrame
+    public struct SegmentDisplayFrame
     {
         /// <summary>Current text content (modified by formatters, align, overflow stages).</summary>
         public string Text;

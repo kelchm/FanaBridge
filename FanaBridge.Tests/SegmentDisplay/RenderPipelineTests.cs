@@ -17,7 +17,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void NumberFormatter_RoundsToInteger(string input, string expected)
         {
             var stage = new NumberFormatter();
-            var frame = stage.Process(new DisplayFrame { Text = input }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = input }, Ctx());
             Assert.Equal(expected, frame.Text);
         }
 
@@ -27,7 +27,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void DecimalFormatter_OneDecimalPlace(string input, string expected)
         {
             var stage = new DecimalFormatter();
-            var frame = stage.Process(new DisplayFrame { Text = input }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = input }, Ctx());
             Assert.Equal(expected, frame.Text);
         }
 
@@ -41,7 +41,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void GearFormatter_MapsGears(string input, string expected)
         {
             var stage = new GearFormatter();
-            var frame = stage.Process(new DisplayFrame { Text = input }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = input }, Ctx());
             Assert.Equal(expected, frame.Text);
         }
 
@@ -49,7 +49,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void GearFormatter_EmptyInput_ReturnsN()
         {
             var stage = new GearFormatter();
-            var frame = stage.Process(new DisplayFrame { Text = "" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "" }, Ctx());
             Assert.Equal("N", frame.Text);
         }
 
@@ -57,7 +57,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void TextPassthrough_PreservesText()
         {
             var stage = new TextPassthrough();
-            var frame = stage.Process(new DisplayFrame { Text = "PIT" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "PIT" }, Ctx());
             Assert.Equal("PIT", frame.Text);
         }
 
@@ -65,7 +65,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void TextPassthrough_NullBecomesEmpty()
         {
             var stage = new TextPassthrough();
-            var frame = stage.Process(new DisplayFrame { Text = null }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = null }, Ctx());
             Assert.Equal("", frame.Text);
         }
 
@@ -75,7 +75,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void AlignStage_RightAlignNumber()
         {
             var stage = new AlignStage(AlignmentType.Auto, SegmentFormat.Number);
-            var frame = stage.Process(new DisplayFrame { Text = "42" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "42" }, Ctx());
             Assert.Equal(" 42", frame.Text);
         }
 
@@ -83,7 +83,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void AlignStage_CenterGear()
         {
             var stage = new AlignStage(AlignmentType.Auto, SegmentFormat.Gear);
-            var frame = stage.Process(new DisplayFrame { Text = "3" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "3" }, Ctx());
             Assert.Equal(" 3 ", frame.Text);
         }
 
@@ -91,7 +91,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void AlignStage_LeftAlignText()
         {
             var stage = new AlignStage(AlignmentType.Auto, SegmentFormat.Text);
-            var frame = stage.Process(new DisplayFrame { Text = "AB" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "AB" }, Ctx());
             Assert.Equal("AB", frame.Text); // no padding for left-align
         }
 
@@ -100,7 +100,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         {
             // "1.2" is 2 segments (dot folds into "1"), so right-align should add 1 space
             var stage = new AlignStage(AlignmentType.Right, SegmentFormat.Number);
-            var frame = stage.Process(new DisplayFrame { Text = "1.2" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "1.2" }, Ctx());
             Assert.Equal(" 1.2", frame.Text);
         }
 
@@ -108,7 +108,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void AlignStage_ThreeSegments_NoPadding()
         {
             var stage = new AlignStage(AlignmentType.Right, SegmentFormat.Number);
-            var frame = stage.Process(new DisplayFrame { Text = "123" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "123" }, Ctx());
             Assert.Equal("123", frame.Text);
         }
 
@@ -118,7 +118,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void TruncateStage_Right_KeepsFirst3Segments()
         {
             var stage = new TruncateStage(OverflowType.TruncateRight);
-            var frame = stage.Process(new DisplayFrame { Text = "12345" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "12345" }, Ctx());
             Assert.Equal("123", frame.Text);
         }
 
@@ -126,7 +126,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void TruncateStage_Left_KeepsLast3Segments()
         {
             var stage = new TruncateStage(OverflowType.TruncateLeft);
-            var frame = stage.Process(new DisplayFrame { Text = "12345" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "12345" }, Ctx());
             Assert.Equal("345", frame.Text);
         }
 
@@ -135,7 +135,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         {
             // "1.234" = segments: 1.(dot folds), 2, 3, 4 → keep first 3 = "1.23"
             var stage = new TruncateStage(OverflowType.TruncateRight);
-            var frame = stage.Process(new DisplayFrame { Text = "1.234" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "1.234" }, Ctx());
             Assert.Equal("1.23", frame.Text);
         }
 
@@ -143,7 +143,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void TruncateStage_FitsAlready_Unchanged()
         {
             var stage = new TruncateStage(OverflowType.TruncateRight);
-            var frame = stage.Process(new DisplayFrame { Text = "AB" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "AB" }, Ctx());
             Assert.Equal("AB", frame.Text);
         }
 
@@ -153,7 +153,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void ScrollStage_ShortText_PassesThrough()
         {
             var stage = new ScrollStage(250);
-            var frame = stage.Process(new DisplayFrame { Text = "AB" }, Ctx(0));
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "AB" }, Ctx(0));
             Assert.Null(frame.Segments); // not set → encode stage handles it
         }
 
@@ -161,7 +161,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void ScrollStage_LongText_SetsSegments()
         {
             var stage = new ScrollStage(250);
-            var frame = stage.Process(new DisplayFrame { Text = "HELLO" }, Ctx(0));
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "HELLO" }, Ctx(0));
             Assert.NotNull(frame.Segments);
             Assert.Equal(3, frame.Segments.Length);
         }
@@ -170,8 +170,8 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void ScrollStage_AdvancesOverTime()
         {
             var stage = new ScrollStage(100);
-            var frame1 = stage.Process(new DisplayFrame { Text = "ABCDE" }, Ctx(0));
-            var frame2 = stage.Process(new DisplayFrame { Text = "ABCDE" }, Ctx(200));
+            var frame1 = stage.Process(new SegmentDisplayFrame { Text = "ABCDE" }, Ctx(0));
+            var frame2 = stage.Process(new SegmentDisplayFrame { Text = "ABCDE" }, Ctx(200));
 
             Assert.NotNull(frame1.Segments);
             Assert.NotNull(frame2.Segments);
@@ -188,7 +188,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void BlinkStage_OnPhase_NotSuppressed()
         {
             var stage = new BlinkStage(500, 500);
-            var frame = stage.Process(new DisplayFrame { Text = "PIT" }, Ctx(100));
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "PIT" }, Ctx(100));
             Assert.False(frame.SuppressOutput);
         }
 
@@ -196,7 +196,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void BlinkStage_OffPhase_Suppressed()
         {
             var stage = new BlinkStage(500, 500);
-            var frame = stage.Process(new DisplayFrame { Text = "PIT" }, Ctx(600));
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "PIT" }, Ctx(600));
             Assert.True(frame.SuppressOutput);
         }
 
@@ -205,7 +205,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         {
             var stage = new BlinkStage(500, 500);
             // At 1100ms: 1100 % 1000 = 100 → on phase
-            var frame = stage.Process(new DisplayFrame { Text = "PIT" }, Ctx(1100));
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "PIT" }, Ctx(1100));
             Assert.False(frame.SuppressOutput);
         }
 
@@ -214,8 +214,8 @@ namespace FanaBridge.Tests.SegmentDisplay
         {
             var stage = new FlashStage(3, 150);
             // On phase: 0-149ms, off phase: 150-299ms
-            var on = stage.Process(new DisplayFrame { Text = "X" }, Ctx(50));
-            var off = stage.Process(new DisplayFrame { Text = "X" }, Ctx(200));
+            var on = stage.Process(new SegmentDisplayFrame { Text = "X" }, Ctx(50));
+            var off = stage.Process(new SegmentDisplayFrame { Text = "X" }, Ctx(200));
             Assert.False(on.SuppressOutput);
             Assert.True(off.SuppressOutput);
         }
@@ -225,7 +225,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         {
             var stage = new FlashStage(2, 150);
             // 2 flashes × 300ms cycle = 600ms total flash time
-            var frame = stage.Process(new DisplayFrame { Text = "X" }, Ctx(700));
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "X" }, Ctx(700));
             Assert.False(frame.SuppressOutput);
         }
 
@@ -234,10 +234,10 @@ namespace FanaBridge.Tests.SegmentDisplay
         {
             var stage = new FlashStage(0, 150);
             // At 10000ms, still flashing: 10000 % 300 = 100 → on phase
-            var frame = stage.Process(new DisplayFrame { Text = "X" }, Ctx(10000));
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "X" }, Ctx(10000));
             Assert.False(frame.SuppressOutput);
             // At 10150ms: 10150 % 300 = 250 → off phase
-            var frame2 = stage.Process(new DisplayFrame { Text = "X" }, Ctx(10150));
+            var frame2 = stage.Process(new SegmentDisplayFrame { Text = "X" }, Ctx(10150));
             Assert.True(frame2.SuppressOutput);
         }
 
@@ -247,7 +247,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void SegmentEncodeStage_EncodesText()
         {
             var stage = new SegmentEncodeStage();
-            var frame = stage.Process(new DisplayFrame { Text = "123" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "123" }, Ctx());
             Assert.NotNull(frame.Segments);
             Assert.Equal(3, frame.Segments.Length);
             Assert.Equal(SevenSegment.Digit1, frame.Segments[0]);
@@ -259,7 +259,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void SegmentEncodeStage_DotFolds()
         {
             var stage = new SegmentEncodeStage();
-            var frame = stage.Process(new DisplayFrame { Text = "1.2" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "1.2" }, Ctx());
             Assert.NotNull(frame.Segments);
             Assert.Equal((byte)(SevenSegment.Digit1 | SevenSegment.Dot), frame.Segments[0]);
             Assert.Equal(SevenSegment.Digit2, frame.Segments[1]);
@@ -270,7 +270,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         {
             var existing = new byte[] { 0xAA, 0xBB, 0xCC };
             var stage = new SegmentEncodeStage();
-            var frame = stage.Process(new DisplayFrame { Text = "123", Segments = existing }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "123", Segments = existing }, Ctx());
             Assert.Same(existing, frame.Segments);
         }
 
@@ -278,7 +278,7 @@ namespace FanaBridge.Tests.SegmentDisplay
         public void SegmentEncodeStage_EmptyText_AllBlank()
         {
             var stage = new SegmentEncodeStage();
-            var frame = stage.Process(new DisplayFrame { Text = "" }, Ctx());
+            var frame = stage.Process(new SegmentDisplayFrame { Text = "" }, Ctx());
             Assert.Equal(SevenSegment.Blank, frame.Segments[0]);
             Assert.Equal(SevenSegment.Blank, frame.Segments[1]);
             Assert.Equal(SevenSegment.Blank, frame.Segments[2]);
@@ -302,7 +302,7 @@ namespace FanaBridge.Tests.SegmentDisplay
             };
 
             var pipeline = RenderPipeline.ForLayer(layer);
-            var frame = pipeline.Process(new DisplayFrame { Text = "3" }, Ctx());
+            var frame = pipeline.Process(new SegmentDisplayFrame { Text = "3" }, Ctx());
 
             Assert.NotNull(frame.Segments);
             Assert.Equal(3, frame.Segments.Length);
@@ -328,7 +328,7 @@ namespace FanaBridge.Tests.SegmentDisplay
             };
 
             var pipeline = RenderPipeline.ForLayer(layer);
-            var frame = pipeline.Process(new DisplayFrame { Text = "42" }, Ctx());
+            var frame = pipeline.Process(new SegmentDisplayFrame { Text = "42" }, Ctx());
 
             Assert.NotNull(frame.Segments);
             // "42" right-aligned = " 42" → [Blank, Digit4, Digit2]
@@ -352,11 +352,11 @@ namespace FanaBridge.Tests.SegmentDisplay
             var pipeline = RenderPipeline.ForLayer(layer);
 
             // On phase
-            var onFrame = pipeline.Process(new DisplayFrame { Text = "PIT" }, Ctx(100));
+            var onFrame = pipeline.Process(new SegmentDisplayFrame { Text = "PIT" }, Ctx(100));
             Assert.False(onFrame.SuppressOutput);
 
             // Off phase
-            var offFrame = pipeline.Process(new DisplayFrame { Text = "PIT" }, Ctx(600));
+            var offFrame = pipeline.Process(new SegmentDisplayFrame { Text = "PIT" }, Ctx(600));
             Assert.True(offFrame.SuppressOutput);
         }
 

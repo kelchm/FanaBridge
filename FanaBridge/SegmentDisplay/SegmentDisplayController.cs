@@ -144,7 +144,7 @@ namespace FanaBridge.SegmentDisplay
                 NCalc = ncalc,
             };
 
-            var frame = new DisplayFrame { Text = result.Text };
+            var frame = new SegmentDisplayFrame { Text = result.Text };
             frame = pipeline.Process(frame, ctx);
 
             if (frame.SuppressOutput)

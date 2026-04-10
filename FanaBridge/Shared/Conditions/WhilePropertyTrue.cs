@@ -39,6 +39,7 @@ namespace FanaBridge.Shared.Conditions
             if (value is long l) return l != 0;
             if (value is double d) return d != 0;
             if (value is float f) return f != 0;
+            if (value is decimal m) return m != 0;
             if (value is string s)
             {
                 s = s.Trim();

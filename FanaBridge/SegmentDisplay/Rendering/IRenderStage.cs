@@ -8,6 +8,6 @@ namespace FanaBridge.SegmentDisplay.Rendering
     public interface IRenderStage
     {
         /// <summary>Process a frame and return the (potentially modified) result.</summary>
-        DisplayFrame Process(DisplayFrame input, RenderContext ctx);
+        SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx);
     }
 }

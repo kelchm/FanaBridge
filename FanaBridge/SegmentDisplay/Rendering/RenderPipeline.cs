@@ -16,7 +16,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
         }
 
         /// <summary>Run the frame through all stages sequentially.</summary>
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             for (int i = 0; i < _stages.Length; i++)
             {
@@ -30,6 +30,9 @@ namespace FanaBridge.SegmentDisplay.Rendering
         /// </summary>
         public static RenderPipeline ForLayer(SegmentDisplayLayer layer)
         {
+            if (layer.Content == null)
+                throw new System.ArgumentException("Layer content must not be null.", "layer");
+
             var stages = new List<IRenderStage>();
 
             // 1. Formatter (from content format)

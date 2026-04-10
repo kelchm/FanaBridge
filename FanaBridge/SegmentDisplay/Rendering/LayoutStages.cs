@@ -18,7 +18,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
             _format = format;
         }
 
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             if (string.IsNullOrEmpty(input.Text)) return input;
 
@@ -84,7 +84,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
             _direction = direction;
         }
 
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             if (string.IsNullOrEmpty(input.Text)) return input;
 
@@ -129,7 +129,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
             _speedMs = Math.Max(50, speedMs);
         }
 
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             if (string.IsNullOrEmpty(input.Text)) return input;
 

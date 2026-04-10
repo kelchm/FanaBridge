@@ -6,12 +6,12 @@ namespace FanaBridge.SegmentDisplay.Rendering
     /// <summary>
     /// Final pipeline stage: converts text into 7-segment byte values.
     /// Dots and commas fold into the preceding segment's decimal point bit.
-    /// If <see cref="DisplayFrame.Segments"/> is already set (e.g., by
+    /// If <see cref="SegmentDisplayFrame.Segments"/> is already set (e.g., by
     /// <see cref="ScrollStage"/>), this stage is a no-op.
     /// </summary>
     public class SegmentEncodeStage : IRenderStage
     {
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             // If segments were already set (e.g., by scroll stage), skip encoding
             if (input.Segments != null) return input;

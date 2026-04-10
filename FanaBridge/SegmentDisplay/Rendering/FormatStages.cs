@@ -5,7 +5,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
     /// <summary>Formats a raw value as a rounded integer string.</summary>
     public class NumberFormatter : IRenderStage
     {
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             input.Text = FormatNumeric(input.Text, "0");
             return input;
@@ -26,7 +26,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
     /// <summary>Formats a raw value with one decimal place.</summary>
     public class DecimalFormatter : IRenderStage
     {
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             input.Text = NumberFormatter.FormatNumeric(input.Text, "0.0");
             return input;
@@ -43,7 +43,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
             _format = format ?? @"ss\.f";
         }
 
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             if (string.IsNullOrEmpty(input.Text)) return input;
 
@@ -64,7 +64,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
     /// <summary>Formats a gear value: R, N, 1-9.</summary>
     public class GearFormatter : IRenderStage
     {
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             input.Text = FormatGear(input.Text);
             return input;
@@ -84,7 +84,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
     /// <summary>Passes the raw value through as-is.</summary>
     public class TextPassthrough : IRenderStage
     {
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             if (input.Text == null) input.Text = "";
             return input;

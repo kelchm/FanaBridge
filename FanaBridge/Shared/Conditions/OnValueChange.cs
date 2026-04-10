@@ -34,7 +34,9 @@ namespace FanaBridge.Shared.Conditions
 
             string lastStr = state.LastValue?.ToString() ?? "";
 
-            // Detect change (non-empty values only, matching prototype behavior)
+            // Detect change. Empty-string transitions are ignored to prevent
+            // false triggers when a property hasn't been populated yet by the
+            // game plugin (matching prototype behavior).
             if (currentStr != lastStr && currentStr.Length > 0)
             {
                 state.ActiveUntilMs = nowMs + HoldMs;

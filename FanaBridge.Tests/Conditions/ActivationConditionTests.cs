@@ -231,6 +231,18 @@ namespace FanaBridge.Tests.Conditions
             Assert.Equal(expected, WhilePropertyTrue.IsTruthy(value));
         }
 
+        [Fact]
+        public void IsTruthy_DecimalNonZero_ReturnsTrue()
+        {
+            Assert.True(WhilePropertyTrue.IsTruthy(1.0m));
+        }
+
+        [Fact]
+        public void IsTruthy_DecimalZero_ReturnsFalse()
+        {
+            Assert.False(WhilePropertyTrue.IsTruthy(0m));
+        }
+
         // ── Test doubles ────────────────────────────────────────────
 
         private class StubPropertyProvider : IPropertyProvider

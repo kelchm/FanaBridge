@@ -1,7 +1,7 @@
 namespace FanaBridge.SegmentDisplay.Rendering
 {
     /// <summary>
-    /// Toggles <see cref="DisplayFrame.SuppressOutput"/> on a repeating on/off interval.
+    /// Toggles <see cref="SegmentDisplayFrame.SuppressOutput"/> on a repeating on/off interval.
     /// </summary>
     public class BlinkStage : IRenderStage
     {
@@ -14,7 +14,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
             _offMs = offMs > 0 ? offMs : 500;
         }
 
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             int cycle = _onMs + _offMs;
             if (cycle <= 0) return input;
@@ -41,7 +41,7 @@ namespace FanaBridge.SegmentDisplay.Rendering
             _rateMs = rateMs > 0 ? rateMs : 150;
         }
 
-        public DisplayFrame Process(DisplayFrame input, RenderContext ctx)
+        public SegmentDisplayFrame Process(SegmentDisplayFrame input, RenderContext ctx)
         {
             int cycle = _rateMs * 2; // on + off
             if (cycle <= 0) return input;
