@@ -8,7 +8,7 @@ namespace FanaBridge.Shared.Conditions
     {
         public override string Type { get { return "AlwaysActive"; } }
 
-        public override bool Evaluate(IPropertyProvider props, ActivationState state, long nowMs)
+        public override bool Evaluate(IPropertyProvider props, INCalcEngine ncalc, ActivationState state, long nowMs)
         {
             return true;
         }

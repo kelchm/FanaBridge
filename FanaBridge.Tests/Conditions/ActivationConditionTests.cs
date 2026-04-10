@@ -13,7 +13,7 @@ namespace FanaBridge.Tests.Conditions
         public void AlwaysActive_ReturnsTrue()
         {
             var condition = new AlwaysActive();
-            Assert.True(condition.Evaluate(new StubPropertyProvider(), new ActivationState(), 0));
+            Assert.True(condition.Evaluate(new StubPropertyProvider(), null, new ActivationState(), 0));
         }
 
         // ── WhilePropertyTrue ───────────────────────────────────────
@@ -37,7 +37,7 @@ namespace FanaBridge.Tests.Conditions
             props.Set("test", value);
 
             var condition = new WhilePropertyTrue { Property = "test" };
-            Assert.Equal(expected, condition.Evaluate(props, new ActivationState(), 0));
+            Assert.Equal(expected, condition.Evaluate(props, null, new ActivationState(), 0));
         }
 
         [Fact]
@@ -45,14 +45,14 @@ namespace FanaBridge.Tests.Conditions
         {
             var props = new StubPropertyProvider();
             var condition = new WhilePropertyTrue { Property = "missing" };
-            Assert.False(condition.Evaluate(props, new ActivationState(), 0));
+            Assert.False(condition.Evaluate(props, null, new ActivationState(), 0));
         }
 
         [Fact]
         public void WhilePropertyTrue_EmptyPropertyName_ReturnsFalse()
         {
             var condition = new WhilePropertyTrue { Property = "" };
-            Assert.False(condition.Evaluate(new StubPropertyProvider(), new ActivationState(), 0));
+            Assert.False(condition.Evaluate(new StubPropertyProvider(), null, new ActivationState(), 0));
         }
 
         [Fact]
@@ -62,10 +62,10 @@ namespace FanaBridge.Tests.Conditions
             props.Set("flag", true);
 
             var condition = new WhilePropertyTrue { Property = "flag", Invert = true };
-            Assert.False(condition.Evaluate(props, new ActivationState(), 0));
+            Assert.False(condition.Evaluate(props, null, new ActivationState(), 0));
 
             props.Set("flag", false);
-            Assert.True(condition.Evaluate(props, new ActivationState(), 0));
+            Assert.True(condition.Evaluate(props, null, new ActivationState(), 0));
         }
 
         // ── OnValueChange ───────────────────────────────────────────
@@ -79,7 +79,7 @@ namespace FanaBridge.Tests.Conditions
             var condition = new OnValueChange { Property = "gear", HoldMs = 2000 };
             var state = new ActivationState();
 
-            Assert.False(condition.Evaluate(props, state, 1000));
+            Assert.False(condition.Evaluate(props, null, state, 1000));
         }
 
         [Fact]
@@ -92,17 +92,17 @@ namespace FanaBridge.Tests.Conditions
             var state = new ActivationState();
 
             // Seed
-            condition.Evaluate(props, state, 1000);
+            condition.Evaluate(props, null, state, 1000);
 
             // Change value
             props.Set("gear", 4);
-            Assert.True(condition.Evaluate(props, state, 2000));
+            Assert.True(condition.Evaluate(props, null, state, 2000));
 
             // Still within hold
-            Assert.True(condition.Evaluate(props, state, 3500));
+            Assert.True(condition.Evaluate(props, null, state, 3500));
 
             // After hold expires
-            Assert.False(condition.Evaluate(props, state, 4500));
+            Assert.False(condition.Evaluate(props, null, state, 4500));
         }
 
         [Fact]
@@ -115,10 +115,10 @@ namespace FanaBridge.Tests.Conditions
             var state = new ActivationState();
 
             // Seed
-            condition.Evaluate(props, state, 1000);
+            condition.Evaluate(props, null, state, 1000);
 
             // Same value
-            Assert.False(condition.Evaluate(props, state, 2000));
+            Assert.False(condition.Evaluate(props, null, state, 2000));
         }
 
         [Fact]
@@ -131,37 +131,74 @@ namespace FanaBridge.Tests.Conditions
             var state = new ActivationState();
 
             // Seed
-            condition.Evaluate(props, state, 1000);
+            condition.Evaluate(props, null, state, 1000);
 
             // First change at t=2000, hold until t=4000
             props.Set("gear", 4);
-            condition.Evaluate(props, state, 2000);
+            condition.Evaluate(props, null, state, 2000);
 
             // Second change at t=3000, hold extended until t=5000
             props.Set("gear", 5);
-            condition.Evaluate(props, state, 3000);
+            condition.Evaluate(props, null, state, 3000);
 
             // Still active at t=4500 (would have expired from first change)
-            Assert.True(condition.Evaluate(props, state, 4500));
+            Assert.True(condition.Evaluate(props, null, state, 4500));
 
             // Expired at t=5500
-            Assert.False(condition.Evaluate(props, state, 5500));
+            Assert.False(condition.Evaluate(props, null, state, 5500));
         }
 
         [Fact]
         public void OnValueChange_EmptyPropertyName_ReturnsFalse()
         {
             var condition = new OnValueChange { Property = "" };
-            Assert.False(condition.Evaluate(new StubPropertyProvider(), new ActivationState(), 0));
+            Assert.False(condition.Evaluate(new StubPropertyProvider(), null, new ActivationState(), 0));
         }
 
         // ── WhileExpressionTrue ─────────────────────────────────────
 
         [Fact]
-        public void WhileExpressionTrue_ReturnsFalse_InPhase1()
+        public void WhileExpressionTrue_TruthyResult_ReturnsTrue()
+        {
+            var ncalc = new StubNCalcEngine();
+            ncalc.Result = true;
+
+            var condition = new WhileExpressionTrue { Expression = "1 == 1" };
+            Assert.True(condition.Evaluate(new StubPropertyProvider(), ncalc, new ActivationState(), 0));
+        }
+
+        [Fact]
+        public void WhileExpressionTrue_FalsyResult_ReturnsFalse()
+        {
+            var ncalc = new StubNCalcEngine();
+            ncalc.Result = false;
+
+            var condition = new WhileExpressionTrue { Expression = "1 == 0" };
+            Assert.False(condition.Evaluate(new StubPropertyProvider(), ncalc, new ActivationState(), 0));
+        }
+
+        [Fact]
+        public void WhileExpressionTrue_NullEngine_ReturnsFalse()
         {
             var condition = new WhileExpressionTrue { Expression = "1 == 1" };
-            Assert.False(condition.Evaluate(new StubPropertyProvider(), new ActivationState(), 0));
+            Assert.False(condition.Evaluate(new StubPropertyProvider(), null, new ActivationState(), 0));
+        }
+
+        [Fact]
+        public void WhileExpressionTrue_EmptyExpression_ReturnsFalse()
+        {
+            var condition = new WhileExpressionTrue { Expression = "" };
+            Assert.False(condition.Evaluate(new StubPropertyProvider(), new StubNCalcEngine(), new ActivationState(), 0));
+        }
+
+        [Fact]
+        public void WhileExpressionTrue_NullResult_ReturnsFalse()
+        {
+            var ncalc = new StubNCalcEngine();
+            ncalc.Result = null;
+
+            var condition = new WhileExpressionTrue { Expression = "bad()" };
+            Assert.False(condition.Evaluate(new StubPropertyProvider(), ncalc, new ActivationState(), 0));
         }
 
         // ── IsTruthy edge cases ─────────────────────────────────────
@@ -194,7 +231,7 @@ namespace FanaBridge.Tests.Conditions
             Assert.Equal(expected, WhilePropertyTrue.IsTruthy(value));
         }
 
-        // ── Test double ─────────────────────────────────────────────
+        // ── Test doubles ────────────────────────────────────────────
 
         private class StubPropertyProvider : IPropertyProvider
         {
@@ -206,6 +243,16 @@ namespace FanaBridge.Tests.Conditions
             {
                 object val;
                 return _values.TryGetValue(propertyName, out val) ? val : null;
+            }
+        }
+
+        private class StubNCalcEngine : INCalcEngine
+        {
+            public object Result { get; set; }
+
+            public object Evaluate(string expression)
+            {
+                return Result;
             }
         }
     }

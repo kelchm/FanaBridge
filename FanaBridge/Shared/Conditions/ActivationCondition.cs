@@ -21,9 +21,10 @@ namespace FanaBridge.Shared.Conditions
         /// Evaluates whether this condition is currently active.
         /// </summary>
         /// <param name="props">Property provider for reading SimHub values.</param>
+        /// <param name="ncalc">NCalc expression engine, or null if unavailable.</param>
         /// <param name="state">Per-condition mutable state (last value, timers).</param>
         /// <param name="nowMs">Current timestamp in milliseconds.</param>
         /// <returns>True if the condition is met.</returns>
-        public abstract bool Evaluate(IPropertyProvider props, ActivationState state, long nowMs);
+        public abstract bool Evaluate(IPropertyProvider props, INCalcEngine ncalc, ActivationState state, long nowMs);
     }
 }

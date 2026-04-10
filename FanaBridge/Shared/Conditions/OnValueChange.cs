@@ -18,7 +18,7 @@ namespace FanaBridge.Shared.Conditions
         [JsonProperty("HoldMs")]
         public int HoldMs { get; set; }
 
-        public override bool Evaluate(IPropertyProvider props, ActivationState state, long nowMs)
+        public override bool Evaluate(IPropertyProvider props, INCalcEngine ncalc, ActivationState state, long nowMs)
         {
             if (string.IsNullOrEmpty(Property)) return false;
 
