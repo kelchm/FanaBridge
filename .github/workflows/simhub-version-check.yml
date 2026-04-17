@@ -62,15 +62,15 @@ jobs:
 
           body="## SimHub version out of date
 
-The CI pipeline is pinned to SimHub **$PINNED** but the latest release is **$LATEST**.
+          The CI pipeline is pinned to SimHub **$PINNED** but the latest release is **$LATEST**.
 
-### Action required
+          ### Action required
 
-Update \`SIMHUB_VERSION\` in \`.github/workflows/build.yml\` from \`$PINNED\` to \`$LATEST\`.
+          Update \`SIMHUB_VERSION\` in \`.github/workflows/build.yml\` from \`$PINNED\` to \`$LATEST\`.
 
-Also review the \`M_FS_WHEEL_SWTYPE\` enum in the new \`SimHub.FanatecManaged.dll\` for any added, removed, or renamed wheel type entries that may affect profile matching (see \`docs/reference/devices.md\` — *Wheel Type Identifiers* section).
+          Also review the \`M_FS_WHEEL_SWTYPE\` enum in the new \`SimHub.FanatecManaged.dll\` for any added, removed, or renamed wheel type entries that may affect profile matching (see \`docs/reference/devices.md\` — *Wheel Type Identifiers* section).
 
-*This issue was opened automatically by the [SimHub Version Check]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/simhub-version-check.yml) workflow.*"
+          *This issue was opened automatically by the [SimHub Version Check]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/simhub-version-check.yml) workflow.*"
 
           gh issue create \
             --repo "$GITHUB_REPOSITORY" \
