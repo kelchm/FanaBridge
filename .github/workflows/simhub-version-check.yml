@@ -20,7 +20,12 @@ jobs:
       - name: Get pinned SimHub version
         id: pinned
         run: |
+          set -euo pipefail
           version=$(grep -oP "SIMHUB_VERSION:\s*'\K[^']+" .github/workflows/build.yml | head -1)
+          if [[ -z "$version" ]]; then
+            echo "Failed to extract pinned SimHub version from .github/workflows/build.yml" >&2
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Pinned SimHub version: $version"
 
@@ -29,7 +34,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           latest=$(gh release list --repo SHWotever/SimHub --limit 1 --json tagName --jq '.[0].tagName')
+          if [[ -z "$latest" ]]; then
+            echo "Failed to determine the latest SimHub version." >&2
+            exit 1
+          fi
           echo "version=$latest" >> "$GITHUB_OUTPUT"
           echo "Latest SimHub version: $latest"
 
@@ -43,7 +53,7 @@ jobs:
           title="Update CI to SimHub $LATEST (currently pinned to $PINNED)"
 
           # Skip if an open issue with this title already exists
-          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 1000 \
             --json title | jq -r --arg t "$title" '.[] | select(.title == $t) | .title' | head -1)
           if [[ -n "$existing" ]]; then
             echo "Issue already open: $existing"
