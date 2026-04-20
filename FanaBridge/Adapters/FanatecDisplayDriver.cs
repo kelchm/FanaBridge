@@ -30,6 +30,12 @@ namespace FanaBridge.Adapters
         private int _lastKnownGear = int.MinValue;
         private DateTime _gearOverlayUntil = DateTime.MinValue;
 
+        // GearUpshiftBrackets: flicker state
+        private static readonly TimeSpan FlickerInterval = TimeSpan.FromMilliseconds(250);
+        private bool _lastBracketsShown;
+        private bool _flickerBracketsOn;
+        private DateTime _flickerToggleAt = DateTime.MinValue;
+
         public FanatecDisplayDriver(DisplayEncoder display, DisplaySettings settings)
         {
             _display = display;
@@ -75,6 +81,10 @@ namespace FanaBridge.Adapters
                     UpdateGearAndSpeed(data);
                     break;
 
+                case "GearUpshiftBrackets":
+                    UpdateGearUpshiftBrackets(data);
+                    break;
+
                 case "Gear":
                 default:
                     UpdateGear(data);
@@ -94,6 +104,9 @@ namespace FanaBridge.Adapters
             _lastSentSpeed = int.MinValue;
             _lastKnownGear = int.MinValue;
             _gearOverlayUntil = DateTime.MinValue;
+            _lastBracketsShown = false;
+            _flickerBracketsOn = false;
+            _flickerToggleAt = DateTime.MinValue;
         }
 
         // =====================================================================
@@ -168,6 +181,47 @@ namespace FanaBridge.Adapters
                     _currentText = speed.ToString();
                 }
             }
+        }
+
+        private void UpdateGearUpshiftBrackets(GameData data)
+        {
+            string gearStr = data.NewData.Gear;
+            int gear = ParseGear(gearStr);
+
+            // SimHub computes the shift-point percentage via its own RPM config.
+            // 1.0 = redline reached; values approaching 1.0 are used for the flicker zone.
+            double rpmPct = data.NewData.CarSettings_CurrentDisplayedRPMPercent;
+
+            bool showBrackets;
+
+            if (rpmPct >= 1.0)
+            {
+                // Redline reached: flicker brackets to signal upshift
+                DateTime now = DateTime.UtcNow;
+                if (now >= _flickerToggleAt)
+                {
+                    _flickerBracketsOn = !_flickerBracketsOn;
+                    _flickerToggleAt   = now + FlickerInterval;
+                }
+                showBrackets = _flickerBracketsOn;
+            }
+            else
+            {
+                // Below redline: no brackets, reset flicker state
+                showBrackets       = false;
+                _flickerBracketsOn = false;
+            }
+
+            // Rate-limit: only write to the display when something changed
+            if (gear == _lastSentGear && showBrackets == _lastBracketsShown && _lastDisplayMode == "GearUpshift")
+                return;
+
+            _display.DisplayGearBracketed(gear, showBrackets);
+            _lastSentGear      = gear;
+            _lastBracketsShown = showBrackets;
+            _lastDisplayMode   = "GearUpshift";
+            _currentGear       = GearToString(gear);
+            _currentText       = showBrackets ? "[" + _currentGear + "]" : _currentGear;
         }
 
         // =====================================================================
