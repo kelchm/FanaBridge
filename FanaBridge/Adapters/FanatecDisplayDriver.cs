@@ -47,7 +47,7 @@ namespace FanaBridge.Adapters
             _settings = settings ?? new DisplaySettings();
         }
 
-        /// <summary>The current display mode string ("Gear", "Speed", "GearAndSpeed").</summary>
+        /// <summary>The current display mode string ("Gear", "Speed", "GearAndSpeed", "GearUpshiftBrackets").</summary>
         public string DisplayMode
         {
             get { return _settings.DisplayMode ?? DisplaySettings.DefaultMode; }
@@ -187,13 +187,13 @@ namespace FanaBridge.Adapters
                 && data.NewData.CarSettings_RPMRedLineReached > 0;
 
             // Rate-limit: only write to the display when something changed
-            if (gear == _lastSentGear && showBrackets == _lastBracketsShown && _lastDisplayMode == "GearUpshift")
+            if (gear == _lastSentGear && showBrackets == _lastBracketsShown && _lastDisplayMode == "GearUpshiftBrackets")
                 return;
 
             _display.DisplayGearBracketed(gear, showBrackets);
             _lastSentGear      = gear;
             _lastBracketsShown = showBrackets;
-            _lastDisplayMode   = "GearUpshift";
+            _lastDisplayMode   = "GearUpshiftBrackets";
             _currentGear       = GearToString(gear);
             _currentText       = showBrackets ? "[" + _currentGear + "]" : _currentGear;
         }
