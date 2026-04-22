@@ -190,7 +190,7 @@ namespace FanaBridge.Adapters
             if (gear == _lastSentGear && showBrackets == _lastBracketsShown && _lastDisplayMode == "GearUpshiftBrackets")
                 return;
 
-            _display.DisplayGearBracketed(gear, showBrackets);
+            _display.DisplayGear(gear, showBrackets);
             _lastSentGear      = gear;
             _lastBracketsShown = showBrackets;
             _lastDisplayMode   = "GearUpshiftBrackets";

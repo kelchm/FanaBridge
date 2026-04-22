@@ -50,17 +50,9 @@ namespace FanaBridge.Protocol
 
         /// <summary>
         /// Display a gear number: -1=R, 0=N, 1-9.
-        /// </summary>
-        public bool DisplayGear(int gear)
-        {
-            return SetDisplay(SevenSegment.Blank, GearToSegment(gear), SevenSegment.Blank);
-        }
-
-        /// <summary>
-        /// Display a gear number with optional upshift brackets: -1=R, 0=N, 1-9.
         /// When <paramref name="showBrackets"/> is true, renders [n] using the outer digit positions.
         /// </summary>
-        public bool DisplayGearBracketed(int gear, bool showBrackets)
+        public bool DisplayGear(int gear, bool showBrackets = false)
         {
             byte left  = showBrackets ? SevenSegment.BracketLeft  : SevenSegment.Blank;
             byte right = showBrackets ? SevenSegment.BracketRight : SevenSegment.Blank;
