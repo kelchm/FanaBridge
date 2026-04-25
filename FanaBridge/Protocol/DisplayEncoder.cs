@@ -50,27 +50,32 @@ namespace FanaBridge.Protocol
 
         /// <summary>
         /// Display a gear number: -1=R, 0=N, 1-9.
+        /// When <paramref name="showBrackets"/> is true, renders [n] using the outer digit positions.
         /// </summary>
-        public bool DisplayGear(int gear)
+        public bool DisplayGear(int gear, bool showBrackets = false)
         {
-            byte seg;
+            byte left  = showBrackets ? SevenSegment.BracketLeft  : SevenSegment.Blank;
+            byte right = showBrackets ? SevenSegment.BracketRight : SevenSegment.Blank;
+            return SetDisplay(left, GearToSegment(gear), right);
+        }
+
+        private static byte GearToSegment(int gear)
+        {
             switch (gear)
             {
-                case -1: seg = SevenSegment.R; break;
-                case 0:  seg = SevenSegment.N; break;
-                case 1:  seg = SevenSegment.Digit1; break;
-                case 2:  seg = SevenSegment.Digit2; break;
-                case 3:  seg = SevenSegment.Digit3; break;
-                case 4:  seg = SevenSegment.Digit4; break;
-                case 5:  seg = SevenSegment.Digit5; break;
-                case 6:  seg = SevenSegment.Digit6; break;
-                case 7:  seg = SevenSegment.Digit7; break;
-                case 8:  seg = SevenSegment.Digit8; break;
-                case 9:  seg = SevenSegment.Digit9; break;
-                default: seg = SevenSegment.N; break;
+                case -1: return SevenSegment.R;
+                case 0:  return SevenSegment.N;
+                case 1:  return SevenSegment.Digit1;
+                case 2:  return SevenSegment.Digit2;
+                case 3:  return SevenSegment.Digit3;
+                case 4:  return SevenSegment.Digit4;
+                case 5:  return SevenSegment.Digit5;
+                case 6:  return SevenSegment.Digit6;
+                case 7:  return SevenSegment.Digit7;
+                case 8:  return SevenSegment.Digit8;
+                case 9:  return SevenSegment.Digit9;
+                default: return SevenSegment.N;
             }
-
-            return SetDisplay(SevenSegment.Blank, seg, SevenSegment.Blank);
         }
 
         /// <summary>

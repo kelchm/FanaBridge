@@ -21,6 +21,7 @@
                     <ComboBoxItem Content="Gear" Tag="Gear" />
                     <ComboBoxItem Content="Speed" Tag="Speed" />
                     <ComboBoxItem Content="Gear + Speed" Tag="GearAndSpeed" />
+                    <ComboBoxItem Content="Gear + Upshift Brackets" Tag="GearUpshiftBrackets" />
                 </ComboBox>
             </styles:SHSubSection>
 

@@ -9,7 +9,7 @@ namespace FanaBridge.Adapters
         public const string DefaultMode = "Gear";
 
         /// <summary>
-        /// Display mode: "Gear", "Speed", or "GearAndSpeed".
+        /// Display mode: "Gear", "Speed", "GearAndSpeed", or "GearUpshiftBrackets".
         /// </summary>
         public string DisplayMode { get; set; } = DefaultMode;
     }

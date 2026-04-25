@@ -30,6 +30,9 @@ namespace FanaBridge.Adapters
         private int _lastKnownGear = int.MinValue;
         private DateTime _gearOverlayUntil = DateTime.MinValue;
 
+        // GearUpshiftBrackets: bracket state
+        private bool _lastBracketsShown;
+
         public FanatecDisplayDriver(DisplayEncoder display, DisplaySettings settings)
         {
             _display = display;
@@ -44,7 +47,7 @@ namespace FanaBridge.Adapters
             _settings = settings ?? new DisplaySettings();
         }
 
-        /// <summary>The current display mode string ("Gear", "Speed", "GearAndSpeed").</summary>
+        /// <summary>The current display mode string ("Gear", "Speed", "GearAndSpeed", "GearUpshiftBrackets").</summary>
         public string DisplayMode
         {
             get { return _settings.DisplayMode ?? DisplaySettings.DefaultMode; }
@@ -75,6 +78,10 @@ namespace FanaBridge.Adapters
                     UpdateGearAndSpeed(data);
                     break;
 
+                case "GearUpshiftBrackets":
+                    UpdateGearUpshiftBrackets(data);
+                    break;
+
                 case "Gear":
                 default:
                     UpdateGear(data);
@@ -94,6 +101,7 @@ namespace FanaBridge.Adapters
             _lastSentSpeed = int.MinValue;
             _lastKnownGear = int.MinValue;
             _gearOverlayUntil = DateTime.MinValue;
+            _lastBracketsShown = false;
         }
 
         // =====================================================================
@@ -168,6 +176,26 @@ namespace FanaBridge.Adapters
                     _currentText = speed.ToString();
                 }
             }
+        }
+
+        private void UpdateGearUpshiftBrackets(GameData data)
+        {
+            string gearStr = data.NewData.Gear;
+            int gear = ParseGear(gearStr);
+
+            bool showBrackets = data.NewData.Rpms > 0
+                && data.NewData.CarSettings_RPMRedLineReached > 0;
+
+            // Rate-limit: only write to the display when something changed
+            if (gear == _lastSentGear && showBrackets == _lastBracketsShown && _lastDisplayMode == "GearUpshiftBrackets")
+                return;
+
+            _display.DisplayGear(gear, showBrackets);
+            _lastSentGear      = gear;
+            _lastBracketsShown = showBrackets;
+            _lastDisplayMode   = "GearUpshiftBrackets";
+            _currentGear       = GearToString(gear);
+            _currentText       = showBrackets ? "[" + _currentGear + "]" : _currentGear;
         }
 
         // =====================================================================

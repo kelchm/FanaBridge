@@ -32,10 +32,12 @@ namespace FanaBridge.Protocol
         public const byte Digit9 = 0x6F;
 
         // Symbols
-        public const byte Dot    = 0x80;
-        public const byte Blank  = 0x00;
-        public const byte Dash   = 0x40;
-        public const byte Under  = 0x08;
+        public const byte Dot          = 0x80;
+        public const byte Blank        = 0x00;
+        public const byte Dash         = 0x40;
+        public const byte Under        = 0x08;
+        public const byte BracketLeft  = 0x39;  // [ top + top-left + bottom-left + bottom
+        public const byte BracketRight = 0x0F;  // ] top + top-right + bottom-right + bottom
 
         // Letters (7-segment approximations)
         public const byte A = 0x77;
