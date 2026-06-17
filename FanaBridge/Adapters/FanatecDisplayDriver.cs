@@ -8,8 +8,8 @@ namespace FanaBridge.Adapters
     /// Maps telemetry data to the Fanatec 3-digit 7-segment display.
     /// Supports gear, speed, and mixed display modes.
     ///
-    /// Settings are read from a JObject so this can be owned by either the
-    /// plugin or a DeviceInstance — no dependency on FanatecPluginSettings.
+    /// Driven by a typed <see cref="DisplaySettings"/> so this can be owned by
+    /// either the plugin or a DeviceInstance — no dependency on FanatecPluginSettings.
     /// </summary>
     public class FanatecDisplayDriver
     {

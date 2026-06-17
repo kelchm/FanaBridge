@@ -6,19 +6,15 @@ namespace FanaBridge.Tests
 {
     public class ConnectionMonitorTests
     {
-        // ── Test stubs ───────────────────────────────────────────────────
+        // ── Test stub ────────────────────────────────────────────────────
 
-        private class StubDevice : IDeviceConnection
+        // The wheelbase now owns its transport, so a single stub stands in for
+        // both connection state (IsConnected / IsDevicePresent) and identity
+        // polling.
+        private class StubWheelbase : IWheelbaseConnection
         {
             public bool IsConnected { get; set; } = true;
             public bool IsDevicePresent { get; set; } = true;
-            public int DisconnectCalls { get; private set; }
-            public void Disconnect() => DisconnectCalls++;
-        }
-
-        private class StubSdk : ISdkConnection
-        {
-            public bool IsConnected { get; set; } = true;
             public int DisconnectCalls { get; private set; }
             public int PollCalls { get; private set; }
             public bool PollThrows { get; set; }
@@ -28,7 +24,7 @@ namespace FanaBridge.Tests
             public bool PollWheelIdentity()
             {
                 if (PollThrows)
-                    throw new InvalidOperationException("SDK poll failed");
+                    throw new InvalidOperationException("wheel poll failed");
                 PollCalls++;
                 return true;
             }
@@ -37,8 +33,8 @@ namespace FanaBridge.Tests
         // ── Helpers ──────────────────────────────────────────────────────
 
         private static ConnectionMonitor Create(
-            StubSdk sdk, StubDevice device, Func<bool> tryConnect)
-            => new ConnectionMonitor(sdk, device, tryConnect);
+            StubWheelbase wheelbase, Func<bool> tryConnect)
+            => new ConnectionMonitor(wheelbase, tryConnect);
 
         /// <summary>Pump Update() n times and return the last result.</summary>
         private static bool PumpFrames(ConnectionMonitor monitor, int count)
@@ -52,24 +48,17 @@ namespace FanaBridge.Tests
         // ── Constructor validation ───────────────────────────────────────
 
         [Fact]
-        public void Constructor_NullSdk_Throws()
+        public void Constructor_NullWheelbase_Throws()
         {
             Assert.Throws<ArgumentNullException>(
-                () => new ConnectionMonitor(null, new StubDevice(), () => true));
-        }
-
-        [Fact]
-        public void Constructor_NullDevice_Throws()
-        {
-            Assert.Throws<ArgumentNullException>(
-                () => new ConnectionMonitor(new StubSdk(), null, () => true));
+                () => new ConnectionMonitor(null, () => true));
         }
 
         [Fact]
         public void Constructor_NullTryConnect_Throws()
         {
             Assert.Throws<ArgumentNullException>(
-                () => new ConnectionMonitor(new StubSdk(), new StubDevice(), null));
+                () => new ConnectionMonitor(new StubWheelbase(), null));
         }
 
         // ── Initial connect ──────────────────────────────────────────────
@@ -77,7 +66,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void TryInitialConnect_Success_IsConnectedTrue()
         {
-            var monitor = Create(new StubSdk(), new StubDevice(), () => true);
+            var monitor = Create(new StubWheelbase(), () => true);
             Assert.True(monitor.TryInitialConnect());
             Assert.True(monitor.IsConnected);
         }
@@ -85,7 +74,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void TryInitialConnect_Failure_IsConnectedFalse()
         {
-            var monitor = Create(new StubSdk(), new StubDevice(), () => false);
+            var monitor = Create(new StubWheelbase(), () => false);
             Assert.False(monitor.TryInitialConnect());
             Assert.False(monitor.IsConnected);
         }
@@ -96,7 +85,7 @@ namespace FanaBridge.Tests
         public void Update_WhenDisconnected_AttemptsReconnect()
         {
             int attempts = 0;
-            var monitor = Create(new StubSdk(), new StubDevice(), () =>
+            var monitor = Create(new StubWheelbase(), () =>
             {
                 attempts++;
                 return attempts >= 3; // fail first two, succeed third
@@ -127,7 +116,7 @@ namespace FanaBridge.Tests
             int connectCount = 0;
             bool connectedFired = false;
 
-            var monitor = Create(new StubSdk(), new StubDevice(), () => ++connectCount >= 2);
+            var monitor = Create(new StubWheelbase(), () => ++connectCount >= 2);
             monitor.Connected += () => connectedFired = true;
 
             monitor.TryInitialConnect(); // fails
@@ -142,57 +131,36 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_DeviceNotPresent_DisconnectsAndFiresEvent()
         {
-            var sdk = new StubSdk();
-            var device = new StubDevice();
+            var wheelbase = new StubWheelbase();
             bool disconnectedFired = false;
 
-            var monitor = Create(sdk, device, () => true);
+            var monitor = Create(wheelbase, () => true);
             monitor.Disconnected += () => disconnectedFired = true;
             monitor.TryInitialConnect();
 
             // Pump to frame 120 where the bus check happens
-            device.IsDevicePresent = false;
+            wheelbase.IsDevicePresent = false;
             PumpFrames(monitor, 120);
 
             Assert.False(monitor.IsConnected);
             Assert.True(disconnectedFired);
-            Assert.Equal(1, device.DisconnectCalls);
-            Assert.Equal(1, sdk.DisconnectCalls);
+            Assert.Equal(1, wheelbase.DisconnectCalls);
         }
 
         // ── Stream check (every 60 frames, when not on 120) ─────────────
 
         [Fact]
-        public void Update_DeviceStreamLost_DisconnectsAndFiresEvent()
+        public void Update_StreamLost_DisconnectsAndFiresEvent()
         {
-            var sdk = new StubSdk();
-            var device = new StubDevice();
+            var wheelbase = new StubWheelbase();
             bool disconnectedFired = false;
 
-            var monitor = Create(sdk, device, () => true);
+            var monitor = Create(wheelbase, () => true);
             monitor.Disconnected += () => disconnectedFired = true;
             monitor.TryInitialConnect();
 
             // Frame 60 triggers the stream check (not 120)
-            device.IsConnected = false;
-            PumpFrames(monitor, 60);
-
-            Assert.False(monitor.IsConnected);
-            Assert.True(disconnectedFired);
-        }
-
-        [Fact]
-        public void Update_SdkStreamLost_DisconnectsAndFiresEvent()
-        {
-            var sdk = new StubSdk();
-            var device = new StubDevice();
-            bool disconnectedFired = false;
-
-            var monitor = Create(sdk, device, () => true);
-            monitor.Disconnected += () => disconnectedFired = true;
-            monitor.TryInitialConnect();
-
-            sdk.IsConnected = false;
+            wheelbase.IsConnected = false;
             PumpFrames(monitor, 60);
 
             Assert.False(monitor.IsConnected);
@@ -204,11 +172,10 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_PollThrows_DisconnectsWithShortCooldown()
         {
-            var sdk = new StubSdk();
-            var device = new StubDevice();
+            var wheelbase = new StubWheelbase();
             int connectAttempts = 0;
 
-            var monitor = Create(sdk, device, () =>
+            var monitor = Create(wheelbase, () =>
             {
                 connectAttempts++;
                 return true;
@@ -217,14 +184,14 @@ namespace FanaBridge.Tests
 
             // Poll happens on the very first frame when cooldown is 0.
             // Make it throw to trigger disconnect.
-            sdk.PollThrows = true;
+            wheelbase.PollThrows = true;
             bool result = monitor.Update();
 
             Assert.False(result);
             Assert.False(monitor.IsConnected);
 
             // Short cooldown = 60 frames. Pump through cooldown, then reconnect.
-            sdk.PollThrows = false;
+            wheelbase.PollThrows = false;
             PumpFrames(monitor, 60);
             Assert.False(monitor.IsConnected);
 
@@ -239,11 +206,10 @@ namespace FanaBridge.Tests
         [Fact]
         public void ForceReconnect_WhenConnected_DisconnectsAndReconnects()
         {
-            var sdk = new StubSdk();
-            var device = new StubDevice();
+            var wheelbase = new StubWheelbase();
             bool connectedFired = false;
 
-            var monitor = Create(sdk, device, () => true);
+            var monitor = Create(wheelbase, () => true);
             monitor.Connected += () => connectedFired = true;
             monitor.TryInitialConnect();
 
@@ -251,38 +217,35 @@ namespace FanaBridge.Tests
 
             Assert.True(monitor.IsConnected);
             Assert.True(connectedFired);
-            Assert.Equal(1, device.DisconnectCalls);
-            Assert.Equal(1, sdk.DisconnectCalls);
+            Assert.Equal(1, wheelbase.DisconnectCalls);
         }
 
         [Fact]
         public void ForceReconnect_WhenDisconnected_SkipsDisconnect()
         {
-            var sdk = new StubSdk();
-            var device = new StubDevice();
+            var wheelbase = new StubWheelbase();
             int connectAttempts = 0;
 
-            var monitor = Create(sdk, device, () => ++connectAttempts >= 2);
+            var monitor = Create(wheelbase, () => ++connectAttempts >= 2);
             monitor.TryInitialConnect(); // fails (attempt 1)
 
             Assert.False(monitor.IsConnected);
-            Assert.Equal(0, device.DisconnectCalls);
+            Assert.Equal(0, wheelbase.DisconnectCalls);
 
             monitor.ForceReconnect(); // attempt 2 → succeeds
 
             Assert.True(monitor.IsConnected);
-            Assert.Equal(0, device.DisconnectCalls); // wasn't connected, so no disconnect
+            Assert.Equal(0, wheelbase.DisconnectCalls); // wasn't connected, so no disconnect
         }
 
         [Fact]
         public void ForceReconnect_Failure_FiresDisconnected()
         {
-            var sdk = new StubSdk();
-            var device = new StubDevice();
+            var wheelbase = new StubWheelbase();
             bool disconnectedFired = false;
             int connectAttempts = 0;
 
-            var monitor = Create(sdk, device, () => ++connectAttempts == 1);
+            var monitor = Create(wheelbase, () => ++connectAttempts == 1);
             monitor.Disconnected += () => disconnectedFired = true;
             monitor.TryInitialConnect(); // attempt 1 → succeeds
 
@@ -297,7 +260,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_SteadyState_ReturnsTrue()
         {
-            var monitor = Create(new StubSdk(), new StubDevice(), () => true);
+            var monitor = Create(new StubWheelbase(), () => true);
             monitor.TryInitialConnect();
 
             // Run 240 frames (covers multiple heartbeat cycles)
@@ -308,15 +271,15 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_SteadyState_PollsWheelIdentity()
         {
-            var sdk = new StubSdk();
-            var monitor = Create(sdk, new StubDevice(), () => true);
+            var wheelbase = new StubWheelbase();
+            var monitor = Create(wheelbase, () => true);
             monitor.TryInitialConnect();
 
             // Poll happens immediately on first frame, then every 30 frames
             PumpFrames(monitor, 120);
 
             // Expect polls at frames: 1, 31, 61, 91 = 4 polls
-            Assert.True(sdk.PollCalls >= 4);
+            Assert.True(wheelbase.PollCalls >= 4);
         }
     }
 }

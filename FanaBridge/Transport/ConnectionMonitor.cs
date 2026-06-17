@@ -12,8 +12,7 @@ namespace FanaBridge.Transport
     /// </summary>
     public class ConnectionMonitor
     {
-        private readonly ISdkConnection _sdk;
-        private readonly IDeviceConnection _device;
+        private readonly IWheelbaseConnection _wheelbase;
         private readonly Func<bool> _tryConnect;
         private readonly Action<string> _logWarn;
         private readonly Action<string> _logInfo;
@@ -42,24 +41,21 @@ namespace FanaBridge.Transport
         /// <summary>Fired when the connection is lost.</summary>
         public event Action Disconnected;
 
-        /// <param name="sdk">Shared SDK manager (wheel identity, SDK connection).</param>
-        /// <param name="device">Shared HID device (LED/display I/O).</param>
+        /// <param name="wheelbase">The connected wheelbase (owns its transport; identity + polling).</param>
         /// <param name="tryConnect">
-        /// Delegate that attempts to connect both the SDK and HID layers.
+        /// Delegate that attempts to connect the wheelbase (and its transport).
         /// Returns true on success. The monitor does not own connection logic
         /// so the plugin can apply PID overrides and other settings.
         /// </param>
         /// <param name="logWarn">Optional warning logger (defaults to no-op).</param>
         /// <param name="logInfo">Optional info logger (defaults to no-op).</param>
         public ConnectionMonitor(
-            ISdkConnection sdk,
-            IDeviceConnection device,
+            IWheelbaseConnection wheelbase,
             Func<bool> tryConnect,
             Action<string> logWarn = null,
             Action<string> logInfo = null)
         {
-            _sdk = sdk ?? throw new ArgumentNullException(nameof(sdk));
-            _device = device ?? throw new ArgumentNullException(nameof(device));
+            _wheelbase = wheelbase ?? throw new ArgumentNullException(nameof(wheelbase));
             _tryConnect = tryConnect ?? throw new ArgumentNullException(nameof(tryConnect));
             _logWarn = logWarn ?? (_ => { });
             _logInfo = logInfo ?? (_ => { });
@@ -111,11 +107,10 @@ namespace FanaBridge.Transport
             // expensive, so do it less frequently than the stream check)
             if (_frameCounter % HID_BUS_CHECK_INTERVAL == 0)
             {
-                if (!_device.IsDevicePresent)
+                if (!_wheelbase.IsDevicePresent)
                 {
                     _logWarn("FanaBridge: Device no longer on HID bus");
-                    _device.Disconnect();
-                    _sdk.Disconnect();
+                    _wheelbase.Disconnect();
                     _connected = false;
                     _reconnectCooldown = COOLDOWN_MEDIUM;
                     Disconnected?.Invoke();
@@ -124,9 +119,9 @@ namespace FanaBridge.Transport
             }
             else if (_frameCounter % STREAM_CHECK_INTERVAL == 0)
             {
-                if (!_device.IsConnected || !_sdk.IsConnected)
+                if (!_wheelbase.IsConnected)
                 {
-                    _logWarn("FanaBridge: Device or SDK disconnected");
+                    _logWarn("FanaBridge: Wheelbase disconnected");
                     _connected = false;
                     _reconnectCooldown = COOLDOWN_LONG;
                     Disconnected?.Invoke();
@@ -139,12 +134,12 @@ namespace FanaBridge.Transport
             {
                 try
                 {
-                    _sdk.PollWheelIdentity();
+                    _wheelbase.PollWheelIdentity();
                 }
                 catch (Exception ex)
                 {
                     _logWarn(
-                        $"FanaBridge: SDK poll failed, triggering reconnect: {ex.Message}");
+                        $"FanaBridge: Wheel identity poll failed, triggering reconnect: {ex.Message}");
                     _connected = false;
                     _reconnectCooldown = COOLDOWN_SHORT;
                     Disconnected?.Invoke();
@@ -169,8 +164,7 @@ namespace FanaBridge.Transport
 
             if (_connected)
             {
-                _device.Disconnect();
-                _sdk.Disconnect();
+                _wheelbase.Disconnect();
                 _connected = false;
             }
 

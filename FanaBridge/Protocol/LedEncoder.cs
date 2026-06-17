@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Profiles;
 using FanaBridge.Transport;
 
 namespace FanaBridge.Protocol

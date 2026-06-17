@@ -11,7 +11,7 @@ namespace FanaBridge.Protocol
     /// <list type="bullet">
     ///   <item><b>Bitmask rev LEDs</b> — 9-bit bitmask controlling individual LED on/off
     ///   state for non-RGB rims (e.g. CSSWBMWV2, CSWRFORM). Bitmask is packed in
-    ///   RGB333 bit order per the SDK's FUN_1002c240.</item>
+    ///   the wire's RGB333 bit order (see <see cref="SetLegacyRevOnOff"/>).</item>
     ///   <item><b>RevStripe</b> — single RGB333 color controlling the entire LED strip
     ///   as one unit (CSLRP1X, CSLRP1PS4, CSLRWRC).</item>
     ///   <item><b>3-bit rev LEDs</b> — per-LED 1-bit-per-channel color (7 colors + off)
@@ -63,10 +63,11 @@ namespace FanaBridge.Protocol
         {
             if (onOff == null || onOff.Length == 0 || onOff.Length > 9) return false;
 
-            // Pack 9-LED bitmask in RGB333 bit order (matches SDK FUN_1002c240):
+            // Pack the 9-LED bitmask in the wire's RGB333 bit order:
             //   byte[4] = LED0 (bit 0)
             //   byte[5] = LED1(bit7) | LED2(bit6) | ... | LED8(bit0)
-            // The SDK reverses the LED array then packs in groups of 8.
+            // LED0 sits alone in the low byte; LEDs 1-8 pack into the high byte
+            // most-significant-first.
             byte dataLo = (byte)(onOff[0] ? 0x01 : 0x00);
             byte dataHi = 0;
             for (int i = 1; i < onOff.Length && i <= 8; i++)
@@ -315,8 +316,8 @@ namespace FanaBridge.Protocol
         private void BuildReport(byte subcmd, byte b4, byte b5, byte b6, byte b7)
         {
             // Report ID 0x01 is correct for col01 commands on current-generation
-            // wheelbases. The SDK's transport (FUN_10014d70) overwrites byte[0]
-            // with a device-specific report ID, but FanaBridge sends as-is.
+            // wheelbases. Some wheelbases expect a device-specific report ID in
+            // byte[0], but FanaBridge sends 0x01 as-is.
             _reportBuf[0] = 0x01;
             _reportBuf[1] = 0xF8;
             _reportBuf[2] = 0x09;

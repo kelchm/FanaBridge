@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge.Profiles;
+using FanaBridge.Protocol;
 
 namespace FanaBridge.UI
 {
@@ -146,7 +147,7 @@ namespace FanaBridge.UI
     /// </summary>
     public class WizardState
     {
-        // ── Identity (from SDK, set once at construction) ────────────────
+        // ── Identity (from the wheelbase, set once at construction) ──────
         public string WheelType { get; set; }
         public string ModuleType { get; set; }
         public string ProfileName { get; set; }

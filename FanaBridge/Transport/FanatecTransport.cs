@@ -13,7 +13,7 @@ namespace FanaBridge.Transport
     /// <see cref="IDeviceTransport"/> interface used by protocol encoders
     /// (LEDs, display, tuning).
     /// </summary>
-    public class FanatecDevice : IDisposable, IDeviceConnection, IDeviceTransport
+    public class FanatecTransport : IDisposable, IDeviceTransport
     {
         private const int DISPLAY_REPORT_LENGTH = 8;
 
@@ -82,7 +82,7 @@ namespace FanaBridge.Transport
                 try
                 {
                     return DeviceList.Local.GetHidDevices()
-                        .Any(d => d.VendorID == FanatecSdkManager.FANATEC_VENDOR_ID
+                        .Any(d => d.VendorID == FanatecWheelbase.FANATEC_VENDOR_ID
                                && d.ProductID == _connectedProductId);
                 }
                 catch
@@ -95,7 +95,7 @@ namespace FanaBridge.Transport
         /// <summary>
         /// Connects to a Fanatec device by product ID.
         /// Opens the col03 (LED) and col01 (display) HID interfaces.
-        /// The product ID should come from FanatecSdkManager.ConnectedProductId.
+        /// The product ID should come from FanatecWheelbase.ConnectedProductId.
         /// </summary>
         public bool Connect(int productId)
         {
@@ -105,12 +105,12 @@ namespace FanaBridge.Transport
             try
             {
                 var devices = DeviceList.Local.GetHidDevices()
-                    .Where(d => d.VendorID == FanatecSdkManager.FANATEC_VENDOR_ID && d.ProductID == productId)
+                    .Where(d => d.VendorID == FanatecWheelbase.FANATEC_VENDOR_ID && d.ProductID == productId)
                     .ToList();
 
                 if (devices.Count == 0)
                 {
-                    SimHub.Logging.Current.Info("FanatecDevice: No devices found for PID 0x" + productId.ToString("X4"));
+                    SimHub.Logging.Current.Info("FanatecTransport: No devices found for PID 0x" + productId.ToString("X4"));
                     return false;
                 }
 
@@ -128,13 +128,13 @@ namespace FanaBridge.Transport
 
                 if (_ledDevice == null)
                 {
-                    SimHub.Logging.Current.Warn("FanatecDevice: No LED control interface (col03) found");
+                    SimHub.Logging.Current.Warn("FanatecTransport: No LED control interface (col03) found");
                     return false;
                 }
 
                 _ledStream = _ledDevice.Open();
                 SimHub.Logging.Current.Info(string.Format(
-                    "FanatecDevice: LED interface opened (MaxOutput={0})", _ledDevice.GetMaxOutputReportLength()));
+                    "FanatecTransport: LED interface opened (MaxOutput={0})", _ledDevice.GetMaxOutputReportLength()));
 
                 // Open col01 via HidStream (interrupt OUT — confirmed working in PoC)
                 if (_displayDevice != null)
@@ -142,11 +142,11 @@ namespace FanaBridge.Transport
                     try
                     {
                         _displayStream = _displayDevice.Open();
-                        SimHub.Logging.Current.Info("FanatecDevice: Display interface (col01) opened via HidStream");
+                        SimHub.Logging.Current.Info("FanatecTransport: Display interface (col01) opened via HidStream");
                     }
                     catch (Exception ex)
                     {
-                        SimHub.Logging.Current.Warn("FanatecDevice: col01 HidStream failed: " + ex.Message);
+                        SimHub.Logging.Current.Warn("FanatecTransport: col01 HidStream failed: " + ex.Message);
                     }
 
                     // Also open raw handle as fallback
@@ -165,7 +165,7 @@ namespace FanaBridge.Transport
                     }
                     catch (Exception ex)
                     {
-                        SimHub.Logging.Current.Warn("FanatecDevice: col01 WriteFile handle failed: " + ex.Message);
+                        SimHub.Logging.Current.Warn("FanatecTransport: col01 WriteFile handle failed: " + ex.Message);
                     }
                 }
 
@@ -179,12 +179,12 @@ namespace FanaBridge.Transport
                 }
 
                 _connectedProductId = productId;
-                SimHub.Logging.Current.Info("FanatecDevice: Connected to " + ProductName);
+                SimHub.Logging.Current.Info("FanatecTransport: Connected to " + ProductName);
                 return true;
             }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Error("FanatecDevice: Connection error: " + ex.Message);
+                SimHub.Logging.Current.Error("FanatecTransport: Connection error: " + ex.Message);
                 return false;
             }
         }
@@ -203,7 +203,7 @@ namespace FanaBridge.Transport
             }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Warn("FanatecDevice: LED write error: " + ex.Message);
+                SimHub.Logging.Current.Warn("FanatecTransport: LED write error: " + ex.Message);
                 return false;
             }
         }
@@ -225,7 +225,7 @@ namespace FanaBridge.Transport
                 }
                 catch (Exception ex)
                 {
-                    SimHub.Logging.Current.Warn("FanatecDevice: Display stream write failed: " + ex.Message);
+                    SimHub.Logging.Current.Warn("FanatecTransport: Display stream write failed: " + ex.Message);
                 }
             }
 

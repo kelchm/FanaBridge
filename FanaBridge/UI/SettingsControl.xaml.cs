@@ -10,7 +10,6 @@ using System.Windows.Threading;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
-using FanatecManaged;
 using Timer = System.Timers.Timer;
 
 namespace FanaBridge.UI
@@ -156,12 +155,10 @@ namespace FanaBridge.UI
             var caps = Plugin.CurrentCapabilities;
             bool identified = caps.Name != null;
 
-            // Resolve wheel/module codes from the SDK — available even when no profile exists
-            var sdk = Plugin.SdkManager;
-            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
-            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
-                ? null
-                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
+            // Resolve wheel/module codes from the wheelbase — available even when no profile exists
+            var wheelbase = Plugin.Wheelbase;
+            string wheelCode = wheelbase.WheelCode;
+            string moduleCode = wheelbase.ModuleCode;
 
             if (!identified)
             {
@@ -205,10 +202,7 @@ namespace FanaBridge.UI
             txtProfileHint.Visibility = Visibility.Collapsed;
             panelProfilePicker.Visibility = Visibility.Visible;
 
-            // Build the match key (same format as the profile ID: "WHEELTYPE_MODULE")
-            string matchKey = wheelCode;
-            if (moduleCode != null)
-                matchKey += "_" + moduleCode;
+            string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
 
             // Get ALL profiles that match this wheel (built-in + user, even duplicates)
             var all = WheelProfileStore.FindAllForWheel(wheelCode, moduleCode);
@@ -335,16 +329,12 @@ namespace FanaBridge.UI
             if (string.IsNullOrEmpty(overrideKey)) return;
 
             // Build match key for current wheel
-            var sdk = Plugin.SdkManager;
-            if (!sdk.WheelDetected) return;
+            var wheelbase = Plugin.Wheelbase;
+            if (!wheelbase.WheelDetected) return;
 
-            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
-            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
-                ? null
-                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
-            string matchKey = wheelCode;
-            if (moduleCode != null)
-                matchKey += "_" + moduleCode;
+            string wheelCode = wheelbase.WheelCode;
+            string moduleCode = wheelbase.ModuleCode;
+            string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
 
             // Check if the selected profile is the one auto-resolution would pick
             var autoResolved = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null);
@@ -365,7 +355,7 @@ namespace FanaBridge.UI
 
             // Persist settings and re-resolve capabilities
             Plugin.SaveSettings();
-            sdk.RefreshCapabilities();
+            wheelbase.RefreshCapabilities();
 
             // Show restart notice if the device name changed from what SimHub registered
             UpdateRestartNotice();
@@ -453,14 +443,10 @@ namespace FanaBridge.UI
                 return;
 
             // Remove any override for this profile
-            var sdk = Plugin.SdkManager;
-            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
-            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
-                ? null
-                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
-            string matchKey = wheelCode;
-            if (moduleCode != null)
-                matchKey += "_" + moduleCode;
+            var wheelbase = Plugin.Wheelbase;
+            string wheelCode = wheelbase.WheelCode;
+            string moduleCode = wheelbase.ModuleCode;
+            string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
 
             Plugin.Settings.ProfileOverrides.Remove(matchKey);
 
@@ -475,7 +461,7 @@ namespace FanaBridge.UI
 
             // Re-resolve and update UI
             Plugin.SaveSettings();
-            sdk.RefreshCapabilities();
+            wheelbase.RefreshCapabilities();
             UpdateRestartNotice();
             UpdateStatus();
         }
@@ -675,6 +661,10 @@ namespace FanaBridge.UI
         /// <summary>
         /// Encode a string to 7-segment bytes, folding dots/commas onto the previous character.
         /// </summary>
+        // TODO: The per-character dot/comma folding rule here duplicates
+        // DisplayEncoder.DisplayText. The length semantics differ (this builds an
+        // unbounded list for scroll-vs-fit; DisplayText caps at 3), but the folding
+        // step itself should be a shared SevenSegment/DisplayEncoder helper.
         private static List<byte> EncodeText(string text)
         {
             var encoded = new List<byte>();

@@ -1,6 +1,5 @@
 using System;
 using System.Threading;
-using FanaBridge.Profiles;
 using FanaBridge.Transport;
 
 namespace FanaBridge.Protocol
@@ -49,6 +48,12 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>Whether the underlying transport is connected.</summary>
+        // TODO: This passthrough exists only because TuningSettingsPanel binds
+        // directly to this controller to gate its UI. The UI should not integrate
+        // with the tuning controller directly — route connectivity through the
+        // plugin (FanatecPlugin.IsDeviceConnected) like the other panels, then
+        // remove this property (it duplicates the internal _transport.IsConnected
+        // checks and is the lone encoder/controller exposing transport state).
         public bool IsConnected => _transport.IsConnected;
 
         /// <summary>

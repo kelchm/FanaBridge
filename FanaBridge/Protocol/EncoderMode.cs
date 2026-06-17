@@ -1,4 +1,4 @@
-namespace FanaBridge.Profiles
+namespace FanaBridge.Protocol
 {
     /// <summary>
     /// Encoder operating mode for Fanatec button modules.

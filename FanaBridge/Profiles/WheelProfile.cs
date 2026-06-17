@@ -41,7 +41,7 @@ namespace FanaBridge.Profiles
         [JsonProperty("shortName")]
         public string ShortName { get; set; }
 
-        /// <summary>Matching criteria for auto-detection via SDK.</summary>
+        /// <summary>Matching criteria for auto-detection via FF 08 identity.</summary>
         [JsonProperty("match")]
         public ProfileMatch Match { get; set; }
 
