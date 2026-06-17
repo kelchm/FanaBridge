@@ -89,8 +89,10 @@ namespace FanaBridge
                 "FanaBridgeSettings",
                 () => new FanatecPluginSettings());
 
-            _sdk = new FanatecSdkManager();
+            // Transport first — the SDK manager reads the FF 08 identity report
+            // through it (no SimHub.FanatecManaged.dll).
             _device = new FanatecDevice();
+            _sdk = new FanatecSdkManager(_device);
             _leds = new LedEncoder(_device);
             _legacyLeds = new LegacyLedEncoder(_device);
             _display = new DisplayEncoder(_device);
@@ -131,7 +133,11 @@ namespace FanaBridge
             // --- Properties ---
             this.AttachDelegate("FanaBridge.Connected", () => _connectionMonitor.IsConnected);
             this.AttachDelegate("FanaBridge.DeviceName", () => _sdk.ProductName ?? "Not connected");
+            this.AttachDelegate("FanaBridge.BaseName", () => _sdk.BaseName ?? "Not connected");
             this.AttachDelegate("FanaBridge.WheelName", () => _sdk.WheelDisplayName);
+            this.AttachDelegate("FanaBridge.RimName", () => _sdk.RimName ?? "No wheel");
+            this.AttachDelegate("FanaBridge.ModuleName", () => _sdk.ModuleName ?? "None");
+            this.AttachDelegate("FanaBridge.IsHub", () => _sdk.IsHub);
             this.AttachDelegate("FanaBridge.WheelDetected", () => _sdk.WheelDetected);
             this.AttachDelegate("FanaBridge.WheelType", () => (int)_sdk.SteeringWheelType);
             this.AttachDelegate("FanaBridge.ModuleType", () => (int)_sdk.SubModuleType);

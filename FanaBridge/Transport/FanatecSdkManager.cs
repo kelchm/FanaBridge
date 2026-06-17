@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using FanaBridge.Identity;
 using FanaBridge.Profiles;
 using FanatecManaged;
 using HidSharp;
@@ -7,22 +8,31 @@ using HidSharp;
 namespace FanaBridge.Transport
 {
     /// <summary>
-    /// Manages the Fanatec SDK connection lifecycle and provides unified
-    /// access to device identity, wheel type, and capabilities.
+    /// Resolves "what Fanatec hardware is present" — wheelbase, rim/hub, and
+    /// button module — entirely over HID via the col03 <c>FF 08</c> system
+    /// report. No Fanatec driver/service and no SimHub.FanatecManaged.dll: the
+    /// identity tables are owned by FanaBridge (see <see cref="FanatecIdentity"/>).
     ///
-    /// This is the single source of truth for "what Fanatec hardware is present."
-    /// It replaces the previous approach of requiring a hard-coded product ID.
+    /// This is the single source of truth for wheel identity. Because it talks
+    /// pure HID, it also works for Fanatec rims on non-Fanatec / SRM wheelbases,
+    /// provided the base emits the FF 08 system report.
     /// </summary>
     public class FanatecSdkManager : IDisposable, ISdkConnection
     {
         public const ushort FANATEC_VENDOR_ID = 0x0EB7;
 
-        private WheelInterface _wheelInterface;
+        // HID transport (col03) used to trigger + read the FF 08 system report.
+        private readonly IDeviceTransport _transport;
         private bool _disposed;
+
+        public FanatecSdkManager(IDeviceTransport transport)
+        {
+            _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        }
 
         // ── Connection state ─────────────────────────────────────────────
 
-        /// <summary>Whether the SDK is connected to a Fanatec wheelbase.</summary>
+        /// <summary>Whether a Fanatec wheelbase has been located on the HID bus.</summary>
         public bool IsConnected { get; private set; }
 
         /// <summary>The USB product ID of the connected wheelbase, or 0 if not connected.</summary>
@@ -36,13 +46,28 @@ namespace FanaBridge.Transport
         /// <summary>Whether a steering wheel rim is currently attached.</summary>
         public bool WheelDetected { get; private set; }
 
-        /// <summary>The raw steering wheel type enum from the SDK.</summary>
+        /// <summary>The steering wheel / hub type, decoded from FF 08 byte 0x18.</summary>
         public M_FS_WHEEL_SWTYPE SteeringWheelType { get; private set; }
             = M_FS_WHEEL_SWTYPE.FS_WHEEL_SWTYPE_UNINITIALIZED;
 
-        /// <summary>The raw sub-module type enum (button module).</summary>
+        /// <summary>The attached button-module type (decoded from FF 08 byte 0x1F).</summary>
         public M_FS_WHEEL_SW_MODULETYPE SubModuleType { get; private set; }
             = M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED;
+
+        /// <summary>Whether the attached rim is a hub (accepts a button module).</summary>
+        public bool IsHub { get; private set; }
+
+        /// <summary>Friendly rim/hub name (e.g. "Podium Steering Wheel BMW M4 GT3").</summary>
+        public string RimName { get; private set; }
+
+        /// <summary>Friendly module name (e.g. "Podium Button Module Rally"), or null.</summary>
+        public string ModuleName { get; private set; }
+
+        /// <summary>Raw BaseType byte from the FF 08 report (FF 08 byte 0x02).</summary>
+        public byte BaseType { get; private set; }
+
+        /// <summary>Friendly wheelbase name (e.g. "ClubSport DD / ClubSport DD+").</summary>
+        public string BaseName { get; private set; }
 
         /// <summary>Resolved capability profile for the current wheel + module combination.</summary>
         public WheelCapabilities CurrentCapabilities { get; private set; }
@@ -62,9 +87,13 @@ namespace FanaBridge.Transport
             {
                 if (!WheelDetected)
                     return "No wheel attached";
-                if (!WheelIdentified)
+                // Prefer a matched profile's name; otherwise fall back to the
+                // FF 08-decoded rim name so even unprofiled wheels show correctly.
+                if (CurrentCapabilities != null && !string.IsNullOrEmpty(CurrentCapabilities.Name))
+                    return CurrentCapabilities.Name;
+                if (string.IsNullOrEmpty(RimName))
                     return "Detecting...";
-                return CurrentCapabilities.Name;
+                return string.IsNullOrEmpty(ModuleName) ? RimName : RimName + " + " + ModuleName;
             }
         }
 
@@ -79,71 +108,36 @@ namespace FanaBridge.Transport
         // ── Discovery ────────────────────────────────────────────────────
 
         /// <summary>
-        /// Scans the HID bus for any Fanatec device and attempts to connect
-        /// via the SDK. Returns true if a wheelbase was found and connected.
-        /// No product ID is required — this is fully automatic.
+        /// Scans the HID bus for a Fanatec wheelbase (a device exposing the
+        /// 64-byte col03 interface) and records its PID + name. No SDK, no DLL.
         /// </summary>
         public bool AutoConnect()
         {
             if (_disposed) return false;
-
-            // Release any existing connection first
             Disconnect();
 
             try
             {
-                // Find all Fanatec HID devices, grouped by product ID
-                var fanatecPids = DeviceList.Local.GetHidDevices()
+                var fanatecDevices = DeviceList.Local.GetHidDevices()
                     .Where(d => d.VendorID == FANATEC_VENDOR_ID)
-                    .Select(d => d.ProductID)
-                    .Distinct()
                     .ToList();
 
-                if (fanatecPids.Count == 0)
+                if (fanatecDevices.Count == 0)
                 {
                     SimHub.Logging.Current.Debug("FanatecSdkManager: No Fanatec devices found on HID bus");
                     return false;
                 }
 
-                SimHub.Logging.Current.Info(string.Format(
-                    "FanatecSdkManager: Found {0} Fanatec PID(s): {1}",
-                    fanatecPids.Count,
-                    string.Join(", ", fanatecPids.Select(p => "0x" + p.ToString("X4")))));
-
-                // Try connecting the SDK to each PID until one succeeds
-                foreach (int pid in fanatecPids)
+                // The wheelbase is the device that exposes the col03 (64-byte)
+                // control interface; accessories (pedals, etc.) do not.
+                int basePid = PickBasePid(fanatecDevices);
+                if (basePid == 0)
                 {
-                    if (TrySdkConnect(pid))
-                    {
-                        // Resolve product name from the HID descriptor
-                        try
-                        {
-                            var device = DeviceList.Local.GetHidDevices()
-                                .FirstOrDefault(d => d.VendorID == FANATEC_VENDOR_ID && d.ProductID == pid);
-                            ProductName = device?.GetProductName() ?? "Fanatec Device";
-                        }
-                        catch
-                        {
-                            ProductName = "Fanatec Device";
-                        }
-
-                        ConnectedProductId = pid;
-                        SimHub.Logging.Current.Info(string.Format(
-                            "FanatecSdkManager: Connected to {0} (PID 0x{1:X4})",
-                            ProductName, pid));
-
-                        // Do initial wheel poll (best-effort, may get UNINITIALIZED)
-                        try { PollWheelIdentity(); }
-                        catch (Exception ex)
-                        {
-                            SimHub.Logging.Current.Warn("FanatecSdkManager: Initial poll failed: " + ex.Message);
-                        }
-                        return true;
-                    }
+                    SimHub.Logging.Current.Warn("FanatecSdkManager: No Fanatec wheelbase (col03) interface found");
+                    return false;
                 }
 
-                SimHub.Logging.Current.Warn("FanatecSdkManager: SDK Connect failed for all detected PIDs");
-                return false;
+                return Adopt(basePid, fanatecDevices);
             }
             catch (Exception ex)
             {
@@ -159,36 +153,71 @@ namespace FanaBridge.Transport
         public bool Connect(int productId)
         {
             if (_disposed) return false;
-
             Disconnect();
 
-            if (TrySdkConnect(productId))
+            try
+            {
+                var fanatecDevices = DeviceList.Local.GetHidDevices()
+                    .Where(d => d.VendorID == FANATEC_VENDOR_ID)
+                    .ToList();
+                return Adopt(productId, fanatecDevices);
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Error("FanatecSdkManager: Connect error: " + ex.Message);
+                return false;
+            }
+        }
+
+        private bool Adopt(int productId, System.Collections.Generic.List<HidDevice> fanatecDevices)
+        {
+            try
+            {
+                var device = fanatecDevices.FirstOrDefault(d => d.ProductID == productId);
+                ProductName = SafeProductName(device);
+            }
+            catch
+            {
+                ProductName = "Fanatec Device";
+            }
+
+            ConnectedProductId = productId;
+            IsConnected = true;
+
+            SimHub.Logging.Current.Info(string.Format(
+                "FanatecSdkManager: Wheelbase {0} (PID 0x{1:X4})", ProductName, productId));
+
+            // Best-effort initial poll. The HID transport may not be open yet
+            // (it's connected after us in the plugin's connect sequence), in
+            // which case this is a no-op until the periodic poll runs.
+            try { PollWheelIdentity(); }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanatecSdkManager: Initial poll failed: " + ex.Message);
+            }
+            return true;
+        }
+
+        // Pick the wheelbase PID: prefer a Fanatec device exposing a 64-byte
+        // col03 report (input or output); fall back to the first Fanatec PID.
+        private static int PickBasePid(System.Collections.Generic.List<HidDevice> devices)
+        {
+            foreach (var d in devices)
             {
                 try
                 {
-                    var device = DeviceList.Local.GetHidDevices()
-                        .FirstOrDefault(d => d.VendorID == FANATEC_VENDOR_ID && d.ProductID == productId);
-                    ProductName = device?.GetProductName() ?? "Fanatec Device";
+                    if (d.GetMaxOutputReportLength() >= 64 || d.GetMaxInputReportLength() >= 64)
+                        return d.ProductID;
                 }
-                catch
-                {
-                    ProductName = "Fanatec Device";
-                }
-
-                ConnectedProductId = productId;
-                SimHub.Logging.Current.Info(string.Format(
-                    "FanatecSdkManager: Connected to {0} (PID 0x{1:X4})",
-                    ProductName, productId));
-
-                try { PollWheelIdentity(); }
-                catch (Exception ex)
-                {
-                    SimHub.Logging.Current.Warn("FanatecSdkManager: Initial poll failed: " + ex.Message);
-                }
-                return true;
+                catch { /* descriptor query can throw on busy handles */ }
             }
+            return devices.Select(d => d.ProductID).FirstOrDefault();
+        }
 
-            return false;
+        private static string SafeProductName(HidDevice device)
+        {
+            try { return device?.GetProductName() ?? "Fanatec Device"; }
+            catch { return "Fanatec Device"; }
         }
 
         // ── Polling ──────────────────────────────────────────────────────
@@ -202,23 +231,29 @@ namespace FanaBridge.Transport
         public Func<string, string> ProfileOverrideResolver { get; set; }
 
         /// <summary>
-        /// Polls the SDK for current wheel identity. Call periodically (not every frame).
-        /// Returns true if the wheel type changed since last poll.
+        /// Reads the FF 08 system report and updates wheel identity. Call
+        /// periodically (not every frame). Returns true if identity changed.
         /// </summary>
         public bool PollWheelIdentity()
         {
-            if (!IsConnected || _wheelInterface == null)
+            if (!IsConnected)
                 return false;
 
-            var info = _wheelInterface.GetDeviceInfo();
+            if (!Ff08IdentityReader.TryRead(_transport, ConnectedProductId, out var id))
+                return false; // transport not ready or no FF 08 report this round
 
             var prevType = SteeringWheelType;
             var prevModule = SubModuleType;
             var prevDetected = WheelDetected;
 
-            WheelDetected = info.Detected;
-            SteeringWheelType = info.SteeringWheelType;
-            SubModuleType = info.SubModuleType;
+            WheelDetected = id.Detected;
+            SteeringWheelType = id.SteeringWheelType;
+            SubModuleType = id.ModuleType;
+            IsHub = id.IsHub;
+            RimName = id.RimName;
+            ModuleName = id.ModuleName;
+            BaseType = id.BaseType;
+            BaseName = id.BaseName;
 
             bool changed = prevType != SteeringWheelType
                 || prevModule != SubModuleType
@@ -279,50 +314,32 @@ namespace FanaBridge.Transport
                 : WheelCapabilities.None;
 
             SimHub.Logging.Current.Info(string.Format(
-                "FanatecSdkManager: {0} — Detected={1}, Type={2}, Module={3}, Override={4}, Caps={5} (ButtonRgb={6}, ButtonAuxIntensity={7}, RevRgb={8}, FlagRgb={9}, LegacyRevOnOff={10}, LegacyRevStripe={11}, LegacyRev3Bit={12}, LegacyFlag3Bit={13}, Display={14})",
+                "FanatecSdkManager: {0} — Base={1}, Detected={2}, Type={3}, Module={4}, Override={5}, Caps={6}",
                 logContext,
+                BaseName ?? "(unknown)",
                 WheelDetected,
                 SteeringWheelType,
                 SubModuleType,
                 overrideId ?? "(auto)",
-                CurrentCapabilities.Name ?? "(none)",
-                CurrentCapabilities.ButtonRgbCount,
-                CurrentCapabilities.ButtonAuxIntensityCount,
-                CurrentCapabilities.RevRgbCount,
-                CurrentCapabilities.FlagRgbCount,
-                CurrentCapabilities.LegacyRevOnOffCount,
-                CurrentCapabilities.LegacyRevStripeCount,
-                CurrentCapabilities.LegacyRev3BitCount,
-                CurrentCapabilities.LegacyFlag3BitCount,
-                CurrentCapabilities.Display));
+                CurrentCapabilities.Name ?? "(none)"));
         }
 
         // ── Lifecycle ────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Disconnects the SDK and resets all state.
-        /// </summary>
+        /// <summary>Resets all identity state. The HID transport is owned elsewhere.</summary>
         public void Disconnect()
         {
-            try
-            {
-                if (_wheelInterface != null && IsConnected)
-                {
-                    _wheelInterface.Release();
-                }
-            }
-            catch (Exception ex)
-            {
-                SimHub.Logging.Current.Warn("FanatecSdkManager: Release error: " + ex.Message);
-            }
-
-            _wheelInterface = null;
             IsConnected = false;
             ConnectedProductId = 0;
             ProductName = null;
             WheelDetected = false;
             SteeringWheelType = M_FS_WHEEL_SWTYPE.FS_WHEEL_SWTYPE_UNINITIALIZED;
             SubModuleType = M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED;
+            IsHub = false;
+            RimName = null;
+            ModuleName = null;
+            BaseType = 0;
+            BaseName = null;
             CurrentCapabilities = WheelCapabilities.None;
         }
 
@@ -332,35 +349,6 @@ namespace FanaBridge.Transport
             {
                 _disposed = true;
                 Disconnect();
-            }
-        }
-
-        // ── Internal ─────────────────────────────────────────────────────
-
-        private bool TrySdkConnect(int productId)
-        {
-            try
-            {
-                var wi = new WheelInterface();
-                bool result = wi.Connect(productId);
-
-                if (result)
-                {
-                    _wheelInterface = wi;
-                    IsConnected = true;
-                    return true;
-                }
-
-                SimHub.Logging.Current.Info(
-                    "FanatecSdkManager: SDK Connect returned false for PID 0x" + productId.ToString("X4"));
-                return false;
-            }
-            catch (Exception ex)
-            {
-                SimHub.Logging.Current.Warn(string.Format(
-                    "FanatecSdkManager: SDK Connect threw for PID 0x{0:X4}: {1}",
-                    productId, ex.Message));
-                return false;
             }
         }
     }

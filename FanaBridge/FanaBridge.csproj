@@ -60,10 +60,6 @@
       <HintPath>$(SimHubDir)HidSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="SimHub.FanatecManaged">
-      <HintPath>$(SimHubDir)SimHub.FanatecManaged.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
     <Reference Include="BA63Driver">
       <HintPath>$(SimHubDir)BA63Driver.dll</HintPath>
       <Private>false</Private>
