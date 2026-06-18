@@ -7,16 +7,16 @@ A reference glossary for Fanatec ecosystem concepts as used in this documentatio
 ## Hardware
 
 ### Wheelbase
-The motor unit that connects to the host PC via USB. All HID communication flows through the wheelbase — it acts as the communication bridge between the host and all attached peripherals (wheels, hubs, modules). Provides force feedback. Identified by the `BASE_TYPE` enum. See [Wheelbases](reference/devices.md#wheelbases).
+The motor unit that connects to the host PC via USB. All HID communication flows through the wheelbase — it acts as the communication bridge between the host and all attached peripherals (wheels, hubs, modules). Provides force feedback. Identified by the [system report](#system-report-identity) BaseType byte (`0x02`). See [Wheelbases](reference/devices.md#wheelbases).
 
 ### Wheel
-A self-contained steering wheel rim with a **passive** quick-release connection to the wheelbase. Contains built-in buttons and may include LEDs, displays, and encoders. A wheel's capabilities are **fixed** by its hardware — it cannot be extended. Wheels **cannot** accept button modules. See [Wheels](reference/devices.md#wheels).
+A self-contained steering wheel rim with a **passive** quick-release connection to the wheelbase. Contains built-in buttons and may include LEDs, displays, and encoders. A wheel's capabilities are **fixed** by its hardware — it cannot be extended. Wheels **cannot** accept button modules. Identified by the [system report](#system-report-identity) wire code (byte `0x18`), the same code space as hubs. See [Wheels](reference/devices.md#wheels).
 
 ### Hub
-A mounting platform with an **active** PCB/MCU and a quick-release connection to the wheelbase. Designed for attaching third-party or custom steering wheels. Has a USB-C interface for connecting a **button module**. A hub's effective capabilities are **compositional** — the combination of its own native features plus whatever module is attached. See [Hubs](reference/devices.md#hubs).
+A mounting platform with an **active** PCB/MCU and a quick-release connection to the wheelbase. Designed for attaching third-party or custom steering wheels. Module-capable hubs have a USB-C interface for connecting a **button module** (not all hubs accept one). A hub's effective capabilities are **compositional** — the combination of its own native features plus whatever module is attached. Identified by the [system report](#system-report-identity) wire code (byte `0x18`), the same code space as wheels. See [Hubs](reference/devices.md#hubs).
 
 ### Button Module
-An accessory that attaches to a **hub** (never a standalone wheel) via USB-C. Provides LEDs, displays, buttons, and encoders. The module's capabilities become the hub's effective capabilities. Identified by the `BUTTON_MODULE_TYPE` enum. See [Button Modules](reference/devices.md#button-modules) for specific modules and their capabilities.
+An accessory that attaches to a **hub** (never a standalone wheel) via USB-C. Provides LEDs, displays, buttons, and encoders. The module's capabilities become the hub's effective capabilities. Identified by the [system report](#system-report-identity) module byte (`0x1F`). See [Button Modules](reference/devices.md#button-modules) for specific modules and their capabilities.
 
 ### Compositional Capability Model
 The principle that a hub's effective capabilities are determined by the combination of its native features plus the attached module's features. This is not hardcoded to specific modules — if a new module were released, any compatible hub would gain its capabilities. See [Button Modules](reference/devices.md#button-modules).
@@ -95,10 +95,13 @@ The modern 64-byte HID collection. Used for: modern LED control (RGB565), ITM di
 col01 and col03 are separate HID interfaces. The host opens and writes to each independently. The Fanatec SDK provides a single send path that uses the first byte of the application buffer as a routing hint (`0xFF` → col03, anything else → col01), but this is an SDK convenience — on the wire, the collection is determined by which interface the host writes to.
 
 ### Command Class
-The second byte of a col03 report, identifying the protocol domain: `0x01` = LED control, `0x02` = ITM enable / analysis page, `0x03` = tuning menu, `0x05` = ITM display (page set, param defs, value updates, keepalive).
+The second byte of a col03 report, identifying the protocol domain: `0x01` = LED control, `0x02` = ITM enable / analysis page, `0x03` = tuning menu, `0x05` = ITM display (page set, param defs, value updates, keepalive), `0x08` = system report (identity).
 
 ### Report Trigger
-A general-purpose notification mechanism using col01 reports. Sends an ON/OFF pair: `[RID, F8, 09, 01, 06, FF, <SubId>, 00]` followed by `[RID, F8, 09, 01, 06, 00, 00, 00]`. SubId=1 is used for button module detection refresh, SubId=2 for CBP operations. See [Clutch Bite Point — Trigger Mechanism](reference/protocol.md#0x06--report-trigger--ack).
+A general-purpose, SubId-parameterized notification mechanism using col01 reports — not specific to any single function. Sends an ON/OFF pair: `[RID, F8, 09, 01, 06, FF, <SubId>, 00]` followed by `[RID, F8, 09, 01, 06, 00, 00, 00]`. The SubId selects the purpose: 1 = button-module re-detect, 2 = clutch bite point, 3 = legacy hardware-identity (superseded by the system report on modern bases). See [Report Trigger](reference/protocol.md#0x06--report-trigger--ack).
+
+### System Report (Identity)
+The identity/configuration report a modern col03-capable wheelbase emits, beginning `0xFF 0x08`. It carries the wheelbase code (byte `0x02`), the attached wheel/hub code (byte `0x18`), and button-module presence (byte `0x1F`). Enabled with `FF 08 01 FF` (push-on-change) and requested once with `FF 08 02`; the base then pushes a fresh report on every attachment change. This is how FanaBridge identifies connected hardware. See [System Report (Identity)](reference/protocol.md#0x08--system-report-identity).
 
 ### Staged Commit
 A protocol pattern where multiple data reports are sent without effect, then a final report with a commit flag (`0x01`) causes all pending changes to be applied atomically. Used by the col03 button LED protocol (color + intensity reports).
@@ -127,7 +130,7 @@ The tuning menu supports 5 setup slots (index 0–4). Each slot stores a complet
 The telemetry display system that shows multi-page dashboards on compatible displays. "In-Tuning-Menu" is the historical name from the SDK; in practice it is used for game telemetry, not just tuning. See [ITM Display Protocol](reference/protocol.md#0x05--itm-display).
 
 ### ITM Device ID
-A numeric identifier routing ITM commands to the correct physical display. Values: 1 = wheelbase display, 2 = steering wheel / SmallOLED (disabled in current SDK), 3 = button module or compatible wheel display (shared, mutually exclusive), 4 = dedicated wheel display. See [ITM Display — Supported Devices](reference/protocol.md#itm-supported-devices) for the specific device mapping.
+A numeric identifier routing ITM commands to the correct physical display. Values: 1 = wheelbase display, 2 = steering wheel / SmallOLED (disabled in current firmware), 3 = button module or compatible wheel display (shared, mutually exclusive), 4 = dedicated wheel display. See [ITM Display — Supported Devices](reference/protocol.md#itm-supported-devices) for the specific device mapping.
 
 ### ParamDefs
 Parameter definition reports (`FF 05 03 ...`) that tell the firmware what parameters will be displayed and in which slot positions. Required when using raw HID (FanaBridge approach). The SDK handles this internally.
@@ -149,10 +152,10 @@ The firmware's internal table of up to 16 parameter slots. In the SDK approach, 
 ## SDK Concepts
 
 ### STEERINGWHEEL_TYPE
-The SDK enum identifying all wheels and hubs. Uses a single enum for both categories despite them being physically distinct device types. Values 0–27. See [Wheels](reference/devices.md#wheels) and [Hubs](reference/devices.md#hubs).
+The SDK enum identifying all wheels and hubs. Uses a single enum for both categories despite them being physically distinct device types. At runtime FanaBridge identifies these devices by the byte-`0x18` wire code, an 8-bit space rather than a fixed enumeration. See [Wheels](reference/devices.md#wheels) and [Hubs](reference/devices.md#hubs).
 
 ### BASE_TYPE
-The SDK enum identifying wheelbase models. Values 1–14. See [Wheel Bases](reference/devices.md#wheelbases).
+The SDK enum identifying wheelbase models. Values 1–14, plus 99 = CSWV1 (legacy ClubSport Wheel Base V1). See [Wheel Bases](reference/devices.md#wheelbases).
 
 ### BUTTON_MODULE_TYPE
 The SDK enum identifying button modules: 0 = none, 1 = PBME, 2 = PBMR.

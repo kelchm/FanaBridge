@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.0 - Unreleased
+
+### Changed
+- Wheel, hub, and module identity is now decoded entirely over HID (the col03 `FF 08` system report); the dependency on the Fanatec SDK / `SimHub.FanatecManaged.dll` for device detection has been dropped
+
+### Fixed
+- FanaBridge should now detect wheels and hubs attached to a Podium DD wheelbase
+
 ## v0.3.0 - 2026-03-28
 
 ### Added
@@ -25,7 +33,7 @@
 - CSL Elite Steering Wheel Porsche Vision GT
 - CSL Elite Steering Wheel WRC
 - CSL Steering Wheel GT3
-- GT Steering Wheel PRO 
+- GT Steering Wheel PRO
 - GT Steering Wheel Extreme
 - Podium Steering Wheel Bentley GT3
 
@@ -38,7 +46,6 @@
 
 ### New Wheel Support
 - ClubSport Steering Wheel Formula V2.5 (CSSWFORMV2)
-
 
 ## v0.2.0 - 2026-03-16
 

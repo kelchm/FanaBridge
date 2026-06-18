@@ -22,10 +22,9 @@
 - **3-digit display** — Wheels with a basic display show gear, speed, or gear-then-speed overlay
 - **SimHub LED profiles** — Wheels appear in SimHub's Devices view with standard LED Editor support
 - **Compatible with LED profile plugins** — Works with [ATSR Hub EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO) and other SimHub LED profile plugins
-- **Automatic wheel detection** — Detects connected wheels via the Fanatec SDK and matches to a profile
+- **Automatic detection** — Detects connected wheels, hubs and button modules directly over HID and matches to a profile
 - **Hot-plug support** — Reconnects gracefully when devices are plugged/unplugged or wheels are swapped
 - **Custom wheel profiles** — JSON-based profiles mean unsupported wheels can be added without waiting for a plugin update
-- **Wheel Profile Wizard** — Guided in-app wizard probes your hardware to generate a profile for any unsupported wheel
 - **Experimental: Encoder mode** — Configure encoder behavior (relative, pulse, constant, auto) directly on supported devices
 
 ### Planned
