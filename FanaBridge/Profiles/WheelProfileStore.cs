@@ -297,6 +297,14 @@ namespace FanaBridge.Profiles
         public static WheelProfile FindByWheelType(
             string wheelType, string moduleType, string overrideId)
         {
+            // A wheel/hub that isn't in the decode tables (e.g. EXT_INFO or
+            // future hardware) resolves to a null code. With no code and no
+            // explicit override there is nothing to match, so return early —
+            // before touching the snapshot — rather than letting a null key
+            // reach Dictionary.TryGetValue (which throws ArgumentNullException).
+            if (string.IsNullOrEmpty(wheelType) && string.IsNullOrEmpty(overrideId))
+                return null;
+
             var snap = GetSnapshot();
 
             // 0. Explicit user override (from plugin settings).
@@ -317,6 +325,12 @@ namespace FanaBridge.Profiles
             // This is a temporary workaround — see docs/reference/devices.md
             // for the full analysis of naming divergence across SDK versions.
             wheelType = NormalizeWheelType(wheelType);
+
+            // An override may have been supplied for a null-coded wheel but
+            // failed to resolve above; with no usable code, stop here so the
+            // key lookups below never see a null key.
+            if (string.IsNullOrEmpty(wheelType))
+                return null;
 
             // 1. Try compound key first (hub + module)
             if (!string.IsNullOrEmpty(moduleType))

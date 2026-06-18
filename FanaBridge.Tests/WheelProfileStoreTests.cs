@@ -38,5 +38,26 @@ namespace FanaBridge.Tests
         {
             Assert.Equal(wheelType, WheelProfileStore.NormalizeWheelType(wheelType));
         }
+
+        // ── FindByWheelType null/empty safety ────────────────────────────
+        //
+        // An attached but unrecognized wheel (a wire byte not in the decode
+        // tables, e.g. EXT_INFO / future hardware) resolves to a null code.
+        // Lookup must return null rather than throw — otherwise identity
+        // polling crashes on exactly the new hardware this path exists for.
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        public void FindByWheelType_ReturnsNull_ForNullOrEmptyWheel(string wheelType)
+        {
+            Assert.Null(WheelProfileStore.FindByWheelType(wheelType));
+        }
+
+        [Fact]
+        public void FindByWheelType_ReturnsNull_ForNullWheelWithModule()
+        {
+            Assert.Null(WheelProfileStore.FindByWheelType(null, "PBMR"));
+        }
     }
 }

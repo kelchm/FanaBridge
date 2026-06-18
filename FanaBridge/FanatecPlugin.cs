@@ -108,7 +108,6 @@ namespace FanaBridge
 
         public void Init(PluginManager pluginManager)
         {
-            Instance = this;
             SimHub.Logging.Current.Info("FanaBridge: Init starting");
 
             Settings = this.ReadCommonSettings<FanatecPluginSettings>(
@@ -154,13 +153,20 @@ namespace FanaBridge
                 StateChanged?.Invoke();
             };
 
+            // Publish the singleton only now that every shared field is
+            // constructed. DeviceInstance wrappers reach back through
+            // Instance.Wheelbase / Instance.Transport, so exposing it earlier
+            // would let them observe a half-built plugin (null Wheelbase).
+            Instance = this;
+
             // Attempt initial connection
             _connectionMonitor.TryInitialConnect();
 
             // --- Properties ---
             this.AttachDelegate("FanaBridge.Connected", () => _connectionMonitor.IsConnected);
             this.AttachDelegate("FanaBridge.DeviceName", () => _wheelbase.ProductName ?? "Not connected");
-            this.AttachDelegate("FanaBridge.BaseName", () => _wheelbase.BaseCode ?? "Not connected");
+            this.AttachDelegate("FanaBridge.BaseName", () =>
+                _wheelbase.IsConnected ? (_wheelbase.BaseCode ?? "Unknown") : "Not connected");
             this.AttachDelegate("FanaBridge.WheelName", () => _wheelbase.DisplayName);
             this.AttachDelegate("FanaBridge.ModuleName", () => _wheelbase.ModuleCode ?? "None");
             this.AttachDelegate("FanaBridge.DisplayName", () => _wheelbase.DisplayName);

@@ -17,7 +17,7 @@ namespace FanaBridge.Protocol
     internal static class FanatecDeviceTables
     {
         // Attachment wire byte (0x18) -> wheel code.
-        public static readonly Dictionary<byte, string> Wheels = new Dictionary<byte, string>
+        public static readonly IReadOnlyDictionary<byte, string> Wheels = new Dictionary<byte, string>
         {
             { 0x01, "CSSWBMW" },
             { 0x02, "CSSWFORM" },
@@ -44,7 +44,7 @@ namespace FanaBridge.Protocol
         };
 
         // Attachment wire byte (0x18) -> hub code. Hubs accept a button module.
-        public static readonly Dictionary<byte, string> Hubs = new Dictionary<byte, string>
+        public static readonly IReadOnlyDictionary<byte, string> Hubs = new Dictionary<byte, string>
         {
             { 0x04, "CSSWUH" },
             { 0x06, "CSSWUHX" },
@@ -55,14 +55,14 @@ namespace FanaBridge.Protocol
         };
 
         // Module byte (0x1F) -> button-module code.
-        public static readonly Dictionary<byte, string> Modules = new Dictionary<byte, string>
+        public static readonly IReadOnlyDictionary<byte, string> Modules = new Dictionary<byte, string>
         {
             { 0x01, "PBME" },
             { 0x02, "PBMR" },
         };
 
         // BaseType byte (0x02) -> wheelbase code.
-        public static readonly Dictionary<byte, string> Wheelbases = new Dictionary<byte, string>
+        public static readonly IReadOnlyDictionary<byte, string> Wheelbases = new Dictionary<byte, string>
         {
             {  1, "CSWV2" },
             {  2, "CSWV25" },

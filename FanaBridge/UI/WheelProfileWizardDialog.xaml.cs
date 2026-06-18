@@ -1278,7 +1278,7 @@ namespace FanaBridge.UI
                 // Re-resolve with the new override active.
                 // The settings UI handles restart prompting via UpdateRestartNotice()
                 // after this dialog closes.
-                _plugin.Wheelbase.RefreshCapabilities();
+                _plugin.Wheelbase?.RefreshCapabilities();
 
                 DialogResult = true;
                 Close();

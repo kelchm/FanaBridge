@@ -122,6 +122,7 @@ namespace FanaBridge.Transport
                 if (!_wheelbase.IsConnected)
                 {
                     _logWarn("FanaBridge: Wheelbase disconnected");
+                    _wheelbase.Disconnect();
                     _connected = false;
                     _reconnectCooldown = COOLDOWN_LONG;
                     Disconnected?.Invoke();
@@ -140,6 +141,7 @@ namespace FanaBridge.Transport
                 {
                     _logWarn(
                         $"FanaBridge: Wheel identity poll failed, triggering reconnect: {ex.Message}");
+                    _wheelbase.Disconnect();
                     _connected = false;
                     _reconnectCooldown = COOLDOWN_SHORT;
                     Disconnected?.Invoke();

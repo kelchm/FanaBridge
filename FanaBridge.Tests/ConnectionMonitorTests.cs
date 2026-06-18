@@ -167,6 +167,22 @@ namespace FanaBridge.Tests
             Assert.True(disconnectedFired);
         }
 
+        [Fact]
+        public void Update_StreamLost_TearsDownWheelbase()
+        {
+            var wheelbase = new StubWheelbase();
+            var monitor = Create(wheelbase, () => true);
+            monitor.TryInitialConnect();
+
+            wheelbase.IsConnected = false;
+            PumpFrames(monitor, 60); // stream check at frame 60
+
+            // The monitor must reset the wheelbase on the stream-loss path,
+            // not just flip its own flag — otherwise stale identity/transport
+            // state survives into the reconnect.
+            Assert.Equal(1, wheelbase.DisconnectCalls);
+        }
+
         // ── Wheel poll failure ───────────────────────────────────────────
 
         [Fact]
@@ -199,6 +215,20 @@ namespace FanaBridge.Tests
             Assert.True(result);
             Assert.True(monitor.IsConnected);
             Assert.Equal(2, connectAttempts);
+        }
+
+        [Fact]
+        public void Update_PollThrows_TearsDownWheelbase()
+        {
+            var wheelbase = new StubWheelbase();
+            var monitor = Create(wheelbase, () => true);
+            monitor.TryInitialConnect();
+
+            // Poll happens on the first frame when cooldown is 0.
+            wheelbase.PollThrows = true;
+            monitor.Update();
+
+            Assert.Equal(1, wheelbase.DisconnectCalls);
         }
 
         // ── ForceReconnect ───────────────────────────────────────────────

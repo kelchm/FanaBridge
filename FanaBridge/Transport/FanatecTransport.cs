@@ -253,14 +253,19 @@ namespace FanaBridge.Transport
 
         int IDeviceTransport.ReadCol03(byte[] buffer, int timeoutMs)
         {
-            if (_ledStream == null) return -1;
             lock (_writeLock)
             {
-                int saved = _ledStream.ReadTimeout;
+                // Capture under the lock: Disconnect() nulls/disposes the stream
+                // under the same lock, so a non-null local here stays valid for
+                // the duration of the read.
+                var stream = _ledStream;
+                if (stream == null) return -1;
+
+                int saved = stream.ReadTimeout;
                 try
                 {
-                    _ledStream.ReadTimeout = timeoutMs;
-                    return _ledStream.Read(buffer, 0, buffer.Length);
+                    stream.ReadTimeout = timeoutMs;
+                    return stream.Read(buffer, 0, buffer.Length);
                 }
                 catch
                 {
@@ -268,7 +273,7 @@ namespace FanaBridge.Transport
                 }
                 finally
                 {
-                    _ledStream.ReadTimeout = saved;
+                    try { stream.ReadTimeout = saved; } catch { }
                 }
             }
         }
@@ -319,24 +324,29 @@ namespace FanaBridge.Transport
         // =====================================================================
 
         /// <summary>
-        /// Closes all HID handles.
+        /// Closes all HID handles. Holds the write lock so teardown can't race
+        /// an in-flight send/read (which capture their stream under the same
+        /// lock), avoiding use-after-dispose on the HID streams.
         /// </summary>
         public void Disconnect()
         {
-            try { _displayStream?.Close(); } catch { }
-            try { _displayStream?.Dispose(); } catch { }
-            try { _ledStream?.Close(); } catch { }
-            try { _ledStream?.Dispose(); } catch { }
-            try { _displayHandle?.Close(); } catch { }
-            try { _displayHandle?.Dispose(); } catch { }
+            lock (_writeLock)
+            {
+                try { _displayStream?.Close(); } catch { }
+                try { _displayStream?.Dispose(); } catch { }
+                try { _ledStream?.Close(); } catch { }
+                try { _ledStream?.Dispose(); } catch { }
+                try { _displayHandle?.Close(); } catch { }
+                try { _displayHandle?.Dispose(); } catch { }
 
-            _displayStream = null;
-            _ledStream = null;
-            _displayHandle = null;
-            _ledDevice = null;
-            _displayDevice = null;
-            _connectedProductId = 0;
-            ProductName = null;
+                _displayStream = null;
+                _ledStream = null;
+                _displayHandle = null;
+                _ledDevice = null;
+                _displayDevice = null;
+                _connectedProductId = 0;
+                ProductName = null;
+            }
         }
 
         public void Dispose()

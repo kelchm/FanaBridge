@@ -148,7 +148,7 @@ namespace FanaBridge.UI
                 txtWheelName.Text = "—";
                 txtCapabilities.Text = "—";
                 borderUnverifiedAlert.Visibility = Visibility.Collapsed;
-                UpdateProfilePicker(null, null, null);
+                UpdateProfilePicker(false, null, null, null);
                 return;
             }
 
@@ -167,7 +167,7 @@ namespace FanaBridge.UI
                 txtCapabilities.Text = "—";
                 borderUnverifiedAlert.Visibility = Visibility.Collapsed;
                 // Still show the panel so the wizard button is accessible for unsupported wheels
-                UpdateProfilePicker(wheelCode, moduleCode, null);
+                UpdateProfilePicker(wheelbase.WheelDetected, wheelCode, moduleCode, null);
                 return;
             }
 
@@ -180,7 +180,7 @@ namespace FanaBridge.UI
                 ? Visibility.Collapsed
                 : Visibility.Visible;
 
-            UpdateProfilePicker(wheelCode, moduleCode, caps);
+            UpdateProfilePicker(wheelbase.WheelDetected, wheelCode, moduleCode, caps);
         }
 
         // =====================================================================
@@ -188,11 +188,11 @@ namespace FanaBridge.UI
         // =====================================================================
 
         private void UpdateProfilePicker(
-            string wheelCode, string moduleCode, WheelCapabilities activeCaps)
+            bool wheelDetected, string wheelCode, string moduleCode, WheelCapabilities activeCaps)
         {
-            if (wheelCode == null)
+            if (!wheelDetected)
             {
-                // No identified wheel — hide picker
+                // Nothing attached — hide picker entirely.
                 panelProfilePicker.Visibility = Visibility.Collapsed;
                 txtProfileHint.Visibility = Visibility.Visible;
                 txtProfileHint.Text = "Connect a wheel to manage profiles.";
@@ -202,7 +202,14 @@ namespace FanaBridge.UI
             txtProfileHint.Visibility = Visibility.Collapsed;
             panelProfilePicker.Visibility = Visibility.Visible;
 
-            string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
+            // A detected-but-unrecognized wheel (wire byte not in the decode
+            // tables) has a null code, so there's no profile to match — but the
+            // panel must stay visible so the New Profile Wizard is reachable and
+            // the user can create one. The store lookups below are null-safe and
+            // yield an empty list / null, landing on the "no profile" state.
+            string matchKey = wheelCode != null
+                ? WheelProfileStore.MakeMatchKey(wheelCode, moduleCode)
+                : null;
 
             // Get ALL profiles that match this wheel (built-in + user, even duplicates)
             var all = WheelProfileStore.FindAllForWheel(wheelCode, moduleCode);
@@ -215,7 +222,8 @@ namespace FanaBridge.UI
 
             // Current override (if any) from settings
             string currentOverride = null;
-            Plugin.Settings.ProfileOverrides?.TryGetValue(matchKey, out currentOverride);
+            if (matchKey != null)
+                Plugin.Settings.ProfileOverrides?.TryGetValue(matchKey, out currentOverride);
 
             if (all.Count == 0)
             {

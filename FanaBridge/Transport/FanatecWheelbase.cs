@@ -44,8 +44,13 @@ namespace FanaBridge.Transport
 
         // ── Connection state ─────────────────────────────────────────────
 
-        /// <summary>Whether a Fanatec wheelbase has been located and its transport opened.</summary>
-        public bool IsConnected { get; private set; }
+        /// <summary>
+        /// Whether the wheelbase is connected. Tracks the live transport rather
+        /// than a latched flag, so a dropped HID stream is reflected immediately
+        /// (and trips <see cref="ConnectionMonitor"/>'s stream check) instead of
+        /// reporting connected until the next bus scan.
+        /// </summary>
+        public bool IsConnected => _transport.IsConnected;
 
         /// <summary>Whether the wheelbase's HID device is still present on the bus.</summary>
         public bool IsDevicePresent => _transport.IsDevicePresent;
@@ -220,7 +225,6 @@ namespace FanaBridge.Transport
             }
 
             ConnectedProductId = productId;
-            IsConnected = true;
 
             SimHub.Logging.Current.Info(string.Format(
                 "FanatecWheelbase: {0} (PID 0x{1:X4})", ProductName, productId));
@@ -430,7 +434,6 @@ namespace FanaBridge.Transport
         {
             _transport.Disconnect();
 
-            IsConnected = false;
             ConnectedProductId = 0;
             ProductName = null;
             WheelDetected = false;
