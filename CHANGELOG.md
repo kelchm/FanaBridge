@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.1 - 2026-06-18
+
+### Fixed
+- Speed display now follows the km/h vs mph unit set in SimHub instead of always showing km/h, by reading `SpeedLocal` rather than `SpeedKmh` ([#27](https://github.com/kelchm/FanaBridge/issues/27))
+
 ## v0.3.0 - 2026-03-28
 
 ### Added

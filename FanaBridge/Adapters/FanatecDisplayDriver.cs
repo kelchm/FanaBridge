@@ -110,41 +110,28 @@ namespace FanaBridge.Adapters
 
         private void UpdateGear(GameData data)
         {
-            string gearStr = data.NewData.Gear;
-            int gear = ParseGear(gearStr);
+            int gear = ParseGear(data.NewData.Gear);
 
             if (gear == _lastSentGear && _lastDisplayMode == "Gear")
                 return;
 
-            _display.DisplayGear(gear);
-            _lastSentGear = gear;
-            _lastDisplayMode = "Gear";
-            _currentGear = GearToString(gear);
-            _currentText = _currentGear;
+            ShowGear(gear, "Gear");
         }
 
         private void UpdateSpeed(GameData data)
         {
-            int speed = (int)Math.Round(data.NewData.SpeedKmh);
-            if (speed < 0) speed = 0;
-            if (speed > 999) speed = 999;
+            int speed = ReadSpeed(data);
 
             if (speed == _lastSentSpeed && _lastDisplayMode == "Speed")
                 return;
 
-            _display.DisplaySpeed(speed);
-            _lastSentSpeed = speed;
-            _lastDisplayMode = "Speed";
-            _currentText = speed.ToString();
+            ShowSpeed(speed, "Speed");
         }
 
         private void UpdateGearAndSpeed(GameData data)
         {
-            string gearStr = data.NewData.Gear;
-            int gear = ParseGear(gearStr);
-            int speed = (int)Math.Round(data.NewData.SpeedKmh);
-            if (speed < 0) speed = 0;
-            if (speed > 999) speed = 999;
+            int gear = ParseGear(data.NewData.Gear);
+            int speed = ReadSpeed(data);
 
             // Trigger the gear overlay whenever the gear changes
             if (gear != _lastKnownGear)
@@ -157,31 +144,19 @@ namespace FanaBridge.Adapters
             {
                 // Show gear as a temporary overlay after a gear change
                 if (gear != _lastSentGear || _lastDisplayMode != "GearSpeed_Gear")
-                {
-                    _display.DisplayGear(gear);
-                    _lastSentGear = gear;
-                    _lastDisplayMode = "GearSpeed_Gear";
-                    _currentGear = GearToString(gear);
-                    _currentText = _currentGear;
-                }
+                    ShowGear(gear, "GearSpeed_Gear");
             }
             else
             {
                 // Default: show speed
                 if (speed != _lastSentSpeed || _lastDisplayMode != "GearSpeed_Speed")
-                {
-                    _display.DisplaySpeed(speed);
-                    _lastSentSpeed = speed;
-                    _lastDisplayMode = "GearSpeed_Speed";
-                    _currentText = speed.ToString();
-                }
+                    ShowSpeed(speed, "GearSpeed_Speed");
             }
         }
 
         private void UpdateGearUpshiftBrackets(GameData data)
         {
-            string gearStr = data.NewData.Gear;
-            int gear = ParseGear(gearStr);
+            int gear = ParseGear(data.NewData.Gear);
 
             bool showBrackets = data.NewData.Rpms > 0
                 && data.NewData.CarSettings_RPMRedLineReached > 0;
@@ -201,6 +176,43 @@ namespace FanaBridge.Adapters
         // =====================================================================
         // HELPERS
         // =====================================================================
+
+        /// <summary>
+        /// Reads the speed from telemetry (SpeedLocal honours the user's km/h
+        /// vs mph choice in SimHub) and clamps it to the 3-digit range.
+        /// </summary>
+        private static int ReadSpeed(GameData data)
+        {
+            int speed = (int)Math.Round(data.NewData.SpeedLocal);
+            if (speed < 0) speed = 0;
+            if (speed > 999) speed = 999;
+            return speed;
+        }
+
+        /// <summary>
+        /// Writes a gear to the display and updates the cached state under the
+        /// given display-mode tag.
+        /// </summary>
+        private void ShowGear(int gear, string mode)
+        {
+            _display.DisplayGear(gear);
+            _lastSentGear = gear;
+            _lastDisplayMode = mode;
+            _currentGear = GearToString(gear);
+            _currentText = _currentGear;
+        }
+
+        /// <summary>
+        /// Writes a speed to the display and updates the cached state under the
+        /// given display-mode tag.
+        /// </summary>
+        private void ShowSpeed(int speed, string mode)
+        {
+            _display.DisplaySpeed(speed);
+            _lastSentSpeed = speed;
+            _lastDisplayMode = mode;
+            _currentText = speed.ToString();
+        }
 
         /// <summary>
         /// Parses SimHub gear string to an integer: "R"=-1, "N"=0, "1"-"9"=1-9.
