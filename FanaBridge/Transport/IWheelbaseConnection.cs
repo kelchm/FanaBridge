@@ -2,7 +2,7 @@ namespace FanaBridge.Transport
 {
     /// <summary>
     /// Connection-check surface of a <see cref="FanatecWheelbase"/>, used by
-    /// <see cref="ConnectionMonitor"/> for heartbeat and identity polling.
+    /// <see cref="ConnectionMonitor"/> for heartbeat and identity servicing.
     /// </summary>
     public interface IWheelbaseConnection
     {
@@ -15,7 +15,10 @@ namespace FanaBridge.Transport
         /// <summary>Release the wheelbase connection and reset identity state.</summary>
         void Disconnect();
 
-        /// <summary>Poll the FF 08 system report for the current wheel/hub identity.</summary>
-        bool PollWheelIdentity();
+        /// <summary>
+        /// Service identity: drain any pushed FF 08 reports and advance the settle
+        /// timer. Called every frame. Returns true when a new identity was committed.
+        /// </summary>
+        bool UpdateIdentity();
     }
 }

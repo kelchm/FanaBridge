@@ -20,12 +20,10 @@ namespace FanaBridge.Transport
         private bool _connected;
         private int _frameCounter;
         private int _reconnectCooldown;
-        private int _wheelPollCooldown;
 
         // ── Heartbeat intervals (in frames) ────────────────────────────
         private const int HID_BUS_CHECK_INTERVAL = 120;
         private const int STREAM_CHECK_INTERVAL = 60;
-        private const int WHEEL_POLL_INTERVAL = 30;
 
         // ── Reconnect cooldowns (in frames) ────────────────────────────
         private const int COOLDOWN_LONG = 300;
@@ -130,28 +128,22 @@ namespace FanaBridge.Transport
                 }
             }
 
-            // Poll wheel identity (~every 0.5 s at 60 fps)
-            if (_wheelPollCooldown <= 0)
+            // Service identity every frame: drain pushed FF 08 reports and advance
+            // the settle timer. The base pushes on change, so this is cheap (a
+            // non-blocking drain) and only commits once a change has settled.
+            try
             {
-                try
-                {
-                    _wheelbase.PollWheelIdentity();
-                }
-                catch (Exception ex)
-                {
-                    _logWarn(
-                        $"FanaBridge: Wheel identity poll failed, triggering reconnect: {ex.Message}");
-                    _wheelbase.Disconnect();
-                    _connected = false;
-                    _reconnectCooldown = COOLDOWN_SHORT;
-                    Disconnected?.Invoke();
-                    return false;
-                }
-                _wheelPollCooldown = WHEEL_POLL_INTERVAL;
+                _wheelbase.UpdateIdentity();
             }
-            else
+            catch (Exception ex)
             {
-                _wheelPollCooldown--;
+                _logWarn(
+                    $"FanaBridge: Identity update failed, triggering reconnect: {ex.Message}");
+                _wheelbase.Disconnect();
+                _connected = false;
+                _reconnectCooldown = COOLDOWN_SHORT;
+                Disconnected?.Invoke();
+                return false;
             }
 
             return true;

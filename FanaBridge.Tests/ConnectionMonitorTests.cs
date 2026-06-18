@@ -10,22 +10,22 @@ namespace FanaBridge.Tests
 
         // The wheelbase now owns its transport, so a single stub stands in for
         // both connection state (IsConnected / IsDevicePresent) and identity
-        // polling.
+        // servicing.
         private class StubWheelbase : IWheelbaseConnection
         {
             public bool IsConnected { get; set; } = true;
             public bool IsDevicePresent { get; set; } = true;
             public int DisconnectCalls { get; private set; }
-            public int PollCalls { get; private set; }
-            public bool PollThrows { get; set; }
+            public int UpdateCalls { get; private set; }
+            public bool UpdateThrows { get; set; }
 
             public void Disconnect() => DisconnectCalls++;
 
-            public bool PollWheelIdentity()
+            public bool UpdateIdentity()
             {
-                if (PollThrows)
-                    throw new InvalidOperationException("wheel poll failed");
-                PollCalls++;
+                if (UpdateThrows)
+                    throw new InvalidOperationException("identity update failed");
+                UpdateCalls++;
                 return true;
             }
         }
@@ -183,10 +183,10 @@ namespace FanaBridge.Tests
             Assert.Equal(1, wheelbase.DisconnectCalls);
         }
 
-        // ── Wheel poll failure ───────────────────────────────────────────
+        // ── Identity update failure ──────────────────────────────────────
 
         [Fact]
-        public void Update_PollThrows_DisconnectsWithShortCooldown()
+        public void Update_IdentityThrows_DisconnectsWithShortCooldown()
         {
             var wheelbase = new StubWheelbase();
             int connectAttempts = 0;
@@ -198,16 +198,15 @@ namespace FanaBridge.Tests
             });
             monitor.TryInitialConnect(); // attempt 1
 
-            // Poll happens on the very first frame when cooldown is 0.
-            // Make it throw to trigger disconnect.
-            wheelbase.PollThrows = true;
+            // Identity is serviced every frame; make it throw to trigger disconnect.
+            wheelbase.UpdateThrows = true;
             bool result = monitor.Update();
 
             Assert.False(result);
             Assert.False(monitor.IsConnected);
 
             // Short cooldown = 60 frames. Pump through cooldown, then reconnect.
-            wheelbase.PollThrows = false;
+            wheelbase.UpdateThrows = false;
             PumpFrames(monitor, 60);
             Assert.False(monitor.IsConnected);
 
@@ -218,14 +217,13 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void Update_PollThrows_TearsDownWheelbase()
+        public void Update_IdentityThrows_TearsDownWheelbase()
         {
             var wheelbase = new StubWheelbase();
             var monitor = Create(wheelbase, () => true);
             monitor.TryInitialConnect();
 
-            // Poll happens on the first frame when cooldown is 0.
-            wheelbase.PollThrows = true;
+            wheelbase.UpdateThrows = true;
             monitor.Update();
 
             Assert.Equal(1, wheelbase.DisconnectCalls);
@@ -299,17 +297,17 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void Update_SteadyState_PollsWheelIdentity()
+        public void Update_SteadyState_ServicesIdentityEveryFrame()
         {
             var wheelbase = new StubWheelbase();
             var monitor = Create(wheelbase, () => true);
             monitor.TryInitialConnect();
 
-            // Poll happens immediately on first frame, then every 30 frames
+            // Identity is serviced on every frame (cheap non-blocking drain),
+            // not on a poll interval.
             PumpFrames(monitor, 120);
 
-            // Expect polls at frames: 1, 31, 61, 91 = 4 polls
-            Assert.True(wheelbase.PollCalls >= 4);
+            Assert.True(wheelbase.UpdateCalls >= 100);
         }
     }
 }

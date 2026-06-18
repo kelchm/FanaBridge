@@ -128,8 +128,18 @@ namespace FanaBridge.Adapters
             if (plugin == null)
                 return DeviceState.Disabled;
 
+            // ARCHITECTURE: this reaches directly into wheelbase identity fields.
+            // When the peripheral model lands, bind to a peripheral snapshot (class
+            // + code + capabilities) instead, so a DeviceInstance can represent
+            // pedals/shifter (hosted or standalone), not just a base attachment.
             var wheelbase = plugin.Wheelbase;
             if (wheelbase == null || !wheelbase.IsConnected)
+                return DeviceState.Scanning;
+
+            // While the attachment identity is settling (mid-transition), treat the
+            // device as not-yet-connected so no LED/display output is driven at a
+            // half-(re)connected wheel.
+            if (!wheelbase.IdentityStable)
                 return DeviceState.Scanning;
 
             if (!_config.MatchesAttachment(

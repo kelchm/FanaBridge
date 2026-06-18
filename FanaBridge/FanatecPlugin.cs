@@ -82,6 +82,10 @@ namespace FanaBridge
         }
 
         /// <summary>The connected wheelbase — used by DeviceInstance wrappers to query wheel identity.</summary>
+        // ARCHITECTURE: single-device assumption. When multi-device support lands
+        // (pedals/shifter/SRM), this becomes a DeviceManager owning a collection;
+        // don't add callers that bake in "exactly one base". See the device-
+        // architecture direction note (Connection / IIdentitySource / Device).
         public FanatecWheelbase Wheelbase => _wheelbase;
 
         /// <summary>Shared HID transport — used by DeviceInstance wrappers for hardware I/O.</summary>
