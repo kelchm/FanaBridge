@@ -13,6 +13,9 @@
     <Reference Include="Newtonsoft.Json">
       <HintPath>$(SimHubDir)Newtonsoft.Json.dll</HintPath>
     </Reference>
+    <Reference Include="GameReaderCommon">
+      <HintPath>$(SimHubDir)GameReaderCommon.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
