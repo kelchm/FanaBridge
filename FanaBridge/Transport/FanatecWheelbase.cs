@@ -23,6 +23,11 @@ namespace FanaBridge.Transport
     /// It is also instantiable per base, so supporting multiple wheelbases later
     /// is a matter of holding a collection rather than unwinding singletons.
     /// </summary>
+    // ARCHITECTURE: this class is base-specific — it directly owns the FF 08
+    // exchange + the base/wheel/module model. The future device model SPLITS it
+    // (a generic Device/manager holding a transport + a bound per-class driver
+    // carrying the FF 08 logic), it does not simply rename. See the device-
+    // architecture direction note (Connection / IIdentitySource / Device).
     public class FanatecWheelbase : IDisposable, IWheelbaseConnection
     {
         public const ushort FANATEC_VENDOR_ID = 0x0EB7;
@@ -32,15 +37,34 @@ namespace FanaBridge.Transport
         private readonly FanatecTransport _transport = new FanatecTransport();
         private bool _disposed;
 
-        public FanatecWheelbase() { }
+        public FanatecWheelbase()
+        {
+            _ingest = OnDrainReading;
+        }
 
         /// <summary>The wheelbase's HID transport — used by LED/display/tuning encoders.</summary>
         public IDeviceTransport Transport => _transport;
 
-        // FF 08 system-report exchange parameters.
-        private const int Ff08ReportLength = 64;
-        private const int Ff08ReadTimeoutMs = 60;
-        private const int Ff08MaxReadAttempts = 8; // axis reports interleave; skip past them
+        // ── Identity acquisition (enable-once, then listen) ────────────────
+        // The base PUSHES the FF 08 system report on every attachment change after
+        // a single enable, and is silent otherwise. We enable + read once on
+        // connect, then UpdateIdentity drains pushed reports via the reader — no
+        // polling. A changed reading is held by the settler until it goes quiet
+        // (riding out the firmware's transient reconnect flap), then committed.
+        private const int IdentitySettleMs = 200;
+        private const int IdentityReEnableMs = 10000;   // keep the push subscription alive
+
+        private readonly SystemReportReader _reportReader = new SystemReportReader();
+        private readonly IdentitySettler _settler = new IdentitySettler(IdentitySettleMs);
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        private readonly Action<SystemReportReader.Reading> _ingest;
+        private long _lastEnableMs;
+        private long _drainNow;
+
+        // Most recent drained reading; decoded into the public properties on commit.
+        private SystemReportReader.Reading _lastReading;
+
+        private volatile bool _identityStable = true;
 
         // ── Connection state ─────────────────────────────────────────────
 
@@ -101,6 +125,13 @@ namespace FanaBridge.Transport
         /// </summary>
         public bool WheelIdentified =>
             WheelDetected && !string.IsNullOrEmpty(WheelCode);
+
+        /// <summary>
+        /// Whether the attachment identity is settled (not mid-transition). False
+        /// while a changed reading is still settling — consumers should treat the
+        /// device as not-yet-connected and suppress output during that window.
+        /// </summary>
+        public bool IdentityStable => _identityStable;
 
         /// <summary>
         /// Display name for the current wheel/hub: the matched profile's name, else
@@ -229,10 +260,29 @@ namespace FanaBridge.Transport
             SimHub.Logging.Current.Info(string.Format(
                 "FanatecWheelbase: {0} (PID 0x{1:X4})", ProductName, productId));
 
-            try { PollWheelIdentity(); }
+            // Enable the system report (turns on the firmware's push-on-change) and
+            // read the initial identity once. From here on UpdateIdentity only
+            // listens for pushes — no triggering.
+            try
+            {
+                _lastEnableMs = _clock.ElapsedMilliseconds;
+                if (_reportReader.ReadInitial(_transport, out var reading))
+                    IngestReading(reading, _clock.ElapsedMilliseconds);
+
+                // Confirm the per-frame drain is non-blocking on this hardware — a
+                // blocking ReadCol03(buf, 0) would stall the frame thread. Done once
+                // now that the input is quiet; leaves a permanent regression guard.
+                double drainMs = _reportReader.ProbeDrainLatencyMs(_transport, 5);
+                if (drainMs > 1.0)
+                    SimHub.Logging.Current.Warn(string.Format(
+                        "FanatecWheelbase: idle identity drain took {0:F2} ms — expected non-blocking (<1 ms); per-frame identity polling may stutter.", drainMs));
+                else
+                    SimHub.Logging.Current.Info(string.Format(
+                        "FanatecWheelbase: identity drain is non-blocking ({0:F2} ms idle)", drainMs));
+            }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Warn("FanatecWheelbase: Initial poll failed: " + ex.Message);
+                SimHub.Logging.Current.Warn("FanatecWheelbase: Initial identity read failed: " + ex.Message);
             }
             return true;
         }
@@ -259,112 +309,66 @@ namespace FanaBridge.Transport
             catch { return "Fanatec Device"; }
         }
 
-        // ── Polling ──────────────────────────────────────────────────────
+        // ── Identity ──────────────────────────────────────────────────────
 
         /// <summary>
-        /// Reads the FF 08 system report and updates wheelbase + attachment identity.
-        /// Call periodically (not every frame). Returns true if identity changed.
+        /// Drains pushed FF 08 system reports and advances the settle timer. Called
+        /// each frame by <see cref="ConnectionMonitor"/>. The base pushes on every
+        /// attachment change (no polling); a changed reading is committed only once
+        /// it has settled. Returns true when a new identity was committed this call.
         /// </summary>
-        public bool PollWheelIdentity()
+        public bool UpdateIdentity()
         {
             if (!IsConnected)
                 return false;
 
-            if (!ReadFf08Report(out var buf, out int sig))
-                return false; // no FF 08 report this round
+            long now = _clock.ElapsedMilliseconds;
 
-            byte baseType = buf[sig + FanatecIdentity.OffBaseType];
-            byte wireCode = buf[sig + FanatecIdentity.OffWireCode];
-            byte modRaw   = buf[sig + FanatecIdentity.OffModule];
-
-            bool isHub = FanatecIdentity.IsHub(wireCode);
-            // A module is only meaningful on a hub; ignore stray bytes on a wheel.
-            string moduleCode = isHub ? FanatecIdentity.DecodeModule(modRaw) : null;
-
-            var prevCode = WheelCode;
-            var prevModule = ModuleCode;
-            var prevDetected = WheelDetected;
-
-            WheelDetected = wireCode != 0;
-            WheelCode = FanatecIdentity.DecodeCode(wireCode);
-            WheelWireCode = wireCode;
-            IsHub = isHub;
-            ModuleCode = moduleCode;
-            BaseType = baseType;
-            BaseCode = FanatecIdentity.DecodeBaseCode(baseType);
-
-            bool changed = prevCode != WheelCode
-                || prevModule != ModuleCode
-                || prevDetected != WheelDetected;
-
-            if (changed)
+            // Keep the push-on-change subscription alive (the enable can lapse).
+            if (now - _lastEnableMs >= IdentityReEnableMs)
             {
-                ResolveCapabilities("Wheel changed");
-                WheelChanged?.Invoke(this);
+                _lastEnableMs = now;
+                try { _reportReader.Enable(_transport); }
+                catch { /* transient; the next tick retries */ }
             }
 
+            _drainNow = now;
+            _reportReader.DrainPushes(_transport, _ingest);
+
+            bool changed = _settler.Tick(now, out _, out _);
+            _identityStable = _settler.IsStable;
+            if (changed)
+                CommitIdentity();
             return changed;
         }
 
-        // Triggers and reads the col03 FF 08 system report (enable → trigger → read,
-        // skipping interleaved axis reports). Returns the buffer + signature offset.
-        // TODO: This is low-level wire I/O (enable/trigger byte patterns, signature
-        // scanning) living in the connection-root class. Consider extracting the
-        // FF 08 exchange into a Protocol-level reader alongside FanatecIdentity's
-        // decode, leaving the wheelbase to own only identity STATE and call into it
-        // — symmetric with how the LED/display/tuning encoders are layered.
-        private bool ReadFf08Report(out byte[] report, out int sig)
+        // Drain callback: record the reading and offer it to the settler. _drainNow
+        // carries the current clock so the cached delegate needs no per-frame closure.
+        private void OnDrainReading(SystemReportReader.Reading r) => IngestReading(r, _drainNow);
+
+        private void IngestReading(SystemReportReader.Reading r, long now)
         {
-            report = null; sig = -1;
-
-            var enable = new byte[Ff08ReportLength];
-            enable[0] = 0xFF; enable[1] = 0x08; enable[2] = 0x01; enable[3] = 0xFF;
-
-            var trigger = new byte[Ff08ReportLength];
-            trigger[0] = 0xFF; trigger[1] = 0x08; trigger[2] = 0x02;
-
-            // The col03 send/read surface is the IDeviceTransport interface
-            // (explicitly implemented on FanatecTransport).
-            IDeviceTransport io = _transport;
-
-            // Hold the transport for the enable→trigger→read sequence so an
-            // interleaved LED write can't land between trigger and read.
-            using (io.BeginBatch())
-            {
-                io.SendCol03(enable);
-                io.SendCol03(trigger);
-
-                int bufLen = io.Col03MaxInputReportLength;
-                if (bufLen < Ff08ReportLength) bufLen = Ff08ReportLength;
-
-                for (int attempt = 0; attempt < Ff08MaxReadAttempts; attempt++)
-                {
-                    var buf = new byte[bufLen];
-                    int n = io.ReadCol03(buf, Ff08ReadTimeoutMs);
-                    if (n <= 0) break;
-
-                    int s = FindFf08Signature(buf, n);
-                    if (s < 0) continue; // not the FF08 report (axis/other) — read again
-
-                    report = buf; sig = s;
-                    return true;
-                }
-            }
-
-            return false;
+            _lastReading = r;
+            byte effModule = FanatecIdentity.IsHub(r.Wire) ? r.ModRaw : (byte)0;
+            _settler.Offer(r.Wire, effModule, now);
         }
 
-        // Locate the "FF 08" system-report signature; tolerates a leading
-        // report-ID byte by scanning the first few positions.
-        private static int FindFf08Signature(byte[] buf, int len)
+        // Commit the latest (settled) reading into the public identity properties.
+        private void CommitIdentity()
         {
-            int limit = len - (FanatecIdentity.OffModule + 1);
-            for (int i = 0; i <= limit && i <= 2; i++)
-            {
-                if (buf[i] == 0xFF && buf[i + 1] == 0x08)
-                    return i;
-            }
-            return -1;
+            byte wire = _lastReading.Wire;
+            bool isHub = FanatecIdentity.IsHub(wire);
+
+            WheelDetected = wire != 0;
+            WheelCode = FanatecIdentity.DecodeCode(wire);
+            WheelWireCode = wire;
+            IsHub = isHub;
+            ModuleCode = isHub ? FanatecIdentity.DecodeModule(_lastReading.ModRaw) : null;
+            BaseType = _lastReading.BaseType;
+            BaseCode = FanatecIdentity.DecodeBaseCode(_lastReading.BaseType);
+
+            ResolveCapabilities("Wheel changed");
+            WheelChanged?.Invoke(this);
         }
 
         /// <summary>
@@ -433,6 +437,9 @@ namespace FanaBridge.Transport
         public void Disconnect()
         {
             _transport.Disconnect();
+            _settler.Reset();
+            _identityStable = true;
+            _lastReading = default;
 
             ConnectedProductId = 0;
             ProductName = null;
