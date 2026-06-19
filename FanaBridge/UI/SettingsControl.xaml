@@ -12,21 +12,52 @@
             <!-- Connection Status -->
             <styles:SHSection Title="DEVICE STATUS" ShowSeparator="True">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                        <TextBlock Text="Status: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
-                        <TextBlock x:Name="txtStatus" Text="Checking..." VerticalAlignment="Center" />
+                    <!-- Device chain: ● wheelbase › wheel/hub › module.
+                         The status dot lives on the wheelbase node (the base is
+                         what connects). The wheelbase node is always present so
+                         the panel height stays constant across states; the wheel
+                         and module nodes are shown/hidden to mirror the stack. -->
+                    <StackPanel Orientation="Horizontal" Margin="0,2,0,12">
+                        <StackPanel VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="dotStatus" Width="9" Height="9" Fill="#E0A800"
+                                         VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock x:Name="txtBaseName" Text="Checking…" FontWeight="SemiBold" FontSize="14" />
+                            </StackPanel>
+                            <TextBlock x:Name="txtBaseCaption" Text="Wheelbase" Foreground="#888888" FontSize="11"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                        <TextBlock x:Name="connBaseWheel" Text="›" Foreground="#888888" FontSize="20"
+                                   VerticalAlignment="Center" Margin="14,0,14,0" />
+                        <StackPanel x:Name="nodeWheel" VerticalAlignment="Center">
+                            <TextBlock x:Name="txtWheelChain" Text="—" FontWeight="SemiBold" FontSize="14" />
+                            <TextBlock x:Name="txtWheelKind" Text="Wheel" Foreground="#888888" FontSize="11" />
+                        </StackPanel>
+                        <TextBlock x:Name="connWheelModule" Text="›" Foreground="#888888" FontSize="20"
+                                   VerticalAlignment="Center" Margin="14,0,14,0" />
+                        <StackPanel x:Name="nodeModule" VerticalAlignment="Center">
+                            <TextBlock x:Name="txtModuleChain" Text="—" FontWeight="SemiBold" FontSize="14" />
+                            <TextBlock Text="Module" Foreground="#888888" FontSize="11" />
+                        </StackPanel>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                        <TextBlock Text="Wheel: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
-                        <TextBlock x:Name="txtWheelName" Text="—" VerticalAlignment="Center" />
+
+                    <!-- Capabilities — styled like a chain node (value + caption) -->
+                    <StackPanel Margin="0,0,0,2">
+                        <TextBlock x:Name="txtCapabilities" Text="—" TextWrapping="Wrap" />
+                        <TextBlock Text="Capabilities" Foreground="#888888" FontSize="11" />
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,4">
-                        <TextBlock Text="Capabilities: " FontWeight="Bold" VerticalAlignment="Center" Width="100" />
-                        <TextBlock x:Name="txtCapabilities" Text="—" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                        <styles:SHButtonPrimary x:Name="btnReconnect" Click="BtnReconnect_Click" HorizontalAlignment="Left">
+                            Reconnect
+                        </styles:SHButtonPrimary>
+                        <TextBlock VerticalAlignment="Center" Margin="12,0,0,0" Foreground="#AAAAAA" FontSize="11">
+                          <Hyperlink Click="BtnCopyDiagnostics_Click"
+                                      Foreground="#4FC3F7" TextDecorations="None"
+                                      ToolTip="Copy a detailed, read-only detection report to the clipboard for pasting into a GitHub issue">
+                              Copy Debug Info
+                          </Hyperlink>
+                        </TextBlock>
                     </StackPanel>
-                    <styles:SHButtonPrimary x:Name="btnReconnect" Click="BtnReconnect_Click" HorizontalAlignment="Left" Margin="0,8">
-                        Reconnect
-                    </styles:SHButtonPrimary>
                 </StackPanel>
             </styles:SHSection>
 

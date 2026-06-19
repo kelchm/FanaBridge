@@ -309,5 +309,73 @@ namespace FanaBridge.Tests
 
             Assert.True(wheelbase.UpdateCalls >= 100);
         }
+
+        // ── Disconnect reason (feeds the UI Status detail) ───────────────
+
+        [Fact]
+        public void LastDisconnectReason_NullWhileConnected()
+        {
+            var monitor = Create(new StubWheelbase(), () => true);
+            monitor.TryInitialConnect();
+            Assert.Null(monitor.LastDisconnectReason);
+        }
+
+        [Fact]
+        public void LastDisconnectReason_SetOnBusLoss()
+        {
+            var wheelbase = new StubWheelbase();
+            var monitor = Create(wheelbase, () => true);
+            monitor.TryInitialConnect();
+
+            wheelbase.IsDevicePresent = false;
+            PumpFrames(monitor, 120); // bus check
+
+            Assert.False(string.IsNullOrEmpty(monitor.LastDisconnectReason));
+        }
+
+        [Fact]
+        public void LastDisconnectReason_SetOnStreamLoss()
+        {
+            var wheelbase = new StubWheelbase();
+            var monitor = Create(wheelbase, () => true);
+            monitor.TryInitialConnect();
+
+            wheelbase.IsConnected = false;
+            PumpFrames(monitor, 60); // stream check
+
+            Assert.False(string.IsNullOrEmpty(monitor.LastDisconnectReason));
+        }
+
+        [Fact]
+        public void LastDisconnectReason_SetOnIdentityFailure()
+        {
+            var wheelbase = new StubWheelbase();
+            var monitor = Create(wheelbase, () => true);
+            monitor.TryInitialConnect();
+
+            wheelbase.UpdateThrows = true;
+            monitor.Update();
+
+            Assert.False(string.IsNullOrEmpty(monitor.LastDisconnectReason));
+        }
+
+        [Fact]
+        public void LastDisconnectReason_ClearedOnReconnect()
+        {
+            var wheelbase = new StubWheelbase();
+            var monitor = Create(wheelbase, () => true);
+            monitor.TryInitialConnect();
+
+            wheelbase.IsConnected = false;
+            PumpFrames(monitor, 60); // stream loss → reason set, enters cooldown
+            Assert.False(string.IsNullOrEmpty(monitor.LastDisconnectReason));
+
+            // Recover and let the cooldown elapse, then reconnect.
+            wheelbase.IsConnected = true;
+            PumpFrames(monitor, 300); // COOLDOWN_LONG
+            Assert.True(monitor.Update());
+            Assert.True(monitor.IsConnected);
+            Assert.Null(monitor.LastDisconnectReason);
+        }
     }
 }

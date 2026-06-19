@@ -33,6 +33,13 @@ namespace FanaBridge.Transport
         /// <summary>Whether the Fanatec device is currently connected.</summary>
         public bool IsConnected => _connected;
 
+        /// <summary>
+        /// Human-readable reason for the most recent runtime disconnect (HID-bus
+        /// loss, stream drop, identity error), or null while connected. Surfaced
+        /// so a dropped connection is diagnosable without opening the SimHub log.
+        /// </summary>
+        public string LastDisconnectReason { get; private set; }
+
         /// <summary>Fired when a connection is established.</summary>
         public event Action Connected;
 
@@ -97,6 +104,7 @@ namespace FanaBridge.Transport
                     return false;
                 }
 
+                LastDisconnectReason = null;
                 Connected?.Invoke();
                 return true;
             }
@@ -108,6 +116,7 @@ namespace FanaBridge.Transport
                 if (!_wheelbase.IsDevicePresent)
                 {
                     _logWarn("FanaBridge: Device no longer on HID bus");
+                    LastDisconnectReason = "Device no longer on the HID bus (powered off or unplugged).";
                     _wheelbase.Disconnect();
                     _connected = false;
                     _reconnectCooldown = COOLDOWN_MEDIUM;
@@ -120,6 +129,7 @@ namespace FanaBridge.Transport
                 if (!_wheelbase.IsConnected)
                 {
                     _logWarn("FanaBridge: Wheelbase disconnected");
+                    LastDisconnectReason = "Wheelbase HID stream closed.";
                     _wheelbase.Disconnect();
                     _connected = false;
                     _reconnectCooldown = COOLDOWN_LONG;
@@ -139,6 +149,7 @@ namespace FanaBridge.Transport
             {
                 _logWarn(
                     $"FanaBridge: Identity update failed, triggering reconnect: {ex.Message}");
+                LastDisconnectReason = "Identity update failed: " + ex.Message;
                 _wheelbase.Disconnect();
                 _connected = false;
                 _reconnectCooldown = COOLDOWN_SHORT;
@@ -166,9 +177,14 @@ namespace FanaBridge.Transport
             _connected = _tryConnect();
 
             if (_connected)
+            {
+                LastDisconnectReason = null;
                 Connected?.Invoke();
+            }
             else
+            {
                 Disconnected?.Invoke();
+            }
         }
     }
 }

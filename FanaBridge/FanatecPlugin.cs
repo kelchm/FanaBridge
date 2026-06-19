@@ -45,6 +45,16 @@ namespace FanaBridge
         /// <summary>Whether the Fanatec device is currently connected (for UI binding).</summary>
         public bool IsDeviceConnected => _connectionMonitor?.IsConnected == true;
 
+        /// <summary>
+        /// When disconnected, a short reason for it (the latest connect-attempt
+        /// failure, else the latest runtime disconnect reason); null while
+        /// connected. Surfaced on the Status row and in the diagnostics capture.
+        /// </summary>
+        public string StatusDetail =>
+            IsDeviceConnected
+                ? null
+                : (_wheelbase?.LastConnectError ?? _connectionMonitor?.LastDisconnectReason);
+
         /// <summary>Name of the connected device (for UI binding).</summary>
         public string DeviceName => _wheelbase?.ProductName ?? "Not connected";
 
@@ -248,6 +258,17 @@ namespace FanaBridge
             // ConnectionMonitor.ForceReconnect() already fires Connected/Disconnected,
             // which invoke StateChanged via the event subscriptions set up in Init().
             _connectionMonitor.ForceReconnect();
+        }
+
+        /// <summary>
+        /// Builds a read-only, GitHub-ready diagnostics snapshot of current device
+        /// detection (HID interface inventory + decoded identity + raw FF 08 frame).
+        /// Called from the settings UI's "Copy Debug Info" link. Sends nothing
+        /// to the device — it only re-enumerates the bus and formats held state.
+        /// </summary>
+        public string BuildDiagnosticsReport()
+        {
+            return DiagnosticsReport.Build(_wheelbase, IsDeviceConnected, StatusDetail, BuildIdentity.Full);
         }
 
         /// <summary>

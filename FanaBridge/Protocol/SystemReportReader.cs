@@ -20,6 +20,13 @@ namespace FanaBridge.Protocol
             public byte BaseType;
             public byte Wire;
             public byte ModRaw;
+
+            /// <summary>
+            /// The full report frame this reading was decoded from (a private copy,
+            /// safe to retain). Kept for the diagnostics capture so the exact wire
+            /// bytes of an unrecognized device can be reported. May be null.
+            /// </summary>
+            public byte[] Raw;
         }
 
         private const int ReportLength = 64;
@@ -60,7 +67,7 @@ namespace FanaBridge.Protocol
                     int sig = FindSignature(buf, n);
                     if (sig < 0) continue; // axis/other report — read again
 
-                    reading = Decode(buf, sig);
+                    reading = Decode(buf, sig, n);
                     return true;
                 }
             }
@@ -85,7 +92,7 @@ namespace FanaBridge.Protocol
                     int sig = FindSignature(buf, n);
                     if (sig < 0) continue; // axis/other report — not FF 08
 
-                    onReading(Decode(buf, sig));
+                    onReading(Decode(buf, sig, n));
                     count++;
                 }
             }
@@ -128,12 +135,22 @@ namespace FanaBridge.Protocol
             return _readBuf;
         }
 
-        private static Reading Decode(byte[] buf, int sig) => new Reading
+        // Decode the three identity bytes and retain a private copy of the full
+        // frame (len bytes) for diagnostics. Decode runs only for a matched FF 08
+        // report; the base pushes only on attachment change, so steady-state idle
+        // drains match nothing and allocate nothing.
+        private static Reading Decode(byte[] buf, int sig, int len)
         {
-            BaseType = buf[sig + FanatecIdentity.OffBaseType],
-            Wire     = buf[sig + FanatecIdentity.OffWireCode],
-            ModRaw   = buf[sig + FanatecIdentity.OffModule],
-        };
+            var raw = new byte[len];
+            Array.Copy(buf, raw, len);
+            return new Reading
+            {
+                BaseType = buf[sig + FanatecIdentity.OffBaseType],
+                Wire     = buf[sig + FanatecIdentity.OffWireCode],
+                ModRaw   = buf[sig + FanatecIdentity.OffModule],
+                Raw      = raw,
+            };
+        }
 
         // Locate the "FF 08" signature; tolerates a leading report-ID byte by
         // scanning the first few positions.

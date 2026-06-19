@@ -43,5 +43,19 @@ namespace FanaBridge.Protocol
         /// </summary>
         public static string DecodeBaseCode(byte baseType)
             => FanatecDeviceTables.Wheelbases.TryGetValue(baseType, out var b) ? b : null;
+
+        // ── Friendly display names (UI only) ──────────────────────────────
+
+        /// <summary>Friendly display name for a wheelbase code, or null if unmapped.</summary>
+        public static string FriendlyBase(string baseCode)
+            => baseCode != null && FanatecDeviceTables.WheelbaseNames.TryGetValue(baseCode, out var n) ? n : null;
+
+        /// <summary>Friendly display name for a wheel/hub code, or null if unmapped.</summary>
+        public static string FriendlyAttachment(string wheelCode)
+            => wheelCode != null && FanatecDeviceTables.AttachmentNames.TryGetValue(wheelCode, out var n) ? n : null;
+
+        /// <summary>Friendly display name for a module code, or null if unmapped.</summary>
+        public static string FriendlyModule(string moduleCode)
+            => moduleCode != null && FanatecDeviceTables.ModuleNames.TryGetValue(moduleCode, out var n) ? n : null;
     }
 }

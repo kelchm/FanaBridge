@@ -116,6 +116,13 @@ namespace FanaBridge.Transport
         /// <summary>FanaBridge button-module code ("PBME"/"PBMR"), or null when none.</summary>
         public string ModuleCode { get; private set; }
 
+        /// <summary>
+        /// Raw module wire byte (FF 08 byte 0x1F) — the deepest module identifier.
+        /// A non-zero value with a null <see cref="ModuleCode"/> means a module is
+        /// present but not in the decode table (report it). 0 when no module.
+        /// </summary>
+        public byte ModuleWireCode { get; private set; }
+
         /// <summary>Resolved capability profile for the current wheel + module combination.</summary>
         public WheelCapabilities CurrentCapabilities { get; private set; }
             = WheelCapabilities.None;
@@ -134,6 +141,15 @@ namespace FanaBridge.Transport
         public bool IdentityStable => _identityStable;
 
         /// <summary>
+        /// Whether the base's FF 08 identity has been read since connecting. False
+        /// in the brief window between the HID transport opening and the first
+        /// identity commit — connected but not yet identified. Derived from
+        /// <see cref="BaseType"/> (0 until the first commit, reset to 0 on
+        /// disconnect), so there is no separate flag to keep in sync.
+        /// </summary>
+        public bool HasIdentity => BaseType != 0;
+
+        /// <summary>
         /// Display name for the current wheel/hub: the matched profile's name, else
         /// the FanaBridge code (or an EXT_INFO / unknown marker for unmapped bytes).
         /// </summary>
@@ -149,9 +165,42 @@ namespace FanaBridge.Transport
                     WheelCode != null     ? WheelCode :
                     WheelWireCode == 0xFF ? "EXT_INFO (extended-identity wheel — please report)" :
                     "Unknown (0x" + WheelWireCode.ToString("X2") + ")";
-                return ModuleCode == null ? label : label + " + " + ModuleCode;
+                string module =
+                    ModuleCode != null          ? " + " + ModuleCode :
+                    IsHub && ModuleWireCode != 0 ? " + Module 0x" + ModuleWireCode.ToString("X2") + " (please report)" :
+                                                   "";
+                return label + module;
             }
         }
+
+        // ── Friendly display names (UI only) ──────────────────────────────
+
+        /// <summary>Friendly wheelbase name (e.g. "ClubSport DD+"), or null if unrecognized.</summary>
+        public string BaseFriendlyName => FanatecIdentity.FriendlyBase(BaseCode);
+
+        /// <summary>Friendly attached wheel/hub name (e.g. "Podium Hub"), or null if unrecognized.</summary>
+        public string AttachmentFriendlyName => FanatecIdentity.FriendlyAttachment(WheelCode);
+
+        /// <summary>Friendly button-module name (e.g. "Button Module Rally"), or null when none/unrecognized.</summary>
+        public string ModuleFriendlyName => FanatecIdentity.FriendlyModule(ModuleCode);
+
+        // ── Diagnostics ──────────────────────────────────────────────────
+
+        /// <summary>
+        /// The full bytes of the most recently drained FF 08 system report (a
+        /// private copy), or null if none has been received. Updated on every
+        /// reading — not just committed changes — so a capture taken on a
+        /// sitting-still unrecognized wheel still reflects the live frame.
+        /// </summary>
+        public byte[] LastRawReport { get; private set; }
+
+        /// <summary>
+        /// Why the most recent connect attempt failed (no Fanatec device, no col03
+        /// interface, HID open failure, …), or null after a successful connect.
+        /// Surfaced so a "device not detected" regression is diagnosable without
+        /// opening the SimHub log.
+        /// </summary>
+        public string LastConnectError { get; private set; }
 
         // ── Events ───────────────────────────────────────────────────────
 
@@ -191,6 +240,7 @@ namespace FanaBridge.Transport
                 if (fanatecDevices.Count == 0)
                 {
                     SimHub.Logging.Current.Debug("FanatecWheelbase: No Fanatec devices found on HID bus");
+                    LastConnectError = "No Fanatec devices (VID 0x0EB7) found on the HID bus.";
                     return false;
                 }
 
@@ -200,6 +250,7 @@ namespace FanaBridge.Transport
                 if (basePid == 0)
                 {
                     SimHub.Logging.Current.Warn("FanatecWheelbase: No Fanatec wheelbase (col03) interface found");
+                    LastConnectError = "Fanatec device(s) present, but no wheelbase (col03 64-byte) interface found.";
                     return false;
                 }
 
@@ -208,6 +259,7 @@ namespace FanaBridge.Transport
             catch (Exception ex)
             {
                 SimHub.Logging.Current.Error("FanatecWheelbase: AutoConnect error: " + ex.Message);
+                LastConnectError = "AutoConnect error: " + ex.Message;
                 return false;
             }
         }
@@ -231,6 +283,7 @@ namespace FanaBridge.Transport
             catch (Exception ex)
             {
                 SimHub.Logging.Current.Error("FanatecWheelbase: Connect error: " + ex.Message);
+                LastConnectError = "Connect error: " + ex.Message;
                 return false;
             }
         }
@@ -252,10 +305,14 @@ namespace FanaBridge.Transport
             {
                 SimHub.Logging.Current.Warn(string.Format(
                     "FanatecWheelbase: HID open failed for {0} (PID 0x{1:X4})", ProductName, productId));
+                LastConnectError = string.Format(
+                    "HID open failed for {0} (PID 0x{1:X4}) — another process may hold the interface.",
+                    ProductName, productId);
                 return false;
             }
 
             ConnectedProductId = productId;
+            LastConnectError = null;   // connected successfully
 
             SimHub.Logging.Current.Info(string.Format(
                 "FanatecWheelbase: {0} (PID 0x{1:X4})", ProductName, productId));
@@ -349,6 +406,7 @@ namespace FanaBridge.Transport
         private void IngestReading(SystemReportReader.Reading r, long now)
         {
             _lastReading = r;
+            LastRawReport = r.Raw;   // retain per-reading, even before/without a settled commit
             byte effModule = FanatecIdentity.IsHub(r.Wire) ? r.ModRaw : (byte)0;
             _settler.Offer(r.Wire, effModule, now);
         }
@@ -364,6 +422,7 @@ namespace FanaBridge.Transport
             WheelWireCode = wire;
             IsHub = isHub;
             ModuleCode = isHub ? FanatecIdentity.DecodeModule(_lastReading.ModRaw) : null;
+            ModuleWireCode = isHub ? _lastReading.ModRaw : (byte)0;   // 0x1F is only meaningful on a hub
             BaseType = _lastReading.BaseType;
             BaseCode = FanatecIdentity.DecodeBaseCode(_lastReading.BaseType);
 
@@ -420,13 +479,15 @@ namespace FanaBridge.Transport
                 : WheelCapabilities.None;
 
             SimHub.Logging.Current.Info(string.Format(
-                "FanatecWheelbase: {0} — Base={1}, Detected={2}, Wheel={3} (wire 0x{4:X2}), Module={5}, Override={6}, Caps={7}",
+                "FanatecWheelbase: {0} — Base={1} (0x{2:X2}), Detected={3}, Wheel={4} (wire 0x{5:X2}), Module={6} (0x{7:X2}), Override={8}, Caps={9}",
                 logContext,
                 BaseCode ?? "(unknown)",
+                BaseType,
                 WheelDetected,
                 WheelCode ?? "(unrecognized)",
                 WheelWireCode,
                 ModuleCode ?? "(none)",
+                ModuleWireCode,
                 overrideId ?? "(auto)",
                 CurrentCapabilities.Name ?? "(none)"));
         }
@@ -448,9 +509,13 @@ namespace FanaBridge.Transport
             WheelWireCode = 0;
             IsHub = false;
             ModuleCode = null;
+            ModuleWireCode = 0;
             BaseType = 0;
             BaseCode = null;
             CurrentCapabilities = WheelCapabilities.None;
+            LastRawReport = null;
+            // LastConnectError is intentionally left intact — it reflects the most
+            // recent connect attempt and is cleared on the next successful connect.
         }
 
         public void Dispose()

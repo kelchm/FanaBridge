@@ -39,8 +39,6 @@ namespace FanaBridge.Protocol
             { 0x1B, "CSSWPVGT" },
             { 0x1C, "CSSWFORMV3" },
             { 0x1D, "CSLSWGT3" },
-            { 0x1F, "ARCEE" },
-            { 0xFE, "GENERIC" },
         };
 
         // Attachment wire byte (0x18) -> hub code. Hubs accept a button module.
@@ -79,6 +77,74 @@ namespace FanaBridge.Protocol
             { 13, "PDD25" },
             { 14, "PDD25PLUS" },
             { 99, "CSWV1" },
+        };
+
+        // ── Friendly display names (UI only) ──────────────────────────────
+        // Concise, human-readable names keyed by FanaBridge code, for the
+        // Device Status readout. Display-only: identity/profile matching always
+        // uses the codes above, never these strings. Missing entries fall back
+        // to the code (then the raw byte), so an unmapped device still shows.
+        //
+        // Transitional — these should ultimately live in per-component profiles
+        // (issue #16). Keep them aligned with Resources/Profiles/*.json.
+
+        // Wheelbase code -> friendly name.
+        public static readonly IReadOnlyDictionary<string, string> WheelbaseNames = new Dictionary<string, string>
+        {
+            { "CSWV1",     "ClubSport V1" },
+            { "CSWV2",     "ClubSport V2" },
+            { "CSWV25",    "ClubSport V2.5" },
+            { "CSLE_1_0",  "CSL Elite" },
+            { "CSLE_1_1",  "CSL Elite V1.1" },
+            { "CSLEPS4",   "CSL Elite+ (PS4)" },
+            { "CSLDD",     "CSL DD" },
+            { "CSDD",      "ClubSport DD" },
+            { "CSDDPlus",  "ClubSport DD+" },
+            { "GTDDPRO",   "GT DD Pro" },
+            { "PDD1",      "Podium DD1" },
+            { "PDD1_PS4",  "Podium DD1 (PS4)" },
+            { "PDD2",      "Podium DD2" },
+            { "PDD25",     "Podium DD" },
+            { "PDD25PLUS", "Podium DD+" },
+        };
+
+        // Wheel/hub code -> friendly name.
+        public static readonly IReadOnlyDictionary<string, string> AttachmentNames = new Dictionary<string, string>
+        {
+            // Wheels
+            { "CSSWBMW",     "ClubSport BMW M3 GT2" },
+            { "CSSWFORM",    "ClubSport Formula Carbon" },
+            { "CSSWPORSCHE", "ClubSport Porsche 918 RSR" },
+            { "CSLESWP1X",   "CSL Elite P1 (Xbox)" },
+            { "CSLESWP1PS4", "CSL Elite P1 (PS4)" },
+            { "CSLESWMCL",   "CSL Elite McLaren GT3 V1" },
+            { "CSSWFORMV2",  "ClubSport Formula V2.5" },
+            { "CSLESWMCLV2", "CSL Elite McLaren GT3 V2" },
+            { "PSWBENT",     "Podium Bentley GT3" },
+            { "PSWBMW",      "Podium BMW M4 GT3" },
+            { "GTSWPRO",     "GT DD Pro Wheel" },
+            { "CSLESWWRC",   "CSL Elite WRC" },
+            { "CSSWBMWV2",   "ClubSport BMW M3 GT2 V2" },
+            { "CSSWRS",      "ClubSport RS" },
+            { "CSSWF1ESV2",  "ClubSport F1 Esports V2" },
+            { "GTSWX",       "GT Extreme" },
+            { "CSSWPVGT",    "CSL Elite Porsche Vision GT" },
+            { "CSSWFORMV3",  "ClubSport Formula V3" },
+            { "CSLSWGT3",    "CSL GT3" },
+            // Hubs
+            { "CSSWUH",      "ClubSport Universal Hub" },
+            { "CSSWUHX",     "ClubSport Universal Hub (Xbox)" },
+            { "PHUB",        "Podium Hub" },
+            { "CSLSWUH",     "CSL Universal Hub" },
+            { "CSUHV2",      "ClubSport Universal Hub V2" },
+            { "WHEELHUB",    "Wheel Hub" },
+        };
+
+        // Module code -> friendly name.
+        public static readonly IReadOnlyDictionary<string, string> ModuleNames = new Dictionary<string, string>
+        {
+            { "PBME", "Button Module Endurance" },
+            { "PBMR", "Button Module Rally" },
         };
     }
 }

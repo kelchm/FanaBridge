@@ -3,10 +3,15 @@
 ## v0.4.0 - Unreleased
 
 ### Changed
-- Wheel, hub, and module identity is now decoded entirely over HID (the col03 `FF 08` system report); the dependency on the Fanatec SDK / `SimHub.FanatecManaged.dll` for device detection has been dropped
+- **Device detection is now handled entirely by FanaBridge over HID** — wheel, hub, and module identity is read straight from the wheelbase (the col03 `FF 08` system report), dropping the dependency on SimHub's Fanatec SDK integration (`SimHub.FanatecManaged.dll`).
+
+### Added
+- **Device Status** now shows the connected hardware as a `wheelbase › wheel/hub › module` chain with friendly names and a live connection indicator; unrecognized hardware shows its raw identity byte.
+- **Copy Debug Info** copies a read-only report (HID interfaces, decoded identity, and the raw `FF 08` bytes) to the clipboard for bug reports — no need to close SimHub or run a separate tool.
+- A disconnected device now shows *why* (no device found, interface in use, lost connection, …).
 
 ### Fixed
-- FanaBridge should now detect wheels and hubs attached to a Podium DD wheelbase
+- Wheels and hubs are now detected on Podium DD wheelbases.
 
 ## v0.3.1 - 2026-06-18
 
