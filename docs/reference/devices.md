@@ -169,12 +169,8 @@ Keyed by the [system report](protocol.md#0x08--system-report-identity) attachmen
 | `0x1B` | CSSWPVGT | CSL Elite Steering Wheel Porsche Vision GT |
 | `0x1C` | CSSWFORMV3 | ClubSport Steering Wheel Formula V3 |
 | `0x1D` | CSLSWGT3 | CSL Steering Wheel GT3 |
-| `0x1F` | ARCEE | Arcee (Miata Bundle) |
-| `0xFE` | GENERIC | Generic Fanatec Steering Wheel (fallback identity) |
 
 > The **Code** (e.g. CSSWBMW) is the stable identifier used throughout this reference. `0x0F` and `0x17` both decode to **PSWBMW** (`0x17` is a hardware revision). A V2.5 hardware variant of the Formula V2 (`0x0A`) exists as a sub-variant of the same Code with no separate wire code. `0x1B`/`0x1C`/`0x1D` (CSSWPVGT, CSSWFORMV3, CSLSWGT3) are newer additions. The wire-code list is the currently-known set, not closed — see the [identity-codes note](#device-identification).
-
-> **Identity-only entries.** `ARCEE` (`0x1F`, the Miata-bundle wheel) and `GENERIC` (`0xFE`, the fallback identity used when a wheel's specific code isn't recognized) are listed for identification only — their LED, display, and APM capabilities are not yet catalogued, so they are intentionally omitted from the capability tables below.
 
 Wheels are self-contained rims with fixed hardware. Their capabilities are determined entirely by their built-in components — they cannot be extended with modules.
 

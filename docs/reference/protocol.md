@@ -940,16 +940,15 @@ The base replies on col03 with a 64-byte report beginning `FF 08`. Identity-bear
 
 | Offset | Field | Description |
 |--------|-------|-------------|
-| `0x02` | BaseType | Wheelbase model code; resolves to a specific base — see [devices.md](devices.md#wheelbases). |
-| `0x02`–`0x03` | Layout selector | 16-bit little-endian (`byte[3] << 8 \| byte[2]`). Selects the firmware-version field widths. The hardware we've observed uses the extended (`≥ 6`) layout; a legacy (`< 6`) layout is inferred but not confirmed on current hardware. `byte[3]` has been `0x00` on every base seen, so in practice `byte[0x02]` also serves as the BaseType code. |
+| `0x02`–`0x03` | SystemConfig | 16-bit little-endian (`byte[3] << 8 \| byte[2]`). Its only effect is selecting the firmware-version field widths: legacy (`< 6`) uses 1-byte version fields, extended (`≥ 6`) uses 4-byte blocks. It does **not** affect the identity offsets below. Every base observed reports the extended layout with `byte[3] = 0x00`; the legacy layout is inferred from the field structure, not yet observed. `byte[0x02]` is the **low byte** of this word and doubles as a [BaseType](devices.md#wheelbases) (wheelbase model) hint — but only while `byte[0x03]` is `0x00`; if a base ever set `byte[0x03]` nonzero, `byte[0x02]` would be a version low-byte, not a base code. |
 | `0x18` | WheelCode | Attached wheel or hub, as a single-byte code. `0x00` = nothing attached; `0xFF` = `EXT_INFO`, a reserved escape for devices that report identity through extended fields instead. Code → device: see [devices.md](devices.md). |
 | `0x1F` | Module | Button-module presence — meaningful only when a **module-capable hub** is attached (not all hubs accept modules): `0x00` = none, `0x01` = PBME, `0x02` = PBMR. |
 
-Remaining offsets carry firmware-version fields (widths set by the layout selector) and transient status bytes that are **not** part of identity and may differ between consecutive reports.
+The `WheelCode` (`0x18`) and `Module` (`0x1F`) bytes sit at fixed offsets, outside the firmware-version fields and read independently of `SystemConfig`, so they decode identically on either layout. Remaining offsets carry firmware-version fields (widths set by `SystemConfig`) and transient status bytes that are **not** part of identity and may differ between consecutive reports.
 
 #### Identity codes
 
-The numeric codes above map to specific hardware. The wheel/hub code (`0x18`) is a single byte — a finite, nearly-full space — and `0xFF` is reserved as the `EXT_INFO` escape, so treat the published list as the **currently-known set, not a closed enumeration**. The complete code → device tables (BaseType, wheel/hub codes, modules, and which hubs accept a module) live in **[devices.md](devices.md)**.
+The numeric codes above map to specific hardware. The wheel/hub code (`0x18`) is a single byte, with `0xFF` reserved as the `EXT_INFO` escape, so treat the published list as the **currently-known set, not a closed enumeration**. A code that isn't in the known set is not a protocol error: a consumer should fall back to a generic identity and continue rather than reject the report. The wheel/hub and module codes are the reliable identity signals here; the BaseType hint (`byte[0x02]`) is best treated as advisory, since it is only valid while `byte[0x03]` is `0x00` (see the row above). The complete code → device tables (BaseType, wheel/hub codes, modules, and which hubs accept a module) live in **[devices.md](devices.md)**.
 
 > **Worked example.** `FF 08 0C 00 00 … 0C … 02 …` → BaseType `0x0C`, WheelCode `0x0C`, Module `0x02` = a ClubSport DD+ base with a Podium Hub and a Podium Button Module Rally attached.
 
