@@ -299,7 +299,7 @@ Wheels have several distinct display technologies. The display type determines w
 | GTSWPRO | OLED (Basic) | — | |
 | PSWBMW | OLED (Basic) | — | |
 | CSSWPVGT | OLED (Basic) | — | Round display; SmallOLED ITM mode planned but disabled in current firmware |
-| CSSWFORMV3 | OLED (Basic) | — | |
+| CSSWFORMV3 | OLED (ITM) | TBD | ITM Device ID unconfirmed |
 | CSLSWGT3 | OLED (Basic) | — | |
 | GTSWX | OLED (ITM) | 3 | Dedicated GTSWX ITM pages |
 | PSWBENT | LCD | 4 | 3.4" 800x800, dedicated Bentley ITM pages |

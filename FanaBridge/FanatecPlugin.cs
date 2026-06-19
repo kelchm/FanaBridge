@@ -144,6 +144,8 @@ namespace FanaBridge
             // Wire up profile override resolution from plugin settings
             _wheelbase.ProfileOverrideResolver = (matchKey) =>
             {
+                if (string.IsNullOrEmpty(matchKey))
+                    return null;
                 if (Settings.ProfileOverrides != null
                     && Settings.ProfileOverrides.TryGetValue(matchKey, out var overrideId))
                     return overrideId;

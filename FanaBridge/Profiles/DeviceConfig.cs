@@ -1,3 +1,5 @@
+using System;
+
 namespace FanaBridge.Profiles
 {
     /// <summary>
@@ -73,8 +75,8 @@ namespace FanaBridge.Profiles
         public bool MatchesAttachment(bool wheelDetected, string attachedWheelCode, string attachedModule)
         {
             return wheelDetected
-                && WheelCode == attachedWheelCode
-                && ModuleCode == attachedModule;
+                && string.Equals(WheelCode, attachedWheelCode, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(ModuleCode, attachedModule, StringComparison.OrdinalIgnoreCase);
         }
     }
 }
