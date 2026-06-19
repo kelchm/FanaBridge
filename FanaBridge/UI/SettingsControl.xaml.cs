@@ -419,6 +419,10 @@ namespace FanaBridge.UI
             string moduleCode = wheelbase.ModuleCode;
             string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
 
+            // No match key (e.g. detected but unrecognized wheel, WheelCode null)
+            // means there is no identity to attach an override to — nothing to persist.
+            if (string.IsNullOrEmpty(matchKey)) return;
+
             // Check if the selected profile is the one auto-resolution would pick
             var autoResolved = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null);
             string autoOverrideKey = autoResolved != null
@@ -531,7 +535,11 @@ namespace FanaBridge.UI
             string moduleCode = wheelbase.ModuleCode;
             string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
 
-            Plugin.Settings.ProfileOverrides.Remove(matchKey);
+            // A null/empty key (unrecognized wheel) can never have been stored as
+            // an override key, so there is nothing to remove — and Dictionary
+            // throws on a null key.
+            if (!string.IsNullOrEmpty(matchKey))
+                Plugin.Settings.ProfileOverrides.Remove(matchKey);
 
             // Delete from disk and store
             bool deleted = WheelProfileStore.DeleteUserProfile(profileId);
