@@ -476,10 +476,14 @@ namespace FanaBridge.Profiles
         /// formed the same way compound profile IDs are: "{wheel}" alone, or
         /// "{wheel}_{module}". This is the single source of truth for the key
         /// format — callers (identity resolution, settings UI, wizard) must
-        /// use it rather than concatenating by hand.
+        /// use it rather than concatenating by hand. Returns null when there is
+        /// no wheel/hub code, so a stray module code can't yield a malformed
+        /// "_{module}" key.
         /// </summary>
         public static string MakeMatchKey(string wheelCode, string moduleCode)
         {
+            if (string.IsNullOrEmpty(wheelCode))
+                return null;
             return string.IsNullOrEmpty(moduleCode)
                 ? wheelCode
                 : wheelCode + "_" + moduleCode;

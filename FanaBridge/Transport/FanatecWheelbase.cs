@@ -14,8 +14,11 @@ namespace FanaBridge.Transport
     /// Owns the wheelbase's identity (base model) and its current attachment
     /// (wheel or hub, + optional module), read entirely over HID via the col03
     /// <c>FF 08</c> system report — no Fanatec driver/service and no
-    /// SimHub.FanatecManaged.dll. Because it talks pure HID, identity also works
-    /// for Fanatec wheels on non-Fanatec / SRM bases that emit the FF 08 report.
+    /// SimHub.FanatecManaged.dll. The identity DECODE is transport-agnostic (it
+    /// parses whatever FF 08 frame it is handed), but discovery and connection are
+    /// currently scoped to the Fanatec VID (0x0EB7) in <see cref="FanatecTransport"/>,
+    /// so a base enumerating under a different VID (e.g. an SRM kit on its own VID)
+    /// is not yet connected here.
     ///
     /// This is the natural home for wheelbase-native capabilities (e.g. a CSL
     /// Elite base's own rev LEDs) and the seam for compositional capability
