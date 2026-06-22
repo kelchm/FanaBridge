@@ -8,7 +8,7 @@
     "wheelType": "GTSWX"
   },
   "display": "itm",
-  "verified": false,
+  "verified": true,
   "leds": [
     { "channel": "revRgb",  "hwIndex": 0, "role": "rev",  "label": "Rev LED 1" },
     { "channel": "revRgb",  "hwIndex": 1, "role": "rev",  "label": "Rev LED 2" },

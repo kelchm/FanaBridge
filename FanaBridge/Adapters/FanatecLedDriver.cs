@@ -358,7 +358,10 @@ namespace FanaBridge.Adapters
 
             int buttonCount = caps.ButtonLedCount;
             if (buttonCount > 0)
-                maps.Add(new ButtonRangeMap(revFlagCount, buttonCount));
+                // First arg is the offset into the buttons section array, not the
+                // combined layout — physical placement comes from map order. Must be
+                // 0 or grouped mode reads out of bounds. See FanatecLedDriverTests.
+                maps.Add(new ButtonRangeMap(0, buttonCount));
 
             return new PhysicalMapper(maps.ToArray());
         }
