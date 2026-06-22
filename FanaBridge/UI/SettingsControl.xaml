@@ -41,6 +41,11 @@
                         </StackPanel>
                     </StackPanel>
 
+                    <!-- Connection detail / failure reason — full width, wraps instead of
+                         overflowing the device-chain row. -->
+                    <TextBlock x:Name="txtStatusDetail" Foreground="#E0A800" FontSize="11"
+                               TextWrapping="Wrap" Margin="0,0,0,10" Visibility="Collapsed" />
+
                     <!-- Capabilities — styled like a chain node (value + caption) -->
                     <StackPanel Margin="0,0,0,2">
                         <TextBlock x:Name="txtCapabilities" Text="—" TextWrapping="Wrap" />

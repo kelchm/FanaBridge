@@ -202,6 +202,11 @@ namespace FanaBridge.Transport
         /// </summary>
         public string LastConnectError { get; private set; }
 
+        // De-dupes connect-failure logging: ConnectionMonitor retries every few seconds,
+        // so a given failure is logged once (until it changes or a connect succeeds),
+        // while LastConnectError is still updated every attempt for the live UI/status.
+        private string _lastLoggedConnectError;
+
         // ── Events ───────────────────────────────────────────────────────
 
         /// <summary>
@@ -238,21 +243,13 @@ namespace FanaBridge.Transport
                     .ToList();
 
                 if (fanatecDevices.Count == 0)
-                {
-                    SimHub.Logging.Current.Debug("FanatecWheelbase: No Fanatec devices found on HID bus");
-                    LastConnectError = "No Fanatec devices (VID 0x0EB7) found on the HID bus.";
-                    return false;
-                }
+                    return FailConnect("No Fanatec devices (VID 0x0EB7) found on the HID bus.");
 
                 // The wheelbase is the device that exposes the col03 (64-byte)
                 // control interface; accessories (pedals, etc.) do not.
                 int basePid = PickBasePid(fanatecDevices);
                 if (basePid == 0)
-                {
-                    SimHub.Logging.Current.Warn("FanatecWheelbase: No Fanatec wheelbase (col03) interface found");
-                    LastConnectError = "Fanatec device(s) present, but no wheelbase (col03 64-byte) interface found.";
-                    return false;
-                }
+                    return FailConnect("Fanatec device(s) present, but no col03 (64-byte) interface found.");
 
                 return Adopt(basePid, fanatecDevices);
             }
@@ -302,17 +299,11 @@ namespace FanaBridge.Transport
 
             // Open the HID transport for this base — identity + all I/O flow through it.
             if (!_transport.Connect(productId))
-            {
-                SimHub.Logging.Current.Warn(string.Format(
-                    "FanatecWheelbase: HID open failed for {0} (PID 0x{1:X4})", ProductName, productId));
-                LastConnectError = string.Format(
-                    "HID open failed for {0} (PID 0x{1:X4}) — another process may hold the interface.",
-                    ProductName, productId);
-                return false;
-            }
+                return FailConnect(DescribeConnectFailure(_transport.LastConnectStatus, ProductName, productId));
 
             ConnectedProductId = productId;
-            LastConnectError = null;   // connected successfully
+            LastConnectError = null;          // connected successfully
+            _lastLoggedConnectError = null;   // re-arm failure logging for the next drop
 
             SimHub.Logging.Current.Info(string.Format(
                 "FanatecWheelbase: {0} (PID 0x{1:X4})", ProductName, productId));
@@ -344,8 +335,10 @@ namespace FanaBridge.Transport
             return true;
         }
 
-        // Pick the wheelbase PID: prefer a Fanatec device exposing a 64-byte
-        // col03 report (input or output); fall back to the first Fanatec PID.
+        // Pick the wheelbase PID: prefer a Fanatec device exposing a 64-byte report.
+        // Deliberately looser than the transport's col03 check (which requires a 64-byte
+        // OUTPUT): matching a 64-byte INPUT too lets an input-only base still be adopted,
+        // so the transport can report NoCol03Interface rather than the base vanishing here.
         private static int PickBasePid(System.Collections.Generic.List<HidDevice> devices)
         {
             foreach (var d in devices)
@@ -358,6 +351,42 @@ namespace FanaBridge.Transport
                 catch { /* descriptor query can throw on busy handles */ }
             }
             return devices.Select(d => d.ProductID).FirstOrDefault();
+        }
+
+        // Records the connect-failure reason for the live UI/status, logging it only when
+        // it changes — ConnectionMonitor retries every few seconds, so logging every
+        // attempt would spam identical lines.
+        private bool FailConnect(string message)
+        {
+            LastConnectError = message;
+            if (!string.Equals(message, _lastLoggedConnectError, StringComparison.Ordinal))
+            {
+                SimHub.Logging.Current.Warn("FanatecWheelbase: " + message);
+                _lastLoggedConnectError = message;
+            }
+            return false;
+        }
+
+        // Maps the transport's categorised connect outcome to a concise reason (used for
+        // both the UI status line and the de-duped log). Only Col03OpenFailed is genuine
+        // exclusive-access contention.
+        internal static string DescribeConnectFailure(
+            FanatecTransport.TransportConnectStatus status, string productName, int productId)
+        {
+            switch (status)
+            {
+                case FanatecTransport.TransportConnectStatus.NoDeviceForPid:
+                    return string.Format("No HID device for {0} (PID 0x{1:X4}) — powered off, unplugged, or mode change.",
+                        productName, productId);
+                case FanatecTransport.TransportConnectStatus.NoCol03Interface:
+                    return string.Format("No col03 (64-byte) interface for {0} (PID 0x{1:X4}) — console mode or no col03 wheel; set PC mode (red LED).",
+                        productName, productId);
+                case FanatecTransport.TransportConnectStatus.Col03OpenFailed:
+                    return string.Format("col03 interface for {0} (PID 0x{1:X4}) held by another process (Fanatec app / another sim?).",
+                        productName, productId);
+                default:
+                    return string.Format("HID open failed for {0} (PID 0x{1:X4}).", productName, productId);
+            }
         }
 
         private static string SafeProductName(HidDevice device)

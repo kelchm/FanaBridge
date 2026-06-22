@@ -170,6 +170,22 @@ namespace FanaBridge.UI
             connWheelModule.Visibility = nodeModule.Visibility = Visibility.Collapsed;
         }
 
+        // Full-width wrapping line for the connection reason (e.g. "no col03 …"); the
+        // device-chain caption is too narrow for it and would overflow the row.
+        private void SetStatusDetail(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                txtStatusDetail.Text = "";
+                txtStatusDetail.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                txtStatusDetail.Text = text;
+                txtStatusDetail.Visibility = Visibility.Visible;
+            }
+        }
+
         // friendly name → code → raw byte, so an unmapped device still shows.
         private static string ChainBaseText(FanatecWheelbase wb)
             => wb.BaseFriendlyName
@@ -217,7 +233,8 @@ namespace FanaBridge.UI
 
             if (!Plugin.IsDeviceConnected)
             {
-                ShowBaseOnly(LinkState.Disconnected, "Not Connected", Plugin.StatusDetail);
+                ShowBaseOnly(LinkState.Disconnected, "Not Connected", null);
+                SetStatusDetail(Plugin.StatusDetail);
                 txtCapabilities.Text = "—";
                 borderUnverifiedAlert.Visibility = Visibility.Collapsed;
                 UpdateProfilePicker(false, null, null, null);
@@ -232,6 +249,7 @@ namespace FanaBridge.UI
             if (!wheelbase.HasIdentity)
             {
                 ShowBaseOnly(LinkState.Connecting, "Connecting…", null);
+                SetStatusDetail(null);
                 txtCapabilities.Text = "—";
                 borderUnverifiedAlert.Visibility = Visibility.Collapsed;
                 UpdateProfilePicker(false, null, null, null);
@@ -243,6 +261,7 @@ namespace FanaBridge.UI
 
             // The chain shows what's attached whether or not a profile matched.
             ShowConnectedChain(wheelbase);
+            SetStatusDetail(null);
 
             txtCapabilities.Text = identified ? FormatCapabilities(caps) : "—";
 

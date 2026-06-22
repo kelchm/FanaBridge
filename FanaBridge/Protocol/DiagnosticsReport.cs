@@ -12,8 +12,11 @@ namespace FanaBridge.Protocol
     /// live transport FanaBridge already holds open (so there is no need to close
     /// SimHub or run an external tool).
     ///
-    /// Strictly read-only: it re-enumerates the HID bus and formats the last FF 08
-    /// system report FanaBridge already drained. It sends nothing to the device.
+    /// Read-only: it re-enumerates the HID bus, decodes the last FF 08 system report
+    /// FanaBridge already drained (identity + firmware versions), flags the col03 control
+    /// interface the same way the transport selects it (the &amp;col03 path token, else a
+    /// 64-byte OUTPUT report), and takes one best-effort, motion-gated col01 input
+    /// snapshot. It never writes to the device.
     ///
     /// The output is a fenced Markdown block ready to paste into a GitHub issue,
     /// emitting the same wire bytes (raw FF 08 hex + the 0x02/0x18/0x1F key bytes)
@@ -29,20 +32,21 @@ namespace FanaBridge.Protocol
 
             sb.AppendLine("### FanaBridge detection report");
             sb.AppendLine();
-            sb.AppendLine("> **Please describe what is physically attached** (wheelbase model, "
-                + "wheel/hub, button module) so it can be matched to the bytes below.");
+            sb.AppendLine("> Describe what's physically attached (wheelbase, wheel/hub, button module).");
             sb.AppendLine();
             sb.AppendLine("```");
-            sb.AppendLine("FanaBridge : " + (string.IsNullOrEmpty(buildInfo) ? "unknown" : buildInfo));
-            sb.AppendLine("OS         : " + SafeOsVersion());
-            sb.AppendLine("Captured   : " + DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") + " UTC");
+            sb.AppendLine(string.Format("{0,-13}{1}", "FanaBridge:", string.IsNullOrEmpty(buildInfo) ? "unknown" : buildInfo));
+            sb.AppendLine(string.Format("{0,-13}{1}", "OS:", SafeOsVersion()));
+            sb.AppendLine(string.Format("{0,-13}{1}", "Captured:", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") + " UTC"));
             sb.AppendLine();
 
             AppendInterfaceInventory(sb);
             sb.AppendLine();
-            AppendIdentity(sb, wheelbase, connected, statusDetail);
+            AppendSystemReport(sb, wheelbase, connected, statusDetail);
             sb.AppendLine();
-            AppendRawReport(sb, wheelbase);
+            AppendInputProbe(sb);
+            sb.AppendLine();
+            AppendReportDescriptors(sb);
 
             sb.AppendLine("```");
             return sb.ToString();
@@ -54,14 +58,13 @@ namespace FanaBridge.Protocol
         // new col03 logic does not — still produces useful evidence.
         private static void AppendInterfaceInventory(StringBuilder sb)
         {
-            sb.AppendLine("Fanatec HID interfaces (VID 0x0EB7):");
+            sb.AppendLine("HID interfaces");
 
             HidDevice[] devices;
             try
             {
                 devices = DeviceList.Local.GetHidDevices()
-                    .Where(d => d.VendorID == FanatecWheelbase.FANATEC_VENDOR_ID)
-                    .OrderBy(d => d.ProductID)
+                    .Where(d => IsRelevantVid(d.VendorID))
                     .ToArray();
             }
             catch (Exception ex)
@@ -72,66 +75,238 @@ namespace FanaBridge.Protocol
 
             if (devices.Length == 0)
             {
-                sb.AppendLine("  (none — base off/unplugged, or claimed by another process)");
+                sb.AppendLine("  (none — device off/unplugged, or claimed by another process)");
                 return;
             }
 
-            foreach (var d in devices)
-                sb.AppendLine("  " + DescribeDevice(d));
+            // One entry per physical device (VID+PID shown on the entry line, so an SRM
+            // converter is visible whether it enumerates under the Fanatec VID or its own).
+            // Shared name/rel/mfr/serial print once; each collection is a compact line;
+            // long paths go in their own block.
+            foreach (var grp in devices.GroupBy(d => new { d.VendorID, d.ProductID })
+                                       .OrderBy(g => g.Key.VendorID).ThenBy(g => g.Key.ProductID))
+            {
+                var members = grp.OrderBy(ColTag, StringComparer.OrdinalIgnoreCase).ToList();
+                var first = members[0];
+                sb.AppendLine(string.Format("  VID 0x{0:X4}  PID 0x{1:X4}  \"{2}\"  rel=0x{3:X4}  mfr=\"{4}\"  serial={5}",
+                    grp.Key.VendorID, grp.Key.ProductID, SafeName(first),
+                    SafeReleaseBcd(first), SafeManufacturer(first), SafeSerial(first)));
+
+                foreach (var d in members)
+                {
+                    string usage = TopLevelUsage(SafeRawDescriptor(d));
+                    sb.AppendLine(string.Format("    {0,-6} out={1,-4}in={2,-4}feat={3,-4}{4}",
+                        ColTag(d), SafeMaxOutput(d), SafeMaxInput(d), SafeMaxFeature(d),
+                        usage != null ? "usage=" + usage : ""));
+                }
+
+                // col03 = the &col03 node or a 64-byte OUTPUT report; a 64-byte INPUT
+                // alone is not col03 (a PS4-mode gamepad col01 has in=64).
+                bool col03 = members.Any(d => SafePath(d).IndexOf("col03", StringComparison.OrdinalIgnoreCase) >= 0)
+                    || members.Any(d => Is64(SafeMaxOutput(d)));
+                bool col02 = members.Any(d => SafePath(d).IndexOf("col02", StringComparison.OrdinalIgnoreCase) >= 0);
+                sb.AppendLine("    " + string.Format("{0,-13}{1}", "col03 (PC):",
+                    col03 ? "present" : col02 ? "absent (col02 only)" : "absent"));
+
+                sb.AppendLine("    paths:");
+                foreach (var d in members)
+                    sb.AppendLine(string.Format("      {0,-6} {1}", ColTag(d), SafePath(d)));
+            }
         }
 
-        private static string DescribeDevice(HidDevice d)
+        // The HID collection tag from the device path (col01..col05), or "(?)" when the
+        // device exposes a single top-level collection (no &colNN in the path).
+        private static string ColTag(HidDevice d)
         {
-            string col = "?";
             string path = SafePath(d);
             foreach (var c in new[] { "col01", "col02", "col03", "col04", "col05" })
-                if (path.IndexOf(c, StringComparison.OrdinalIgnoreCase) >= 0) col = c;
-
-            return string.Format("PID 0x{0:X4}  {1,-6} out={2,3} in={3,3}  \"{4}\"",
-                d.ProductID, col, SafeMaxOutput(d), SafeMaxInput(d), SafeName(d));
+                if (path.IndexOf(c, StringComparison.OrdinalIgnoreCase) >= 0) return c;
+            return "(?)";
         }
 
-        // ── Decoded identity ─────────────────────────────────────────────
-        private static void AppendIdentity(
+        private const int SRM_VENDOR_ID = 0x35F9;   // SRM Conversion Kit management VID
+
+        // VIDs we enumerate: the Fanatec VID plus the SRM Conversion Kit VID. An SRM
+        // converter can appear under either, so we list both and show the VID per entry
+        // rather than (mis)labelling a VID as "SRM".
+        private static bool IsRelevantVid(int vid)
+            => vid == FanatecWheelbase.FANATEC_VENDOR_ID || vid == SRM_VENDOR_ID;
+
+        // ── Input report snapshot (read-only) ────────────────────────────
+        // One bounded read per input-bearing collection (col01/col02/col03 — any with an
+        // input report >= 33 bytes; each line is tagged with its collection). HID input is
+        // change-driven, so a stationary wheel yields no report; the FF 08 report above is
+        // the authoritative identity. Safe alongside a live connection (Windows delivers
+        // HID input per-handle, so this can't steal the transport's frames).
+        private static void AppendInputProbe(StringBuilder sb)
+        {
+            sb.AppendLine("Input report snapshot");
+
+            HidDevice[] devices;
+            try
+            {
+                devices = DeviceList.Local.GetHidDevices()
+                    .Where(d => IsRelevantVid(d.VendorID))
+                    .ToArray();
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("  (enumeration failed: " + ex.Message + ")");
+                return;
+            }
+
+            var targets = devices.Where(d => SafeMaxInput(d) >= 33)
+                .OrderBy(ColTag, StringComparer.OrdinalIgnoreCase).ToArray();
+            if (targets.Length == 0)
+            {
+                sb.AppendLine("  (no interface with an input report >= 33 bytes)");
+                return;
+            }
+
+            var idle = new System.Collections.Generic.List<string>();
+            foreach (var d in targets)
+            {
+                string data = ReadInput(d);
+                if (data != null)
+                    sb.AppendLine(string.Format("  {0,-6} PID 0x{1:X4} in={2}: {3}",
+                        ColTag(d), d.ProductID, SafeMaxInput(d), data));
+                else
+                    idle.Add(ColTag(d));
+            }
+            if (idle.Count > 0)
+                sb.AppendLine("  " + string.Join("/", idle) + ": no report in 300 ms");
+        }
+
+        // Returns the raw input bytes + key offsets, or null if no report arrived.
+        private static string ReadInput(HidDevice d)
+        {
+            int len = SafeMaxInput(d);
+            if (len <= 0) len = 64;
+
+            HidStream stream = null;
+            try
+            {
+                if (!d.TryOpen(out stream) || stream == null) return null;
+                stream.ReadTimeout = 300;
+                var buf = new byte[len];
+                int n = stream.Read(buf, 0, buf.Length);
+                if (n <= 0) return null;
+
+                string hex = BytesToHex(buf.Take(n).ToArray());
+                return (n >= 34)
+                    ? string.Format("{0}   [30]=0x{1:X2} [31]=0x{2:X2} [32..33]=0x{3:X2} 0x{4:X2}",
+                        hex, buf[30], buf[31], buf[32], buf[33])
+                    : hex;
+            }
+            catch { return null; }
+            finally
+            {
+                try { stream?.Close(); } catch { }
+                try { stream?.Dispose(); } catch { }
+            }
+        }
+
+        // ── Raw HID report descriptors ───────────────────────────────────
+        // The device's own report descriptor: every report ID, size, and collection it
+        // exposes — ground truth for the col03 / report-id-0xFF question, available
+        // without the wheel moving, so one capture answers it without a re-run. Verbose,
+        // so it sits at the bottom.
+        private static void AppendReportDescriptors(StringBuilder sb)
+        {
+            sb.AppendLine("HID report descriptors (raw)");
+
+            HidDevice[] devices;
+            try
+            {
+                devices = DeviceList.Local.GetHidDevices()
+                    .Where(d => IsRelevantVid(d.VendorID))
+                    .ToArray();
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("  (enumeration failed: " + ex.Message + ")");
+                return;
+            }
+            if (devices.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+                return;
+            }
+
+            foreach (var grp in devices.GroupBy(d => new { d.VendorID, d.ProductID })
+                                       .OrderBy(g => g.Key.VendorID).ThenBy(g => g.Key.ProductID))
+                foreach (var d in grp.OrderBy(ColTag, StringComparer.OrdinalIgnoreCase))
+                {
+                    byte[] rd = SafeRawDescriptor(d);
+                    sb.AppendLine(string.Format("  VID 0x{0:X4} PID 0x{1:X4} {2,-7}{3}",
+                        d.VendorID, d.ProductID, ColTag(d) + ":", rd == null || rd.Length == 0 ? "(unavailable)" : BytesToHex(rd)));
+                }
+        }
+
+        // ── FF 08 system report (identity + firmware, one payload) ───────
+        // The base/wheel/module codes, their wire bytes, and the firmware versions are
+        // ALL decoded from the single col03 FF 08 frame, so they are presented together:
+        // one component per line carrying its code, identity byte, and firmware.
+        private static void AppendSystemReport(
             StringBuilder sb, FanatecWheelbase wb, bool connected, string statusDetail)
         {
-            sb.AppendLine("Detection:");
-            sb.AppendLine("  Connected  : " + connected);
+            sb.AppendLine("FF 08 system report (col03 — identity + firmware):");
+            sb.AppendLine(Kv("Connected", connected.ToString()));
             if (!string.IsNullOrEmpty(statusDetail))
-                sb.AppendLine("  Detail     : " + statusDetail);
+                sb.AppendLine(Kv("Detail", statusDetail));
 
-            if (!connected || wb == null)
+            byte[] raw = wb?.LastRawReport;
+            if (!connected || wb == null || raw == null || raw.Length == 0)
+            {
+                sb.AppendLine("  (no FF 08 captured — not connected, no col03 interface, or no wheel");
+                sb.AppendLine("   attached. If a wheel IS attached, a full USB capture may be needed —");
+                sb.AppendLine("   see the Fanatec-RE capture-fanatec-usb.ps1 workflow.)");
                 return;
+            }
 
-            sb.AppendLine(string.Format("  Device     : \"{0}\"  (PID 0x{1:X4})",
-                wb.ProductName ?? "?", wb.ConnectedProductId));
-            sb.AppendLine(string.Format("  Wheelbase  : {0}  [0x02]=0x{1:X2}",
-                wb.BaseCode ?? "Unknown", wb.BaseType));
+            var fw = DecodeFirmware(raw);
+            if (fw != null)
+                sb.AppendLine(Kv("SystemConfig", string.Format("0x{0:X4} ({1})",
+                    fw.SystemConfig, fw.Extended ? "extended" : "legacy")));
+            sb.AppendLine(Kv("Raw", BytesToHex(raw)));
+
+            sb.AppendLine(Row("Wheelbase", wb.BaseCode ?? "Unknown", 0x02, wb.BaseType, fw?.Wheelbase));
 
             if (!wb.WheelDetected)
             {
-                sb.AppendLine("  Attachment : (nothing attached)");
+                sb.AppendLine(Kv("Steering wheel", "(nothing attached)"));
             }
             else
             {
                 string wheel =
                     wb.WheelCode != null     ? wb.WheelCode :
-                    wb.WheelWireCode == 0xFF ? "EXT_INFO (please report)" :
-                                               "Unknown (please report)";
-                sb.AppendLine(string.Format("  Attachment : {0}{1}  [0x18]=0x{2:X2}",
-                    wheel, wb.IsHub ? " [hub]" : "", wb.WheelWireCode));
+                    wb.WheelWireCode == 0xFF ? "EXT_INFO" :
+                                               "Unknown";
+                if (wb.IsHub) wheel += " [hub]";
+                sb.AppendLine(Row("Steering wheel", wheel, 0x18, wb.WheelWireCode, fw?.SteeringWheel));
 
-                string module =
-                    wb.ModuleCode != null                  ? wb.ModuleCode :
-                    wb.IsHub && wb.ModuleWireCode != 0      ? "Unknown (please report)" :
-                                                              "none";
-                sb.AppendLine(string.Format("  Module     : {0}  [0x1F]=0x{1:X2}",
-                    module, wb.ModuleWireCode));
+                if (wb.IsHub && (wb.ModuleCode != null || wb.ModuleWireCode != 0))
+                    sb.AppendLine(Row("Button module", wb.ModuleCode ?? "Unknown", 0x1F, wb.ModuleWireCode, fw?.ButtonModule));
             }
 
-            sb.AppendLine("  Identity   : " + (wb.IdentityStable ? "stable" : "settling")
-                + "  DisplayName=\"" + wb.DisplayName + "\"");
-            sb.AppendLine("  Identifier : " + BuildIdentifier(wb));
+            sb.AppendLine(Kv("Identifier", BuildIdentifier(wb) + (wb.IdentityStable ? "" : "  (settling)")));
+            if (!string.IsNullOrEmpty(wb.DisplayName))
+                sb.AppendLine(new string(' ', 18) + "(\"" + wb.DisplayName + "\")");
+        }
+
+        // "  Label:         value" — colon attached to the label, values aligned.
+        private static string Kv(string label, string value)
+        {
+            return string.Format("  {0,-16}{1}", label + ":", value);
+        }
+
+        // A component row: code (left-aligned), its FF 08 identity byte, and firmware.
+        // Shares the Kv value column so codes line up under scalar values.
+        private static string Row(string label, string code, int offset, int wireByte, string fw)
+        {
+            string fwPart = string.IsNullOrEmpty(fw) ? "" : "  fw " + fw;
+            return string.Format("  {0,-16}{1,-11} [0x{2:X2}]=0x{3:X2}{4}",
+                label + ":", code, offset, wireByte, fwPart);
         }
 
         // The FanaBridge identifier — the single line that matters for mapping,
@@ -149,27 +324,107 @@ namespace FanaBridge.Protocol
             return (wb.IsHub && wb.ModuleCode != null) ? wheel + "_" + wb.ModuleCode : wheel;
         }
 
-        // ── Raw FF 08 frame ──────────────────────────────────────────────
-        private static void AppendRawReport(StringBuilder sb, FanatecWheelbase wb)
+        // ── Firmware versions (decoded from the FF 08 system report) ──────
+        // Folded into AppendSystemReport's component rows (wheelbase/steering-wheel/
+        // button-module). Motor and Wireless QR are decoded below but NOT displayed: the
+        // Fanatec updater doesn't surface Motor, and the FF 08 does not reliably carry the
+        // Wireless QR version (the updater reads it via a separate protocol query), so it
+        // usually reads 0.
+        internal sealed class FirmwareVersions
         {
-            sb.AppendLine("Raw FF 08 system report:");
+            public int SystemConfig;
+            public bool Extended;
+            public string Wheelbase, Motor, WirelessQr, SteeringWheel, ButtonModule;
+        }
 
-            byte[] raw = wb?.LastRawReport;
-            if (raw == null || raw.Length == 0)
+        // Decode the FF 08 firmware-version fields. Offsets are from the Fanatec driver
+        // (FWFUProtocolHidHandleSystemReport); the offset->component mapping follows the
+        // SDK struct order (FS_DEVICE_INFO.FirmwareVersion=base, then Motor/WQR/Steering-
+        // Wheel/ButtonModule) and is cross-checked against the Fanatec FW updater:
+        //   base [5..8]=Wheelbase, [0x0C..0x0F]=Motor, [0x13..0x16]=Wireless QR,
+        //   [0x1A..0x1D]=Steering wheel/Hub, [0x21..0x24]=Button module.
+        // Each component is a single byte in the FF 08 (the updater can show wider values
+        // from its own query). Returns null when there is no usable FF 08 report.
+        internal static FirmwareVersions DecodeFirmware(byte[] r)
+        {
+            if (r == null || r.Length < 0x25) return null;
+            int systemConfig = (r[3] << 8) | r[2];
+            bool extended = systemConfig >= 6;
+            return new FirmwareVersions
             {
-                sb.AppendLine("  (none captured — not connected, no wheel attached, or no FF 08");
-                sb.AppendLine("   frame received. If a wheel IS attached, a full USB capture may be");
-                sb.AppendLine("   needed — see the Fanatec-RE capture-fanatec-usb.ps1 workflow.)");
-                return;
-            }
+                SystemConfig = systemConfig,
+                Extended = extended,
+                Wheelbase = FwBase(r, extended),            // [5..8]  (16-bit LE in legacy)
+                Motor = FwField(r, 0x0C, extended),         // [0x0C..0x0F]
+                WirelessQr = FwField(r, 0x13, extended),    // [0x13..0x16]
+                SteeringWheel = FwField(r, 0x1A, extended), // [0x1A..0x1D]
+                ButtonModule = FwField(r, 0x21, extended),  // [0x21..0x24]
+            };
+        }
 
-            sb.AppendLine("  " + BytesToHex(raw));
+        // Extended: 4-byte block "a.b.c.d" at off. Legacy: a single byte at off.
+        private static string FwField(byte[] r, int off, bool extended)
+        {
+            if (extended)
+                return (off + 3 < r.Length) ? Fw4(r[off], r[off + 1], r[off + 2], r[off + 3]) : "?";
+            return off < r.Length ? r[off].ToString() : "?";
+        }
+
+        // The base/wheelbase field: extended = 4-byte block at [5..8]; legacy = 16-bit LE (r[5],r[6]).
+        private static string FwBase(byte[] r, bool extended)
+        {
+            if (extended)
+                return r.Length > 8 ? Fw4(r[5], r[6], r[7], r[8]) : "?";
+            return r.Length > 6 ? ((r[6] << 8) | r[5]).ToString() : "?";
+        }
+
+        // Format a 4-component version, trimming trailing-zero components the way the
+        // Fanatec updater does ("6.0.0.0" -> "6", "2.12.0.1" -> "2.12.0.1", all-zero -> "0").
+        private static string Fw4(int a, int b, int c, int d)
+        {
+            var parts = new[] { a, b, c, d };
+            int last = 0;
+            for (int i = 3; i > 0; i--) { if (parts[i] != 0) { last = i; break; } }
+            return string.Join(".", parts.Take(last + 1));
         }
 
         // ── Helpers (mirror Col03IdentityProbe's defensive HID accessors) ─
+        private static bool Is64(int len) => len == 64 || len == 65;
         private static string BytesToHex(byte[] b) => string.Join(" ", b.Select(x => x.ToString("X2")));
+        private static byte[] SafeRawDescriptor(HidDevice d) { try { return d.GetRawReportDescriptor(); } catch { return null; } }
+
+        // Top-level Usage Page + Usage from a raw HID report descriptor — the global
+        // Usage Page and the first local Usage seen before the first Main Collection.
+        // Returns "PPPP/UUUU" (hex) or null. Internal for unit testing.
+        internal static string TopLevelUsage(byte[] rd)
+        {
+            if (rd == null || rd.Length == 0) return null;
+            int usagePage = -1, usage = -1, i = 0;
+            while (i < rd.Length)
+            {
+                byte b = rd[i++];
+                if (b == 0xFE) { if (i < rd.Length) i += 2 + rd[i]; continue; }   // long item: skip
+                int size = b & 0x03; if (size == 3) size = 4;
+                int type = (b >> 2) & 0x03, tag = (b >> 4) & 0x0F;
+                long data = 0;
+                for (int k = 0; k < size && i + k < rd.Length; k++) data |= (long)rd[i + k] << (8 * k);
+                i += size;
+                if (type == 1 && tag == 0x0) usagePage = (int)data;                        // Global: Usage Page
+                else if (type == 2 && tag == 0x0 && usage < 0) usage = (int)(data & 0xFFFF); // Local: Usage
+                else if (type == 0 && tag == 0xA) break;                                    // Main: Collection
+            }
+            if (usagePage < 0 && usage < 0) return null;
+            return string.Format("{0:X4}/{1:X4}", usagePage < 0 ? 0 : usagePage, usage < 0 ? 0 : usage);
+        }
         private static int SafeMaxOutput(HidDevice d) { try { return d.GetMaxOutputReportLength(); } catch { return 0; } }
         private static int SafeMaxInput(HidDevice d) { try { return d.GetMaxInputReportLength(); } catch { return 0; } }
+        private static int SafeMaxFeature(HidDevice d) { try { return d.GetMaxFeatureReportLength(); } catch { return 0; } }
+        private static int SafeReleaseBcd(HidDevice d) { try { return d.ReleaseNumberBcd; } catch { return 0; } }
+        // Fanatec wheelbases set a manufacturer string but usually expose no serial
+        // (iSerialNumber = 0), so GetSerialNumber throws. Treat throw and empty alike as
+        // "(none)" rather than a misleading "?" that reads like an error.
+        private static string SafeManufacturer(HidDevice d) { try { var s = d.GetManufacturer(); return string.IsNullOrEmpty(s) ? "(none)" : s; } catch { return "(none)"; } }
+        private static string SafeSerial(HidDevice d) { try { var s = d.GetSerialNumber(); return string.IsNullOrEmpty(s) ? "(none)" : s; } catch { return "(none)"; } }
         private static string SafeName(HidDevice d) { try { return d.GetProductName(); } catch { return "?"; } }
         private static string SafePath(HidDevice d) { try { return d.DevicePath ?? ""; } catch { return ""; } }
         private static string SafeOsVersion() { try { return Environment.OSVersion.ToString(); } catch { return "?"; } }
