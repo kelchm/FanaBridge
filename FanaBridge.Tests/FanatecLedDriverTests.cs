@@ -64,7 +64,7 @@ namespace FanaBridge.Tests
         }
 
         private static FanatecLedDriver BuildDriver(WheelCapabilities caps, IDeviceTransport transport)
-            => new FanatecLedDriver(caps, new LedEncoder(transport), new LegacyLedEncoder(transport), transport);
+            => new FanatecLedDriver(caps, new LedEncoder(transport), new LegacyLedEncoder(transport));
 
         // Lights every LED white via raw/individual state, runs one frame, and
         // returns the recorded reports. Dispose() blocks until the async write
