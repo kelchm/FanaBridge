@@ -12,6 +12,7 @@ These profiles have been verified on hardware.
 |--------|:---:|:---:|:---:|:---:|
 | ClubSport BMW M3 GT2 V2 | On/Off | — | — | 3-digit |
 | ClubSport Formula V2.5 | Full color | Full color | — | 3-digit |
+| GT Extreme | Full color | Full color | Full color | 3-digit (ITM planned) |
 | Podium BMW M4 GT3 | — | — | Full color | 3-digit |
 | Podium Hub + Button Module Endurance | Full color | Full color | — | 3-digit (ITM planned) |
 | Podium Hub + Button Module Rally | — | — | Full color | 3-digit |
@@ -36,7 +37,6 @@ These profiles are based on SDK data and should work, but have not been tested o
 | CSL Elite WRC | 512 colors (RevStripe) | — | — | 3-digit |
 | CSL GT3 | — | — | — | 3-digit |
 | GT PRO | 8 colors | — | — | 3-digit |
-| GT Extreme | Full color | Full color | Full color | 3-digit (ITM planned) |
 | Podium Bentley GT3 | Full color | Full color | — | 3-digit (ITM planned) |
 
 > **Other hubs:** The ClubSport Universal Hub, CSL Universal Hub, and ClubSport Universal Hub V2 are recognized by FanaBridge but do not yet have built-in profiles. Use the Wheel Profile Wizard to create one.

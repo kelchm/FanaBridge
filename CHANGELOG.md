@@ -13,6 +13,14 @@
 ### Fixed
 - Wheels and hubs are now detected on Podium DD wheelbases.
 
+## v0.3.2 - 2026-06-22
+
+### Fixed
+- Button LEDs on the GT Steering Wheel Extreme (GTSWX) now work when "Individual LEDs profiles" is disabled. The button LED region was mapped with the wrong offset, so button lighting only worked in individual-LEDs mode ([#34](https://github.com/kelchm/FanaBridge/pull/34), fixes [#29](https://github.com/kelchm/FanaBridge/issues/29))
+
+### Changed
+- GT Steering Wheel Extreme (GTSWX) profile marked as verified
+
 ## v0.3.1 - 2026-06-18
 
 ### Fixed
