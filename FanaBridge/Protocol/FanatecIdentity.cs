@@ -14,9 +14,10 @@ namespace FanaBridge.Protocol
     /// </summary>
     public static class FanatecIdentity
     {
-        public const int OffBaseType = 0x02;
-        public const int OffWireCode = 0x18;
-        public const int OffModule   = 0x1F;
+        // Offsets sourced from the report definition (single source of truth).
+        public static readonly int OffBaseType = Schema.SystemReport.BaseType.Offset; // 0x02
+        public static readonly int OffWireCode = Schema.SystemReport.WheelCode.Offset; // 0x18
+        public static readonly int OffModule   = Schema.SystemReport.Module.Offset;    // 0x1F
 
         /// <summary>
         /// Decode the attachment wire byte (0x18) into a FanaBridge wheel/hub code,

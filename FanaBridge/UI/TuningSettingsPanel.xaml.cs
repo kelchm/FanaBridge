@@ -72,7 +72,7 @@ namespace FanaBridge.UI
                     rawDump = tuning.ReadTuningStateRaw();
                     if (rawDump != null)
                     {
-                        byte raw = rawDump[18]; // TUNING_READ_ENCODER_MODE_OFFSET
+                        byte raw = rawDump[FanatecTuningController.READ_ENCODER_MODE_OFFSET];
                         if (Enum.IsDefined(typeof(EncoderMode), raw))
                         {
                             modeTag = ((EncoderMode)raw).ToString();

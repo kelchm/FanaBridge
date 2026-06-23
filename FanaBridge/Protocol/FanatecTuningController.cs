@@ -23,8 +23,10 @@ namespace FanaBridge.Protocol
         internal const int READ_TIMEOUT_MS = 1000;
         internal const int DRAIN_TIMEOUT_MS = 50;
 
-        internal const int READ_ENCODER_MODE_OFFSET = 18;
-        internal const int WRITE_ENCODER_MODE_OFFSET = 19;
+        // Encoder-mode offsets are derived from the button-module report
+        // definition (payload offset 15, in read vs write HID coordinates).
+        internal static readonly int READ_ENCODER_MODE_OFFSET = Schema.ButtonModuleTuning.ReadOffset;   // 18
+        internal static readonly int WRITE_ENCODER_MODE_OFFSET = Schema.ButtonModuleTuning.WriteOffset; // 19
 
         internal const byte COL01_TUNING_ACK = 0x06;
         internal const int ACK_BURST_COUNT = 4;
