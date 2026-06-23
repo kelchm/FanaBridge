@@ -45,11 +45,13 @@ namespace FanaBridge
         public event Action IdentityChanged;
 
         /// <summary>
-        /// When true, device instances skip all LED and display output so the
-        /// profile wizard can send probe signals without being overwritten by
-        /// SimHub's frame-by-frame updates.  Set by the wizard dialog.
+        /// When set, the output handle of the device the profile wizard is probing. The
+        /// DeviceInstance bound to that device skips its own LED/display output so the
+        /// wizard's probe signals aren't overwritten by SimHub's frame-by-frame updates —
+        /// while every OTHER connected device keeps running. Null when no wizard is active.
+        /// Set by the wizard dialog.
         /// </summary>
-        public bool WizardActive { get; set; }
+        public DeviceHandle WizardTarget { get; set; }
 
         /// <summary>Whether the Fanatec device is currently connected (for UI binding).</summary>
         public bool IsDeviceConnected => _manager?.IsConnected == true;

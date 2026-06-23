@@ -12,9 +12,17 @@ namespace FanaBridge.UI
     {
         private JObject _settings;
         private bool _suppressEvents;
+        private Func<FanatecTuningController> _tuningProvider;
 
         /// <summary>Fired when the user changes a setting. The parent should persist.</summary>
         public event Action SettingsChanged;
+
+        // The tuning controller of the device this panel configures. When a provider was
+        // supplied (by the owning DeviceInstance), it targets THAT device — so tuning a
+        // wheel on a secondary base reaches the secondary, not the primary. Falls back to
+        // the primary only when no provider was given.
+        private FanatecTuningController Tuning =>
+            _tuningProvider != null ? _tuningProvider() : FanatecPlugin.Instance?.Tuning;
 
         public TuningSettingsPanel()
         {
@@ -23,12 +31,15 @@ namespace FanaBridge.UI
         }
 
         /// <summary>
-        /// Binds the panel to a device-instance settings JObject.
-        /// Call once after construction, before the panel is displayed.
+        /// Binds the panel to a device-instance settings JObject and, optionally, a resolver
+        /// for the tuning controller of the device this panel configures (so it targets the
+        /// owning device rather than the primary). Call once after construction, before the
+        /// panel is displayed.
         /// </summary>
-        public void Bind(JObject settings)
+        public void Bind(JObject settings, Func<FanatecTuningController> tuningProvider = null)
         {
             _settings = settings ?? new JObject();
+            _tuningProvider = tuningProvider;
             UpdateEnabledState();
         }
 
@@ -66,7 +77,7 @@ namespace FanaBridge.UI
                 string modeTag = null;
                 byte[] rawDump = null;
 
-                var tuning = FanatecPlugin.Instance?.Tuning;
+                var tuning = Tuning;
                 if (tuning != null && tuning.IsConnected)
                 {
                     rawDump = tuning.ReadTuningStateRaw();
@@ -145,7 +156,7 @@ namespace FanaBridge.UI
             // Send to hardware immediately
             try
             {
-                var tuning = FanatecPlugin.Instance?.Tuning;
+                var tuning = Tuning;
                 if (tuning != null && tuning.IsConnected)
                 {
                     EncoderMode mode;

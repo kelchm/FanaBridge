@@ -113,8 +113,10 @@ namespace FanaBridge.UI
                 SyncNextButton();
             };
 
-            // Suspend normal SimHub LED output while the wizard is active
-            _plugin.WizardActive = true;
+            // Suspend normal SimHub LED output on the device being profiled while the
+            // wizard is active. The wizard drives the primary device's encoders; scoping
+            // to that handle leaves any other connected device running normally.
+            _plugin.WizardTarget = _plugin.PrimaryHandle;
 
             NavigateToSection(WizardSection.Welcome);
         }
@@ -1310,7 +1312,7 @@ namespace FanaBridge.UI
 
             // Re-enable normal SimHub LED output and force a full resend
             // so the device instance picks up where it left off.
-            _plugin.WizardActive = false;
+            _plugin.WizardTarget = null;
             _plugin.Leds?.ForceDirty();
 
             base.OnClosed(e);

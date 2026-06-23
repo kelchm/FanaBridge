@@ -274,9 +274,9 @@ namespace FanaBridge.Adapters
             if (handle?.Transport == null || !handle.Transport.IsConnected)
                 return;
 
-            // While the wizard is probing hardware, suspend all output so
-            // SimHub's per-frame LED writes don't overwrite the test signals.
-            if (plugin.WizardActive)
+            // While the wizard is probing THIS device, suspend its output so SimHub's
+            // per-frame writes don't overwrite the test signals. Other devices keep running.
+            if (plugin.WizardTarget != null && ReferenceEquals(plugin.WizardTarget, handle))
                 return;
 
             // ── Display (ITM falls back to basic 7-seg until ITM support is implemented) ──
@@ -355,7 +355,11 @@ namespace FanaBridge.Adapters
             if (_config.Capabilities.HasEncoders)
             {
                 var tuningPanel = new TuningSettingsPanel();
-                tuningPanel.Bind(_customSettings);
+                // Target THIS descriptor's device, so tuning a wheel hosted on a secondary
+                // base reaches that base rather than the primary.
+                tuningPanel.Bind(
+                    _customSettings,
+                    () => FanatecPlugin.Instance?.ResolveDeviceFor(_config)?.Handle?.Tuning);
                 tuningPanel.SettingsChanged += () =>
                 {
                     // Persist settings on change (handled by SimHub)
