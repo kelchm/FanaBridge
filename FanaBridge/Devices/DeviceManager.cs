@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge.Transport;
+using HidSharp;
 
 namespace FanaBridge.Devices
 {
@@ -21,6 +22,11 @@ namespace FanaBridge.Devices
         private readonly Action<string> _logInfo;
 
         private IReadOnlyList<Peripheral> _peripherals = Array.Empty<Peripheral>();
+
+        // Set from HidSharp's background Changed thread; consumed on the frame thread in
+        // Update(). A flag (not a queue) so a burst of interface arrivals coalesces into
+        // one expedite — and so NO device I/O happens off the frame thread.
+        private volatile bool _busChanged;
 
         /// <summary>Fired when a connection is established.</summary>
         public event Action Connected;
@@ -48,13 +54,32 @@ namespace FanaBridge.Devices
             _monitor = new ConnectionMonitor(_device, TryConnect, logWarn, logInfo);
             _monitor.Connected += () => { RebuildPeripherals(); Connected?.Invoke(); };
             _monitor.Disconnected += () => { RebuildPeripherals(); Disconnected?.Invoke(); };
+
+            // Event-driven arrival/removal: react to HID bus changes at once instead of
+            // waiting for the poll interval. The handler only sets a flag; the actual
+            // (re)connect/teardown happens on the frame thread in Update().
+            DeviceList.Local.Changed += OnHidBusChanged;
         }
+
+        private void OnHidBusChanged(object sender, DeviceListChangedEventArgs e) => _busChanged = true;
 
         // ── Connection lifecycle (delegated to the per-device heartbeat) ──
 
         public bool TryInitialConnect() => _monitor.TryInitialConnect();
-        public bool Update() => _monitor.Update();
         public void ForceReconnect() => _monitor.ForceReconnect();
+
+        public bool Update()
+        {
+            // Drain a pending bus-change notification on the frame thread, so an arrival
+            // reconnects (or a removal tears down) this frame rather than at the next
+            // poll interval. The poll heartbeat remains as a backstop for missed events.
+            if (_busChanged)
+            {
+                _busChanged = false;
+                _monitor.NotifyBusChanged();
+            }
+            return _monitor.Update();
+        }
 
         private bool TryConnect()
         {
@@ -146,6 +171,7 @@ namespace FanaBridge.Devices
 
         public void Dispose()
         {
+            try { DeviceList.Local.Changed -= OnHidBusChanged; } catch { /* never throw from teardown */ }
             _device.SnapshotChanged -= OnDeviceSnapshotChanged;
             _device.Dispose();
         }

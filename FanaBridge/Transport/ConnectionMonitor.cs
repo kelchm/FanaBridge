@@ -22,6 +22,10 @@ namespace FanaBridge.Transport
         private int _frameCounter;
         private int _reconnectCooldown;
 
+        // Set by NotifyBusChanged while connected, to force a presence check on the
+        // next Update regardless of the heartbeat interval (event-driven removal).
+        private bool _forceBusCheck;
+
         // ── Heartbeat intervals (in frames) ────────────────────────────
         private const int HID_BUS_CHECK_INTERVAL = 120;
         private const int STREAM_CHECK_INTERVAL = 60;
@@ -111,8 +115,12 @@ namespace FanaBridge.Transport
             }
 
             // Verify device is still alive periodically (HID bus check is more
-            // expensive, so do it less frequently than the stream check)
-            if (_frameCounter % HID_BUS_CHECK_INTERVAL == 0)
+            // expensive, so do it less frequently than the stream check). A bus-change
+            // notification forces the check this frame so a removal is noticed at once
+            // rather than up to one interval later.
+            bool doBusCheck = _forceBusCheck || (_frameCounter % HID_BUS_CHECK_INTERVAL == 0);
+            _forceBusCheck = false;
+            if (doBusCheck)
             {
                 if (!_device.IsDevicePresent)
                 {
@@ -159,6 +167,22 @@ namespace FanaBridge.Transport
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Signals that the HID bus topology changed (a device arrived or left), so the
+        /// next <see cref="Update"/> acts immediately instead of waiting for the poll
+        /// interval: retry the connection now if disconnected, or re-check device
+        /// presence now if connected. Called from the device manager's debounced
+        /// DeviceList.Changed handler (already marshalled to the frame thread), so it
+        /// only flips state — it performs no I/O itself.
+        /// </summary>
+        public void NotifyBusChanged()
+        {
+            if (_connected)
+                _forceBusCheck = true;   // re-check presence next Update (catch a removal at once)
+            else
+                _reconnectCooldown = 0;  // retry the connection next Update (catch an arrival at once)
         }
 
         /// <summary>

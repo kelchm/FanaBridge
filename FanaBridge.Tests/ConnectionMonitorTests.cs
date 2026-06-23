@@ -377,5 +377,65 @@ namespace FanaBridge.Tests
             Assert.True(monitor.IsConnected);
             Assert.Null(monitor.LastDisconnectReason);
         }
+
+        // ── Bus-change notification (event-driven arrival/removal) ───────
+
+        [Fact]
+        public void NotifyBusChanged_WhenDisconnected_ClearsCooldownForImmediateRetry()
+        {
+            int attempts = 0;
+            var monitor = Create(new StubDevice(), () =>
+            {
+                attempts++;
+                return attempts >= 3; // fail 1 & 2, succeed on 3
+            });
+
+            monitor.TryInitialConnect(); // attempt 1 fails (cooldown 0)
+            monitor.Update();            // attempt 2 fails → enters 300-frame cooldown
+            Assert.False(monitor.IsConnected);
+
+            // A device arrived: clear the cooldown so the very next Update retries,
+            // instead of waiting out ~300 frames.
+            monitor.NotifyBusChanged();
+            bool result = monitor.Update(); // attempt 3 → succeeds immediately
+
+            Assert.True(result);
+            Assert.True(monitor.IsConnected);
+            Assert.Equal(3, attempts);
+        }
+
+        [Fact]
+        public void NotifyBusChanged_WhenConnected_ForcesImmediateBusCheck_OnRemoval()
+        {
+            var device = new StubDevice();
+            var monitor = Create(device, () => true);
+            monitor.TryInitialConnect();
+
+            // Device vanished from the bus. The periodic bus check is only at frame 120;
+            // the notification forces it on the very next frame instead.
+            device.IsDevicePresent = false;
+            monitor.NotifyBusChanged();
+            bool result = monitor.Update(); // frame 1 — forced bus check → not present → disconnect
+
+            Assert.False(result);
+            Assert.False(monitor.IsConnected);
+            Assert.Equal(1, device.DisconnectCalls);
+        }
+
+        [Fact]
+        public void NotifyBusChanged_WhenConnectedAndStillPresent_StaysConnected()
+        {
+            var device = new StubDevice();
+            var monitor = Create(device, () => true);
+            monitor.TryInitialConnect();
+
+            // An unrelated bus change while our device is still present must not drop us.
+            monitor.NotifyBusChanged();
+            bool result = monitor.Update();
+
+            Assert.True(result);
+            Assert.True(monitor.IsConnected);
+            Assert.Equal(0, device.DisconnectCalls);
+        }
     }
 }
