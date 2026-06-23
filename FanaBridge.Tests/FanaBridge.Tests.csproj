@@ -19,6 +19,9 @@
     <Reference Include="BA63Driver">
       <HintPath>$(SimHubDir)BA63Driver.dll</HintPath>
     </Reference>
+    <Reference Include="HidSharp">
+      <HintPath>$(SimHubDir)HidSharp.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>

@@ -44,6 +44,21 @@ namespace FanaBridge.Devices
             HasCol03 = Interfaces.Any(IsCol03Interface);
         }
 
+        /// <summary>
+        /// Builds a group from an already-known col03 status, skipping the interface
+        /// scan. Used where the caller has already determined col03 (and by unit tests
+        /// that exercise probe routing without real HID interfaces).
+        /// </summary>
+        internal HidDeviceGroup(int vid, int pid, bool hasCol03, ushort firmwareBcd = 0, string productName = null)
+        {
+            Vid = vid;
+            Pid = pid;
+            Interfaces = Array.Empty<HidDevice>();
+            ProductName = productName;
+            FirmwareBcd = firmwareBcd;
+            HasCol03 = hasCol03;
+        }
+
         private static bool IsCol03Interface(HidDevice d)
         {
             try
