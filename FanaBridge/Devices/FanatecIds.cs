@@ -1,10 +1,9 @@
 namespace FanaBridge.Devices
 {
     /// <summary>
-    /// Well-known USB identifiers for the device-binding layer. The canonical
-    /// Fanatec vendor id lives here so probes and discovery share one definition;
-    /// <see cref="FanaBridge.Transport.FanatecWheelbase.FANATEC_VENDOR_ID"/> aliases
-    /// it for the existing transport/adapter call sites.
+    /// Well-known USB identifiers for the device-binding layer. The canonical Fanatec
+    /// vendor id lives here so probes, discovery, the transport, and the SimHub
+    /// adapters all share one definition.
     /// </summary>
     internal static class FanatecIds
     {

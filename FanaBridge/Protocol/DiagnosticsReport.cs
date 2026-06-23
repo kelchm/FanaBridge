@@ -1,7 +1,7 @@
 using System;
 using System.Linq;
 using System.Text;
-using FanaBridge.Transport;
+using FanaBridge.Devices;
 using HidSharp;
 
 namespace FanaBridge.Protocol
@@ -26,7 +26,7 @@ namespace FanaBridge.Protocol
     public static class DiagnosticsReport
     {
         public static string Build(
-            FanatecWheelbase wheelbase, bool connected, string statusDetail, string buildInfo)
+            WheelIdentity wheelbase, bool connected, string statusDetail, string buildInfo)
         {
             var sb = new StringBuilder();
 
@@ -130,7 +130,7 @@ namespace FanaBridge.Protocol
         // converter can appear under either, so we list both and show the VID per entry
         // rather than (mis)labelling a VID as "SRM".
         private static bool IsRelevantVid(int vid)
-            => vid == FanatecWheelbase.FANATEC_VENDOR_ID || vid == SRM_VENDOR_ID;
+            => vid == FanatecIds.VendorId || vid == SRM_VENDOR_ID;
 
         // ── Input report snapshot (read-only) ────────────────────────────
         // One bounded read per input-bearing collection (col01/col02/col03 — any with an
@@ -248,7 +248,7 @@ namespace FanaBridge.Protocol
         // ALL decoded from the single col03 FF 08 frame, so they are presented together:
         // one component per line carrying its code, identity byte, and firmware.
         private static void AppendSystemReport(
-            StringBuilder sb, FanatecWheelbase wb, bool connected, string statusDetail)
+            StringBuilder sb, WheelIdentity wb, bool connected, string statusDetail)
         {
             sb.AppendLine("FF 08 system report (col03 — identity + firmware):");
             sb.AppendLine(Kv("Connected", connected.ToString()));
@@ -311,7 +311,7 @@ namespace FanaBridge.Protocol
 
         // The FanaBridge identifier — the single line that matters for mapping,
         // mirroring Col03IdentityProbe (e.g. "PHUB_PBME").
-        private static string BuildIdentifier(FanatecWheelbase wb)
+        private static string BuildIdentifier(WheelIdentity wb)
         {
             if (!wb.WheelDetected)
                 return "(no wheel)";

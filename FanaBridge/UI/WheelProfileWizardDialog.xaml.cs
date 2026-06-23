@@ -70,8 +70,8 @@ namespace FanaBridge.UI
                 { WizardSection.Summary,              stepSummary },
             };
 
-            // Pre-populate identity from the wheelbase
-            var wheelbase = _plugin.Wheelbase;
+            // Pre-populate identity from the current wheel identity
+            var wheelbase = _plugin.Identity;
             _state.WheelType = wheelbase.WheelCode;
             _state.ModuleType = wheelbase.ModuleCode;
 
@@ -1278,7 +1278,7 @@ namespace FanaBridge.UI
                 // Re-resolve with the new override active.
                 // The settings UI handles restart prompting via UpdateRestartNotice()
                 // after this dialog closes.
-                _plugin.Wheelbase?.RefreshCapabilities();
+                _plugin.RefreshCapabilities();
 
                 DialogResult = true;
                 Close();

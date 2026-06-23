@@ -1,3 +1,4 @@
+using FanaBridge.Devices;
 using FanaBridge.Transport;
 using Xunit;
 
@@ -16,7 +17,7 @@ namespace FanaBridge.Tests
         private const int Pid = 0x0E03;
 
         private static string Describe(FanatecTransport.TransportConnectStatus status)
-            => FanatecWheelbase.DescribeConnectFailure(status, Name, Pid);
+            => FanatecBaseDevice.DescribeConnectFailure(status, Name, Pid);
 
         [Fact]
         public void NoCol03Interface_DoesNotBlameAnotherProcess_AndNamesCol03()

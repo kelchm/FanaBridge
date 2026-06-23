@@ -6,7 +6,7 @@ namespace FanaBridge.Protocol
     /// <summary>
     /// Reads the col03 <c>FF 08</c> system report — the wire-level side of identity.
     /// Owns the enable/trigger byte patterns, the report offsets, and the signature
-    /// scan, leaving <see cref="FanatecWheelbase"/> to own identity STATE.
+    /// scan, leaving <c>FanatecBaseDriver</c> to own identity STATE.
     ///
     /// After a single <see cref="Enable"/> the base PUSHES this report on every
     /// attachment change and is otherwise silent, so steady-state reads are a

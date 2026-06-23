@@ -13,9 +13,9 @@ namespace FanaBridge.Devices
     /// logic lives in the bound driver — so adding pedals/shifter/SRM later is a new
     /// probe + driver, not a change here.
     ///
-    /// This is the half of the old <c>FanatecWheelbase</c> that is NOT base-specific;
-    /// <c>FanatecWheelbase</c> is now a thin façade over it (+ a base driver +
-    /// capability resolution) and is removed once SimHub adapters bind to the
+    /// This is the half of the old <c>FanatecWheelbase</c> that is NOT base-specific
+    /// (the base-specific half became <see cref="FanatecBaseDriver"/>); it is held by
+    /// the <see cref="DeviceManager"/>, which SimHub adapters reach through the
     /// peripheral view.
     /// </summary>
     internal sealed class FanatecBaseDevice : IServiceableDevice, IDisposable

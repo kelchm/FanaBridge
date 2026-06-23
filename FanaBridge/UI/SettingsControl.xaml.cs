@@ -7,6 +7,7 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Navigation;
 using System.Windows.Threading;
+using FanaBridge.Devices;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
@@ -128,7 +129,7 @@ namespace FanaBridge.UI
 
         // Connected: the wheelbase node carries the dot + base name; the wheel and
         // module nodes follow what's attached (module only on a hub that has one).
-        private void ShowConnectedChain(FanatecWheelbase wb)
+        private void ShowConnectedChain(WheelIdentity wb)
         {
             SetDot(LinkState.Connected);
             txtBaseName.Text = ChainBaseText(wb);
@@ -187,19 +188,19 @@ namespace FanaBridge.UI
         }
 
         // friendly name → code → raw byte, so an unmapped device still shows.
-        private static string ChainBaseText(FanatecWheelbase wb)
+        private static string ChainBaseText(WheelIdentity wb)
             => wb.BaseFriendlyName
             ?? wb.BaseCode
             ?? (wb.BaseType != 0 ? string.Format("Unknown Base (0x{0:X2})", wb.BaseType) : "Unknown Base");
 
-        private static string ChainAttachmentText(FanatecWheelbase wb)
+        private static string ChainAttachmentText(WheelIdentity wb)
             => wb.AttachmentFriendlyName
             ?? wb.WheelCode
             ?? (wb.WheelWireCode == 0xFF
                 ? "Unrecognized (0xFF)"
                 : string.Format("Unrecognized (0x{0:X2})", wb.WheelWireCode));
 
-        private static string ChainModuleText(FanatecWheelbase wb)
+        private static string ChainModuleText(WheelIdentity wb)
             => wb.ModuleFriendlyName
             ?? wb.ModuleCode
             ?? string.Format("Unknown (0x{0:X2})", wb.ModuleWireCode);
@@ -241,7 +242,7 @@ namespace FanaBridge.UI
                 return;
             }
 
-            var wheelbase = Plugin.Wheelbase;
+            var wheelbase = Plugin.Identity;
 
             // Connected, but the FF 08 identity hasn't been committed yet (the base
             // is still being read). Show the transitional state rather than a
@@ -431,7 +432,7 @@ namespace FanaBridge.UI
             if (string.IsNullOrEmpty(overrideKey)) return;
 
             // Build match key for current wheel
-            var wheelbase = Plugin.Wheelbase;
+            var wheelbase = Plugin.Identity;
             if (!wheelbase.WheelDetected) return;
 
             string wheelCode = wheelbase.WheelCode;
@@ -461,7 +462,7 @@ namespace FanaBridge.UI
 
             // Persist settings and re-resolve capabilities
             Plugin.SaveSettings();
-            wheelbase.RefreshCapabilities();
+            Plugin.RefreshCapabilities();
 
             // Show restart notice if the device name changed from what SimHub registered
             UpdateRestartNotice();
@@ -549,7 +550,7 @@ namespace FanaBridge.UI
                 return;
 
             // Remove any override for this profile
-            var wheelbase = Plugin.Wheelbase;
+            var wheelbase = Plugin.Identity;
             string wheelCode = wheelbase.WheelCode;
             string moduleCode = wheelbase.ModuleCode;
             string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
@@ -571,7 +572,7 @@ namespace FanaBridge.UI
 
             // Re-resolve and update UI
             Plugin.SaveSettings();
-            wheelbase.RefreshCapabilities();
+            Plugin.RefreshCapabilities();
             UpdateRestartNotice();
             UpdateStatus();
         }

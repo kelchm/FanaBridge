@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge;
+using FanaBridge.Devices;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
@@ -87,7 +88,7 @@ namespace FanaBridge.Adapters
                 LedDriver = manager,
                 EnableBrightnessSection = true,
                 ShowConnectionStatus = true,
-                VID = FanatecWheelbase.FANATEC_VENDOR_ID,
+                VID = FanatecIds.VendorId,
             };
 
             _ledModule = new LedModuleSettings<FanatecLedManager>(options);
@@ -128,22 +129,21 @@ namespace FanaBridge.Adapters
             if (plugin == null)
                 return DeviceState.Disabled;
 
-            // ARCHITECTURE: this reaches directly into wheelbase identity fields.
-            // When the peripheral model lands, bind to a peripheral snapshot (class
-            // + code + capabilities) instead, so a DeviceInstance can represent
-            // pedals/shifter (hosted or standalone), not just a base attachment.
-            var wheelbase = plugin.Wheelbase;
-            if (wheelbase == null || !wheelbase.IsConnected)
+            // Bind to the peripheral view rather than a wheelbase object: a
+            // DeviceInstance is Connected only when the device is connected, the
+            // identity is settled, and the attached wheel/hub(+module) matches THIS
+            // descriptor's config. This is what lets a DeviceInstance represent
+            // pedals/shifter (hosted or standalone) once those peripherals exist.
+            if (!plugin.IsDeviceConnected)
                 return DeviceState.Scanning;
 
             // While the attachment identity is settling (mid-transition), treat the
             // device as not-yet-connected so no LED/display output is driven at a
             // half-(re)connected wheel.
-            if (!wheelbase.IdentityStable)
+            if (!plugin.IdentityStable)
                 return DeviceState.Scanning;
 
-            if (!_config.MatchesAttachment(
-                    wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode))
+            if (!plugin.MatchesAttachedWheel(_config))
                 return DeviceState.Scanning;
 
             return DeviceState.Connected;

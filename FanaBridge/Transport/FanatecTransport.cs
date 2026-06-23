@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using FanaBridge.Devices;
 using HidSharp;
 using Microsoft.Win32.SafeHandles;
 
@@ -107,7 +108,7 @@ namespace FanaBridge.Transport
                 try
                 {
                     return DeviceList.Local.GetHidDevices()
-                        .Any(d => d.VendorID == FanatecWheelbase.FANATEC_VENDOR_ID
+                        .Any(d => d.VendorID == FanatecIds.VendorId
                                && d.ProductID == _connectedProductId);
                 }
                 catch
@@ -120,7 +121,7 @@ namespace FanaBridge.Transport
         /// <summary>
         /// Connects to a Fanatec device by product ID.
         /// Opens the col03 (LED) and col01 (display) HID interfaces.
-        /// The product ID should come from FanatecWheelbase.ConnectedProductId.
+        /// The product ID should come from FanatecBaseDevice.ConnectedProductId.
         /// </summary>
         public bool Connect(int productId)
         {
@@ -130,7 +131,7 @@ namespace FanaBridge.Transport
             try
             {
                 var devices = DeviceList.Local.GetHidDevices()
-                    .Where(d => d.VendorID == FanatecWheelbase.FANATEC_VENDOR_ID && d.ProductID == productId)
+                    .Where(d => d.VendorID == FanatecIds.VendorId && d.ProductID == productId)
                     .ToList();
 
                 if (devices.Count == 0)
@@ -152,7 +153,7 @@ namespace FanaBridge.Transport
                 {
                     Thread.Sleep(COL03_FIND_RETRY_MS);
                     devices = DeviceList.Local.GetHidDevices()
-                        .Where(d => d.VendorID == FanatecWheelbase.FANATEC_VENDOR_ID && d.ProductID == productId)
+                        .Where(d => d.VendorID == FanatecIds.VendorId && d.ProductID == productId)
                         .ToList();
                     _displayDevice = devices.FirstOrDefault(d => d.DevicePath.Contains("col01"));
                     _ledDevice = SelectCol03(devices);
