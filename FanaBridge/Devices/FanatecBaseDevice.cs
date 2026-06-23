@@ -21,26 +21,58 @@ namespace FanaBridge.Devices
     internal sealed class FanatecBaseDevice : IServiceableDevice, IDisposable
     {
         // The device OWNS its HID transport; the bound driver reads identity through it
-        // and encoders reach it via Transport.
+        // and the device's encoder set (Handle) writes output through it.
         private readonly FanatecTransport _transport = new FanatecTransport();
 
-        // Phase 1 holds a single base probe; the manager owns the probe list later.
-        private readonly IDeviceProbe _probe = new FanatecBaseProbe();
+        // This device's own output surface — encoders bound to THIS transport, so their
+        // dirty-tracking state describes exactly this device and never aliases another's.
+        // Built once over the stable transport object (the transport reconnects its HID
+        // handle internally; the object itself lives for the carrier's lifetime).
+        private readonly DeviceHandle _handle;
 
-        private FanatecBaseDriver _driver;
+        // The manager owns the priority-ordered probe registry; the carrier binds
+        // whichever driver the first matching probe claims and holds it through the
+        // IDeviceDriver interface, so it is class-agnostic (a base today, an SRM or
+        // pedal carrier tomorrow) rather than hardwired to one concrete driver type.
+        private readonly IReadOnlyList<IDeviceProbe> _probes;
+
+        private IDeviceDriver _driver;
         private bool _disposed;
 
         /// <summary>Fired when the bound driver commits a settled identity change.</summary>
         public event Action<FanatecBaseDevice> SnapshotChanged;
 
+        /// <param name="probes">
+        /// The priority-ordered probe registry (owned by the manager). The carrier binds
+        /// whichever driver the first matching probe claims via <see cref="ProbeBinder"/>.
+        /// </param>
+        public FanatecBaseDevice(IReadOnlyList<IDeviceProbe> probes)
+        {
+            _probes = probes ?? throw new ArgumentNullException(nameof(probes));
+            _handle = new DeviceHandle(
+                _transport,
+                msg => SimHub.Logging.Current.Warn(msg),
+                msg => SimHub.Logging.Current.Info(msg));
+        }
+
         /// <summary>The device's HID transport — used by LED/display/tuning encoders.</summary>
         public IDeviceTransport Transport => _transport;
+
+        /// <summary>This device's output surface (transport + encoder set).</summary>
+        public DeviceHandle Handle => _handle;
 
         public bool IsConnected => _transport.IsConnected;
         public bool IsDevicePresent => _transport.IsDevicePresent;
 
         /// <summary>USB product id of the connected device, or 0.</summary>
         public int ConnectedProductId { get; private set; }
+
+        /// <summary>
+        /// Stable physical-device key of the connected device (see
+        /// <see cref="HidDeviceGroup.DeviceKey"/>), or null when disconnected. Logged on
+        /// connect for hardware validation; becomes the collection's grouping key in P5.
+        /// </summary>
+        public string DeviceKey { get; private set; }
 
         /// <summary>Product name from the HID descriptor of the connected device.</summary>
         public string ProductName { get; private set; }
@@ -140,17 +172,21 @@ namespace FanaBridge.Devices
             SimHub.Logging.Current.Info(string.Format(
                 "FanatecBaseDevice: {0} (PID 0x{1:X4})", ProductName, productId));
 
-            // Bind a driver via the probe. The probe confirms via read-only identify
-            // I/O and seeds the initial identity.
+            // Bind a driver via the priority-ordered probe registry. ProbeBinder runs the
+            // probes by ascending priority and returns the first that claims this device
+            // through read-only identify I/O; the carrier holds it as an IDeviceDriver,
+            // agnostic to which class bound.
             var pidDevices = fanatecDevices.Where(d => d.ProductID == productId).ToList();
             var group = new HidDeviceGroup(FanatecIds.VendorId, productId, pidDevices, ProductName);
 
-            if (_probe.CouldMatch(group) && _probe.TryBind(group, _transport) is FanatecBaseDriver driver)
-            {
-                _driver = driver;
-                _driver.SnapshotChanged += OnDriverSnapshotChanged;
-            }
-            else
+            // Record + log the physical-device key. It does not yet drive grouping; it is
+            // surfaced now so its cross-port distinctness can be validated on real
+            // hardware before the device collection (P5) relies on it.
+            DeviceKey = group.DeviceKey;
+            SimHub.Logging.Current.Info("FanatecBaseDevice: device key " + DeviceKey);
+
+            _driver = ProbeBinder.Bind(group, _transport, _probes);
+            if (_driver == null)
             {
                 // CouldMatch already held (we opened col03), so this is unexpected.
                 SimHub.Logging.Current.Warn(
@@ -178,8 +214,6 @@ namespace FanaBridge.Devices
             return devices.Select(d => d.ProductID).FirstOrDefault();
         }
 
-        private void OnDriverSnapshotChanged(IDeviceDriver driver) => SnapshotChanged?.Invoke(this);
-
         // ── Service ──────────────────────────────────────────────────────
 
         /// <summary>
@@ -190,7 +224,24 @@ namespace FanaBridge.Devices
         {
             if (!IsConnected || _driver == null)
                 return false;
-            return _driver.Service();
+
+            // A driver commits a settled identity from inside its own Service(); the
+            // IDeviceDriver contract is that Service() returns true on that commit. The
+            // carrier re-raises it as its own (device-carrying) event so the manager —
+            // and, later, per-device consumers — learn which device changed, without the
+            // carrier ever knowing the driver's class.
+            bool changed = _driver.Service();
+            if (changed)
+            {
+                // This device's identity just settled (rim swap / module hot-attach /
+                // base identity). Firmware resets LED state on a rim change, so this
+                // device's encoder caches now hold the previous rim's output — reset
+                // THIS device's output before anyone writes again. Scoped to this
+                // carrier, so a swap here never clears another device's caches.
+                _handle.ForceLedResend();
+                SnapshotChanged?.Invoke(this);
+            }
+            return changed;
         }
 
         // ── Failure messaging ────────────────────────────────────────────
@@ -243,7 +294,6 @@ namespace FanaBridge.Devices
         {
             if (_driver != null)
             {
-                _driver.SnapshotChanged -= OnDriverSnapshotChanged;
                 _driver.Dispose();
                 _driver = null;
             }
@@ -251,6 +301,7 @@ namespace FanaBridge.Devices
             _transport.Disconnect();
             ConnectedProductId = 0;
             ProductName = null;
+            DeviceKey = null;
             // LastConnectError is intentionally left intact — it reflects the most
             // recent connect attempt and is cleared on the next successful connect.
         }

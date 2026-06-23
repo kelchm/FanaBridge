@@ -33,10 +33,6 @@ namespace FanaBridge
         private readonly CapabilityResolver _resolver = new CapabilityResolver();
         private WheelCapabilities _currentCaps = WheelCapabilities.None;
 
-        private FanatecTuningController _tuning;
-        private LedEncoder _leds;
-        private LegacyLedEncoder _legacyLeds;
-        private DisplayEncoder _display;
 
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
         public event Action StateChanged;
@@ -183,17 +179,21 @@ namespace FanaBridge
         /// <summary>Shared HID transport — used by DeviceInstance wrappers for hardware I/O.</summary>
         public IDeviceTransport Transport => _manager?.PrimaryTransport;
 
-        /// <summary>Shared LED encoder (col03) — used by DeviceInstance LED drivers and wizard.</summary>
-        public LedEncoder Leds => _leds;
+        // The encoders are owned per-device by the carrier's DeviceHandle. These
+        // accessors forward to the primary device's handle for now; per-device
+        // resolution (a DeviceInstance reading ITS device's handle) lands in P6.
 
-        /// <summary>Shared legacy LED encoder (col01) — used by DeviceInstance LED drivers for legacy/RevStripe wheels.</summary>
-        public LegacyLedEncoder LegacyLeds => _legacyLeds;
+        /// <summary>col03 LED encoder of the primary device — used by DeviceInstance LED drivers and wizard.</summary>
+        public LedEncoder Leds => _manager?.PrimaryHandle?.Leds;
 
-        /// <summary>Shared display encoder — used by DeviceInstance display managers and wizard.</summary>
-        public DisplayEncoder Display => _display;
+        /// <summary>col01 legacy LED encoder of the primary device — used by DeviceInstance LED drivers for legacy/RevStripe wheels.</summary>
+        public LegacyLedEncoder LegacyLeds => _manager?.PrimaryHandle?.LegacyLeds;
 
-        /// <summary>Shared tuning controller — used by TuningSettingsPanel for encoder config.</summary>
-        public FanatecTuningController Tuning => _tuning;
+        /// <summary>Display encoder of the primary device — used by DeviceInstance display managers and wizard.</summary>
+        public DisplayEncoder Display => _manager?.PrimaryHandle?.Display;
+
+        /// <summary>Tuning controller of the primary device — used by TuningSettingsPanel for encoder config.</summary>
+        public FanatecTuningController Tuning => _manager?.PrimaryHandle?.Tuning;
 
         public PluginManager PluginManager { get; set; }
 
@@ -211,19 +211,11 @@ namespace FanaBridge
                 () => new FanatecPluginSettings());
 
             // The manager owns the HID transport and reads the FF 08 identity report
-            // through its bound driver (no SimHub.FanatecManaged.dll). Encoders share
-            // that same transport for hardware I/O.
+            // through its bound driver (no SimHub.FanatecManaged.dll). Each device's
+            // encoder set is owned by its carrier's DeviceHandle, built over that same
+            // transport; the plugin's encoder accessors forward to the primary handle.
             _manager = new DeviceManager(
                 () => Settings.ProductIdOverride,
-                msg => SimHub.Logging.Current.Warn(msg),
-                msg => SimHub.Logging.Current.Info(msg));
-
-            var transport = _manager.PrimaryTransport;
-            _leds = new LedEncoder(transport);
-            _legacyLeds = new LegacyLedEncoder(transport);
-            _display = new DisplayEncoder(transport);
-            _tuning = new FanatecTuningController(
-                transport,
                 msg => SimHub.Logging.Current.Warn(msg),
                 msg => SimHub.Logging.Current.Info(msg));
 
@@ -314,7 +306,7 @@ namespace FanaBridge
             {
                 try
                 {
-                    _display.ClearDisplay();
+                    Display?.ClearDisplay();
                 }
                 catch (Exception ex)
                 {
@@ -346,6 +338,12 @@ namespace FanaBridge
                 return;
 
             ResolveCaps("RefreshCapabilities");
+
+            // A profile-override change (a UI action, not a hardware rim swap) altered the
+            // active caps, so the LED layout may differ — force the affected device's next
+            // write to reach hardware. Scoped to the primary device today; becomes the
+            // resolved device once DeviceInstances route to their own handle in P6.
+            _manager?.PrimaryHandle?.ForceLedResend();
             RaiseIdentityChanged();
         }
 
@@ -377,14 +375,12 @@ namespace FanaBridge
                 _currentCaps.Name ?? "(none)"));
         }
 
-        // The physical rim just changed — firmware resets LED state but our
-        // dirty-tracking arrays still hold the old instance's last output. Force a full
-        // resend so the new DeviceInstance's first write always reaches hardware.
+        // Re-broadcasts a settled identity change to SimHub + UI consumers. The LED
+        // dirty-reset on a hardware rim change now lives on the committing carrier
+        // (FanatecBaseDevice.Service), scoped to that one device, so this method only
+        // raises events — it no longer force-resends a single shared encoder set.
         private void RaiseIdentityChanged()
         {
-            _leds.ForceDirty();
-            _legacyLeds.ForceDirty();
-
             this.TriggerEvent("WheelChanged");
             IdentityChanged?.Invoke();
             StateChanged?.Invoke();

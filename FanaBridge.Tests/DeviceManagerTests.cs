@@ -96,5 +96,39 @@ namespace FanaBridge.Tests
             var bas = Assert.Single(peripherals);
             Assert.Equal(PeripheralKind.Base, bas.Kind);
         }
+
+        // ── Secondary device selection (the multi-device collection logic) ──
+
+        [Fact]
+        public void SecondaryPids_ExcludesPrimaryPid()
+        {
+            // Two distinct base PIDs present; the primary already owns 0x0020, so only the
+            // other becomes a secondary slot.
+            var secondary = DeviceManager.SecondaryPidsFrom(new[] { 0x0020, 0x0E03 }, primaryPid: 0x0020);
+            Assert.Equal(new[] { 0x0E03 }, secondary);
+        }
+
+        [Fact]
+        public void SecondaryPids_Empty_WhenOnlyPrimaryPresent()
+        {
+            // The single-device case: the only base-like PID is the primary's → no secondaries.
+            Assert.Empty(DeviceManager.SecondaryPidsFrom(new[] { 0x0020 }, primaryPid: 0x0020));
+        }
+
+        [Fact]
+        public void SecondaryPids_Deduplicates()
+        {
+            var secondary = DeviceManager.SecondaryPidsFrom(new[] { 0x0E03, 0x0E03, 0x0020 }, primaryPid: 0x0020);
+            Assert.Equal(new[] { 0x0E03 }, secondary);
+        }
+
+        [Fact]
+        public void SecondaryPids_AllDistinct_WhenPrimaryNotAmongThem()
+        {
+            // Primary owns a PID not in the discovered base-like set (e.g. override) →
+            // every discovered base-like PID is a secondary.
+            var secondary = DeviceManager.SecondaryPidsFrom(new[] { 0x0001, 0x0002 }, primaryPid: 0x0020);
+            Assert.Equal(new[] { 0x0001, 0x0002 }, secondary);
+        }
     }
 }
