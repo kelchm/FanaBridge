@@ -12,7 +12,7 @@ namespace FanaBridge.Protocol
     public class LedEncoder
     {
         // ── Protocol constants (col03 report format) ─────────────────────
-        private const int REPORT_LENGTH = 64;
+        private const int REPORT_LENGTH = Wire.Col03Length;
         private const int HEADER_SIZE = 3;   // [0xFF, 0x01, subcmd]
         private const int MAX_RGB565_PER_REPORT = (REPORT_LENGTH - HEADER_SIZE) / 2;  // 30
 
@@ -197,16 +197,10 @@ namespace FanaBridge.Protocol
 
             // Reuse pooled buffer — zero the payload region then fill
             Array.Clear(_reportBuf, 0, REPORT_LENGTH);
-            _reportBuf[0] = 0xFF;
-            _reportBuf[1] = 0x01;
-            _reportBuf[2] = subcmd;
+            Wire.BeginCol03(_reportBuf, Wire.Col03.LedClass, subcmd);
 
             for (int i = 0; i < count; i++)
-            {
-                int offset = HEADER_SIZE + (i * 2);
-                _reportBuf[offset]     = (byte)((colors[i] >> 8) & 0xFF);
-                _reportBuf[offset + 1] = (byte)(colors[i] & 0xFF);
-            }
+                ColorHelper.WriteRgb565BigEndian(_reportBuf, HEADER_SIZE + (i * 2), colors[i]);
 
             bool ok = _transport.SendCol03(_reportBuf);
             if (ok)
@@ -224,16 +218,10 @@ namespace FanaBridge.Protocol
         private bool SendButtonColorReport(ushort[] colors, bool commit)
         {
             Array.Clear(_reportBuf, 0, REPORT_LENGTH);
-            _reportBuf[0] = 0xFF;
-            _reportBuf[1] = 0x01;
-            _reportBuf[2] = SUBCMD_BUTTON_COLORS;
+            Wire.BeginCol03(_reportBuf, Wire.Col03.LedClass, SUBCMD_BUTTON_COLORS);
 
             for (int i = 0; i < colors.Length; i++)
-            {
-                int offset = HEADER_SIZE + (i * 2);
-                _reportBuf[offset]     = (byte)((colors[i] >> 8) & 0xFF);
-                _reportBuf[offset + 1] = (byte)(colors[i] & 0xFF);
-            }
+                ColorHelper.WriteRgb565BigEndian(_reportBuf, HEADER_SIZE + (i * 2), colors[i]);
 
             _reportBuf[BUTTON_COLOR_COMMIT_OFFSET] = commit ? (byte)0x01 : (byte)0x00;
             return _transport.SendCol03(_reportBuf);
@@ -242,9 +230,7 @@ namespace FanaBridge.Protocol
         private bool SendButtonIntensityReport(byte[] intensities, bool commit)
         {
             Array.Clear(_reportBuf, 0, REPORT_LENGTH);
-            _reportBuf[0] = 0xFF;
-            _reportBuf[1] = 0x01;
-            _reportBuf[2] = SUBCMD_BUTTON_INTENSITIES;
+            Wire.BeginCol03(_reportBuf, Wire.Col03.LedClass, SUBCMD_BUTTON_INTENSITIES);
 
             Array.Copy(intensities, 0, _reportBuf, HEADER_SIZE, intensities.Length);
             _reportBuf[BUTTON_INTENSITY_COMMIT_OFFSET] = commit ? (byte)0x01 : (byte)0x00;

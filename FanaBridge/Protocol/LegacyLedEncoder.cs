@@ -23,7 +23,7 @@ namespace FanaBridge.Protocol
     public class LegacyLedEncoder
     {
         // ── col01 report constants ─────────────────────────────────────────
-        private const int REPORT_LENGTH = 8;
+        private const int REPORT_LENGTH = Wire.Col01Length;
 
         // Subcmd bytes (byte[3] in the report)
         private const byte SUBCMD_GLOBAL_ENABLE = 0x02;
@@ -144,12 +144,7 @@ namespace FanaBridge.Protocol
             if (rgbBools == null || rgbBools.Length == 0 || rgbBools.Length > 27) return false;
 
             // Pack 27 booleans into 4 bytes, LSB-first
-            uint packed = 0;
-            for (int i = 0; i < rgbBools.Length; i++)
-            {
-                if (rgbBools[i] != 0)
-                    packed |= 1u << i;
-            }
+            uint packed = BitPacking.PackLsbFirst(rgbBools);
 
             // Dirty check
             if (packed == _lastRev3BitPacked)
@@ -189,12 +184,7 @@ namespace FanaBridge.Protocol
             if (rgbBools == null || rgbBools.Length == 0 || rgbBools.Length > 18) return false;
 
             // Pack 18 booleans into 4 bytes, LSB-first
-            uint packed = 0;
-            for (int i = 0; i < rgbBools.Length; i++)
-            {
-                if (rgbBools[i] != 0)
-                    packed |= 1u << i;
-            }
+            uint packed = BitPacking.PackLsbFirst(rgbBools);
 
             // Dirty check
             if (packed == _lastFlag3BitPacked)
@@ -318,10 +308,7 @@ namespace FanaBridge.Protocol
             // Report ID 0x01 is correct for col01 commands on current-generation
             // wheelbases. Some wheelbases expect a device-specific report ID in
             // byte[0], but FanaBridge sends 0x01 as-is.
-            _reportBuf[0] = 0x01;
-            _reportBuf[1] = 0xF8;
-            _reportBuf[2] = 0x09;
-            _reportBuf[3] = subcmd;
+            Wire.BeginCol01(_reportBuf, subcmd);
             _reportBuf[4] = b4;
             _reportBuf[5] = b5;
             _reportBuf[6] = b6;

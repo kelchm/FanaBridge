@@ -35,6 +35,17 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
+        /// Writes a 16-bit RGB565 color into <paramref name="buf"/> at
+        /// <paramref name="offset"/> in big-endian (high byte first) order — the
+        /// wire layout of every col03 per-LED color slot.
+        /// </summary>
+        public static void WriteRgb565BigEndian(byte[] buf, int offset, ushort color)
+        {
+            buf[offset]     = (byte)((color >> 8) & 0xFF);
+            buf[offset + 1] = (byte)(color & 0xFF);
+        }
+
+        /// <summary>
         /// Converts a System.Drawing.Color to RGB565.
         /// </summary>
         public static ushort ToRgb565(System.Drawing.Color color)

@@ -9,7 +9,7 @@ namespace FanaBridge.Protocol
     /// </summary>
     public class DisplayEncoder
     {
-        private const int REPORT_LENGTH = 8;
+        private const int REPORT_LENGTH = Wire.Col01Length;
 
         private readonly IDeviceTransport _transport;
 
@@ -28,11 +28,8 @@ namespace FanaBridge.Protocol
         /// </summary>
         public bool SetDisplay(byte seg1, byte seg2, byte seg3)
         {
-            _reportBuf[0] = 0x01;  // Report ID
-            _reportBuf[1] = 0xF8;
-            _reportBuf[2] = 0x09;
-            _reportBuf[3] = 0x01;
-            _reportBuf[4] = 0x02;
+            Wire.BeginCol01(_reportBuf, Wire.Col01.GroupExtended);
+            _reportBuf[4] = 0x02;  // operation: 7-segment display data
             _reportBuf[5] = seg1;
             _reportBuf[6] = seg2;
             _reportBuf[7] = seg3;

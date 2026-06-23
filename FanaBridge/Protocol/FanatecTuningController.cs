@@ -15,8 +15,8 @@ namespace FanaBridge.Protocol
     public class FanatecTuningController
     {
         // ── Protocol constants ───────────────────────────────────────────
-        internal const int REPORT_LENGTH = 64;
-        internal const byte CMD_CLASS = 0x03;
+        internal const int REPORT_LENGTH = Wire.Col03Length;
+        internal const byte CMD_CLASS = Wire.Col03.TuningClass;
         internal const byte SUBCMD_WRITE = 0x00;
         internal const byte SUBCMD_READ = 0x02;
         internal const byte DEVICE_ID_BMR = 0x02;
@@ -153,9 +153,7 @@ namespace FanaBridge.Protocol
         internal static byte[] BuildWriteBuffer(byte[] readBuf)
         {
             var writeBuf = new byte[REPORT_LENGTH];
-            writeBuf[0] = 0xFF;
-            writeBuf[1] = CMD_CLASS;
-            writeBuf[2] = SUBCMD_WRITE;
+            Wire.BeginCol03(writeBuf, CMD_CLASS, SUBCMD_WRITE);
             Array.Copy(readBuf, 2, writeBuf, 3, REPORT_LENGTH - 3);
             return writeBuf;
         }
@@ -170,9 +168,7 @@ namespace FanaBridge.Protocol
             if (!_transport.IsConnected) return null;
 
             var request = new byte[REPORT_LENGTH];
-            request[0] = 0xFF;
-            request[1] = CMD_CLASS;
-            request[2] = SUBCMD_READ;
+            Wire.BeginCol03(request, CMD_CLASS, SUBCMD_READ);
 
             try
             {
@@ -219,21 +215,15 @@ namespace FanaBridge.Protocol
         /// </summary>
         private bool SendAckBurst()
         {
-            var onPacket = new byte[8];
-            onPacket[0] = 0x01;
-            onPacket[1] = 0xF8;
-            onPacket[2] = 0x09;
-            onPacket[3] = 0x01;
+            var onPacket = new byte[Wire.Col01Length];
+            Wire.BeginCol01(onPacket, Wire.Col01.GroupExtended);
             onPacket[4] = COL01_TUNING_ACK;
             onPacket[5] = 0xFF;
             onPacket[6] = 0x02;
             onPacket[7] = 0x00;
 
-            var offPacket = new byte[8];
-            offPacket[0] = 0x01;
-            offPacket[1] = 0xF8;
-            offPacket[2] = 0x09;
-            offPacket[3] = 0x01;
+            var offPacket = new byte[Wire.Col01Length];
+            Wire.BeginCol01(offPacket, Wire.Col01.GroupExtended);
             offPacket[4] = COL01_TUNING_ACK;
             offPacket[5] = 0x00;
             offPacket[6] = 0x00;
