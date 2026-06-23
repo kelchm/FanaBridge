@@ -22,5 +22,36 @@ namespace FanaBridge.Protocol.Schema
             new ReportField("Module", 0x1F, range: "0x00–0x02", description: "Button-module presence (0x00 none, 0x01 PBME, 0x02 PBMR)");
 
         public static readonly IReadOnlyList<ReportField> Fields = new[] { BaseType, WheelCode, Module };
+
+        /// <summary>
+        /// The identity bytes a system-report frame carries — the schema's decode
+        /// output. The schema stops at the typed WIRE bytes; the device layer
+        /// (<see cref="FanatecIdentity"/> / <c>FanatecBaseDriver</c>) maps them to
+        /// FanaBridge codes and the peripheral model. For protobuf (<c>ff 10</c>)
+        /// device-tree reports this same shape grows into a nested tree, decoded the
+        /// same way — schema owns decode, the driver owns wire→peripheral.
+        /// </summary>
+        public struct Values
+        {
+            public byte BaseType;
+            public byte WheelCode;
+            public byte Module;
+        }
+
+        /// <summary>
+        /// Reads the identity fields out of a system-report frame, where
+        /// <paramref name="sig"/> is the index of the leading <c>0xFF</c> (the field
+        /// offsets are relative to it). Driven by the <see cref="Fields"/> definitions
+        /// — the single source of truth for which byte means what.
+        /// </summary>
+        public static Values Decode(byte[] frame, int sig)
+        {
+            return new Values
+            {
+                BaseType  = frame[sig + BaseType.Offset],
+                WheelCode = frame[sig + WheelCode.Offset],
+                Module    = frame[sig + Module.Offset],
+            };
+        }
     }
 }

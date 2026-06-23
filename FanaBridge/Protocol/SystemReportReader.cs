@@ -143,11 +143,15 @@ namespace FanaBridge.Protocol
         {
             var raw = new byte[len];
             Array.Copy(buf, raw, len);
+
+            // The schema owns field extraction (which byte means what); the reader
+            // owns framing + retaining the raw frame for diagnostics.
+            var v = Schema.SystemReport.Decode(buf, sig);
             return new Reading
             {
-                BaseType = buf[sig + FanatecIdentity.OffBaseType],
-                Wire     = buf[sig + FanatecIdentity.OffWireCode],
-                ModRaw   = buf[sig + FanatecIdentity.OffModule],
+                BaseType = v.BaseType,
+                Wire     = v.WheelCode,
+                ModRaw   = v.Module,
                 Raw      = raw,
             };
         }
@@ -156,7 +160,7 @@ namespace FanaBridge.Protocol
         // scanning the first few positions.
         private static int FindSignature(byte[] buf, int len)
         {
-            int limit = len - (FanatecIdentity.OffModule + 1);
+            int limit = len - (Schema.SystemReport.Module.Offset + 1);
             for (int i = 0; i <= limit && i <= 2; i++)
                 if (buf[i] == 0xFF && buf[i + 1] == 0x08)
                     return i;
