@@ -329,6 +329,54 @@ namespace FanaBridge.Devices
             _peripherals.FirstOrDefault(p => p.Kind == kind
                 && string.Equals(p.Code, code, StringComparison.OrdinalIgnoreCase));
 
+        // ── Per-device routing view ───────────────────────────────────────
+
+        /// <summary>
+        /// One connected device for per-DeviceInstance routing: its output handle plus its
+        /// current attachment (wheel/hub + module) so a descriptor can match against the
+        /// SPECIFIC device that hosts it rather than a global "the attached wheel".
+        /// </summary>
+        public readonly struct DeviceView
+        {
+            public DeviceView(DeviceHandle handle, Peripheral wheel, Peripheral module, bool stable)
+            {
+                Handle = handle;
+                Wheel = wheel;
+                Module = module;
+                Stable = stable;
+            }
+
+            public DeviceHandle Handle { get; }
+            public Peripheral Wheel { get; }    // Wheel or Hub, or null
+            public Peripheral Module { get; }   // Module, or null
+            public bool Stable { get; }
+        }
+
+        /// <summary>
+        /// Each currently-connected device, primary first. A DeviceInstance walks these to
+        /// find the one whose attachment matches its descriptor (rim-on-any-base), so two
+        /// instances can be Connected against different bases at once.
+        /// </summary>
+        public IEnumerable<DeviceView> ConnectedDevices()
+        {
+            if (_monitor.IsConnected)
+                yield return ViewOf(_device);
+            foreach (var s in _secondary)
+                if (s.Monitor.IsConnected)
+                    yield return ViewOf(s.Device);
+        }
+
+        // Build a routing view from a carrier's snapshot, reusing the exact peripheral merge
+        // (so wheel/module matching is identical to the legacy single-device path).
+        private static DeviceView ViewOf(FanatecBaseDevice device)
+        {
+            var snap = device.Snapshot;
+            var peris = BuildPeripherals(snap);
+            var wheel = peris.FirstOrDefault(p => p.Kind == PeripheralKind.Wheel || p.Kind == PeripheralKind.Hub);
+            var module = peris.FirstOrDefault(p => p.Kind == PeripheralKind.Module);
+            return new DeviceView(device.Handle, wheel, module, snap.Stable);
+        }
+
         private void OnDeviceSnapshotChanged(FanatecBaseDevice device)
         {
             RebuildPeripherals();

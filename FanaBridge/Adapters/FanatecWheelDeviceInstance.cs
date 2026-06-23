@@ -65,18 +65,30 @@ namespace FanaBridge.Adapters
                 return;
             _ledModuleInitialized = true;
 
-            // Without the shared encoders we can't build a module at all.
+            // Without the plugin (and its device manager) we can't build a module at all.
             var plugin = FanatecPlugin.Instance;
             if (plugin == null) return;
 
-            // Resolve the caps for THIS descriptor (live caps only when the
-            // connected wheel matches us; otherwise our registration caps).
+            // Resolve the caps for THIS descriptor (live caps only when a connected device
+            // hosts our rim; otherwise our registration caps).
             var caps = plugin.ResolveCapsFor(_config);
             int allLeds = caps.AllLedCount;
 
             if (allLeds == 0) return;
 
-            _manager = new FanatecLedManager(_config, plugin.Leds, plugin.LegacyLeds);
+            // Resolve THIS descriptor's output handle + caps lazily on each driver
+            // (re)build: the handle of whatever connected device currently hosts this rim,
+            // falling back to the primary handle when none is connected (a harmless
+            // placeholder — output is suppressed while disconnected). When the rim moves to
+            // another base, the handle changes and the driver rebuilds on reconnect.
+            _manager = new FanatecLedManager(
+                _config,
+                () =>
+                {
+                    var p = FanatecPlugin.Instance;
+                    return p?.ResolveDeviceFor(_config)?.Handle ?? p?.PrimaryHandle;
+                },
+                () => FanatecPlugin.Instance?.ResolveCapsFor(_config) ?? WheelCapabilities.None);
             var manager = _manager;
             var options = new LedModuleOptions
             {
@@ -129,21 +141,15 @@ namespace FanaBridge.Adapters
             if (plugin == null)
                 return DeviceState.Disabled;
 
-            // Bind to the peripheral view rather than a wheelbase object: a
-            // DeviceInstance is Connected only when the device is connected, the
-            // identity is settled, and the attached wheel/hub(+module) matches THIS
-            // descriptor's config. This is what lets a DeviceInstance represent
-            // pedals/shifter (hosted or standalone) once those peripherals exist.
-            if (!plugin.IsDeviceConnected)
-                return DeviceState.Scanning;
-
-            // While the attachment identity is settling (mid-transition), treat the
-            // device as not-yet-connected so no LED/display output is driven at a
-            // half-(re)connected wheel.
-            if (!plugin.IdentityStable)
-                return DeviceState.Scanning;
-
-            if (!plugin.MatchesAttachedWheel(_config))
+            // Resolve the SPECIFIC connected device hosting THIS descriptor's rim. Null →
+            // no connected base hosts it (disconnected, or its rim is on another/absent
+            // base); not-stable → that device's identity is mid-transition, so suppress
+            // output at a half-(re)connected wheel. Either case is Scanning. A match that
+            // is settled means Connected — independently of any other device, so two
+            // instances can be Connected against different bases at once. This is also what
+            // lets a DeviceInstance represent pedals/shifter once those peripherals exist.
+            var resolved = plugin.ResolveDeviceFor(_config);
+            if (resolved == null || !resolved.Stable)
                 return DeviceState.Scanning;
 
             return DeviceState.Connected;
@@ -239,7 +245,9 @@ namespace FanaBridge.Adapters
         {
             bool isConnected = GetDeviceState() == DeviceState.Connected;
 
-            // Detect Connected → Scanning transition
+            // Detect Connected → Scanning transition: clear THIS device's display and drop
+            // the display manager so it rebinds to the resolved handle on reconnect — which
+            // may be a different base if the rim was physically moved.
             if (_wasConnected && !isConnected)
             {
                 SimHub.Logging.Current.Info(
@@ -247,6 +255,7 @@ namespace FanaBridge.Adapters
                     "]: Lost connection");
 
                 _displayManager?.Clear();
+                _displayManager = null;
             }
 
             _wasConnected = isConnected;
@@ -256,9 +265,13 @@ namespace FanaBridge.Adapters
 
             EnsureLedModuleInitialized();
 
+            // Drive THIS descriptor's resolved device — its own transport + encoders, not a
+            // process-global set. GetDeviceState already confirmed a settled match, so the
+            // handle is non-null; the transport check guards a race with a just-dropped link.
             var plugin = FanatecPlugin.Instance;
-            var device = plugin?.Transport;
-            if (device == null || !device.IsConnected)
+            var resolved = plugin?.ResolveDeviceFor(_config);
+            var handle = resolved?.Handle;
+            if (handle?.Transport == null || !handle.Transport.IsConnected)
                 return;
 
             // While the wizard is probing hardware, suspend all output so
@@ -271,7 +284,7 @@ namespace FanaBridge.Adapters
             {
                 if (_displayManager == null)
                 {
-                    _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
+                    _displayManager = new FanatecDisplayDriver(handle.Display, _displaySettings);
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
                 }
@@ -280,18 +293,10 @@ namespace FanaBridge.Adapters
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
-            // Hot-swap the driver if the active profile changed (e.g. user
-            // picked a different override in the settings dropdown).
-            if (_manager != null)
-            {
-                // Use the per-descriptor resolution, not the global caps — a
-                // non-matching device resolves to its own registration profile
-                // and so never hot-swaps to the connected wheel's profile.
-                var currentCaps = plugin.ResolveCapsFor(_config);
-                if (currentCaps?.Profile != null)
-                    _manager.HotSwapIfNeeded(currentCaps);
-            }
-
+            // Rebuild the driver if the active profile changed (e.g. user picked a different
+            // override) OR the device hosting this rim changed (e.g. the rim moved to
+            // another base). MaybeRebuild resolves both internally and no-ops otherwise.
+            _manager?.MaybeRebuild();
             _ledModule?.Display();
         }
 

@@ -141,43 +141,65 @@ namespace FanaBridge
         }
 
         /// <summary>
-        /// Whether the wheel/hub(+module) currently attached matches a specific device
-        /// descriptor. The single predicate that replaces reaching into wheelbase
-        /// identity fields — a DeviceInstance asks this about its own config.
+        /// The connected device whose attachment matches <paramref name="config"/>, or null
+        /// if no connected device hosts a matching rim. This is the per-device router: it
+        /// walks the connected carriers (primary first) and returns the FIRST whose
+        /// wheel/hub(+module) matches, carrying that device's output handle, the caps
+        /// resolved for its attachment, and whether its identity is settled. A DeviceInstance
+        /// drives THIS device — so two instances can be Connected against different bases,
+        /// and a rim moved between bases re-binds here on the far base's reconnect.
         /// </summary>
-        public bool MatchesAttachedWheel(DeviceConfig config)
+        public ResolvedDevice ResolveDeviceFor(DeviceConfig config)
         {
             if (config == null)
-                return false;
-            var w = _manager?.AttachedWheel;
-            if (w == null)
-                return false;
-            return config.MatchesAttachment(true, w.Code, _manager.AttachedModule?.Code);
+                return null;
+
+            var mgr = _manager;
+            if (mgr == null)
+                return null;
+
+            foreach (var dv in mgr.ConnectedDevices())
+            {
+                if (!config.MatchesAttachment(dv.Wheel != null, dv.Wheel?.Code, dv.Module?.Code))
+                    continue;
+
+                // Live caps resolved from this device's actual attachment (respects a user
+                // override); fall back to the config's registration caps if unresolved.
+                var caps = _resolver.Resolve(dv.Wheel?.Code, dv.Module?.Code, out _);
+                if (caps?.Profile == null)
+                    caps = config.Capabilities ?? WheelCapabilities.None;
+
+                return new ResolvedDevice(dv.Handle, caps, dv.Stable);
+            }
+
+            return null;
         }
 
         /// <summary>
-        /// Resolves the capabilities a specific device descriptor should use.
-        /// Returns the live, currently-active capabilities (which respect any user
-        /// override) only when the connected wheel actually matches this
-        /// <paramref name="config"/>; otherwise returns the config's own registration
-        /// capabilities. <see cref="CurrentCapabilities"/> is global, so unrelated
-        /// device instances must NOT consume it directly — this is the single guard
-        /// that prevents the connected wheel's caps from leaking into every descriptor.
+        /// Whether any connected device hosts the wheel/hub(+module) this descriptor
+        /// matches. A DeviceInstance asks this about its own config. Generalizes the old
+        /// single-attached-wheel predicate to the device collection.
+        /// </summary>
+        public bool MatchesAttachedWheel(DeviceConfig config) => ResolveDeviceFor(config) != null;
+
+        /// <summary>
+        /// Resolves the capabilities a specific device descriptor should use: the live caps
+        /// of the connected device that hosts its rim (respecting any user override), or the
+        /// config's own registration caps when no connected device matches. Keyed per
+        /// descriptor + per device, so one wheel's caps never leak into another's instance.
         /// </summary>
         public WheelCapabilities ResolveCapsFor(DeviceConfig config)
-        {
-            if (config == null)
-                return WheelCapabilities.None;
-
-            var current = _currentCaps;
-            if (current?.Profile != null && MatchesAttachedWheel(config))
-                return current;
-
-            return config.Capabilities ?? WheelCapabilities.None;
-        }
+            => ResolveDeviceFor(config)?.Caps ?? config?.Capabilities ?? WheelCapabilities.None;
 
         /// <summary>Shared HID transport — used by DeviceInstance wrappers for hardware I/O.</summary>
         public IDeviceTransport Transport => _manager?.PrimaryTransport;
+
+        /// <summary>
+        /// The primary device's output handle (transport + encoders). DeviceInstances use
+        /// this only as a fallback when their own device isn't connected; while connected
+        /// they read the handle of the device that hosts their rim (see <see cref="ResolveDeviceFor"/>).
+        /// </summary>
+        public DeviceHandle PrimaryHandle => _manager?.PrimaryHandle;
 
         // The encoders are owned per-device by the carrier's DeviceHandle. These
         // accessors forward to the primary device's handle for now; per-device
