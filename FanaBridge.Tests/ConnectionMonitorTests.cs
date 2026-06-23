@@ -1,4 +1,5 @@
 using System;
+using FanaBridge.Devices;
 using FanaBridge.Transport;
 using Xunit;
 
@@ -8,10 +9,9 @@ namespace FanaBridge.Tests
     {
         // ── Test stub ────────────────────────────────────────────────────
 
-        // The wheelbase now owns its transport, so a single stub stands in for
-        // both connection state (IsConnected / IsDevicePresent) and identity
-        // servicing.
-        private class StubWheelbase : IWheelbaseConnection
+        // The device owns its transport, so a single stub stands in for both
+        // connection state (IsConnected / IsDevicePresent) and identity servicing.
+        private class StubDevice : IServiceableDevice
         {
             public bool IsConnected { get; set; } = true;
             public bool IsDevicePresent { get; set; } = true;
@@ -21,7 +21,7 @@ namespace FanaBridge.Tests
 
             public void Disconnect() => DisconnectCalls++;
 
-            public bool UpdateIdentity()
+            public bool Service()
             {
                 if (UpdateThrows)
                     throw new InvalidOperationException("identity update failed");
@@ -33,7 +33,7 @@ namespace FanaBridge.Tests
         // ── Helpers ──────────────────────────────────────────────────────
 
         private static ConnectionMonitor Create(
-            StubWheelbase wheelbase, Func<bool> tryConnect)
+            StubDevice wheelbase, Func<bool> tryConnect)
             => new ConnectionMonitor(wheelbase, tryConnect);
 
         /// <summary>Pump Update() n times and return the last result.</summary>
@@ -58,7 +58,7 @@ namespace FanaBridge.Tests
         public void Constructor_NullTryConnect_Throws()
         {
             Assert.Throws<ArgumentNullException>(
-                () => new ConnectionMonitor(new StubWheelbase(), null));
+                () => new ConnectionMonitor(new StubDevice(), null));
         }
 
         // ── Initial connect ──────────────────────────────────────────────
@@ -66,7 +66,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void TryInitialConnect_Success_IsConnectedTrue()
         {
-            var monitor = Create(new StubWheelbase(), () => true);
+            var monitor = Create(new StubDevice(), () => true);
             Assert.True(monitor.TryInitialConnect());
             Assert.True(monitor.IsConnected);
         }
@@ -74,7 +74,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void TryInitialConnect_Failure_IsConnectedFalse()
         {
-            var monitor = Create(new StubWheelbase(), () => false);
+            var monitor = Create(new StubDevice(), () => false);
             Assert.False(monitor.TryInitialConnect());
             Assert.False(monitor.IsConnected);
         }
@@ -85,7 +85,7 @@ namespace FanaBridge.Tests
         public void Update_WhenDisconnected_AttemptsReconnect()
         {
             int attempts = 0;
-            var monitor = Create(new StubWheelbase(), () =>
+            var monitor = Create(new StubDevice(), () =>
             {
                 attempts++;
                 return attempts >= 3; // fail first two, succeed third
@@ -116,7 +116,7 @@ namespace FanaBridge.Tests
             int connectCount = 0;
             bool connectedFired = false;
 
-            var monitor = Create(new StubWheelbase(), () => ++connectCount >= 2);
+            var monitor = Create(new StubDevice(), () => ++connectCount >= 2);
             monitor.Connected += () => connectedFired = true;
 
             monitor.TryInitialConnect(); // fails
@@ -131,7 +131,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_DeviceNotPresent_DisconnectsAndFiresEvent()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             bool disconnectedFired = false;
 
             var monitor = Create(wheelbase, () => true);
@@ -152,7 +152,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_StreamLost_DisconnectsAndFiresEvent()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             bool disconnectedFired = false;
 
             var monitor = Create(wheelbase, () => true);
@@ -170,7 +170,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_StreamLost_TearsDownWheelbase()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             var monitor = Create(wheelbase, () => true);
             monitor.TryInitialConnect();
 
@@ -188,7 +188,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_IdentityThrows_DisconnectsWithShortCooldown()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             int connectAttempts = 0;
 
             var monitor = Create(wheelbase, () =>
@@ -219,7 +219,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_IdentityThrows_TearsDownWheelbase()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             var monitor = Create(wheelbase, () => true);
             monitor.TryInitialConnect();
 
@@ -234,7 +234,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void ForceReconnect_WhenConnected_DisconnectsAndReconnects()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             bool connectedFired = false;
 
             var monitor = Create(wheelbase, () => true);
@@ -251,7 +251,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void ForceReconnect_WhenDisconnected_SkipsDisconnect()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             int connectAttempts = 0;
 
             var monitor = Create(wheelbase, () => ++connectAttempts >= 2);
@@ -269,7 +269,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void ForceReconnect_Failure_FiresDisconnected()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             bool disconnectedFired = false;
             int connectAttempts = 0;
 
@@ -288,7 +288,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_SteadyState_ReturnsTrue()
         {
-            var monitor = Create(new StubWheelbase(), () => true);
+            var monitor = Create(new StubDevice(), () => true);
             monitor.TryInitialConnect();
 
             // Run 240 frames (covers multiple heartbeat cycles)
@@ -299,7 +299,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void Update_SteadyState_ServicesIdentityEveryFrame()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             var monitor = Create(wheelbase, () => true);
             monitor.TryInitialConnect();
 
@@ -315,7 +315,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void LastDisconnectReason_NullWhileConnected()
         {
-            var monitor = Create(new StubWheelbase(), () => true);
+            var monitor = Create(new StubDevice(), () => true);
             monitor.TryInitialConnect();
             Assert.Null(monitor.LastDisconnectReason);
         }
@@ -323,7 +323,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void LastDisconnectReason_SetOnBusLoss()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             var monitor = Create(wheelbase, () => true);
             monitor.TryInitialConnect();
 
@@ -336,7 +336,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void LastDisconnectReason_SetOnStreamLoss()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             var monitor = Create(wheelbase, () => true);
             monitor.TryInitialConnect();
 
@@ -349,7 +349,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void LastDisconnectReason_SetOnIdentityFailure()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             var monitor = Create(wheelbase, () => true);
             monitor.TryInitialConnect();
 
@@ -362,7 +362,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void LastDisconnectReason_ClearedOnReconnect()
         {
-            var wheelbase = new StubWheelbase();
+            var wheelbase = new StubDevice();
             var monitor = Create(wheelbase, () => true);
             monitor.TryInitialConnect();
 
