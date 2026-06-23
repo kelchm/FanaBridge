@@ -29,7 +29,7 @@ namespace FanaBridge.Protocol
             public byte[] Raw;
         }
 
-        private const int ReportLength = 64;
+        private const int ReportLength = Wire.Col03Length;
         private const int InitialReadTimeoutMs = 60;
         private const int InitialMaxReadAttempts = 8; // axis reports interleave; skip past them
         private const int DrainTimeoutMs = 0;         // non-blocking
@@ -166,14 +166,15 @@ namespace FanaBridge.Protocol
         private static byte[] BuildEnable()
         {
             var b = new byte[ReportLength];
-            b[0] = 0xFF; b[1] = 0x08; b[2] = 0x01; b[3] = 0xFF;
+            Wire.BeginCol03(b, Wire.Col03.SystemClass, 0x01); // FF 08 01 ...
+            b[3] = 0xFF;                                       // ... FF = enable push-on-change
             return b;
         }
 
         private static byte[] BuildTrigger()
         {
             var b = new byte[ReportLength];
-            b[0] = 0xFF; b[1] = 0x08; b[2] = 0x02;
+            Wire.BeginCol03(b, Wire.Col03.SystemClass, 0x02); // FF 08 02 = trigger one report
             return b;
         }
     }
