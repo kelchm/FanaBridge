@@ -12,7 +12,7 @@ namespace FanaBridge
 
         /// <summary>
         /// Optional USB Product ID override. When 0, the plugin auto-detects
-        /// whichever Fanatec wheelbase is connected via the SDK.
+        /// whichever Fanatec wheelbase is connected over HID.
         /// Set to a specific PID (e.g. 0x0020) to force a particular device.
         /// </summary>
         public int ProductIdOverride { get; set; } = 0;

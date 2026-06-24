@@ -1,5 +1,4 @@
 using System;
-using FanatecManaged;
 
 namespace FanaBridge.Profiles
 {
@@ -50,31 +49,34 @@ namespace FanaBridge.Profiles
             }
         }
 
-        /// <summary>SDK wheel type enum, resolved from profile match criteria.</summary>
-        public M_FS_WHEEL_SWTYPE WheelType
-        {
-            get
-            {
-                if (Profile?.Match == null) return M_FS_WHEEL_SWTYPE.FS_WHEEL_SWTYPE_UNINITIALIZED;
-                string fullName = "FS_WHEEL_SWTYPE_" + Profile.Match.WheelType;
-                if (Enum.TryParse(fullName, out M_FS_WHEEL_SWTYPE result))
-                    return result;
-                return M_FS_WHEEL_SWTYPE.FS_WHEEL_SWTYPE_UNINITIALIZED;
-            }
-        }
+        /// <summary>Profile-match wheel code (e.g. "PSWBMW", "PHUB") from the profile.</summary>
+        public string WheelCode => Profile?.Match?.WheelType;
 
-        /// <summary>SDK module type enum, resolved from profile match criteria.</summary>
-        public M_FS_WHEEL_SW_MODULETYPE ModuleType
+        /// <summary>Button-module code, resolved from the profile match criteria, or null.</summary>
+        public string ModuleCode => string.IsNullOrEmpty(Profile?.Match?.ModuleType) ? null : Profile.Match.ModuleType;
+
+        /// <summary>
+        /// Whether this descriptor matches the wheel/hub + module currently
+        /// attached to the wheelbase. Matching is EXACT on both wheel and
+        /// module: a bare-hub descriptor (<see cref="ModuleCode"/> null) does
+        /// NOT match a hub that has a module attached — that hub is represented
+        /// by the corresponding hub+module descriptor instead. This is the
+        /// single predicate shared by device-state reporting
+        /// (<c>GetDeviceState</c>) and capability resolution
+        /// (<c>FanatecPlugin.ResolveCapsFor</c>) so the two can never diverge:
+        /// when they did, a module hot-attached to an already-connected hub was
+        /// ignored until the hub was reseated.
+        /// </summary>
+        /// <remarks>
+        /// Exact module matching means an attached module with no dedicated
+        /// profile leaves the bare hub unmatched (no graceful fallback).
+        /// Composing base ⊕ hub ⊕ module dynamically is tracked in issue #16.
+        /// </remarks>
+        public bool MatchesAttachment(bool wheelDetected, string attachedWheelCode, string attachedModule)
         {
-            get
-            {
-                if (Profile?.Match == null || string.IsNullOrEmpty(Profile.Match.ModuleType))
-                    return M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED;
-                string fullName = "FS_WHEEL_SW_MODULETYPE_" + Profile.Match.ModuleType;
-                if (Enum.TryParse(fullName, out M_FS_WHEEL_SW_MODULETYPE result))
-                    return result;
-                return M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED;
-            }
+            return wheelDetected
+                && string.Equals(WheelCode, attachedWheelCode, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(ModuleCode, attachedModule, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

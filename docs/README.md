@@ -1,12 +1,24 @@
 # Fanatec Protocol & Device Documentation
 
-This directory contains documentation for the Fanatec HID protocols and hardware ecosystem, as used by [FanaBridge](../README.md) and applicable to anyone working with Fanatec steering wheels, wheelbases, and button modules.
+This directory documents the Fanatec HID protocols and hardware ecosystem — as used by [FanaBridge](../README.md) and applicable to anyone working with Fanatec steering wheels, wheelbases, and button modules. The **reference** docs are vendor-neutral; **FanaBridge-specific** material is grouped separately.
+
+## Reference
+
+Vendor-neutral Fanatec protocol and hardware documentation, independent of FanaBridge:
 
 | Document | Description |
 |----------|-------------|
 | [Terminology](terminology.md) | Glossary of all key concepts — hardware categories, display types, protocol terms, color encodings, SDK concepts |
 | [Devices](reference/devices.md) | Wheelbases, wheels, hubs, button modules — identification, capabilities, and the compositional model |
 | [Protocol](reference/protocol.md) | HID transport, LED control, 7-segment display, ITM display, tuning menu, clutch bite point |
+
+## FanaBridge
+
+Documentation specific to the FanaBridge plugin:
+
+| Document | Description |
+|----------|-------------|
+| [Supported Devices](supported-devices.md) | Wheels and hub + module combos with built-in FanaBridge profiles — tested vs. unverified, and their LED/display capabilities |
 
 ## Conventions
 

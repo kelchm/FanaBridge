@@ -13,7 +13,7 @@ namespace FanaBridge.Transport
     /// <see cref="IDeviceTransport"/> interface used by protocol encoders
     /// (LEDs, display, tuning).
     /// </summary>
-    public class FanatecDevice : IDisposable, IDeviceConnection, IDeviceTransport
+    public class FanatecTransport : IDisposable, IDeviceTransport
     {
         private const int DISPLAY_REPORT_LENGTH = 8;
 
@@ -54,6 +54,31 @@ namespace FanaBridge.Transport
         /// <summary>The product ID we connected to, for presence checks.</summary>
         private int _connectedProductId;
 
+        /// <summary>
+        /// Categorised reason the most recent <see cref="Connect"/> attempt failed
+        /// (or <see cref="TransportConnectStatus.Connected"/> on success). Lets the
+        /// caller surface an accurate reason instead of assuming exclusive-access
+        /// contention for every failure — notably, a col01-only/legacy base that
+        /// exposes no col03 interface is <see cref="TransportConnectStatus.NoCol03Interface"/>,
+        /// not a held handle.
+        /// </summary>
+        public TransportConnectStatus LastConnectStatus { get; private set; }
+
+        /// <summary>Outcome categories for <see cref="Connect"/>.</summary>
+        public enum TransportConnectStatus
+        {
+            /// <summary>Connected successfully.</summary>
+            Connected,
+            /// <summary>No HID device with the requested VID/PID was present.</summary>
+            NoDeviceForPid,
+            /// <summary>Device(s) found, but none exposed a col03 (64-byte) control collection.</summary>
+            NoCol03Interface,
+            /// <summary>A col03 collection was found but could not be opened (held by another process).</summary>
+            Col03OpenFailed,
+            /// <summary>An unexpected error occurred while connecting.</summary>
+            UnexpectedError,
+        }
+
         /// <summary>True if the HID streams appear to be open.</summary>
         public bool IsConnected
         {
@@ -82,7 +107,7 @@ namespace FanaBridge.Transport
                 try
                 {
                     return DeviceList.Local.GetHidDevices()
-                        .Any(d => d.VendorID == FanatecSdkManager.FANATEC_VENDOR_ID
+                        .Any(d => d.VendorID == FanatecWheelbase.FANATEC_VENDOR_ID
                                && d.ProductID == _connectedProductId);
                 }
                 catch
@@ -95,7 +120,7 @@ namespace FanaBridge.Transport
         /// <summary>
         /// Connects to a Fanatec device by product ID.
         /// Opens the col03 (LED) and col01 (display) HID interfaces.
-        /// The product ID should come from FanatecSdkManager.ConnectedProductId.
+        /// The product ID should come from FanatecWheelbase.ConnectedProductId.
         /// </summary>
         public bool Connect(int productId)
         {
@@ -105,36 +130,61 @@ namespace FanaBridge.Transport
             try
             {
                 var devices = DeviceList.Local.GetHidDevices()
-                    .Where(d => d.VendorID == FanatecSdkManager.FANATEC_VENDOR_ID && d.ProductID == productId)
+                    .Where(d => d.VendorID == FanatecWheelbase.FANATEC_VENDOR_ID && d.ProductID == productId)
                     .ToList();
 
                 if (devices.Count == 0)
                 {
-                    SimHub.Logging.Current.Info("FanatecDevice: No devices found for PID 0x" + productId.ToString("X4"));
+                    LastConnectStatus = TransportConnectStatus.NoDeviceForPid;
+                    SimHub.Logging.Current.Info("FanatecTransport: No devices found for PID 0x" + productId.ToString("X4"));
                     return false;
                 }
 
-                // Find interfaces by HID collection from device path
-                _ledDevice = devices.FirstOrDefault(d => d.DevicePath.Contains("col03"));
+                // Locate the col03 (LED/identity) control interface — by its &col03
+                // path token, else by a 64-byte OUTPUT report. col03 can
+                // enumerate a moment AFTER col01, so (mirroring the official SDK, which
+                // opens it with a short retry) re-scan a few times before concluding it
+                // is absent. Defensive length reads avoid a descriptor-query throw being
+                // misclassified as an unexpected error.
                 _displayDevice = devices.FirstOrDefault(d => d.DevicePath.Contains("col01"));
-
-                // Fallback: find LED interface by max output report length
-                if (_ledDevice == null)
+                _ledDevice = SelectCol03(devices);
+                for (int attempt = 1; _ledDevice == null && attempt < COL03_FIND_ATTEMPTS; attempt++)
                 {
-                    _ledDevice = devices.FirstOrDefault(d =>
-                        d.GetMaxOutputReportLength() == 64 ||
-                        d.GetMaxOutputReportLength() == 65);
+                    Thread.Sleep(COL03_FIND_RETRY_MS);
+                    devices = DeviceList.Local.GetHidDevices()
+                        .Where(d => d.VendorID == FanatecWheelbase.FANATEC_VENDOR_ID && d.ProductID == productId)
+                        .ToList();
+                    _displayDevice = devices.FirstOrDefault(d => d.DevicePath.Contains("col01"));
+                    _ledDevice = SelectCol03(devices);
                 }
 
                 if (_ledDevice == null)
                 {
-                    SimHub.Logging.Current.Warn("FanatecDevice: No LED control interface (col03) found");
+                    // Debug, not Warn: the wheelbase logs a single de-duped Warn for this;
+                    // logging here every retry/poll would spam the log.
+                    LastConnectStatus = TransportConnectStatus.NoCol03Interface;
+                    SimHub.Logging.Current.Debug(
+                        "FanatecTransport: No col03 (64-byte) control interface found for PID 0x"
+                        + productId.ToString("X4") + " after " + COL03_FIND_ATTEMPTS + " attempt(s)");
                     return false;
                 }
 
-                _ledStream = _ledDevice.Open();
+                try
+                {
+                    _ledStream = _ledDevice.Open();
+                }
+                catch (Exception ex)
+                {
+                    // The col03 collection exists but we could not open it — this is
+                    // the only failure that is genuine exclusive-access contention.
+                    LastConnectStatus = TransportConnectStatus.Col03OpenFailed;
+                    SimHub.Logging.Current.Warn(
+                        "FanatecTransport: col03 interface open failed (held by another process?): " + ex.Message);
+                    return false;
+                }
+
                 SimHub.Logging.Current.Info(string.Format(
-                    "FanatecDevice: LED interface opened (MaxOutput={0})", _ledDevice.GetMaxOutputReportLength()));
+                    "FanatecTransport: LED interface opened (MaxOutput={0})", SafeMaxOutput(_ledDevice)));
 
                 // Open col01 via HidStream (interrupt OUT — confirmed working in PoC)
                 if (_displayDevice != null)
@@ -142,11 +192,11 @@ namespace FanaBridge.Transport
                     try
                     {
                         _displayStream = _displayDevice.Open();
-                        SimHub.Logging.Current.Info("FanatecDevice: Display interface (col01) opened via HidStream");
+                        SimHub.Logging.Current.Info("FanatecTransport: Display interface (col01) opened via HidStream");
                     }
                     catch (Exception ex)
                     {
-                        SimHub.Logging.Current.Warn("FanatecDevice: col01 HidStream failed: " + ex.Message);
+                        SimHub.Logging.Current.Warn("FanatecTransport: col01 HidStream failed: " + ex.Message);
                     }
 
                     // Also open raw handle as fallback
@@ -165,7 +215,7 @@ namespace FanaBridge.Transport
                     }
                     catch (Exception ex)
                     {
-                        SimHub.Logging.Current.Warn("FanatecDevice: col01 WriteFile handle failed: " + ex.Message);
+                        SimHub.Logging.Current.Warn("FanatecTransport: col01 WriteFile handle failed: " + ex.Message);
                     }
                 }
 
@@ -179,15 +229,36 @@ namespace FanaBridge.Transport
                 }
 
                 _connectedProductId = productId;
-                SimHub.Logging.Current.Info("FanatecDevice: Connected to " + ProductName);
+                LastConnectStatus = TransportConnectStatus.Connected;
+                SimHub.Logging.Current.Info("FanatecTransport: Connected to " + ProductName);
                 return true;
             }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Error("FanatecDevice: Connection error: " + ex.Message);
+                LastConnectStatus = TransportConnectStatus.UnexpectedError;
+                SimHub.Logging.Current.Error("FanatecTransport: Connection error: " + ex.Message);
                 return false;
             }
         }
+
+        // col03 can enumerate slightly after col01; the official SDK opens it with a
+        // short retry, so we re-scan a few times before declaring it absent.
+        private const int COL03_FIND_ATTEMPTS = 3;
+        private const int COL03_FIND_RETRY_MS = 10;
+
+        // col03 control interface: the &col03 node, else a node with a 64-byte OUTPUT
+        // report (col03 is the LED/FF 08 WRITE channel). A 64-byte INPUT alone is NOT
+        // col03 — e.g. a console/PS4-mode gamepad collection (col01) has a 64-byte input
+        // report; selecting it would open the wrong endpoint and fail every LED write.
+        private static HidDevice SelectCol03(System.Collections.Generic.List<HidDevice> devices)
+        {
+            return devices.FirstOrDefault(d => d.DevicePath.Contains("col03"))
+                ?? devices.FirstOrDefault(d => IsCol03ReportLength(SafeMaxOutput(d)));
+        }
+
+        private static bool IsCol03ReportLength(int len) => len == 64 || len == 65;
+        private static int SafeMaxOutput(HidDevice d) { try { return d.GetMaxOutputReportLength(); } catch { return 0; } }
+        private static int SafeMaxInput(HidDevice d) { try { return d.GetMaxInputReportLength(); } catch { return 0; } }
 
         /// <summary>
         /// Sends a 64-byte report on the LED interface (col03).
@@ -203,7 +274,7 @@ namespace FanaBridge.Transport
             }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Warn("FanatecDevice: LED write error: " + ex.Message);
+                SimHub.Logging.Current.Warn("FanatecTransport: LED write error: " + ex.Message);
                 return false;
             }
         }
@@ -225,7 +296,7 @@ namespace FanaBridge.Transport
                 }
                 catch (Exception ex)
                 {
-                    SimHub.Logging.Current.Warn("FanatecDevice: Display stream write failed: " + ex.Message);
+                    SimHub.Logging.Current.Warn("FanatecTransport: Display stream write failed: " + ex.Message);
                 }
             }
 
@@ -253,14 +324,19 @@ namespace FanaBridge.Transport
 
         int IDeviceTransport.ReadCol03(byte[] buffer, int timeoutMs)
         {
-            if (_ledStream == null) return -1;
             lock (_writeLock)
             {
-                int saved = _ledStream.ReadTimeout;
+                // Capture under the lock: Disconnect() nulls/disposes the stream
+                // under the same lock, so a non-null local here stays valid for
+                // the duration of the read.
+                var stream = _ledStream;
+                if (stream == null) return -1;
+
+                int saved = stream.ReadTimeout;
                 try
                 {
-                    _ledStream.ReadTimeout = timeoutMs;
-                    return _ledStream.Read(buffer, 0, buffer.Length);
+                    stream.ReadTimeout = timeoutMs;
+                    return stream.Read(buffer, 0, buffer.Length);
                 }
                 catch
                 {
@@ -268,7 +344,7 @@ namespace FanaBridge.Transport
                 }
                 finally
                 {
-                    _ledStream.ReadTimeout = saved;
+                    try { stream.ReadTimeout = saved; } catch { }
                 }
             }
         }
@@ -278,7 +354,7 @@ namespace FanaBridge.Transport
             get
             {
                 if (_ledDevice == null) return 64;
-                int len = _ledDevice.GetMaxInputReportLength();
+                int len = SafeMaxInput(_ledDevice);
                 return len > 0 ? len : 64;
             }
         }
@@ -319,24 +395,29 @@ namespace FanaBridge.Transport
         // =====================================================================
 
         /// <summary>
-        /// Closes all HID handles.
+        /// Closes all HID handles. Holds the write lock so teardown can't race
+        /// an in-flight send/read (which capture their stream under the same
+        /// lock), avoiding use-after-dispose on the HID streams.
         /// </summary>
         public void Disconnect()
         {
-            try { _displayStream?.Close(); } catch { }
-            try { _displayStream?.Dispose(); } catch { }
-            try { _ledStream?.Close(); } catch { }
-            try { _ledStream?.Dispose(); } catch { }
-            try { _displayHandle?.Close(); } catch { }
-            try { _displayHandle?.Dispose(); } catch { }
+            lock (_writeLock)
+            {
+                try { _displayStream?.Close(); } catch { }
+                try { _displayStream?.Dispose(); } catch { }
+                try { _ledStream?.Close(); } catch { }
+                try { _ledStream?.Dispose(); } catch { }
+                try { _displayHandle?.Close(); } catch { }
+                try { _displayHandle?.Dispose(); } catch { }
 
-            _displayStream = null;
-            _ledStream = null;
-            _displayHandle = null;
-            _ledDevice = null;
-            _displayDevice = null;
-            _connectedProductId = 0;
-            ProductName = null;
+                _displayStream = null;
+                _ledStream = null;
+                _displayHandle = null;
+                _ledDevice = null;
+                _displayDevice = null;
+                _connectedProductId = 0;
+                ProductName = null;
+            }
         }
 
         public void Dispose()

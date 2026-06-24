@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.0 - Unreleased
+
+### Changed
+- **Device detection is now handled entirely by FanaBridge over HID** — wheel, hub, and module identity is read straight from the wheelbase (the col03 `FF 08` system report), dropping the dependency on SimHub's Fanatec SDK integration (`SimHub.FanatecManaged.dll`).
+
+### Added
+- **Device Status** now shows the connected hardware as a `wheelbase › wheel/hub › module` chain with friendly names and a live connection indicator; unrecognized hardware shows its raw identity byte.
+- **Copy Debug Info** copies a read-only report (HID interfaces, decoded identity, and the raw `FF 08` bytes) to the clipboard for bug reports — no need to close SimHub or run a separate tool.
+- A disconnected device now shows *why* (no device found, interface in use, lost connection, …).
+
+### Fixed
+- Wheels and hubs are now detected on Podium DD wheelbases.
+
 ## v0.3.2 - 2026-06-22
 
 ### Fixed
@@ -38,7 +51,7 @@
 - CSL Elite Steering Wheel Porsche Vision GT
 - CSL Elite Steering Wheel WRC
 - CSL Steering Wheel GT3
-- GT Steering Wheel PRO 
+- GT Steering Wheel PRO
 - GT Steering Wheel Extreme
 - Podium Steering Wheel Bentley GT3
 
@@ -51,7 +64,6 @@
 
 ### New Wheel Support
 - ClubSport Steering Wheel Formula V2.5 (CSSWFORMV2)
-
 
 ## v0.2.0 - 2026-03-16
 

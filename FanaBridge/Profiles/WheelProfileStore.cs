@@ -9,7 +9,7 @@ namespace FanaBridge.Profiles
 {
     /// <summary>
     /// Loads <see cref="WheelProfile"/> definitions and provides lookup by
-    /// SDK wheel/module type.
+    /// decoded wheel/module type.
     ///
     /// Thread-safe via snapshot-and-swap: all read methods capture a local
     /// reference to the current immutable snapshot, so concurrent reads never
@@ -275,7 +275,7 @@ namespace FanaBridge.Profiles
         }
 
         /// <summary>
-        /// Finds the best matching profile for the given SDK wheel/module type.
+        /// Finds the best matching profile for the given decoded wheel/module type.
         /// For hub+module combos, tries "{wheelType}_{moduleType}" first,
         /// then falls back to "{wheelType}" alone.
         /// Returns null if no profile matches.
@@ -286,7 +286,7 @@ namespace FanaBridge.Profiles
         }
 
         /// <summary>
-        /// Finds a profile for the given SDK wheel/module type, optionally
+        /// Finds a profile for the given decoded wheel/module type, optionally
         /// respecting an explicit user override.
         /// </summary>
         /// <param name="overrideId">
@@ -297,6 +297,14 @@ namespace FanaBridge.Profiles
         public static WheelProfile FindByWheelType(
             string wheelType, string moduleType, string overrideId)
         {
+            // A wheel/hub that isn't in the decode tables (e.g. EXT_INFO or
+            // future hardware) resolves to a null code. With no code and no
+            // explicit override there is nothing to match, so return early —
+            // before touching the snapshot — rather than letting a null key
+            // reach Dictionary.TryGetValue (which throws ArgumentNullException).
+            if (string.IsNullOrEmpty(wheelType) && string.IsNullOrEmpty(overrideId))
+                return null;
+
             var snap = GetSnapshot();
 
             // 0. Explicit user override (from plugin settings).
@@ -318,10 +326,16 @@ namespace FanaBridge.Profiles
             // for the full analysis of naming divergence across SDK versions.
             wheelType = NormalizeWheelType(wheelType);
 
+            // An override may have been supplied for a null-coded wheel but
+            // failed to resolve above; with no usable code, stop here so the
+            // key lookups below never see a null key.
+            if (string.IsNullOrEmpty(wheelType))
+                return null;
+
             // 1. Try compound key first (hub + module)
             if (!string.IsNullOrEmpty(moduleType))
             {
-                string compoundId = wheelType + "_" + moduleType;
+                string compoundId = MakeMatchKey(wheelType, moduleType);
                 if (snap.ById.TryGetValue(compoundId, out var compound))
                     return compound;
             }
@@ -455,7 +469,25 @@ namespace FanaBridge.Profiles
             }
         }
 
-        // ── Override key helpers ─────────────────────────────────────────
+        // ── Key helpers ──────────────────────────────────────────────────
+
+        /// <summary>
+        /// Builds the profile-match key for a wheel/hub plus optional module,
+        /// formed the same way compound profile IDs are: "{wheel}" alone, or
+        /// "{wheel}_{module}". This is the single source of truth for the key
+        /// format — callers (identity resolution, settings UI, wizard) must
+        /// use it rather than concatenating by hand. Returns null when there is
+        /// no wheel/hub code, so a stray module code can't yield a malformed
+        /// "_{module}" key.
+        /// </summary>
+        public static string MakeMatchKey(string wheelCode, string moduleCode)
+        {
+            if (string.IsNullOrEmpty(wheelCode))
+                return null;
+            return string.IsNullOrEmpty(moduleCode)
+                ? wheelCode
+                : wheelCode + "_" + moduleCode;
+        }
 
         /// <summary>
         /// Builds a stable key for storing profile overrides in settings.
@@ -490,30 +522,6 @@ namespace FanaBridge.Profiles
 
             // Legacy / simple key — fall back to ById lookup
             return snap.ById.TryGetValue(overrideKey, out var p) ? p : null;
-        }
-
-        /// <summary>
-        /// Strips SDK enum prefixes to get the short code for matching.
-        /// e.g. "FS_WHEEL_SWTYPE_PSWBMW" → "PSWBMW"
-        /// </summary>
-        public static string StripWheelPrefix(string enumName)
-        {
-            const string prefix = "FS_WHEEL_SWTYPE_";
-            if (enumName != null && enumName.StartsWith(prefix))
-                return enumName.Substring(prefix.Length);
-            return enumName;
-        }
-
-        /// <summary>
-        /// Strips SDK module enum prefixes to get the short code.
-        /// e.g. "FS_WHEEL_SW_MODULETYPE_PBMR" → "PBMR"
-        /// </summary>
-        public static string StripModulePrefix(string enumName)
-        {
-            const string prefix = "FS_WHEEL_SW_MODULETYPE_";
-            if (enumName != null && enumName.StartsWith(prefix))
-                return enumName.Substring(prefix.Length);
-            return enumName;
         }
 
         /// <summary>

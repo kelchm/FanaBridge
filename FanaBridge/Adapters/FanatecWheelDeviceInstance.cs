@@ -6,7 +6,6 @@ using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using FanaBridge.UI;
-using FanatecManaged;
 using GameReaderCommon;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
@@ -26,7 +25,7 @@ namespace FanaBridge.Adapters
     /// brightness controls, and the full .shdevice export structure.
     ///
     /// Does NOT own hardware — delegates to the shared FanatecPlugin singleton
-    /// for all SDK/HID access. Reports Connected only when the singleton's
+    /// for all HID access. Reports Connected only when the singleton's
     /// current wheel identity matches this instance's wheel type.
     /// </summary>
     public class FanatecWheelDeviceInstance : DeviceInstance
@@ -65,30 +64,18 @@ namespace FanaBridge.Adapters
                 return;
             _ledModuleInitialized = true;
 
-            // Use the currently-active profile (which respects user overrides)
-            // when it matches THIS device.  Otherwise fall back to the registry
-            // config — CurrentCapabilities is global and would leak the connected
-            // wheel's caps into unrelated device instances.
-            var caps = _config.Capabilities;
+            // Without the shared encoders we can't build a module at all.
             var plugin = FanatecPlugin.Instance;
-            if (plugin != null)
-            {
-                var sdk = plugin.SdkManager;
-                var current = plugin.CurrentCapabilities;
-                if (current?.Profile != null && current != WheelCapabilities.None
-                    && sdk != null
-                    && _config.WheelType == sdk.SteeringWheelType
-                    && _config.ModuleType == sdk.SubModuleType)
-                {
-                    caps = current;
-                }
-            }
+            if (plugin == null) return;
+
+            // Resolve the caps for THIS descriptor (live caps only when the
+            // connected wheel matches us; otherwise our registration caps).
+            var caps = plugin.ResolveCapsFor(_config);
             int allLeds = caps.AllLedCount;
 
             if (allLeds == 0) return;
 
-            if (plugin == null) plugin = FanatecPlugin.Instance;
-            _manager = new FanatecLedManager(caps, plugin.Leds, plugin.LegacyLeds, plugin.Device);
+            _manager = new FanatecLedManager(_config, plugin.Leds, plugin.LegacyLeds);
             var manager = _manager;
             var options = new LedModuleOptions
             {
@@ -100,7 +87,7 @@ namespace FanaBridge.Adapters
                 LedDriver = manager,
                 EnableBrightnessSection = true,
                 ShowConnectionStatus = true,
-                VID = FanatecSdkManager.FANATEC_VENDOR_ID,
+                VID = FanatecWheelbase.FANATEC_VENDOR_ID,
             };
 
             _ledModule = new LedModuleSettings<FanatecLedManager>(options);
@@ -125,8 +112,8 @@ namespace FanaBridge.Adapters
 
             _customSettings = new JObject
             {
-                ["wheelType"] = _config.WheelType.ToString(),
-                ["moduleType"] = _config.ModuleType.ToString(),
+                ["wheelType"] = _config.WheelCode ?? "",
+                ["moduleType"] = _config.ModuleCode ?? "",
                 ["displayMode"] = DisplaySettings.DefaultMode,
             };
             _displaySettings = new DisplaySettings();
@@ -141,16 +128,22 @@ namespace FanaBridge.Adapters
             if (plugin == null)
                 return DeviceState.Disabled;
 
-            var sdk = plugin.SdkManager;
-            if (sdk == null || !sdk.IsConnected)
+            // ARCHITECTURE: this reaches directly into wheelbase identity fields.
+            // When the peripheral model lands, bind to a peripheral snapshot (class
+            // + code + capabilities) instead, so a DeviceInstance can represent
+            // pedals/shifter (hosted or standalone), not just a base attachment.
+            var wheelbase = plugin.Wheelbase;
+            if (wheelbase == null || !wheelbase.IsConnected)
                 return DeviceState.Scanning;
 
-            if (!sdk.WheelDetected || sdk.SteeringWheelType != _config.WheelType)
+            // While the attachment identity is settling (mid-transition), treat the
+            // device as not-yet-connected so no LED/display output is driven at a
+            // half-(re)connected wheel.
+            if (!wheelbase.IdentityStable)
                 return DeviceState.Scanning;
 
-            // For hub+module configs, also match the module type
-            if (_config.ModuleType != M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
-                && sdk.SubModuleType != _config.ModuleType)
+            if (!_config.MatchesAttachment(
+                    wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode))
                 return DeviceState.Scanning;
 
             return DeviceState.Connected;
@@ -264,7 +257,7 @@ namespace FanaBridge.Adapters
             EnsureLedModuleInitialized();
 
             var plugin = FanatecPlugin.Instance;
-            var device = plugin?.Device;
+            var device = plugin?.Transport;
             if (device == null || !device.IsConnected)
                 return;
 
@@ -291,7 +284,10 @@ namespace FanaBridge.Adapters
             // picked a different override in the settings dropdown).
             if (_manager != null)
             {
-                var currentCaps = plugin.CurrentCapabilities;
+                // Use the per-descriptor resolution, not the global caps — a
+                // non-matching device resolves to its own registration profile
+                // and so never hot-swaps to the connected wheel's profile.
+                var currentCaps = plugin.ResolveCapsFor(_config);
                 if (currentCaps?.Profile != null)
                     _manager.HotSwapIfNeeded(currentCaps);
             }

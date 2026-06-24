@@ -1,16 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Media;
 using System.Windows.Navigation;
 using System.Windows.Threading;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
-using FanatecManaged;
 using Timer = System.Timers.Timer;
 
 namespace FanaBridge.UI
@@ -48,24 +47,13 @@ namespace FanaBridge.UI
 
         private void SetAboutInfo()
         {
-            var assembly = typeof(FanatecPlugin).Assembly;
-
-            var version = assembly
-                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-                ?.InformationalVersion
-                ?? assembly.GetName().Version?.ToString()
-                ?? "Unknown";
-
-            var config = GetAssemblyMetadata(assembly, "BuildConfiguration");
-            var commit = GetAssemblyMetadata(assembly, "CommitHash");
-
             var versionText = FindName("txtPluginVersion") as TextBlock;
             if (versionText != null)
-                versionText.Text = $"FanaBridge {version}";
+                versionText.Text = "FanaBridge " + BuildIdentity.Version;
 
             var buildText = FindName("txtBuildInfo") as TextBlock;
             if (buildText != null)
-                buildText.Text = FormatBuildInfo(config, commit);
+                buildText.Text = FormatBuildInfo(BuildIdentity.Configuration, BuildIdentity.CommitHash);
         }
 
         private static string FormatBuildInfo(string config, string commit)
@@ -77,13 +65,6 @@ namespace FanaBridge.UI
             if (commit != null)
                 return commit;
             return "\u2014";
-        }
-
-        private static string GetAssemblyMetadata(Assembly assembly, string key)
-        {
-            return assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => string.Equals(a.Key, key, StringComparison.OrdinalIgnoreCase))
-                ?.Value;
         }
 
         private static string FormatCapabilities(WheelCapabilities caps)
@@ -114,6 +95,115 @@ namespace FanaBridge.UI
             return parts.Count > 0 ? string.Join(", ", parts) : "None";
         }
 
+        // =====================================================================
+        // DEVICE CHAIN  (wheelbase › wheel/hub › module)
+        //
+        // A normal-user readout: friendly product names laid out as the physical
+        // device stack. Empty slots disappear (a plain wheel shows no module
+        // node). Unrecognized hardware falls back to the raw 0xNN byte so it is
+        // still visible/reportable; the full codes + bytes live in the Copy
+        // Debug Info report.
+        // =====================================================================
+
+        private enum LinkState { Connected, Connecting, Disconnected }
+
+        private static readonly Brush DotConnected = MakeBrush(0x4C, 0xAF, 0x50);  // green
+        private static readonly Brush DotConnecting = MakeBrush(0xE0, 0xA8, 0x00); // amber
+        private static readonly Brush DotIdle = MakeBrush(0x99, 0x99, 0x99);       // gray
+
+        private static Brush MakeBrush(byte r, byte g, byte b)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
+        }
+
+        private void SetDot(LinkState state)
+        {
+            dotStatus.Fill =
+                state == LinkState.Connected  ? DotConnected :
+                state == LinkState.Connecting ? DotConnecting :
+                                                DotIdle;
+        }
+
+        // Connected: the wheelbase node carries the dot + base name; the wheel and
+        // module nodes follow what's attached (module only on a hub that has one).
+        private void ShowConnectedChain(FanatecWheelbase wb)
+        {
+            SetDot(LinkState.Connected);
+            txtBaseName.Text = ChainBaseText(wb);
+            txtBaseCaption.Text = "Wheelbase";
+            txtBaseCaption.ToolTip = null;
+
+            connBaseWheel.Visibility = nodeWheel.Visibility = Visibility.Visible;
+            if (wb.WheelDetected)
+            {
+                txtWheelChain.Text = ChainAttachmentText(wb);
+                txtWheelKind.Text = wb.IsHub ? "Hub" : "Wheel";
+                txtWheelKind.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                txtWheelChain.Text = "(no wheel attached)";
+                txtWheelKind.Visibility = Visibility.Collapsed;
+            }
+
+            bool showModule = wb.WheelDetected && wb.IsHub
+                && (wb.ModuleCode != null || wb.ModuleWireCode != 0);
+            connWheelModule.Visibility = nodeModule.Visibility =
+                showModule ? Visibility.Visible : Visibility.Collapsed;
+            if (showModule)
+                txtModuleChain.Text = ChainModuleText(wb);
+        }
+
+        // Connecting / disconnected: only the wheelbase node shows — carrying the
+        // dot, a headline, and an optional reason in its caption. Keeping the node
+        // present means the panel height does not change between states.
+        private void ShowBaseOnly(LinkState state, string headline, string caption)
+        {
+            SetDot(state);
+            txtBaseName.Text = headline;
+            txtBaseCaption.Text = string.IsNullOrEmpty(caption) ? "Wheelbase" : caption;
+            txtBaseCaption.ToolTip = string.IsNullOrEmpty(caption) ? null : caption;
+
+            connBaseWheel.Visibility = nodeWheel.Visibility = Visibility.Collapsed;
+            connWheelModule.Visibility = nodeModule.Visibility = Visibility.Collapsed;
+        }
+
+        // Full-width wrapping line for the connection reason (e.g. "no col03 …"); the
+        // device-chain caption is too narrow for it and would overflow the row.
+        private void SetStatusDetail(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                txtStatusDetail.Text = "";
+                txtStatusDetail.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                txtStatusDetail.Text = text;
+                txtStatusDetail.Visibility = Visibility.Visible;
+            }
+        }
+
+        // friendly name → code → raw byte, so an unmapped device still shows.
+        private static string ChainBaseText(FanatecWheelbase wb)
+            => wb.BaseFriendlyName
+            ?? wb.BaseCode
+            ?? (wb.BaseType != 0 ? string.Format("Unknown Base (0x{0:X2})", wb.BaseType) : "Unknown Base");
+
+        private static string ChainAttachmentText(FanatecWheelbase wb)
+            => wb.AttachmentFriendlyName
+            ?? wb.WheelCode
+            ?? (wb.WheelWireCode == 0xFF
+                ? "Unrecognized (0xFF)"
+                : string.Format("Unrecognized (0x{0:X2})", wb.WheelWireCode));
+
+        private static string ChainModuleText(FanatecWheelbase wb)
+            => wb.ModuleFriendlyName
+            ?? wb.ModuleCode
+            ?? string.Format("Unknown (0x{0:X2})", wb.ModuleWireCode);
+
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             Plugin.StateChanged += OnPluginStateChanged;
@@ -141,49 +231,50 @@ namespace FanaBridge.UI
         {
             if (Plugin == null) return;
 
-            bool connected = Plugin.IsDeviceConnected;
-
-            if (!connected)
+            if (!Plugin.IsDeviceConnected)
             {
-                txtStatus.Text = "Disconnected";
-                txtWheelName.Text = "—";
+                ShowBaseOnly(LinkState.Disconnected, "Not Connected", null);
+                SetStatusDetail(Plugin.StatusDetail);
                 txtCapabilities.Text = "—";
                 borderUnverifiedAlert.Visibility = Visibility.Collapsed;
-                UpdateProfilePicker(null, null, null);
+                UpdateProfilePicker(false, null, null, null);
+                return;
+            }
+
+            var wheelbase = Plugin.Wheelbase;
+
+            // Connected, but the FF 08 identity hasn't been committed yet (the base
+            // is still being read). Show the transitional state rather than a
+            // misleading "Unknown Base" flash.
+            if (!wheelbase.HasIdentity)
+            {
+                ShowBaseOnly(LinkState.Connecting, "Connecting…", null);
+                SetStatusDetail(null);
+                txtCapabilities.Text = "—";
+                borderUnverifiedAlert.Visibility = Visibility.Collapsed;
+                UpdateProfilePicker(false, null, null, null);
                 return;
             }
 
             var caps = Plugin.CurrentCapabilities;
             bool identified = caps.Name != null;
 
-            // Resolve wheel/module codes from the SDK — available even when no profile exists
-            var sdk = Plugin.SdkManager;
-            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
-            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
-                ? null
-                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
+            // The chain shows what's attached whether or not a profile matched.
+            ShowConnectedChain(wheelbase);
+            SetStatusDetail(null);
 
-            if (!identified)
-            {
-                txtStatus.Text = "Connected — " + Plugin.WheelName;
-                txtWheelName.Text = "—";
-                txtCapabilities.Text = "—";
-                borderUnverifiedAlert.Visibility = Visibility.Collapsed;
-                // Still show the panel so the wizard button is accessible for unsupported wheels
-                UpdateProfilePicker(wheelCode, moduleCode, null);
-                return;
-            }
+            txtCapabilities.Text = identified ? FormatCapabilities(caps) : "—";
 
-            txtStatus.Text = "Connected";
-            txtWheelName.Text = Plugin.WheelName;
-            txtCapabilities.Text = FormatCapabilities(caps);
+            // Unverified-profile banner only applies once a profile is matched.
+            borderUnverifiedAlert.Visibility = (identified && !caps.Verified)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
-            // Show unverified profile banner if applicable
-            borderUnverifiedAlert.Visibility = caps.Verified
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-
-            UpdateProfilePicker(wheelCode, moduleCode, caps);
+            // Pass caps only when identified; an unrecognized-but-attached wheel
+            // still shows the picker so the New Profile Wizard stays reachable.
+            UpdateProfilePicker(
+                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode,
+                identified ? caps : null);
         }
 
         // =====================================================================
@@ -191,11 +282,11 @@ namespace FanaBridge.UI
         // =====================================================================
 
         private void UpdateProfilePicker(
-            string wheelCode, string moduleCode, WheelCapabilities activeCaps)
+            bool wheelDetected, string wheelCode, string moduleCode, WheelCapabilities activeCaps)
         {
-            if (wheelCode == null)
+            if (!wheelDetected)
             {
-                // No identified wheel — hide picker
+                // Nothing attached — hide picker entirely.
                 panelProfilePicker.Visibility = Visibility.Collapsed;
                 txtProfileHint.Visibility = Visibility.Visible;
                 txtProfileHint.Text = "Connect a wheel to manage profiles.";
@@ -205,10 +296,14 @@ namespace FanaBridge.UI
             txtProfileHint.Visibility = Visibility.Collapsed;
             panelProfilePicker.Visibility = Visibility.Visible;
 
-            // Build the match key (same format as the profile ID: "WHEELTYPE_MODULE")
-            string matchKey = wheelCode;
-            if (moduleCode != null)
-                matchKey += "_" + moduleCode;
+            // A detected-but-unrecognized wheel (wire byte not in the decode
+            // tables) has a null code, so there's no profile to match — but the
+            // panel must stay visible so the New Profile Wizard is reachable and
+            // the user can create one. The store lookups below are null-safe and
+            // yield an empty list / null, landing on the "no profile" state.
+            string matchKey = wheelCode != null
+                ? WheelProfileStore.MakeMatchKey(wheelCode, moduleCode)
+                : null;
 
             // Get ALL profiles that match this wheel (built-in + user, even duplicates)
             var all = WheelProfileStore.FindAllForWheel(wheelCode, moduleCode);
@@ -221,7 +316,8 @@ namespace FanaBridge.UI
 
             // Current override (if any) from settings
             string currentOverride = null;
-            Plugin.Settings.ProfileOverrides?.TryGetValue(matchKey, out currentOverride);
+            if (matchKey != null)
+                Plugin.Settings.ProfileOverrides?.TryGetValue(matchKey, out currentOverride);
 
             if (all.Count == 0)
             {
@@ -335,16 +431,16 @@ namespace FanaBridge.UI
             if (string.IsNullOrEmpty(overrideKey)) return;
 
             // Build match key for current wheel
-            var sdk = Plugin.SdkManager;
-            if (!sdk.WheelDetected) return;
+            var wheelbase = Plugin.Wheelbase;
+            if (!wheelbase.WheelDetected) return;
 
-            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
-            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
-                ? null
-                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
-            string matchKey = wheelCode;
-            if (moduleCode != null)
-                matchKey += "_" + moduleCode;
+            string wheelCode = wheelbase.WheelCode;
+            string moduleCode = wheelbase.ModuleCode;
+            string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
+
+            // No match key (e.g. detected but unrecognized wheel, WheelCode null)
+            // means there is no identity to attach an override to — nothing to persist.
+            if (string.IsNullOrEmpty(matchKey)) return;
 
             // Check if the selected profile is the one auto-resolution would pick
             var autoResolved = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null);
@@ -365,7 +461,7 @@ namespace FanaBridge.UI
 
             // Persist settings and re-resolve capabilities
             Plugin.SaveSettings();
-            sdk.RefreshCapabilities();
+            wheelbase.RefreshCapabilities();
 
             // Show restart notice if the device name changed from what SimHub registered
             UpdateRestartNotice();
@@ -453,16 +549,16 @@ namespace FanaBridge.UI
                 return;
 
             // Remove any override for this profile
-            var sdk = Plugin.SdkManager;
-            string wheelCode = WheelProfileStore.StripWheelPrefix(sdk.SteeringWheelType.ToString());
-            string moduleCode = sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
-                ? null
-                : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
-            string matchKey = wheelCode;
-            if (moduleCode != null)
-                matchKey += "_" + moduleCode;
+            var wheelbase = Plugin.Wheelbase;
+            string wheelCode = wheelbase.WheelCode;
+            string moduleCode = wheelbase.ModuleCode;
+            string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
 
-            Plugin.Settings.ProfileOverrides.Remove(matchKey);
+            // A null/empty key (unrecognized wheel) can never have been stored as
+            // an override key, so there is nothing to remove — and Dictionary
+            // throws on a null key.
+            if (!string.IsNullOrEmpty(matchKey))
+                Plugin.Settings.ProfileOverrides.Remove(matchKey);
 
             // Delete from disk and store
             bool deleted = WheelProfileStore.DeleteUserProfile(profileId);
@@ -475,15 +571,69 @@ namespace FanaBridge.UI
 
             // Re-resolve and update UI
             Plugin.SaveSettings();
-            sdk.RefreshCapabilities();
+            wheelbase.RefreshCapabilities();
             UpdateRestartNotice();
             UpdateStatus();
         }
 
         private void BtnReconnect_Click(object sender, RoutedEventArgs e)
         {
+            // After reconnecting, the base is connected but not yet identified, so
+            // UpdateStatus naturally shows the amber "Connecting…" state until the
+            // identity commits (~200 ms later) and it goes green.
             Plugin?.ForceReconnect();
-            UpdateStatus(); // immediate since we're already on UI thread
+            UpdateStatus();
+        }
+
+        private void BtnCopyDiagnostics_Click(object sender, RoutedEventArgs e)
+        {
+            string report;
+            try
+            {
+                report = Plugin?.BuildDiagnosticsReport();
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanaBridge: Failed to build debug info: " + ex.Message);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(report))
+                return;
+
+            try
+            {
+                Clipboard.SetText(report);
+                FlashCopied(sender as Hyperlink);
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanaBridge: Failed to copy debug info to clipboard: " + ex.Message);
+            }
+        }
+
+        private const string CopyLinkLabel = "Copy Debug Info";
+        private DispatcherTimer _copyFlashTimer;
+
+        // Briefly confirm the copy on the link itself, then restore its label.
+        // Restores a constant label (not the captured inlines) and cancels any
+        // pending flash, so a rapid second click can't leave it stuck on "Copied!".
+        private void FlashCopied(Hyperlink link)
+        {
+            if (link == null) return;
+
+            _copyFlashTimer?.Stop();
+            link.Inlines.Clear();
+            link.Inlines.Add("Copied!");
+
+            _copyFlashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
+            _copyFlashTimer.Tick += (s, args) =>
+            {
+                _copyFlashTimer.Stop();
+                link.Inlines.Clear();
+                link.Inlines.Add(CopyLinkLabel);
+            };
+            _copyFlashTimer.Start();
         }
 
         private void BtnOpenProfilesFolder_Click(object sender, RoutedEventArgs e)
@@ -675,6 +825,10 @@ namespace FanaBridge.UI
         /// <summary>
         /// Encode a string to 7-segment bytes, folding dots/commas onto the previous character.
         /// </summary>
+        // TODO: The per-character dot/comma folding rule here duplicates
+        // DisplayEncoder.DisplayText. The length semantics differ (this builds an
+        // unbounded list for scroll-vs-fit; DisplayText caps at 3), but the folding
+        // step itself should be a shared SevenSegment/DisplayEncoder helper.
         private static List<byte> EncodeText(string text)
         {
             var encoded = new List<byte>();

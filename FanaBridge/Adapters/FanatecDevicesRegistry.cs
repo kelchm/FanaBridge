@@ -11,7 +11,7 @@ namespace FanaBridge.Adapters
     /// settings (.shdevice) and connected/disconnected status.
     ///
     /// All descriptors share the Fanatec VID (0x0EB7). Detection is based on
-    /// the SDK wheel identity, not USB PID, because all wheel rims share the
+    /// the FF 08 wheel identity, not USB PID, because all wheel rims share the
     /// wheelbase PID. The DeviceInstances are thin wrappers over the shared
     /// FanatecPlugin singleton — they do not open their own HID connections.
     ///
@@ -104,7 +104,7 @@ namespace FanaBridge.Adapters
                     ParentDeviceTypeID = config.ParentDeviceTypeId,
                     // All Fanatec wheelbases share VID 0x0EB7. We use an arbitrary
                     // PID (0x0001) just so SimHub sees a USB descriptor; the real
-                    // matching is done in GetDeviceState() via the SDK.
+                    // matching is done in GetDeviceState() against the wheelbase identity.
                     DetectionDescriptor = new USBRequest(0x0EB7, 0x0001, true),
                     Factory = () => new FanatecWheelDeviceInstance(capturedConfig),
                     MaximumInstances = 1,

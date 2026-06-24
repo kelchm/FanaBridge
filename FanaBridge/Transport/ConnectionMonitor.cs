@@ -12,8 +12,7 @@ namespace FanaBridge.Transport
     /// </summary>
     public class ConnectionMonitor
     {
-        private readonly ISdkConnection _sdk;
-        private readonly IDeviceConnection _device;
+        private readonly IWheelbaseConnection _wheelbase;
         private readonly Func<bool> _tryConnect;
         private readonly Action<string> _logWarn;
         private readonly Action<string> _logInfo;
@@ -21,12 +20,10 @@ namespace FanaBridge.Transport
         private bool _connected;
         private int _frameCounter;
         private int _reconnectCooldown;
-        private int _wheelPollCooldown;
 
         // ── Heartbeat intervals (in frames) ────────────────────────────
         private const int HID_BUS_CHECK_INTERVAL = 120;
         private const int STREAM_CHECK_INTERVAL = 60;
-        private const int WHEEL_POLL_INTERVAL = 30;
 
         // ── Reconnect cooldowns (in frames) ────────────────────────────
         private const int COOLDOWN_LONG = 300;
@@ -36,30 +33,34 @@ namespace FanaBridge.Transport
         /// <summary>Whether the Fanatec device is currently connected.</summary>
         public bool IsConnected => _connected;
 
+        /// <summary>
+        /// Human-readable reason for the most recent runtime disconnect (HID-bus
+        /// loss, stream drop, identity error), or null while connected. Surfaced
+        /// so a dropped connection is diagnosable without opening the SimHub log.
+        /// </summary>
+        public string LastDisconnectReason { get; private set; }
+
         /// <summary>Fired when a connection is established.</summary>
         public event Action Connected;
 
         /// <summary>Fired when the connection is lost.</summary>
         public event Action Disconnected;
 
-        /// <param name="sdk">Shared SDK manager (wheel identity, SDK connection).</param>
-        /// <param name="device">Shared HID device (LED/display I/O).</param>
+        /// <param name="wheelbase">The connected wheelbase (owns its transport; identity + polling).</param>
         /// <param name="tryConnect">
-        /// Delegate that attempts to connect both the SDK and HID layers.
+        /// Delegate that attempts to connect the wheelbase (and its transport).
         /// Returns true on success. The monitor does not own connection logic
         /// so the plugin can apply PID overrides and other settings.
         /// </param>
         /// <param name="logWarn">Optional warning logger (defaults to no-op).</param>
         /// <param name="logInfo">Optional info logger (defaults to no-op).</param>
         public ConnectionMonitor(
-            ISdkConnection sdk,
-            IDeviceConnection device,
+            IWheelbaseConnection wheelbase,
             Func<bool> tryConnect,
             Action<string> logWarn = null,
             Action<string> logInfo = null)
         {
-            _sdk = sdk ?? throw new ArgumentNullException(nameof(sdk));
-            _device = device ?? throw new ArgumentNullException(nameof(device));
+            _wheelbase = wheelbase ?? throw new ArgumentNullException(nameof(wheelbase));
             _tryConnect = tryConnect ?? throw new ArgumentNullException(nameof(tryConnect));
             _logWarn = logWarn ?? (_ => { });
             _logInfo = logInfo ?? (_ => { });
@@ -103,6 +104,7 @@ namespace FanaBridge.Transport
                     return false;
                 }
 
+                LastDisconnectReason = null;
                 Connected?.Invoke();
                 return true;
             }
@@ -111,11 +113,11 @@ namespace FanaBridge.Transport
             // expensive, so do it less frequently than the stream check)
             if (_frameCounter % HID_BUS_CHECK_INTERVAL == 0)
             {
-                if (!_device.IsDevicePresent)
+                if (!_wheelbase.IsDevicePresent)
                 {
                     _logWarn("FanaBridge: Device no longer on HID bus");
-                    _device.Disconnect();
-                    _sdk.Disconnect();
+                    LastDisconnectReason = "Device no longer on the HID bus (powered off or unplugged).";
+                    _wheelbase.Disconnect();
                     _connected = false;
                     _reconnectCooldown = COOLDOWN_MEDIUM;
                     Disconnected?.Invoke();
@@ -124,9 +126,11 @@ namespace FanaBridge.Transport
             }
             else if (_frameCounter % STREAM_CHECK_INTERVAL == 0)
             {
-                if (!_device.IsConnected || !_sdk.IsConnected)
+                if (!_wheelbase.IsConnected)
                 {
-                    _logWarn("FanaBridge: Device or SDK disconnected");
+                    _logWarn("FanaBridge: Wheelbase disconnected");
+                    LastDisconnectReason = "Wheelbase HID stream closed.";
+                    _wheelbase.Disconnect();
                     _connected = false;
                     _reconnectCooldown = COOLDOWN_LONG;
                     Disconnected?.Invoke();
@@ -134,27 +138,23 @@ namespace FanaBridge.Transport
                 }
             }
 
-            // Poll wheel identity (~every 0.5 s at 60 fps)
-            if (_wheelPollCooldown <= 0)
+            // Service identity every frame: drain pushed FF 08 reports and advance
+            // the settle timer. The base pushes on change, so this is cheap (a
+            // non-blocking drain) and only commits once a change has settled.
+            try
             {
-                try
-                {
-                    _sdk.PollWheelIdentity();
-                }
-                catch (Exception ex)
-                {
-                    _logWarn(
-                        $"FanaBridge: SDK poll failed, triggering reconnect: {ex.Message}");
-                    _connected = false;
-                    _reconnectCooldown = COOLDOWN_SHORT;
-                    Disconnected?.Invoke();
-                    return false;
-                }
-                _wheelPollCooldown = WHEEL_POLL_INTERVAL;
+                _wheelbase.UpdateIdentity();
             }
-            else
+            catch (Exception ex)
             {
-                _wheelPollCooldown--;
+                _logWarn(
+                    $"FanaBridge: Identity update failed, triggering reconnect: {ex.Message}");
+                LastDisconnectReason = "Identity update failed: " + ex.Message;
+                _wheelbase.Disconnect();
+                _connected = false;
+                _reconnectCooldown = COOLDOWN_SHORT;
+                Disconnected?.Invoke();
+                return false;
             }
 
             return true;
@@ -169,8 +169,7 @@ namespace FanaBridge.Transport
 
             if (_connected)
             {
-                _device.Disconnect();
-                _sdk.Disconnect();
+                _wheelbase.Disconnect();
                 _connected = false;
             }
 
@@ -178,9 +177,14 @@ namespace FanaBridge.Transport
             _connected = _tryConnect();
 
             if (_connected)
+            {
+                LastDisconnectReason = null;
                 Connected?.Invoke();
+            }
             else
+            {
                 Disconnected?.Invoke();
+            }
         }
     }
 }

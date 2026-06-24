@@ -7,7 +7,6 @@ using BA63Driver.Interfaces;
 using BA63Driver.Mapper;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
-using FanaBridge.Transport;
 
 namespace FanaBridge.Adapters
 {
@@ -17,9 +16,9 @@ namespace FanaBridge.Adapters
     /// Driven entirely by a <see cref="WheelProfile"/>'s LED list.
     /// Each frame, the driver iterates the profile's LED definitions in
     /// order (array index = SimHub logical index), resolves the color
-    /// through the mapper, and dispatches to the correct
-    /// <see cref="FanatecDevice"/> hardware method based on the LED's
-    /// <see cref="LedChannel"/>.
+    /// through the mapper, and dispatches to the correct LED encoder
+    /// (<see cref="LedEncoder"/> / <see cref="LegacyLedEncoder"/>) based on
+    /// the LED's <see cref="LedChannel"/>.
     ///
     /// SimHub physical layout (contiguous, defined by LED array order):
     ///   [0 .. RevFlagCount-1]                     Rev + Flag LEDs
@@ -44,7 +43,6 @@ namespace FanaBridge.Adapters
         private readonly PhysicalMapper _mapper;
         private readonly LedEncoder _leds;
         private readonly LegacyLedEncoder _legacyLeds;
-        private readonly IDeviceTransport _transport;
 
         // Pre-built dispatch table: for each logical LED index, the channel
         // and hardware index to write to.  Built once from the profile.
@@ -76,12 +74,11 @@ namespace FanaBridge.Adapters
         // in-flight the frame is dropped rather than blocking.
         private Task _refreshTask;
 
-        public FanatecLedDriver(WheelCapabilities caps, LedEncoder leds, LegacyLedEncoder legacyLeds, IDeviceTransport transport)
+        public FanatecLedDriver(WheelCapabilities caps, LedEncoder leds, LegacyLedEncoder legacyLeds)
         {
             _caps = caps ?? throw new ArgumentNullException(nameof(caps));
             _leds = leds ?? throw new ArgumentNullException(nameof(leds));
             _legacyLeds = legacyLeds;
-            _transport = transport ?? throw new ArgumentNullException(nameof(transport));
             _profile = caps.Profile;
 
             // Build dispatch tables from the profile
@@ -173,7 +170,7 @@ namespace FanaBridge.Adapters
         /// </summary>
         public bool SendLeds(LedDeviceState state, bool forceRefresh)
         {
-            if (!IsConnected || !_transport.IsConnected)
+            if (!IsConnected)
                 return false;
 
             // Skip unchanged frames — avoid color conversion and USB I/O

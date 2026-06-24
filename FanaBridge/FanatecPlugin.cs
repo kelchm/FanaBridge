@@ -18,15 +18,14 @@ namespace FanaBridge
     {
         /// <summary>
         /// Singleton reference so DeviceInstance wrappers can access the shared
-        /// hardware without owning their own SDK/HID connections.
+        /// hardware without owning their own HID connections.
         /// Set during Init(), cleared during End().
         /// </summary>
         public static FanatecPlugin Instance { get; private set; }
 
         public FanatecPluginSettings Settings { get; set; }
 
-        private FanatecSdkManager _sdk;
-        private FanatecDevice _device;
+        private FanatecWheelbase _wheelbase;
         private ConnectionMonitor _connectionMonitor;
         private FanatecTuningController _tuning;
         private LedEncoder _leds;
@@ -46,20 +45,61 @@ namespace FanaBridge
         /// <summary>Whether the Fanatec device is currently connected (for UI binding).</summary>
         public bool IsDeviceConnected => _connectionMonitor?.IsConnected == true;
 
+        /// <summary>
+        /// When disconnected, a short reason for it (the latest connect-attempt
+        /// failure, else the latest runtime disconnect reason); null while
+        /// connected. Surfaced on the Status row and in the diagnostics capture.
+        /// </summary>
+        public string StatusDetail =>
+            IsDeviceConnected
+                ? null
+                : (_wheelbase?.LastConnectError ?? _connectionMonitor?.LastDisconnectReason);
+
         /// <summary>Name of the connected device (for UI binding).</summary>
-        public string DeviceName => _sdk?.ProductName ?? "Not connected";
+        public string DeviceName => _wheelbase?.ProductName ?? "Not connected";
 
         /// <summary>Name of the currently detected steering wheel.</summary>
-        public string WheelName => _sdk?.WheelDisplayName ?? "Unknown";
+        public string WheelName => _wheelbase?.DisplayName ?? "Unknown";
 
         /// <summary>Current wheel capabilities (for UI binding).</summary>
-        public WheelCapabilities CurrentCapabilities => _sdk?.CurrentCapabilities ?? WheelCapabilities.None;
+        public WheelCapabilities CurrentCapabilities => _wheelbase?.CurrentCapabilities ?? WheelCapabilities.None;
 
-        /// <summary>Shared SDK manager — used by DeviceInstance wrappers to query wheel identity.</summary>
-        public FanatecSdkManager SdkManager => _sdk;
+        /// <summary>
+        /// Resolves the capabilities a specific device descriptor should use.
+        /// Returns the live, currently-active capabilities (which respect any
+        /// user override) only when the connected wheel actually matches this
+        /// <paramref name="config"/>; otherwise returns the config's own
+        /// registration capabilities. <see cref="CurrentCapabilities"/> is
+        /// global, so unrelated device instances must NOT consume it directly —
+        /// this is the single guard that prevents the connected wheel's caps
+        /// from leaking into every descriptor.
+        /// </summary>
+        public WheelCapabilities ResolveCapsFor(DeviceConfig config)
+        {
+            if (config == null)
+                return WheelCapabilities.None;
 
-        /// <summary>Shared HID device — used by DeviceInstance wrappers for hardware I/O.</summary>
-        public FanatecDevice Device => _device;
+            var wheelbase = _wheelbase;
+            var current = CurrentCapabilities;
+            if (current?.Profile != null && wheelbase != null
+                && config.MatchesAttachment(
+                    wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode))
+            {
+                return current;
+            }
+
+            return config.Capabilities ?? WheelCapabilities.None;
+        }
+
+        /// <summary>The connected wheelbase — used by DeviceInstance wrappers to query wheel identity.</summary>
+        // ARCHITECTURE: single-device assumption. When multi-device support lands
+        // (pedals/shifter/SRM), this becomes a DeviceManager owning a collection;
+        // don't add callers that bake in "exactly one base". See the device-
+        // architecture direction note (Connection / IIdentitySource / Device).
+        public FanatecWheelbase Wheelbase => _wheelbase;
+
+        /// <summary>Shared HID transport — used by DeviceInstance wrappers for hardware I/O.</summary>
+        public IDeviceTransport Transport => _wheelbase?.Transport;
 
         /// <summary>Shared LED encoder (col03) — used by DeviceInstance LED drivers and wizard.</summary>
         public LedEncoder Leds => _leds;
@@ -82,26 +122,30 @@ namespace FanaBridge
 
         public void Init(PluginManager pluginManager)
         {
-            Instance = this;
             SimHub.Logging.Current.Info("FanaBridge: Init starting");
 
             Settings = this.ReadCommonSettings<FanatecPluginSettings>(
                 "FanaBridgeSettings",
                 () => new FanatecPluginSettings());
 
-            _sdk = new FanatecSdkManager();
-            _device = new FanatecDevice();
-            _leds = new LedEncoder(_device);
-            _legacyLeds = new LegacyLedEncoder(_device);
-            _display = new DisplayEncoder(_device);
+            // The wheelbase owns the HID transport and reads the FF 08 identity
+            // report through it (no SimHub.FanatecManaged.dll). Encoders share
+            // that same transport for hardware I/O.
+            _wheelbase = new FanatecWheelbase();
+            var transport = _wheelbase.Transport;
+            _leds = new LedEncoder(transport);
+            _legacyLeds = new LegacyLedEncoder(transport);
+            _display = new DisplayEncoder(transport);
             _tuning = new FanatecTuningController(
-                _device,
+                transport,
                 msg => SimHub.Logging.Current.Warn(msg),
                 msg => SimHub.Logging.Current.Info(msg));
 
             // Wire up profile override resolution from plugin settings
-            _sdk.ProfileOverrideResolver = (matchKey) =>
+            _wheelbase.ProfileOverrideResolver = (matchKey) =>
             {
+                if (string.IsNullOrEmpty(matchKey))
+                    return null;
                 if (Settings.ProfileOverrides != null
                     && Settings.ProfileOverrides.TryGetValue(matchKey, out var overrideId))
                     return overrideId;
@@ -109,7 +153,7 @@ namespace FanaBridge
             };
 
             _connectionMonitor = new ConnectionMonitor(
-                _sdk, _device, TryConnect,
+                _wheelbase, TryConnect,
                 msg => SimHub.Logging.Current.Warn(msg),
                 msg => SimHub.Logging.Current.Info(msg));
 
@@ -125,30 +169,42 @@ namespace FanaBridge
                 StateChanged?.Invoke();
             };
 
+            // Publish the singleton only now that every shared field is
+            // constructed. DeviceInstance wrappers reach back through
+            // Instance.Wheelbase / Instance.Transport, so exposing it earlier
+            // would let them observe a half-built plugin (null Wheelbase).
+            Instance = this;
+
             // Attempt initial connection
             _connectionMonitor.TryInitialConnect();
 
             // --- Properties ---
             this.AttachDelegate("FanaBridge.Connected", () => _connectionMonitor.IsConnected);
-            this.AttachDelegate("FanaBridge.DeviceName", () => _sdk.ProductName ?? "Not connected");
-            this.AttachDelegate("FanaBridge.WheelName", () => _sdk.WheelDisplayName);
-            this.AttachDelegate("FanaBridge.WheelDetected", () => _sdk.WheelDetected);
-            this.AttachDelegate("FanaBridge.WheelType", () => (int)_sdk.SteeringWheelType);
-            this.AttachDelegate("FanaBridge.ModuleType", () => (int)_sdk.SubModuleType);
-            this.AttachDelegate("FanaBridge.Capabilities.ButtonLedCount", () => _sdk.CurrentCapabilities.ButtonLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.ButtonRgbCount", () => _sdk.CurrentCapabilities.ButtonRgbCount);
-            this.AttachDelegate("FanaBridge.Capabilities.ButtonAuxIntensityCount", () => _sdk.CurrentCapabilities.ButtonAuxIntensityCount);
-            this.AttachDelegate("FanaBridge.Capabilities.TotalLedCount", () => _sdk.CurrentCapabilities.AllLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.DisplayType", () => _sdk.CurrentCapabilities.Display.ToString());
+            this.AttachDelegate("FanaBridge.DeviceName", () => _wheelbase.ProductName ?? "Not connected");
+            this.AttachDelegate("FanaBridge.BaseName", () =>
+                _wheelbase.IsConnected ? (_wheelbase.BaseCode ?? "Unknown") : "Not connected");
+            this.AttachDelegate("FanaBridge.WheelName", () => _wheelbase.DisplayName);
+            this.AttachDelegate("FanaBridge.ModuleName", () => _wheelbase.ModuleCode ?? "None");
+            this.AttachDelegate("FanaBridge.DisplayName", () => _wheelbase.DisplayName);
+            this.AttachDelegate("FanaBridge.IsHub", () => _wheelbase.IsHub);
+            this.AttachDelegate("FanaBridge.WheelDetected", () => _wheelbase.WheelDetected);
+            this.AttachDelegate("FanaBridge.WheelCode", () => _wheelbase.WheelCode ?? "");
+            this.AttachDelegate("FanaBridge.WheelWireCode", () => (int)_wheelbase.WheelWireCode);
+            this.AttachDelegate("FanaBridge.ModuleType", () => _wheelbase.ModuleCode ?? "");
+            this.AttachDelegate("FanaBridge.Capabilities.ButtonLedCount", () => _wheelbase.CurrentCapabilities.ButtonLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.ButtonRgbCount", () => _wheelbase.CurrentCapabilities.ButtonRgbCount);
+            this.AttachDelegate("FanaBridge.Capabilities.ButtonAuxIntensityCount", () => _wheelbase.CurrentCapabilities.ButtonAuxIntensityCount);
+            this.AttachDelegate("FanaBridge.Capabilities.TotalLedCount", () => _wheelbase.CurrentCapabilities.AllLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.DisplayType", () => _wheelbase.CurrentCapabilities.Display.ToString());
 
             // --- Events ---
             this.AddEvent("DeviceConnected");
             this.AddEvent("DeviceDisconnected");
             this.AddEvent("WheelChanged");
 
-            _sdk.WheelChanged += (manager) =>
+            _wheelbase.WheelChanged += (manager) =>
             {
-                SimHub.Logging.Current.Info("FanaBridge: Wheel changed to " + manager.WheelDisplayName);
+                SimHub.Logging.Current.Info("FanaBridge: Wheel changed to " + manager.DisplayName);
 
                 // The physical rim just changed — firmware resets LED state
                 // but our dirty-tracking arrays still hold the old instance's
@@ -193,8 +249,7 @@ namespace FanaBridge
                 }
             }
 
-            _sdk?.Dispose();
-            _device?.Dispose();
+            _wheelbase?.Dispose();
         }
 
         /// <summary>
@@ -205,6 +260,17 @@ namespace FanaBridge
             // ConnectionMonitor.ForceReconnect() already fires Connected/Disconnected,
             // which invoke StateChanged via the event subscriptions set up in Init().
             _connectionMonitor.ForceReconnect();
+        }
+
+        /// <summary>
+        /// Builds a read-only, GitHub-ready diagnostics snapshot of current device
+        /// detection (HID interface inventory + decoded identity + raw FF 08 frame).
+        /// Called from the settings UI's "Copy Debug Info" link. Sends nothing
+        /// to the device — it only re-enumerates the bus and formats held state.
+        /// </summary>
+        public string BuildDiagnosticsReport()
+        {
+            return DiagnosticsReport.Build(_wheelbase, IsDeviceConnected, StatusDetail, BuildIdentity.Full);
         }
 
         /// <summary>
@@ -225,29 +291,21 @@ namespace FanaBridge
         {
             try
             {
-                bool sdkConnected;
+                bool connected;
                 if (Settings.ProductIdOverride != 0)
                 {
                     SimHub.Logging.Current.Info($"FanaBridge: Using PID override 0x{Settings.ProductIdOverride:X4}");
-                    sdkConnected = _sdk.Connect(Settings.ProductIdOverride);
+                    connected = _wheelbase.Connect(Settings.ProductIdOverride);
                 }
                 else
                 {
-                    sdkConnected = _sdk.AutoConnect();
+                    connected = _wheelbase.AutoConnect();
                 }
 
-                if (!sdkConnected)
+                if (!connected)
                     return false;
 
-                bool hidConnected = _device.Connect(_sdk.ConnectedProductId);
-                if (!hidConnected)
-                {
-                    SimHub.Logging.Current.Warn("FanaBridge: SDK connected but HID open failed");
-                    _sdk.Disconnect();
-                    return false;
-                }
-
-                SimHub.Logging.Current.Info($"FanaBridge: Connected to {_sdk.ProductName} (PID 0x{_sdk.ConnectedProductId:X4})");
+                SimHub.Logging.Current.Info($"FanaBridge: Connected to {_wheelbase.ProductName} (PID 0x{_wheelbase.ConnectedProductId:X4})");
                 return true;
             }
             catch (Exception ex)

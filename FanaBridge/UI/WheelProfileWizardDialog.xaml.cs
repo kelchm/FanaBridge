@@ -11,7 +11,6 @@ using FanaBridge;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
-using FanatecManaged;
 using Microsoft.Win32;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
@@ -34,7 +33,7 @@ namespace FanaBridge.UI
     public partial class WheelProfileWizardDialog : Window
     {
         private readonly FanatecPlugin _plugin;
-        private FanatecDevice Device => _plugin.Device;
+        private IDeviceTransport Device => _plugin.Transport;
 
         // ── State model (single source of truth) ─────────────────────────
         private readonly WizardState _state = new WizardState();
@@ -71,14 +70,10 @@ namespace FanaBridge.UI
                 { WizardSection.Summary,              stepSummary },
             };
 
-            // Pre-populate identity from the SDK
-            var sdk = _plugin.SdkManager;
-            _state.WheelType = WheelProfileStore.StripWheelPrefix(
-                sdk.SteeringWheelType.ToString());
-            _state.ModuleType =
-                sdk.SubModuleType == M_FS_WHEEL_SW_MODULETYPE.FS_WHEEL_SW_MODULETYPE_UNINITIALIZED
-                    ? null
-                    : WheelProfileStore.StripModulePrefix(sdk.SubModuleType.ToString());
+            // Pre-populate identity from the wheelbase
+            var wheelbase = _plugin.Wheelbase;
+            _state.WheelType = wheelbase.WheelCode;
+            _state.ModuleType = wheelbase.ModuleCode;
 
             txtWizWheelType.Text = _state.WheelType ?? "Unknown";
             txtWizModuleType.Text = _state.ModuleType ?? "(none)";
@@ -827,6 +822,9 @@ namespace FanaBridge.UI
             else if (inputs.Count == 2)
             {
                 // Second unique input — likely an encoder
+                // TODO: This isAbsolute predicate is duplicated in OnClassifyTimerTick.
+                // Extract to a shared IsAbsoluteEncoderMode(EncoderMode?) helper so a
+                // new absolute mode can't be added to one site and missed in the other.
                 bool isAbsolute = mapping.EncoderMode == EncoderMode.Pulse ||
                                   mapping.EncoderMode == EncoderMode.Constant;
 
@@ -1265,21 +1263,22 @@ namespace FanaBridge.UI
                 // the settings UI should handle activation and override persistence.
                 WheelProfileStore.Reload();
 
-                string matchKey = profile.Match?.WheelType;
-                if (!string.IsNullOrEmpty(profile.Match?.ModuleType))
-                    matchKey += "_" + profile.Match.ModuleType;
+                string matchKey = WheelProfileStore.MakeMatchKey(
+                    profile.Match?.WheelType, profile.Match?.ModuleType);
                 if (!string.IsNullOrEmpty(matchKey))
                 {
+                    // This profile was just written to the user directory.
+                    profile.Source = ProfileSource.User;
                     _plugin.Settings.ProfileOverrides ??= new Dictionary<string, string>();
-                    string overrideKey = profile.Id + ":" + ProfileSource.User;
-                    _plugin.Settings.ProfileOverrides[matchKey] = overrideKey;
+                    _plugin.Settings.ProfileOverrides[matchKey] =
+                        WheelProfileStore.MakeOverrideKey(profile);
                     _plugin.SaveSettings();
                 }
 
                 // Re-resolve with the new override active.
                 // The settings UI handles restart prompting via UpdateRestartNotice()
                 // after this dialog closes.
-                _plugin.SdkManager.RefreshCapabilities();
+                _plugin.Wheelbase?.RefreshCapabilities();
 
                 DialogResult = true;
                 Close();

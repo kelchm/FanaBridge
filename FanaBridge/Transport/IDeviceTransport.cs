@@ -4,7 +4,7 @@ namespace FanaBridge.Transport
 {
     /// <summary>
     /// Low-level HID transport abstraction for all protocol encoders
-    /// (LEDs, display, tuning, etc.). Implemented by <see cref="FanatecDevice"/>.
+    /// (LEDs, display, tuning, etc.). Implemented by <see cref="FanatecTransport"/>.
     ///
     /// Individual sends are thread-safe — callers do not need to hold any lock
     /// for single-report operations. For multi-report atomic sequences, use
@@ -44,7 +44,8 @@ namespace FanaBridge.Transport
         /// Acquires exclusive access to the transport for multi-report
         /// atomic sequences (e.g. staged LED commit, tuning read-modify-write).
         /// Dispose the returned token to release.
-        /// Re-entrant: sends made inside a batch skip re-acquiring the lock.
+        /// Re-entrant: sends made inside a batch on the same thread re-acquire
+        /// the lock recursively, so they never block or deadlock.
         /// </summary>
         IDisposable BeginBatch();
     }

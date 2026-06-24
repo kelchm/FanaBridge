@@ -2,6 +2,8 @@
 
 Fanatec wheelbases communicate with the host PC over USB HID (Human Interface Device). All commands and data flow through HID reports organized into separate **collections**, each with its own endpoint, report size, and purpose.
 
+> **Status — how to read this.** This reference describes the Fanatec HID protocol as pieced together from observation and experimentation — **not an official specification**. Some details are confirmed against hardware; others are inferred and may be incomplete or wrong.
+
 ## Table of Contents
 
 - [USB Identifiers](#usb-identifiers)
@@ -9,18 +11,21 @@ Fanatec wheelbases communicate with the host PC over USB HID (Human Interface De
 - [Report Framing](#report-framing)
 - [Collection Routing](#collection-routing)
 - [col01 Reference](#col01-reference)
-  - [Direct Subcmds](#direct-subcmds)
+  - [0x09 — General Control](#0x09--general-control)
     - [0x02 — Rev LED Global On/Off](#0x02--rev-led-global-onoff)
     - [0x06 — RevStripe Enable/Disable](#0x06--revstripe-enabledisable)
     - [0x07 — Rev LED Blink Enable](#0x07--rev-led-blink-enable)
     - [0x08 — Rev LED Data (Bitmask / Color)](#0x08--rev-led-data-bitmask--color)
     - [0x09 / 0x0A — RGB Rev LED Data (Legacy)](#0x09--0x0a--rgb-rev-led-data-legacy)
     - [0x0C — Flag LED Data (Legacy)](#0x0c--flag-led-data-legacy)
-  - [Group 0x01 Subcmds](#group-0x01-subcmds)
-    - [0x02 — 7-Segment Display Data](#0x02--7-segment-display-data)
-    - [0x06 — Report Trigger / ACK](#0x06--report-trigger--ack)
-    - [0x17 — Set Clutch Bite Point](#0x17--set-clutch-bite-point)
-    - [0x18 — Display Ownership](#0x18--display-ownership)
+    - [0x01 — Extended Operations (Group)](#0x01--extended-operations-group)
+      - [0x02 — 7-Segment Display Data](#0x02--7-segment-display-data)
+      - [0x06 — Report Trigger / ACK](#0x06--report-trigger--ack)
+      - [0x17 — Set Clutch Bite Point](#0x17--set-clutch-bite-point)
+      - [0x18 — Display Ownership](#0x18--display-ownership)
+  - [0x13 / 0x14 — Base Rev LEDs](#0x13--0x14--base-rev-leds)
+    - [0x13 — Base Rev LED Data](#0x13--base-rev-led-data)
+    - [0x14 — Base Rev LED Enable](#0x14--base-rev-led-enable)
 - [col03 Reference](#col03-reference)
   - [0x01 — LED Control](#0x01--led-control)
     - [0x00 — Rev LEDs](#0x00--rev-leds)
@@ -40,10 +45,20 @@ Fanatec wheelbases communicate with the host PC over USB HID (Human Interface De
     - [Read-Modify-Write Pattern](#read-modify-write-pattern)
     - [WRITE Report Byte Map](#write-report-byte-map)
     - [Live Change Notifications](#live-change-notifications)
+    - [CBP in Tuning Context](#cbp-in-tuning-context)
   - [0x05 — ITM Display](#0x05--itm-display)
     - [0x01 — ValueUpdate](#0x01--valueupdate)
     - [0x03 — ParamDefs](#0x03--paramdefs)
     - [0x04 — PageSet / Keepalive / Config](#0x04--pageset--keepalive--config)
+    - [Slot & Handle Mapping (Raw HID)](#slot--handle-mapping-raw-hid)
+    - [Control Model: Official Software vs Raw HID](#control-model-official-software-vs-raw-hid)
+    - [Timing & Rate Limiting](#timing--rate-limiting)
+    - [Automatic Page Changes (Alerts)](#automatic-page-changes-alerts)
+  - [0x08 — System Report (Identity)](#0x08--system-report-identity)
+    - [Enable / Trigger](#enable--trigger)
+    - [Report Layout](#report-layout-device--host)
+    - [Identity codes](#identity-codes)
+    - [Engage Sequence](#engage-sequence)
 - [Cross-Reference Topics](#cross-reference-topics)
   - [LEDs](#leds)
   - [Displays](#displays)
@@ -100,14 +115,14 @@ Byte:  [0]     [1]   [2]   [3]      [4]      [5]   [6]   [7]
        ReportID 0xF8  0x09  subcmd   data...
 ```
 
-The report ID byte (`0x00` or `0x01`) is device-specific and assigned during initialization: use `0x01` on col03-capable devices and `0x00` on col01-only devices. The constant prefix `0xF8 0x09` identifies this as a Fanatec control command.
+The report ID byte (`0x00` or `0x01`) is device-specific and assigned during initialization: use `0x01` on col03-capable devices and `0x00` on col01-only devices. The `0xF8` byte marks a Fanatec control command, and the bytes after it address it in tiers:
 
-**Subcmd groups:**
-
-Some subcmds use a two-level scheme where byte[3] selects a group and byte[4] selects the operation within that group:
+- **byte[2] — command class.** `0x09` for most LED/display/config commands; a few dedicated classes such as `0x13`/`0x14` ([base rev LEDs](#0x13--0x14--base-rev-leds)).
+- **byte[3] — subcommand** (within class `0x09`). Most subcommands are complete here — e.g. `0x08` = rev LED data.
+- **byte[4] — operation.** One subcommand, `0x01`, is a *group*: rather than acting on its own it selects a further set of operations in byte[4].
 
 ```
-[ReportID, 0xF8, 0x09, 0x01, subcmd, data...]    ← group 0x01
+[ReportID, 0xF8, 0x09, 0x01, operation, data...]    ← group 0x01
 ```
 
 ### col03 Reports
@@ -127,6 +142,7 @@ The **command class** (byte[1]) determines the protocol domain:
 | `0x02` | [ITM enable](#0x02--itm-enable) |
 | `0x03` | [Tuning menu](#0x03--tuning-menu) |
 | `0x05` | [ITM display](#0x05--itm-display) |
+| `0x08` | [System report (identity)](#0x08--system-report-identity) |
 
 ## Collection Routing
 
@@ -151,11 +167,11 @@ Whether col03 availability is determined by the **wheelbase** (always present on
 
 ## col01 Reference
 
-All col01 commands use the `[ReportID, 0xF8, 0x09, ...]` framing described in [Report Framing](#col01-reports).
+Most col01 commands use the `[ReportID, 0xF8, 0x09, ...]` framing described in [Report Framing](#col01-reports). The sections below are grouped by **command class** (byte[2]): the general `0x09` class, then the [base rev-LED](#0x13--0x14--base-rev-leds) classes `0x13`/`0x14`.
 
-### Direct Subcmds
+### 0x09 — General Control
 
-Direct subcmds are identified by byte[3] of the report.
+The catch-all control class — rev and flag LEDs, displays, and configuration. The **subcommand** sits in byte[3]; most subcommands are complete there (listed below). The exception is subcommand `0x01`, a *group* whose [operations](#0x01--extended-operations-group) are selected by byte[4].
 
 #### 0x02 — Rev LED Global On/Off
 
@@ -171,7 +187,7 @@ Enables or disables the rev LED strip globally.
 
 #### 0x06 — RevStripe Enable/Disable
 
-Enables or disables the RevStripe LED strip. Found on three rims: CSLRP1X, CSLRP1PS4, CSLRWRC.
+Enables or disables the RevStripe LED strip. Found on three rims: CSLESWP1X, CSLESWP1PS4, CSLESWWRC.
 
 **Inverted semantics** — `0x00` means ON:
 
@@ -222,7 +238,7 @@ Example: All 9 LEDs on
   data_lo = 0xFF, data_hi = 0x01   (bitmask: 0b111111111)
 ```
 
-**RevStripe rims** (CSLRP1X, CSLRP1PS4, CSLRWRC): [RGB333](#rgb333-color-encoding) color value controlling the entire strip as one unit:
+**RevStripe rims** (CSLESWP1X, CSLESWP1PS4, CSLESWWRC): [RGB333](#rgb333-color-encoding) color value controlling the entire strip as one unit:
 
 ```
 Example: Red     → data_lo = 0x00, data_hi = 0x38
@@ -246,15 +262,15 @@ Sets flag LED color via legacy protocol. Only a subset of wheels have flag LEDs 
 [ReportID, 0xF8, 0x09, 0x0C, flag_color, dirty_flag, 0x00, 0x00]
 ```
 
-### Group 0x01 Subcmds
+#### 0x01 — Extended Operations (Group)
 
-Group 0x01 subcmds use byte[3] = `0x01` with the operation in byte[4]:
+Subcommand `0x01` doesn't act on its own — byte[4] selects the operation:
 
 ```
-[ReportID, 0xF8, 0x09, 0x01, subcmd, data...]
+[ReportID, 0xF8, 0x09, 0x01, operation, data...]
 ```
 
-#### 0x02 — 7-Segment Display Data
+##### 0x02 — 7-Segment Display Data
 
 Controls the 3-digit display found on many Fanatec wheels, hubs, and button modules. Typically used to show gear, speed, or short text strings.
 
@@ -312,9 +328,9 @@ Display Text "Hi":   [RID, F8, 09, 01, 02, 76, 06, 00]   (H, I, blank)
 Clear Display:       [RID, F8, 09, 01, 02, 00, 00, 00]
 ```
 
-#### 0x06 — Report Trigger / ACK
+##### 0x06 — Report Trigger / ACK
 
-General-purpose notification mechanism used to trigger firmware actions. Sent as an ON/OFF pair:
+A **general, SubId-parameterized report trigger** — **not** a button-module command. A single firmware command requests that the device emit a class of report selected by the SubId byte; button-module refresh is only one of its uses (distinct, non-module purposes such as clutch-bite-point and legacy identity ride the identical `F8 09 01 06` frame). Sent as an ON/OFF pair:
 
 ```
 Trigger ON:  [ReportID, 0xF8, 0x09, 0x01, 0x06, 0xFF, <SubId>, 0x00]
@@ -332,15 +348,18 @@ Trigger OFF: [ReportID, 0xF8, 0x09, 0x01, 0x06, 0x00, 0x00,    0x00]
 
 | SubId | Purpose | Used By |
 |-------|---------|---------|
-| 0 | Cancel / off | Always sent as the second half of a pair |
-| 1 | Button module detection refresh | BME refresh operations |
+| 0 | Plain "emit USB input report" / the OFF (deassert) half of every pair | input-report trigger; trailing OFF of every ON/OFF pulse |
+| 1 | Button module detection refresh | BME refresh — re-scan the attached button module |
 | 2 | **CBP data request / notification** | **[Set CBP](#0x17--set-clutch-bite-point) / Get CBP** |
+| 3 | Hardware-identity report trigger | **legacy** stack only; superseded by the `FF 08` system report on modern col03 bases |
 
 SubId=2 tells the firmware either "I just set CBP" (after Set) or "please report the current CBP" (before Get). The firmware responds with a HID input report that the input handler processes.
 
+> SubId selects which report the device returns; the same `0x06` frame carries all of them, so the mechanism is general rather than module-specific. From what we've observed, the SubId is understood to select: `1` = re-detect an attached button module, `2` = clutch bite point (paired with [Set CBP](#0x17--set-clutch-bite-point)), `3` = a legacy hardware-identity report (superseded by the [System Report](#0x08--system-report-identity) on modern col03 bases). A `SubId = 4` is also emitted during a modern base's startup sequence; its effect is currently unknown.
+
 The correct sequence is **one ON/OFF pair** followed by a **100ms sleep**. The sleep gives the firmware time to process the trigger and send its response.
 
-#### 0x17 — Set Clutch Bite Point
+##### 0x17 — Set Clutch Bite Point
 
 Sets the clutch bite point (CBP) engagement threshold for analog clutch paddles.
 
@@ -383,7 +402,7 @@ The 100ms delay is necessary because the firmware sends a response via the input
 
 <!-- TODO: Document exact firmware display hold duration and recommended host-side delay/backoff strategy -->
 
-#### 0x18 — Display Ownership
+##### 0x18 — Display Ownership
 
 On certain OLED-equipped devices (currently only the PBME), the host can explicitly take or release control of the display. The official software checks whether the device has an OLED before sending this command.
 
@@ -400,6 +419,35 @@ Release to firmware:  [RID, F8, 09, 01, 18, 01, 00, 00]
 This is important during operations where the firmware needs to show its own content (e.g., [CBP adjustment](#0x17--set-clutch-bite-point), tuning menu navigation). The host should release control, wait for the operation to complete, then reclaim control.
 
 For non-OLED devices (including LED 7-segment displays and the PBMR's small OLED), this command is a no-op. Display conflict management on these devices must be handled by the host software.
+
+### 0x13 / 0x14 — Base Rev LEDs
+
+Some older wheelbases (e.g., CSL Elite Wheel Base) have a resident 9-LED rev strip on the base unit — separate from any rev indicator on the connected wheel — driven by its own command class at byte[2] = `0x13`.
+
+**The base and wheel share the rev-LED channel, then split.** At power-on both the base strip and the wheel's rev LEDs follow the legacy [`0x08`](#0x08--rev-led-data-bitmask--color) writes, gated by the shared [`0x02`](#0x02--rev-led-global-onoff) enable. The first `0x13` write moves the base onto its own channel; afterward `0x13` drives the base and `0x08` drives only the wheel — independently, until power-cycle. That's how an RPM display can run on the base strip and a [RevStripe](#0x06--revstripe-enabledisable) wheel at once (enable with `0x02`, drive the wheel via `0x06` + `0x08`, then the base via `0x13`).
+
+#### 0x13 — Base Rev LED Data
+
+Sets which of the base strip's LEDs are lit:
+
+```
+[ReportID, 0xF8, 0x13, bits_0_7, bit_8, 0x00, 0x00, 0x00]
+```
+
+9-LED bitmask in **natural** bit order — byte[3] = LEDs 0–7 (bit N → LED N), byte[4] bit 0 = LED 8.
+
+> **Different packing from [`0x08`](#0x08--rev-led-data-bitmask--color).** `0x13` is natural order (bit 0 = LED 0); the wheel's `0x08` bitmask is *reversed* (`data_hi` bits 7..0 = LEDs 1..8). Encode each target with its own layout.
+
+#### 0x14 — Base Rev LED Enable
+
+Seen in captures alongside `0x13`; appears to enable/disable the base strip:
+
+```
+Enable:  [ReportID, 0xF8, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00]
+Disable: [ReportID, 0xF8, 0x14, 0xFF, 0x00, 0x00, 0x00, 0x00]
+```
+
+In practice you don't need it: the base is turned on by the shared [`0x02`](#0x02--rev-led-global-onoff) enable and lit by [`0x13`](#0x13--base-rev-led-data).
 
 ---
 
@@ -871,6 +919,49 @@ The official software supports automatic page switching based on telemetry event
 
 Each device has a configurable favorite page with a display duration (default 10 seconds, range 3–60 seconds). After a trigger-caused page change, the display reverts to the favorite page after the duration expires.
 
+### 0x08 — System Report (Identity)
+
+The **system report** is how a modern col03-capable wheelbase reports its identity and configuration: the connected base, the attached wheel or hub, and any button module on a module-capable hub. It is the primary way to identify connected hardware over pure HID.
+
+#### Enable / Trigger
+
+```
+Enable push-on-change:  FF 08 01 FF        (disable: FF 08 01 00)
+Trigger one report:     FF 08 02
+```
+
+After a single **enable**, the base **pushes** a fresh system report on every attachment change (wheel, hub, or module connect/disconnect) and is otherwise silent. A **trigger** requests one immediate report — used to seed the initial identity on connect. A directly-connected modern base needs no prior handshake to respond.
+
+> As far as we've observed, the system report is specific to modern col03-capable wheelbases; older col01-only wheels self-identify through their regular input report instead, and some wheel-side adapters expose col03 without implementing it. Behavior on the oldest bases is inferred, not confirmed.
+
+#### Report Layout (device → host)
+
+The base replies on col03 with a 64-byte report beginning `FF 08`. Identity-bearing fields (offsets relative to the leading `0xFF`):
+
+| Offset | Field | Description |
+|--------|-------|-------------|
+| `0x02`–`0x03` | SystemConfig | 16-bit little-endian (`byte[3] << 8 \| byte[2]`). Its only effect is selecting the firmware-version field widths: legacy (`< 6`) uses 1-byte version fields, extended (`≥ 6`) uses 4-byte blocks. It does **not** affect the identity offsets below. Every base observed reports the extended layout with `byte[3] = 0x00`; the legacy layout is inferred from the field structure, not yet observed. `byte[0x02]` is the **low byte** of this word and doubles as a [BaseType](devices.md#wheelbases) (wheelbase model) hint — but only while `byte[0x03]` is `0x00`; if a base ever set `byte[0x03]` nonzero, `byte[0x02]` would be a version low-byte, not a base code. |
+| `0x18` | WheelCode | Attached wheel or hub, as a single-byte code. `0x00` = nothing attached; `0xFF` = `EXT_INFO`, a reserved escape for devices that report identity through extended fields instead. Code → device: see [devices.md](devices.md). |
+| `0x1F` | Module | Button-module presence — meaningful only when a **module-capable hub** is attached (not all hubs accept modules): `0x00` = none, `0x01` = PBME, `0x02` = PBMR. |
+
+The `WheelCode` (`0x18`) and `Module` (`0x1F`) bytes sit at fixed offsets, outside the firmware-version fields and read independently of `SystemConfig`, so they decode identically on either layout. Remaining offsets carry firmware-version fields (widths set by `SystemConfig`) and transient status bytes that are **not** part of identity and may differ between consecutive reports.
+
+#### Identity codes
+
+The numeric codes above map to specific hardware. The wheel/hub code (`0x18`) is a single byte, with `0xFF` reserved as the `EXT_INFO` escape, so treat the published list as the **currently-known set, not a closed enumeration**. A code that isn't in the known set is not a protocol error: a consumer should fall back to a generic identity and continue rather than reject the report. The wheel/hub and module codes are the reliable identity signals here; the BaseType hint (`byte[0x02]`) is best treated as advisory, since it is only valid while `byte[0x03]` is `0x00` (see the row above). The complete code → device tables (BaseType, wheel/hub codes, modules, and which hubs accept a module) live in **[devices.md](devices.md)**.
+
+> **Worked example.** `FF 08 0C 00 00 … 0C … 02 …` → BaseType `0x0C`, WheelCode `0x0C`, Module `0x02` = a ClubSport DD+ base with a Podium Hub and a Podium Button Module Rally attached.
+
+#### Engage Sequence
+
+To bring a modern base online for identity, the host:
+
+1. **Enable** the system report: `FF 08 01 FF`
+2. **Trigger** one report to seed initial state: `FF 08 02`
+3. **Read** col03 and scan the first bytes for the `FF 08` signature; decode BaseType / WheelCode / Module.
+
+Thereafter, attachment changes arrive as pushed `FF 08` reports — no repeated triggering is needed (re-enable periodically to keep the subscription alive). To force a re-detect of a button module hot-attached to an already-connected hub, send the [0x06 Report Trigger](#0x06--report-trigger--ack) with **SubId = 1**. A modern wheelbase needs no acquire or host-presence handshake before responding.
+
 ---
 
 ## Cross-Reference Topics
@@ -1201,11 +1292,12 @@ ITM display support depends on the wheelbase, steering wheel, and button module 
 
 Only these steering wheels report APM (Advanced Paddle Mode) via the tuning menu:
 
-| ID | Wheel |
-|----|-------|
-| 9 | CSLRMCL |
-| 10 | CSWRFORMV2 |
-| 11 | CSLRMCLV1_1 |
-| 25 | CSLSWGT3 |
+| Code |
+|------|
+| CSLESWMCL |
+| CSSWFORMV2 |
+| CSLESWMCLV2 |
+| CSLSWGT3 |
+| CSSWFORMV3 |
 
 For all other wheels, APM is ignored (always zero).
