@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.4.0 - Unreleased
+## v0.4.0 - 2026-07-01
 
 ### Changed
 - **Device detection is now handled entirely by FanaBridge over HID** — wheel, hub, and module identity is read straight from the wheelbase (the col03 `FF 08` system report), dropping the dependency on SimHub's Fanatec SDK integration (`SimHub.FanatecManaged.dll`).
