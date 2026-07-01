@@ -8,7 +8,7 @@
 ### Added
 - **Control Mapper Integration (experimental)**: SimHub's Control Mapper can keep separate button mappings per wheel, but only for wheels its built-in support recognizes. FanaBridge now supplies its own wheel identity to Control Mapper, extending that per-rim recognition to Fanatec wheels and bases SimHub can't identify on its own (Podium DD, newer wheels). On by default, but a no-op unless Control Mapper's own "Recognize Individual Wheels" setting is also on (the settings page flags it when it isn't); SimHub still wins for wheels it already recognizes, so existing mappings are untouched.
 - **Device Status** now shows the connected hardware as a `wheelbase › wheel/hub › module` chain with friendly names and a live connection indicator; unrecognized hardware shows its raw identity byte.
-- **Copy Debug Info** copies a read-only report (HID interfaces, decoded identity, and the raw `FF 08` bytes) to the clipboard for bug reports — no need to close SimHub or run a separate tool.
+- **Copy Debug Info** copies a read-only report (HID interfaces, decoded identity, the raw `FF 08` bytes, the DirectInput controllers Control Mapper sees, and a Control Mapper resolution snapshot) to the clipboard for bug reports — no need to close SimHub or run a separate tool.
 - A disconnected device now shows *why* (no device found, interface in use, lost connection, …).
 
 ### Fixed
