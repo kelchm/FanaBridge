@@ -75,10 +75,12 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Non-blocking drain of pushed reports; every FF 08 report found is passed
-        /// to <paramref name="onReading"/>. Returns the number delivered.
+        /// Non-blocking drain of pushed reports. Every FF 08 identity report is passed
+        /// to <paramref name="onReading"/>; if <paramref name="onItmReport"/> is provided,
+        /// every FF 05 ITM report (the firmware's subscription pushes) is passed to it as
+        /// a private copy. Returns the number of identity readings delivered.
         /// </summary>
-        public int DrainPushes(IDeviceTransport io, Action<Reading> onReading)
+        public int DrainPushes(IDeviceTransport io, Action<Reading> onReading, Action<byte[]> onItmReport = null)
         {
             int count = 0;
             using (io.BeginBatch())
@@ -90,13 +92,32 @@ namespace FanaBridge.Protocol
                     if (n <= 0) break;
 
                     int sig = FindSignature(buf, n);
-                    if (sig < 0) continue; // axis/other report — not FF 08
+                    if (sig >= 0)
+                    {
+                        onReading(Decode(buf, sig, n));
+                        count++;
+                        continue;
+                    }
 
-                    onReading(Decode(buf, sig, n));
-                    count++;
+                    if (onItmReport != null && IsItmReport(buf, n))
+                    {
+                        var copy = new byte[n];
+                        Array.Copy(buf, copy, n);
+                        onItmReport(copy);
+                    }
                 }
             }
             return count;
+        }
+
+        // True if the report carries the col03 ITM signature (FF 05), tolerating a
+        // leading report-ID byte. The firmware pushes these on ITM page changes.
+        private static bool IsItmReport(byte[] buf, int len)
+        {
+            for (int i = 0; i <= 2 && i + 1 < len; i++)
+                if (buf[i] == 0xFF && buf[i + 1] == 0x05)
+                    return true;
+            return false;
         }
 
         /// <summary>
