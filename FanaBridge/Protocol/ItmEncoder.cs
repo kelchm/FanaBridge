@@ -60,7 +60,7 @@ namespace FanaBridge.Protocol
 
         /// <summary>A signed 16-bit value (e.g. SPEED).</summary>
         public static ItmValue Int16(byte handle, ushort paramId, short value)
-            => new ItmValue(handle, paramId, 2, (ushort)value);
+            => new ItmValue(handle, paramId, 2, unchecked((ushort)value));
 
         /// <summary>A signed 32-bit value (e.g. RPM, ERS_LEVEL).</summary>
         public static ItmValue Int32(byte handle, ushort paramId, int value)
@@ -288,6 +288,12 @@ namespace FanaBridge.Protocol
             if (defs == null || defs.Count == 0 || defs.Count > MaxParams)
                 return false;
 
+            // Validate the whole list before touching the transport — otherwise an invalid
+            // entry after a report boundary would return false with a partial batch sent.
+            for (int j = 0; j < defs.Count; j++)
+                if ((defs[j].Suffix?.Length ?? 0) > MaxSuffixLength)
+                    return false;
+
             using (_transport.BeginBatch())
             {
                 bool ok = true;
@@ -300,8 +306,6 @@ namespace FanaBridge.Protocol
                     {
                         var d = defs[i];
                         int suffixLen = d.Suffix?.Length ?? 0;
-                        if (suffixLen > MaxSuffixLength)
-                            return false;
 
                         int entryLen = PARAM_DEF_ENTRY_HEADER + suffixLen;
                         // A fresh report can always hold one entry (suffix bounded above);
@@ -338,6 +342,13 @@ namespace FanaBridge.Protocol
             if (values == null || values.Count == 0 || values.Count > MaxParams)
                 return false;
 
+            // Validate every entry before touching the transport — otherwise a bad size
+            // after a report boundary would return false with a partial batch sent.
+            // (1/2/4 for numeric values; 3 occurs for ASCII text, e.g. a 3-char map.)
+            for (int j = 0; j < values.Count; j++)
+                if (values[j].Size < 1 || values[j].Size > 4)
+                    return false;
+
             using (_transport.BeginBatch())
             {
                 bool ok = true;
@@ -349,9 +360,6 @@ namespace FanaBridge.Protocol
                     for (; i < values.Count; i++)
                     {
                         var v = values[i];
-                        // 1/2/4 for numeric values; 3 occurs for ASCII text (e.g. a 3-char map).
-                        if (v.Size < 1 || v.Size > 4)
-                            return false;
 
                         int entryLen = VALUE_ENTRY_HEADER + v.Size;
                         if (pos + entryLen > REPORT_LENGTH)

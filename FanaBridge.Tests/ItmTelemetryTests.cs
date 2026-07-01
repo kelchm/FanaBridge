@@ -140,6 +140,26 @@ namespace FanaBridge.Tests
             Assert.Equal(82.25f, AsF32(v[5]), 3);
         }
 
+        [Fact]
+        public void NonFiniteTelemetry_EncodesAsZero()
+        {
+            // NaN/Infinity must not slip through the clamp helpers into an undefined cast
+            // (which could send a garbage value to the firmware).
+            var s = NewStatus();
+            Set(s, "SpeedLocal", double.NaN);
+            Set(s, "OilTemperature", double.PositiveInfinity);
+            Set(s, "ERSPercent", double.NaN);
+
+            var lap = ItmTelemetry.BuildValues(ItmPage.LapInfo, Wrap(s));
+            Assert.Equal((short)0, AsI16(lap[0]));   // ClampSpeed(NaN) -> 0
+
+            Assert.True(ItmTelemetry.TryEncodeParam(ItmParam.OilTemp, 5, Wrap(s), out var oil));
+            Assert.Equal((byte)0, AsU8(oil));        // ClampByte(Inf) -> 0
+
+            Assert.True(ItmTelemetry.TryEncodeParam(ItmParam.ErsLevel, 3, Wrap(s), out var ers));
+            Assert.Equal(0, AsI32(ers));             // SafeRound(NaN) -> 0
+        }
+
         [Theory]
         [InlineData("N", 0)]
         [InlineData("", 0)]

@@ -138,6 +138,8 @@ namespace FanaBridge.Protocol
         // SpeedLocal honours the user's km/h vs mph choice, matching the 7-seg driver.
         private static readonly Field SpeedField = I16(ItmParam.Speed, d => ClampSpeed(d.SpeedLocal));
         private static readonly Field GearField = U8(ItmParam.Gear, d => EncodeGear(d.Gear));
+        // Shared: appears on both the Lap Info and Lap Times pages.
+        private static readonly Field LastLapTimeField = F32(ItmParam.LastLapTime, d => Seconds(d.LastLapTime));
 
         // ── Page layouts ─────────────────────────────────────────────────
         private static readonly Field[] LapInfo =
@@ -147,7 +149,7 @@ namespace FanaBridge.Protocol
             U8(ItmParam.Lap, d => ClampByte(d.CurrentLap)),
             U8(ItmParam.Position, d => ClampByte(d.Position)),
             F32(ItmParam.LapTime, d => Seconds(d.CurrentLapTime)),
-            F32(ItmParam.LastLapTime, d => Seconds(d.LastLapTime)),
+            LastLapTimeField,
         };
 
         private static readonly Field[] FuelErsDrs =
@@ -155,7 +157,7 @@ namespace FanaBridge.Protocol
             SpeedField,
             GearField,
             F32(ItmParam.Fuel, d => (float)d.Fuel),
-            I32(ItmParam.ErsLevel, d => (int)Math.Round(d.ERSPercent)),
+            I32(ItmParam.ErsLevel, d => SafeRound(d.ERSPercent)),
             U8(ItmParam.DrsZone, d => (byte)(d.DRSAvailable != 0 ? 1 : 0)),
             U8(ItmParam.DrsActive, d => (byte)(d.DRSEnabled != 0 ? 1 : 0)),
             F32(ItmParam.DeltaOwnBest, d => (float)(d.DeltaToSessionBest ?? 0.0)),
@@ -181,7 +183,7 @@ namespace FanaBridge.Protocol
         {
             SpeedField,
             GearField,
-            F32(ItmParam.LastLapTime, d => Seconds(d.LastLapTime)),
+            LastLapTimeField,
             F32(ItmParam.BestLapTime, d => Seconds(d.BestLapTime)),
             // Car ahead is shown as a negative gap (you're behind them); car behind positive.
             F32(ItmParam.CarAhead, d => -NearestGap(d.OpponentsAheadOnTrack)),
@@ -404,9 +406,16 @@ namespace FanaBridge.Protocol
             return best == double.MaxValue ? 0f : (float)best;
         }
 
+        // Round a possibly non-finite value to int, mapping NaN/Infinity to 0. A NaN
+        // would otherwise slip through range comparisons (all false) into an undefined
+        // cast — the same firmware-safety concern BrakeBiasTenths guards against.
+        private static int SafeRound(double value)
+            => double.IsNaN(value) || double.IsInfinity(value) ? 0 : (int)Math.Round(value);
+
         // Speed is non-negative; clamp to [0, Int16 max] (the SPEED param is Int16).
         private static short ClampSpeed(double value)
         {
+            if (double.IsNaN(value) || double.IsInfinity(value)) return 0;
             double v = Math.Round(value);
             if (v < 0) return 0;
             if (v > short.MaxValue) return short.MaxValue;
@@ -415,6 +424,7 @@ namespace FanaBridge.Protocol
 
         private static byte ClampByte(double value)
         {
+            if (double.IsNaN(value) || double.IsInfinity(value)) return 0;
             double v = Math.Round(value);
             if (v < 0) return 0;
             if (v > 255) return 255;

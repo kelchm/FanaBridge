@@ -265,6 +265,10 @@ namespace FanaBridge.Adapters
                 _displayManager?.Clear();
                 _itmDisplay?.Stop();
                 _itmWasRunning = false;
+                // Reset one-shot latches so a reconnect starts clean: errors can log again
+                // and the legacy page can re-blank when the mode is "None".
+                _itmErrorLogged = false;
+                _legacyBlanked = false;
             }
 
             _wasConnected = isConnected;
