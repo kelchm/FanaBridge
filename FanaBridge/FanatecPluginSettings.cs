@@ -44,11 +44,13 @@ namespace FanaBridge
         /// Experimental Control Mapper integration: feeds FanaBridge's FF 08 wheel
         /// identity into SimHub's Control Mapper so it can tell Fanatec rims apart —
         /// including wheels/bases its built-in support can't recognize (Podium DD, newer
-        /// wheels). Off by default; takes effect live (no restart) and only differentiates
-        /// rims while Control Mapper's own "Recognize Individual Wheels" toggle is on.
-        /// Gap-filler: SimHub wins for any wheel it already recognizes, so existing
-        /// mappings are never disturbed. See <see cref="Adapters.ControlMapperBridge"/>.
+        /// wheels). On by default; takes effect live (no restart) and only differentiates
+        /// rims while Control Mapper's own "Recognize Individual Wheels" toggle is on
+        /// (surfaced in the settings UI when it isn't). Gap-filler: SimHub wins for any
+        /// wheel it already recognizes, so existing mappings are never disturbed, and it's
+        /// a no-op unless the user has opted into per-rim mapping at the SimHub level. See
+        /// <see cref="Adapters.ControlMapperBridge"/>.
         /// </summary>
-        public bool EnableControlMapperIntegration { get; set; } = false;
+        public bool EnableControlMapperIntegration { get; set; } = true;
     }
 }
