@@ -404,23 +404,27 @@ namespace FanaBridge
         /// </summary>
         public string BuildDiagnosticsReport()
         {
-            var report = DiagnosticsReport.Build(_wheelbase, IsDeviceConnected, StatusDetail, BuildIdentity.Full);
-
-            // Append a read-only Control Mapper resolution snapshot so a user can
-            // confirm, on their own hardware, whether the stock Fanatec provider
-            // identifies their base (variant non-null => FanaBridge is masked) or
-            // not (variant null => FanaBridge fills the gap). Uses a throwaway
-            // bridge when the feature is off so the diagnostic is always available;
-            // it only reads, never registers.
+            // Build the read-only Control Mapper snapshot first so it can be embedded
+            // inside the report's code fence as a trailing feature section (not dangling
+            // after it). It lets a user confirm, on their own hardware, whether the stock
+            // Fanatec provider identifies their base (variant non-null => FanaBridge is
+            // masked) or not (variant null => FanaBridge fills the gap). Uses a throwaway
+            // bridge when the feature is off so the diagnostic is always available; it
+            // only reads, never registers.
+            string controlMapperSection;
             try
             {
                 var bridge = _controlMapperBridge ?? new FanaBridge.Adapters.ControlMapperBridge();
-                report += Environment.NewLine + bridge.DescribeResolution(PluginManager);
+                controlMapperSection = bridge.DescribeResolution(PluginManager);
             }
             catch (Exception ex)
             {
-                report += Environment.NewLine + "Control Mapper diagnostic error: " + ex.Message;
+                controlMapperSection = "Control Mapper integration (diagnostic)" + Environment.NewLine
+                    + "  diagnostic error: " + ex.Message;
             }
+
+            var report = DiagnosticsReport.Build(
+                _wheelbase, IsDeviceConnected, StatusDetail, BuildIdentity.Full, controlMapperSection);
 
             return report;
         }

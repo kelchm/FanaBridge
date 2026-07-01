@@ -360,8 +360,7 @@ namespace FanaBridge.Adapters
         {
             var sb = new StringBuilder();
             sb.AppendLine("Control Mapper integration (diagnostic)");
-            sb.AppendLine("  Mode: gap-filler — SimHub wins for any wheel it recognizes; FanaBridge");
-            sb.AppendLine("        only supplies an identity where SimHub returns nothing.");
+            sb.AppendLine("  Mode: gap-filler — SimHub wins where it recognizes a wheel; FanaBridge fills the rest.");
 
             string ours = null, friendly = null;
             try { ours = FanaBridgeVariantProvider.ComputeCurrentVariant(); } catch { }
@@ -548,12 +547,11 @@ namespace FanaBridge.Adapters
         private static string Verdict(string winner, bool winnerIsOurs)
         {
             if (string.IsNullOrEmpty(winner))
-                return "no per-rim identity right now (Recognize Individual Wheels off, or no wheel detected).";
+                return "no per-rim identity (Recognize Individual Wheels off, or no wheel detected).";
             if (winnerIsOurs)
-                return "SimHub can't identify this wheel — FanaBridge is supplying the per-rim identity \""
-                    + winner + "\". (This is where the feature helps.)";
-            return "SimHub already identifies this wheel (\"" + winner
-                + "\") — FanaBridge is standing by (gap-filler); nothing needed here.";
+                return "SimHub can't identify this wheel — FanaBridge is supplying the identity \""
+                    + winner + "\".";
+            return "SimHub already identifies this wheel (\"" + winner + "\"); FanaBridge is standing by.";
         }
 
         /// <summary>Lists the user's configured Fanatec source controllers (the ones they

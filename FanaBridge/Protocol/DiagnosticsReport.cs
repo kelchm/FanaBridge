@@ -26,7 +26,8 @@ namespace FanaBridge.Protocol
     public static class DiagnosticsReport
     {
         public static string Build(
-            FanatecWheelbase wheelbase, bool connected, string statusDetail, string buildInfo)
+            FanatecWheelbase wheelbase, bool connected, string statusDetail, string buildInfo,
+            string controlMapperSection = null)
         {
             var sb = new StringBuilder();
 
@@ -40,15 +41,28 @@ namespace FanaBridge.Protocol
             sb.AppendLine(string.Format("{0,-13}{1}", "Captured:", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") + " UTC"));
             sb.AppendLine();
 
+            // Hardware detection: raw bus inventory -> decoded identity -> raw appendix.
+            // Nothing sits above its source (identity is decoded from a col03 interface
+            // listed above it; the verbose descriptor dump trails last).
             AppendInterfaceInventory(sb);
-            sb.AppendLine();
-            AppendDirectInputControllers(sb);
             sb.AppendLine();
             AppendSystemReport(sb, wheelbase, connected, statusDetail);
             sb.AppendLine();
             AppendInputProbe(sb);
             sb.AppendLine();
             AppendReportDescriptors(sb);
+
+            // Control Mapper (feature-specific), kept together as a trailer so the
+            // hardware detection above stands on its own: what the app enumerates,
+            // then what FanaBridge feeds it. Folded INSIDE the fence (the section is
+            // passed in by the caller because it lives in the Control Mapper bridge).
+            sb.AppendLine();
+            AppendDirectInputControllers(sb);
+            if (!string.IsNullOrEmpty(controlMapperSection))
+            {
+                sb.AppendLine();
+                sb.AppendLine(controlMapperSection.TrimEnd());
+            }
 
             sb.AppendLine("```");
             return sb.ToString();
@@ -306,7 +320,7 @@ namespace FanaBridge.Protocol
         // The device's own report descriptor: every report ID, size, and collection it
         // exposes — ground truth for the col03 / report-id-0xFF question, available
         // without the wheel moving, so one capture answers it without a re-run. Verbose,
-        // so it sits at the bottom.
+        // so it sits last in the hardware-detection block.
         private static void AppendReportDescriptors(StringBuilder sb)
         {
             sb.AppendLine("HID report descriptors (raw)");
