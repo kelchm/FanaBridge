@@ -43,6 +43,14 @@ namespace FanaBridge.Adapters
         private FanatecDisplayDriver _displayManager;
         private DisplaySettings _displaySettings = new DisplaySettings();
 
+        // ITM display driver — null until a wheel with an ITM display is driven.
+        private ItmDisplayDriver _itmDisplay;
+        private bool _itmWasRunning;
+        private bool _itmErrorLogged;
+        // True once the legacy page has been blanked after switching to mode "None",
+        // so it is cleared once on the transition rather than every frame.
+        private bool _legacyBlanked;
+
         // Track connection state transitions for cleanup on disconnect.
         private bool _wasConnected;
 
@@ -115,6 +123,9 @@ namespace FanaBridge.Adapters
                 ["wheelType"] = _config.WheelCode ?? "",
                 ["moduleType"] = _config.ModuleCode ?? "",
                 ["displayMode"] = DisplaySettings.DefaultMode,
+                ["itmEnabled"] = DisplaySettings.DefaultItmEnabled,
+                ["itmShowLapTotal"] = DisplaySettings.DefaultShowLapTotal,
+                ["itmShowPositionTotal"] = DisplaySettings.DefaultShowPositionTotal,
             };
             _displaySettings = new DisplaySettings();
 
@@ -199,7 +210,8 @@ namespace FanaBridge.Adapters
 
             // Extract custom settings
             _customSettings = new JObject();
-            foreach (var key in new[] { "wheelType", "moduleType", "displayMode" })
+            foreach (var key in new[] { "wheelType", "moduleType", "displayMode", "itmEnabled",
+                                        "itmShowLapTotal", "itmShowPositionTotal" })
             {
                 if (obj[key] != null)
                     _customSettings[key] = obj[key].DeepClone();
@@ -231,7 +243,11 @@ namespace FanaBridge.Adapters
             _displaySettings = new DisplaySettings
             {
                 DisplayMode = (string)_customSettings["displayMode"] ?? DisplaySettings.DefaultMode,
+                ItmEnabled = (bool?)_customSettings["itmEnabled"] ?? DisplaySettings.DefaultItmEnabled,
+                ItmShowLapTotal = (bool?)_customSettings["itmShowLapTotal"] ?? DisplaySettings.DefaultShowLapTotal,
+                ItmShowPositionTotal = (bool?)_customSettings["itmShowPositionTotal"] ?? DisplaySettings.DefaultShowPositionTotal,
             };
+
             _displayManager?.UpdateSettings(_displaySettings);
         }
 
@@ -247,6 +263,8 @@ namespace FanaBridge.Adapters
                     "]: Lost connection");
 
                 _displayManager?.Clear();
+                _itmDisplay?.Stop();
+                _itmWasRunning = false;
             }
 
             _wasConnected = isConnected;
@@ -266,8 +284,73 @@ namespace FanaBridge.Adapters
             if (plugin.WizardActive)
                 return;
 
-            // ── Display (ITM falls back to basic 7-seg until ITM support is implemented) ──
-            if (_config.Capabilities.Display != DisplayType.None)
+            // ── Display ──────────────────────────────────────────────────
+            var displayType = _config.Capabilities.Display;
+            if (displayType == DisplayType.Itm)
+            {
+                if (_itmDisplay == null)
+                {
+                    _itmDisplay = new ItmDisplayDriver(plugin.Itm,
+                        log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
+                    SimHub.Logging.Current.Info(
+                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created ITM display driver");
+                }
+
+                // Guard the ITM/legacy display work: an exception here (firmware quirk,
+                // transport hiccup) must not skip the LED update further down this same
+                // DataUpdate call. Log the first failure, then stay quiet to avoid spam.
+                try
+                {
+                    _itmDisplay.Enabled = _displaySettings.ItmEnabled;
+                    if (_displaySettings.ItmEnabled)
+                        _itmDisplay.Start();   // idempotent — re-arms bring-up after a disconnect
+                    _itmDisplay.ShowLapTotal = _displaySettings.ItmShowLapTotal;
+                    _itmDisplay.ShowPositionTotal = _displaySettings.ItmShowPositionTotal;
+
+                    // Feed the firmware's pushed ITM subscription reports (col03-IN) to the
+                    // driver so it follows the page the wheel button selects.
+                    plugin.Wheelbase?.DrainItmReports(_itmDisplay.OnSubscriptionReport);
+
+                    _itmDisplay.Update(data);
+
+                    // Log the bring-up completing once, so hardware verification can
+                    // confirm from the SimHub log that ITM went live.
+                    if (_itmDisplay.IsRunning && !_itmWasRunning)
+                        SimHub.Logging.Current.Info(
+                            "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                            "]: ITM enabled — following firmware subscriptions");
+                    _itmWasRunning = _itmDisplay.IsRunning;
+
+                    // Optionally also drive the legacy 7-segment gear/speed over col01. On an
+                    // ITM OLED (e.g. PBME) the firmware renders this on its legacy page. This
+                    // adds col01 traffic interleaved with col03 ITM, which can destabilise the
+                    // firmware under load, so it is opt-in — the "Legacy Display Mode" dropdown,
+                    // where "None" leaves it off.
+                    if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+                    {
+                        if (_displayManager == null)
+                            _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
+                        _displayManager.Update(data);
+                        _legacyBlanked = false;
+                    }
+                    else if (_displayManager != null && !_legacyBlanked)
+                    {
+                        _displayManager.Clear();   // switched to None — blank the legacy page once
+                        _legacyBlanked = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!_itmErrorLogged)
+                    {
+                        _itmErrorLogged = true;
+                        SimHub.Logging.Current.Error(
+                            "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                            "]: ITM display update failed (LEDs unaffected): " + ex);
+                    }
+                }
+            }
+            else if (displayType != DisplayType.None)
             {
                 if (_displayManager == null)
                 {
@@ -301,6 +384,7 @@ namespace FanaBridge.Adapters
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: End called");
 
             _displayManager?.Clear();
+            _itmDisplay?.Stop();
             _ledModule?.FinalizeModule();
         }
 
@@ -333,9 +417,13 @@ namespace FanaBridge.Adapters
                 screenPanel.Bind(_displaySettings, _config.Capabilities.Display);
                 screenPanel.SettingsChanged += () =>
                 {
-                    // Sync back to JObject for persistence
+                    // Sync back to JObject for persistence.
                     _customSettings["displayMode"] = _displaySettings.DisplayMode;
+                    _customSettings["itmEnabled"] = _displaySettings.ItmEnabled;
+                    _customSettings["itmShowLapTotal"] = _displaySettings.ItmShowLapTotal;
+                    _customSettings["itmShowPositionTotal"] = _displaySettings.ItmShowPositionTotal;
                     _displayManager?.UpdateSettings(_displaySettings);
+                    // ITM driver reads _displaySettings live each frame.
                 };
 
                 yield return new DeviceSettingControl(
