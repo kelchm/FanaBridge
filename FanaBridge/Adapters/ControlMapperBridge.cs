@@ -434,6 +434,45 @@ namespace FanaBridge.Adapters
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Whether Control Mapper's "Recognize Individual Wheels" is currently on — the
+        /// setting that makes Control Mapper consult variant providers at all. When it's
+        /// off the worker Stop()s the provider list and no variant is ever requested, so
+        /// the integration is a silent no-op. Returns null when it can't be determined
+        /// (Control Mapper not loaded, or SimHub internals unavailable). Read-only: never
+        /// registers or mutates. Used by the settings UI to surface the dependency.
+        /// </summary>
+        public bool? IsRecognizeIndividualWheelsOn(object pm)
+        {
+            if (pm == null) return null;
+            try
+            {
+                lock (_sync)
+                {
+                    if (_giveUpLogged) return null;
+                    _pm = pm;
+                    if (!ResolveHandles(pm)) return null;
+                    object cm = LiveControlMapper();
+                    if (cm == null) return null;
+
+                    // Primary: read the actual setting. The property name mirrors SimHub's,
+                    // including its spelling ("Indiviual").
+                    if (GetProp(ReadSettings(cm), "RecognizeIndiviualWheels") is bool on)
+                        return on;
+
+                    // Fallback: the worker Stop()s the provider list when the setting is
+                    // off, so a present list means on and a null list means off.
+                    object rw = _rwField.GetValue(cm);
+                    object vh = rw != null ? _vhField.GetValue(rw) : null;
+                    if (vh != null && _vhLockType != null)
+                        lock (_vhLockType)
+                            return _provField.GetValue(vh) is IList;
+                    return null;
+                }
+            }
+            catch { return null; }
+        }
+
         // ---- internals -----------------------------------------------------
 
         /// <summary>Resolve all reflection handles once, purely from types.</summary>

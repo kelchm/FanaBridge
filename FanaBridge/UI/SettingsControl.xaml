@@ -181,6 +181,9 @@
                               Unchecked="ChkEnableControlMapperIntegration_Changed" />
                     <TextBlock TextWrapping="Wrap" Margin="20,4,0,0" Opacity="0.6" FontSize="11"
                                Text="Supplies FanaBridge's wheel identity to SimHub's Control Mapper, extending its per-rim recognition to Fanatec wheels and bases SimHub can't identify on its own (Podium DD, newer wheels). Requires Control Mapper's &quot;Recognize Individual Wheels&quot; setting." />
+                    <TextBlock x:Name="txtControlMapperStatus"
+                               TextWrapping="Wrap" Margin="20,4,0,0" FontSize="11"
+                               Visibility="Collapsed" />
                 </StackPanel>
             </styles:SHSection>
 

@@ -222,6 +222,29 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void IsRecognizeIndividualWheelsOn_ReflectsTheSetting()
+        {
+            var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
+            var cm = (IFakeControlMapper)pm.Plugin;
+
+            cm.Settings.RecognizeIndiviualWheels = true;
+            Assert.True(bridge.IsRecognizeIndividualWheelsOn(pm));
+
+            cm.Settings.RecognizeIndiviualWheels = false;
+            Assert.False(bridge.IsRecognizeIndividualWheelsOn(pm));
+        }
+
+        [Fact]
+        public void IsRecognizeIndividualWheelsOn_ControlMapperNotLoaded_ReturnsNull()
+        {
+            var pm = new FakePluginManager(null); // GetPlugin<T>() returns null
+            var bridge = new ControlMapperBridge();
+
+            Assert.Null(bridge.IsRecognizeIndividualWheelsOn(pm));
+            Assert.False(bridge.IsGivenUp);
+        }
+
+        [Fact]
         public void DescribeResolution_ControlMapperNotLoaded_DoesNotThrow()
         {
             var pm = new FakePluginManager(null); // GetPlugin<T>() returns null
@@ -351,6 +374,9 @@ namespace FanaBridge.Tests.CmFakes
             = new List<FakeControllerDescription>();
         public List<FakeControllerSourceMapping> ControllerMappings { get; }
             = new List<FakeControllerSourceMapping>();
+        /// <summary>Mirrors ControlMapperPluginSettings.RecognizeIndiviualWheels — SimHub's
+        /// spelling — so the bridge's RIW read is covered by the exact property name.</summary>
+        public bool RecognizeIndiviualWheels { get; set; } = true;
     }
 }
 

@@ -162,6 +162,21 @@ namespace FanaBridge
             return null;
         }
 
+        /// <summary>
+        /// Whether Control Mapper's "Recognize Individual Wheels" is on (the setting the
+        /// integration depends on), or null if it can't be determined. Read-only; used by
+        /// the settings UI to flag the case where the integration is enabled but inert.
+        /// </summary>
+        public bool? IsControlMapperRecognizingIndividualWheels()
+        {
+            try
+            {
+                var bridge = _controlMapperBridge ?? new FanaBridge.Adapters.ControlMapperBridge();
+                return bridge.IsRecognizeIndividualWheelsOn(PluginManager);
+            }
+            catch { return null; }
+        }
+
         /// <summary>The connected wheelbase — used by DeviceInstance wrappers to query wheel identity.</summary>
         // ARCHITECTURE: single-device assumption. When multi-device support lands
         // (pedals/shifter/SRM), this becomes a DeviceManager owning a collection;
