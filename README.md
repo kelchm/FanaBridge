@@ -25,7 +25,7 @@
 - **Automatic detection** — Detects connected wheels, hubs and button modules directly over HID and matches to a profile
 - **Hot-plug support** — Reconnects gracefully when devices are plugged/unplugged or wheels are swapped
 - **Custom wheel profiles** — JSON-based profiles mean unsupported wheels can be added without waiting for a plugin update
-- **Experimental: Control Mapper integration** — Supplies FanaBridge's wheel identity to SimHub's Control Mapper so it can keep separate button mappings per Fanatec wheel, including bases and wheels SimHub can't identify on its own (Podium DD, newer wheels)
+- **Experimental: Control Mapper integration** — Supplies FanaBridge's wheel identity to SimHub's Control Mapper so it can keep separate button mappings per Fanatec wheel, including bases and wheels SimHub can't identify on its own (Podium DD wheelbases, newer wheels such as the ClubSport Formula V3)
 - **Experimental: Encoder mode** — Configure encoder behavior (relative, pulse, constant, auto) directly on supported devices
 
 ### Planned

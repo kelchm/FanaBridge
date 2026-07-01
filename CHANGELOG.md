@@ -12,7 +12,7 @@
 - A disconnected device now shows *why* (no device found, interface in use, lost connection, …).
 
 ### Fixed
-- Wheels and hubs are now detected on Podium DD wheelbases.
+- Detection now covers hardware SimHub's Fanatec SDK couldn't identify — Podium DD wheelbases and newer wheels such as the ClubSport Formula V3 are now recognized, both for FanaBridge's own device matching and for the Control Mapper integration.
 
 ## v0.3.2 - 2026-06-22
 
