@@ -46,6 +46,11 @@ namespace FanaBridge.Adapters
         // Track connection state transitions for cleanup on disconnect.
         private bool _wasConnected;
 
+        // Registered once with the plugin so it can read this device's display name
+        // for the Control Mapper integration. Lazy (in DataUpdate) so it doesn't
+        // depend on construction-vs-plugin-Init ordering.
+        private bool _registeredWithPlugin;
+
         public FanatecWheelDeviceInstance(DeviceConfig config)
         {
             _config = config;
@@ -237,6 +242,12 @@ namespace FanaBridge.Adapters
 
         public override void DataUpdate(PluginManager pluginManager, ref GameData data)
         {
+            if (!_registeredWithPlugin && FanatecPlugin.Instance != null)
+            {
+                FanatecPlugin.Instance.RegisterDeviceInstance(this);
+                _registeredWithPlugin = true;
+            }
+
             bool isConnected = GetDeviceState() == DeviceState.Connected;
 
             // Detect Connected → Scanning transition
@@ -300,6 +311,7 @@ namespace FanaBridge.Adapters
             SimHub.Logging.Current.Info(
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: End called");
 
+            FanatecPlugin.Instance?.UnregisterDeviceInstance(this);
             _displayManager?.Clear();
             _ledModule?.FinalizeModule();
         }

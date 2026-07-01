@@ -19,6 +19,11 @@
     <Reference Include="BA63Driver">
       <HintPath>$(SimHubDir)BA63Driver.dll</HintPath>
     </Reference>
+    <!-- IVariantProvider lives here; the Control Mapper bridge tests build fake
+         doubles of SimHub's reflection targets against the real interface. -->
+    <Reference Include="SimHub.Plugins">
+      <HintPath>$(SimHubDir)SimHub.Plugins.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>

@@ -42,6 +42,8 @@ namespace FanaBridge.Protocol
 
             AppendInterfaceInventory(sb);
             sb.AppendLine();
+            AppendDirectInputControllers(sb);
+            sb.AppendLine();
             AppendSystemReport(sb, wheelbase, connected, statusDetail);
             sb.AppendLine();
             AppendInputProbe(sb);
@@ -131,6 +133,100 @@ namespace FanaBridge.Protocol
         // rather than (mis)labelling a VID as "SRM".
         private static bool IsRelevantVid(int vid)
             => vid == FanatecWheelbase.FANATEC_VENDOR_ID || vid == SRM_VENDOR_ID;
+
+        // ── DirectInput game controllers ─────────────────────────────────
+        // What SimHub's Control Mapper actually sees: the SAME DirectInput query
+        // it runs (GameControl / AttachedOnly). A Fanatec base exposes more than
+        // one HID collection that declares a game-controller usage, so it can show
+        // up as TWO entries here (and in Control Mapper's "Add source controller"
+        // picker) under the same name — but only one is actually fed by the firmware;
+        // the other is "real on paper, dead on the wire" (declares controls but never
+        // transmits, so its Windows Test panel is blank). IMPORTANT: that difference
+        // is NOT visible at the enumeration layer — Capabilities AND GetObjects both
+        // report full controls for the inert collection too (measured on a DD+:
+        // col01 objects=118, col02=80). It only appears when the device is acquired
+        // and read. We report both counts purely as evidence; do not rely on them to
+        // pick the live one. Read-only: enumerates capabilities/objects; never
+        // acquires or writes.
+        private static void AppendDirectInputControllers(StringBuilder sb)
+        {
+            sb.AppendLine("DirectInput game controllers (Control Mapper sees these)");
+
+            SharpDX.DirectInput.DirectInput di = null;
+            try
+            {
+                di = new SharpDX.DirectInput.DirectInput();
+                var all = di.GetDevices(
+                    SharpDX.DirectInput.DeviceClass.GameControl,
+                    SharpDX.DirectInput.DeviceEnumerationFlags.AttachedOnly);
+
+                int fanatec = 0;
+                foreach (var inst in all)
+                {
+                    SharpDX.DirectInput.Joystick js = null;
+                    try
+                    {
+                        js = new SharpDX.DirectInput.Joystick(di, inst.InstanceGuid);
+
+                        int vid = 0, pid = 0;
+                        string ifacePath = "";
+                        try { vid = js.Properties.VendorId; } catch { }
+                        try { pid = js.Properties.ProductId; } catch { }
+                        try { ifacePath = js.Properties.InterfacePath ?? ""; } catch { }
+
+                        if (vid != FanatecWheelbase.FANATEC_VENDOR_ID) continue;
+                        fanatec++;
+
+                        int buttons = 0, axes = 0, povs = 0, objectCount = -1;
+                        try { buttons = js.Capabilities.ButtonCount; } catch { }
+                        try { axes = js.Capabilities.AxeCount; } catch { }
+                        try { povs = js.Capabilities.PovCount; } catch { }
+                        // GetObjects() is the actual enumerable control list. NOTE (measured
+                        // on a ClubSport DD+): it does NOT distinguish the live collection from
+                        // the inert one — both report full controls (col01 objects=118,
+                        // col02=80) even though only col01 is ever fed and the Windows Test
+                        // page renders col02 blank. So neither the Capabilities header NOR
+                        // GetObjects exposes the live/inert difference; that only shows when the
+                        // device is actually acquired and read. We report both counts as
+                        // evidence, but treat neither as a reliable "inert" signal.
+                        try { objectCount = js.GetObjects().Count; } catch { }
+
+                        sb.AppendLine(string.Format("  PID 0x{0:X4}  caps(btn={1} axis={2} pov={3})  objects={4}{5}",
+                            pid, buttons, axes, povs,
+                            objectCount < 0 ? "?" : objectCount.ToString(),
+                            objectCount == 0 ? "  <- inert: no enumerable controls (blank Test panel)" : ""));
+                        sb.AppendLine(string.Format("    name: \"{0}\"", SafeInstanceName(inst)));
+                        sb.AppendLine(string.Format("    guid: {0}", inst.InstanceGuid));
+                        sb.AppendLine(string.Format("    path: {0}", string.IsNullOrEmpty(ifacePath) ? "(unavailable)" : ifacePath));
+                    }
+                    catch (Exception ex)
+                    {
+                        sb.AppendLine("  (device read failed: " + ex.Message + ")");
+                    }
+                    finally
+                    {
+                        try { js?.Dispose(); } catch { }
+                    }
+                }
+
+                if (fanatec == 0)
+                    sb.AppendLine("  (no Fanatec game controller enumerated)");
+                sb.AppendLine(string.Format("  total game controllers seen: {0}", all.Count));
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("  (DirectInput enumeration failed: " + ex.Message + ")");
+            }
+            finally
+            {
+                try { di?.Dispose(); } catch { }
+            }
+        }
+
+        private static string SafeInstanceName(SharpDX.DirectInput.DeviceInstance inst)
+        {
+            try { return inst.InstanceName; } catch { return "?"; }
+        }
 
         // ── Input report snapshot (read-only) ────────────────────────────
         // One bounded read per input-bearing collection (col01/col02/col03 — any with an

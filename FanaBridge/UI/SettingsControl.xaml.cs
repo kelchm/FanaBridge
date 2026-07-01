@@ -758,6 +758,14 @@ namespace FanaBridge.UI
             Plugin?.SaveSettings();
         }
 
+        private void ChkEnableControlMapperIntegration_Changed(object sender, RoutedEventArgs e)
+        {
+            // Persist the flag; FanatecPlugin.DataUpdate reconciles the Control
+            // Mapper bridge (register / unregister) on its next tick — live, no
+            // restart needed.
+            Plugin?.SaveSettings();
+        }
+
         // =====================================================================
         // DISPLAY TEST — scroll support
         // =====================================================================
