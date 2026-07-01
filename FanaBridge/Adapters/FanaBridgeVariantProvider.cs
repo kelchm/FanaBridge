@@ -73,14 +73,41 @@ namespace FanaBridge.Adapters
 
         /// <summary>
         /// Control Mapper's entry point. Returns the stable per-rim id for the Fanatec
-        /// vendor id when a wheel is detected; <c>null</c> otherwise (which lets the next
+        /// base FanaBridge is actively driving; <c>null</c> otherwise (which lets the next
         /// provider, or no variant at all, decide).
+        ///
+        /// <para>Gated on the Fanatec vendor id AND the connected wheelbase's product id
+        /// (<see cref="Transport.FanatecWheelbase.ConnectedProductId"/>): we only speak for
+        /// the device we actually have open over HID. A standalone Fanatec peripheral on
+        /// its own PID (pedals, handbrake) — or another Fanatec base we aren't driving —
+        /// is therefore left alone and falls through to SimHub instead of being tagged with
+        /// this wheel's variant.</para>
         /// </summary>
         public string GetVariant(int vendorid, int productid)
         {
-            if (vendorid != FanatecVendorId)
+            var wheelbase = FanatecPlugin.Instance?.Wheelbase;
+            bool baseConnected = wheelbase != null && wheelbase.IsConnected;
+            int connectedProductId = baseConnected ? wheelbase.ConnectedProductId : 0;
+            if (!ShouldClaim(vendorid, productid, baseConnected, connectedProductId))
                 return null;
             return ComputeCurrentVariant();
+        }
+
+        /// <summary>
+        /// Pure gate for <see cref="GetVariant"/>: claim a controller only when it carries
+        /// the Fanatec vendor id AND its product id matches the wheelbase FanaBridge
+        /// currently has connected. Extracted (no singleton access) so the PID gate is unit
+        /// testable. Returns <c>false</c> when no base is connected, so we never speak for a
+        /// device we aren't driving. (Two identical-model bases share a PID and can't be
+        /// told apart here — that's the converged-architecture device-key problem.)
+        /// </summary>
+        internal static bool ShouldClaim(int vendorid, int productid, bool baseConnected, int connectedProductId)
+        {
+            if (vendorid != FanatecVendorId)
+                return false;
+            if (!baseConnected || connectedProductId == 0)
+                return false;
+            return productid == connectedProductId;
         }
 
         /// <summary>

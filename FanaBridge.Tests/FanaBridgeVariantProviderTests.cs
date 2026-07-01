@@ -7,8 +7,8 @@ namespace FanaBridge.Tests
     /// Covers the pure variant-string logic of <see cref="FanaBridgeVariantProvider"/>:
     /// the stock-compatible id (<see cref="FanaBridgeVariantProvider.FormatStockVariant"/>),
     /// the friendly display name (<see cref="FanaBridgeVariantProvider.FormatFriendlyName"/>),
-    /// and the vendor-id gate on <see cref="FanaBridgeVariantProvider.GetVariant"/>.
-    /// No hardware / no live plugin required.
+    /// and the claim gate (vendor id + connected-base product id) on
+    /// <see cref="FanaBridgeVariantProvider.GetVariant"/>. No hardware / no live plugin required.
     /// </summary>
     public class FanaBridgeVariantProviderTests
     {
@@ -55,17 +55,42 @@ namespace FanaBridge.Tests
         public void FormatFriendlyName_NoWheelCode_ReturnsNull()
             => Assert.Null(FanaBridgeVariantProvider.FormatFriendlyName(null, "PBMR"));
 
-        // ── GetVariant vendor gate ───────────────────────────────────────
+        // ── GetVariant claim gate (VID + connected-base PID) ─────────────
         [Fact]
         public void GetVariant_NonFanatecVendor_ReturnsNull()
             => Assert.Null(new FanaBridgeVariantProvider().GetVariant(0x1234, 0x0001));
 
         [Fact]
         public void GetVariant_FanatecVendor_NoLiveWheel_ReturnsNull()
-            // No FanatecPlugin.Instance in a unit-test context, so ComputeCurrentVariant
-            // resolves to null without throwing.
+            // No FanatecPlugin.Instance in a unit-test context, so the gate sees no
+            // connected base and resolves to null without throwing.
             => Assert.Null(new FanaBridgeVariantProvider()
-                .GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0001));
+                .GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+
+        [Fact]
+        public void ShouldClaim_MatchingVendorAndConnectedPid_True()
+            => Assert.True(FanaBridgeVariantProvider.ShouldClaim(
+                FanaBridgeVariantProvider.FanatecVendorId, 0x0020, baseConnected: true, connectedProductId: 0x0020));
+
+        [Fact]
+        public void ShouldClaim_NonFanatecVendor_False()
+            => Assert.False(FanaBridgeVariantProvider.ShouldClaim(
+                0x1234, 0x0020, baseConnected: true, connectedProductId: 0x0020));
+
+        [Fact] // standalone Fanatec pedals/handbrake, or a base we aren't driving
+        public void ShouldClaim_DifferentFanatecPid_False()
+            => Assert.False(FanaBridgeVariantProvider.ShouldClaim(
+                FanaBridgeVariantProvider.FanatecVendorId, 0x0005, baseConnected: true, connectedProductId: 0x0020));
+
+        [Fact]
+        public void ShouldClaim_NoBaseConnected_False()
+            => Assert.False(FanaBridgeVariantProvider.ShouldClaim(
+                FanaBridgeVariantProvider.FanatecVendorId, 0x0020, baseConnected: false, connectedProductId: 0));
+
+        [Fact]
+        public void ShouldClaim_ConnectedPidZero_False()
+            => Assert.False(FanaBridgeVariantProvider.ShouldClaim(
+                FanaBridgeVariantProvider.FanatecVendorId, 0x0020, baseConnected: true, connectedProductId: 0));
 
         [Fact]
         public void Poll_WithNoLiveWheel_DoesNotThrow()
