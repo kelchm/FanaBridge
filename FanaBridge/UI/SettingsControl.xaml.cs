@@ -186,6 +186,42 @@ namespace FanaBridge.UI
             }
         }
 
+        // Reflects the Control Mapper integration's hard dependency — SimHub's own
+        // "Recognize Individual Wheels" — so an enabled-but-inert feature isn't a silent
+        // no-op. Shown only when the integration is enabled; the amber warning is the
+        // only attention state, the "on" confirmation stays muted, and an indeterminate
+        // state (Control Mapper not loaded / internals unavailable) stays hidden.
+        private void UpdateControlMapperStatus()
+        {
+            if (Plugin == null || txtControlMapperStatus == null) return;
+
+            if (!Plugin.Settings.EnableControlMapperIntegration)
+            {
+                txtControlMapperStatus.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            bool? riw = Plugin.IsControlMapperRecognizingIndividualWheels();
+            if (riw == false)
+            {
+                txtControlMapperStatus.Text =
+                    "Control Mapper's \"Recognize Individual Wheels\" is off — turn it on "
+                    + "(Control Mapper → Settings) for per-rim mapping to take effect.";
+                txtControlMapperStatus.Foreground = DotConnecting; // amber — needs action
+                txtControlMapperStatus.Visibility = Visibility.Visible;
+            }
+            else if (riw == true)
+            {
+                txtControlMapperStatus.Text = "Active — Control Mapper is recognizing individual wheels.";
+                txtControlMapperStatus.Foreground = DotIdle;       // muted — all good
+                txtControlMapperStatus.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                txtControlMapperStatus.Visibility = Visibility.Collapsed; // unknown — stay quiet
+            }
+        }
+
         // friendly name → code → raw byte, so an unmapped device still shows.
         private static string ChainBaseText(FanatecWheelbase wb)
             => wb.BaseFriendlyName
@@ -230,6 +266,10 @@ namespace FanaBridge.UI
         private void UpdateStatus()
         {
             if (Plugin == null) return;
+
+            // Independent of device connection (Control Mapper is configured with or
+            // without a wheel attached), so it runs ahead of the connection returns.
+            UpdateControlMapperStatus();
 
             if (!Plugin.IsDeviceConnected)
             {
@@ -756,6 +796,15 @@ namespace FanaBridge.UI
         private void ChkEnableTuning_Changed(object sender, RoutedEventArgs e)
         {
             Plugin?.SaveSettings();
+        }
+
+        private void ChkEnableControlMapperIntegration_Changed(object sender, RoutedEventArgs e)
+        {
+            // Persist the flag; FanatecPlugin.DataUpdate reconciles the Control
+            // Mapper bridge (register / unregister) on its next tick — live, no
+            // restart needed.
+            Plugin?.SaveSettings();
+            UpdateControlMapperStatus();
         }
 
         // =====================================================================
