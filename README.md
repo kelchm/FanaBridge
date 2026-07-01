@@ -20,6 +20,7 @@
 
 - **RGB button and encoder LEDs** — Full RGB color and 8-level intensity per LED, including Rev/RPM and Flag/status LED strips where present
 - **3-digit display** — Wheels with a basic display show gear, speed, or gear-then-speed overlay
+- **Experimental: ITM telemetry display** — Wheels/modules with a graphical ITM display (e.g. Button Module Endurance) show live SimHub telemetry across all pages — speed, gear, lap times, position, fuel/ERS/DRS, car settings, tyre temps. Pages are selected with the wheel's display button
 - **SimHub LED profiles** — Wheels appear in SimHub's Devices view with standard LED Editor support
 - **Compatible with LED profile plugins** — Works with [ATSR Hub EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO) and other SimHub LED profile plugins
 - **Automatic detection** — Detects connected wheels, hubs and button modules directly over HID and matches to a profile
@@ -30,7 +31,6 @@
 ### Planned
 
 - Customizable telemetry display and arbitrary text/messages (e.g., function layer activation)
-- ITM display support
 
 ## Supported Devices
 
