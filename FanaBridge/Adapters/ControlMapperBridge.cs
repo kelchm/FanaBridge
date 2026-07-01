@@ -117,68 +117,82 @@ namespace FanaBridge.Adapters
 
                 object cm = LiveControlMapper();
                 if (cm == null) return false;          // plugin not loaded yet — quiet retry
-                object rw = _rwField.GetValue(cm);
-                if (rw == null) return false;
-                object vh = _vhField.GetValue(rw);
-                if (vh == null) return false;
-
-                bool changed;
-                lock (_vhLockType)
+                // Value-access + mutation are wrapped: like every other reflection path
+                // here (Unregister / StampFriendlyNames / DescribeResolution), an
+                // unexpected SimHub shape change or an object disposed/rebuilt mid-call
+                // should quietly give up and retry next tick, not surface as repeated
+                // warnings from the per-tick DataUpdate caller.
+                try
                 {
-                    if (!(_provField.GetValue(vh) is IList current))
+                    object rw = _rwField.GetValue(cm);
+                    if (rw == null) return false;
+                    object vh = _vhField.GetValue(rw);
+                    if (vh == null) return false;
+
+                    bool changed;
+                    lock (_vhLockType)
                     {
-                        // List is null — "Recognize Individual Wheels" is off and
-                        // the worker has Stop()'d. Nothing to register against; a
-                        // variant wouldn't be consulted anyway. Reflect that.
-                        _registered = false;
-                        return false;
+                        if (!(_provField.GetValue(vh) is IList current))
+                        {
+                            // List is null — "Recognize Individual Wheels" is off and
+                            // the worker has Stop()'d. Nothing to register against; a
+                            // variant wouldn't be consulted anyway. Reflect that.
+                            _registered = false;
+                            return false;
+                        }
+
+                        // FanaBridge is a gap-filler: ours goes LAST so SimHub's stock
+                        // Fanatec provider stays ahead and wins for every wheel it can
+                        // identify (Control Mapper takes the first non-null answer). Ours
+                        // is consulted only where stock returns null — a base SimHub
+                        // can't identify. Existing mappings are never disturbed.
+                        int mineCount = 0;
+                        foreach (var p in current)
+                            if (p is FanaBridgeVariantProvider) mineCount++;
+                        bool oursLast = current.Count > 0 && ReferenceEquals(current[current.Count - 1], _provider);
+
+                        if (mineCount == 1 && oursLast)
+                        {
+                            _registered = true;
+                            return true;                    // already present exactly once, last
+                        }
+
+                        // Rebuild: every non-FanaBridge provider in original order, then
+                        // ours appended last (drops any stale FanaBridge provider left by
+                        // a prior plugin reload).
+                        var newList = new List<IVariantProvider>();
+                        foreach (var p in current)
+                            if (!(p is FanaBridgeVariantProvider))
+                                newList.Add((IVariantProvider)p);
+                        newList.Add(_provider);
+                        _provField.SetValue(vh, newList);
+                        changed = true;
                     }
 
-                    // FanaBridge is a gap-filler: ours goes LAST so SimHub's stock
-                    // Fanatec provider stays ahead and wins for every wheel it can
-                    // identify (Control Mapper takes the first non-null answer). Ours
-                    // is consulted only where stock returns null — a base SimHub
-                    // can't identify. Existing mappings are never disturbed.
-                    int mineCount = 0;
-                    foreach (var p in current)
-                        if (p is FanaBridgeVariantProvider) mineCount++;
-                    bool oursLast = current.Count > 0 && ReferenceEquals(current[current.Count - 1], _provider);
-
-                    if (mineCount == 1 && oursLast)
+                    _registered = true;
+                    if (changed)
                     {
-                        _registered = true;
-                        return true;                    // already present exactly once, last
+                        if (!_everRegistered)
+                        {
+                            _everRegistered = true;
+                            SimHub.Logging.Current.Info(
+                                "FanaBridge: Control Mapper integration active (variant provider registered)");
+                        }
+                        else
+                        {
+                            SimHub.Logging.Current.Info(
+                                "FanaBridge: Control Mapper variant provider re-registered after eviction");
+                        }
+                        InvokeUpdateControllerList(rw); // re-key a rim already attached at toggle time
                     }
-
-                    // Rebuild: every non-FanaBridge provider in original order, then
-                    // ours appended last (drops any stale FanaBridge provider left by
-                    // a prior plugin reload).
-                    var newList = new List<IVariantProvider>();
-                    foreach (var p in current)
-                        if (!(p is FanaBridgeVariantProvider))
-                            newList.Add((IVariantProvider)p);
-                    newList.Add(_provider);
-                    _provField.SetValue(vh, newList);
-                    changed = true;
+                    return true;
                 }
-
-                _registered = true;
-                if (changed)
+                catch (Exception ex)
                 {
-                    if (!_everRegistered)
-                    {
-                        _everRegistered = true;
-                        SimHub.Logging.Current.Info(
-                            "FanaBridge: Control Mapper integration active (variant provider registered)");
-                    }
-                    else
-                    {
-                        SimHub.Logging.Current.Info(
-                            "FanaBridge: Control Mapper variant provider re-registered after eviction");
-                    }
-                    InvokeUpdateControllerList(rw); // re-key a rim already attached at toggle time
+                    SimHub.Logging.Current.Debug(
+                        "FanaBridge: Control Mapper EnsureRegistered failed: " + ex.GetBaseException().Message);
+                    return false;
                 }
-                return true;
             }
         }
 

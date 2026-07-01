@@ -40,7 +40,10 @@ namespace FanaBridge
         /// <see cref="FanatecPluginSettings.EnableControlMapperIntegration"/> each
         /// frame in <see cref="DataUpdate"/>.
         /// </summary>
-        private FanaBridge.Adapters.ControlMapperBridge _controlMapperBridge;
+        // volatile: written on the DataUpdate thread (UpdateControlMapperIntegration),
+        // read in the WheelChanged handler, which may fire from any thread. Ensures the
+        // handler observes the constructed bridge; a missed read self-heals next tick.
+        private volatile FanaBridge.Adapters.ControlMapperBridge _controlMapperBridge;
 
         /// <summary>Frame counter that throttles the Control Mapper reconcile (see <see cref="UpdateControlMapperIntegration"/>).</summary>
         private int _cmReconcileTick;

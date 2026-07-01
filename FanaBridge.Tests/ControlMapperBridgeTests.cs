@@ -145,6 +145,24 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void EnsureRegistered_ReEnumerateThrows_StillRegistersAndDoesNotThrow()
+        {
+            // A failing UpdateControllerList (SimHub internal misbehaving on re-enumerate)
+            // must not throw out of EnsureRegistered, nor fail the registration — the
+            // provider is in the list; re-keying an already-attached rim is best-effort.
+            var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
+            worker.ThrowOnUpdate = true;
+
+            bool ok = bridge.EnsureRegistered(pm); // must not throw
+
+            Assert.True(ok);
+            Assert.True(bridge.IsRegistered);
+            Assert.False(bridge.IsGivenUp);
+            Assert.Equal(2, helper.Snapshot().Count);          // provider still appended
+            Assert.Equal(1, worker.UpdateControllerListCalls); // attempted once, threw, swallowed
+        }
+
+        [Fact]
         public void EnsureRegistered_PluginNotLoaded_QuietRetry()
         {
             var pm = new FakePluginManager(null); // GetPlugin<T>() returns null
@@ -258,7 +276,15 @@ namespace FanaBridge.Tests.CmFakes
         internal FakeVariantHelper variantHelper = new FakeVariantHelper();
         public FakeVariantHelper Helper => variantHelper;
         public int UpdateControllerListCalls;
-        internal void UpdateControllerList() => UpdateControllerListCalls++;
+        /// <summary>When set, UpdateControllerList throws — drives the bridge's
+        /// defensive catch in EnsureRegistered (a SimHub internal misbehaving mid-call).</summary>
+        public bool ThrowOnUpdate;
+        internal void UpdateControllerList()
+        {
+            UpdateControllerListCalls++;
+            if (ThrowOnUpdate)
+                throw new System.InvalidOperationException("simulated SimHub failure");
+        }
     }
 
     /// <summary>Test double for SimHub's internal VariantHelper. Holds the
