@@ -427,6 +427,25 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void TotalSuffix_FuelShowsCapacity()
+        {
+            // The stock app renders fuel as value/capacity (e.g. "/23"), not a unit label.
+            var s = NewStatus();
+            Set(s, "Fuel", 12.0); Set(s, "MaxFuel", 23.0);
+            Assert.True(ItmTelemetry.TryGetTotalSuffix(ItmParam.Fuel, Wrap(s), out var fuel));
+            Assert.Equal("/23", fuel);
+        }
+
+        [Fact]
+        public void TotalSuffix_FuelSuppressedWhenNoCapacity()
+        {
+            // Games that don't report a tank capacity get no "/0" — fall back to bare value.
+            var s = NewStatus();
+            Set(s, "Fuel", 12.0); Set(s, "MaxFuel", 0.0);
+            Assert.False(ItmTelemetry.TryGetTotalSuffix(ItmParam.Fuel, Wrap(s), out _));
+        }
+
+        [Fact]
         public void TyreTemps_EncodesAllFourCorners()
         {
             var s = NewStatus();

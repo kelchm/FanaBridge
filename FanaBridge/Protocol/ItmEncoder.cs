@@ -147,13 +147,13 @@ namespace FanaBridge.Protocol
     /// Encodes and sends ITM (telemetry display) control reports for Fanatec wheels
     /// over the col03 interface. Covers the four ITM frames documented in the protocol
     /// reference: Enable (<c>FF 02 02</c>), ParamDefs (<c>FF 05 03</c>), ValueUpdate
-    /// (<c>FF 05 01</c>), and the PageSet/Keepalive config frame (<c>FF 05 04</c>).
+    /// (<c>FF 05 01</c>), and the PageSet frame (<c>FF 05 04</c>).
     ///
     /// This is a pure framing layer — like <see cref="LedEncoder"/> and
     /// <see cref="DisplayEncoder"/>, it builds and writes reports but holds no display
-    /// state. Page selection, keepalive scheduling, telemetry-to-parameter mapping, and
-    /// the firmware-safety rate limits (e.g. don't call <see cref="EnableItm"/> in a tight
-    /// loop) are the caller's responsibility.
+    /// state. Page selection, telemetry-to-parameter mapping, and the firmware-safety rate
+    /// limits (e.g. value-update pacing) are the caller's
+    /// responsibility.
     /// </summary>
     public class ItmEncoder
     {
@@ -164,29 +164,25 @@ namespace FanaBridge.Protocol
 
         // Command classes (byte[1])
         private const byte CMD_ITM_ENABLE = 0x02;   // ITM enable lives on its own class
-        private const byte CMD_ITM_DISPLAY = 0x05;  // ParamDefs / ValueUpdate / config
+        private const byte CMD_ITM_DISPLAY = 0x05;  // ITM display: mode gate / ParamDefs / ValueUpdate / PageSet
 
         // Sub-commands (byte[2])
         private const byte SUBCMD_ENABLE = 0x02;
         private const byte SUBCMD_VALUE_UPDATE = 0x01;
         private const byte SUBCMD_ITM_MODE = 0x02;   // under FF 05: firmware ITM on/off gate
         private const byte SUBCMD_PARAM_DEFS = 0x03;
-        private const byte SUBCMD_CONFIG = 0x04;     // PageSet + Keepalive
+        private const byte SUBCMD_PAGESET = 0x04;    // PageSet: byte[3]=display-device id, byte[4]=page
 
-        // Per-entry markers. BOTH ValueUpdate and ParamDefs entries use 0x03 — this
-        // is confirmed against an official-software USB capture. (The protocol
-        // reference claims ValueUpdate entries use 0x01; that is wrong, and entries
-        // marked 0x01 are silently ignored by the firmware.)
-        private const byte MARKER_VALUE = 0x03;
-        private const byte MARKER_PARAM_DEF = 0x03;
+        // First byte of every ValueUpdate/ParamDefs entry: the display-device id (which
+        // display the entry targets), not a marker. FanaBridge only drives the PBME/GTSWX
+        // (device 3), so it is hardcoded to 3; base (1) / Bentley (4) support would derive
+        // it per identity (#43).
+        private const byte ENTRY_DEVICE_ID = 0x03;
 
-        // Keepalive config selector (FF 05 04 02 0B)
-        private const byte KEEPALIVE_CONFIG_TYPE = 0x02;
-        private const byte KEEPALIVE_CONFIG_VALUE = 0x0B;
-
-        // Fixed-size prefixes of a single entry, before the variable tail.
-        // ValueUpdate:  marker, handle, idLo, idHi, size            (+ Size value bytes)
-        // ParamDefs:    marker, slotId, posLo, posHi, suffixLen     (+ suffix bytes)
+        // Fixed-size prefixes of a single entry, before the variable tail. The leading
+        // byte is the display-device id (see ENTRY_DEVICE_ID), not a marker.
+        // ValueUpdate:  deviceId, handle, idLo, idHi, size          (+ Size value bytes)
+        // ParamDefs:    deviceId, slotId, posLo, posHi, suffixLen   (+ suffix bytes)
         private const int VALUE_ENTRY_HEADER = 5;
         private const int PARAM_DEF_ENTRY_HEADER = 5;
 
@@ -227,18 +223,18 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Activates ITM mode and selects the analysis page (0 = default/reset).
-        /// Resets the firmware's slot table, so <see cref="SetParamDefs"/> must be
-        /// re-sent after every enable. Do NOT call in a tight loop — rapid repeated
-        /// enables can crash the PBME firmware; the caller must rate-limit.
+        /// Sends the ITM session enable frame (<c>FF 02 02 00</c>) — command class 0x02,
+        /// separate from the <c>FF 05 02</c> ITM-mode gate (<see cref="SetItmMode"/>).
+        /// byte[3] is always <c>0x00</c> (no page semantics; paging is done via <c>SetPage</c>).
+        /// Send once at session start (as the official Fanatec app does).
         /// </summary>
-        public bool EnableItm(byte page = 0)
+        public bool EnableItm()
         {
             Array.Clear(_reportBuf, 0, REPORT_LENGTH);
             _reportBuf[0] = REPORT_PREFIX;
             _reportBuf[1] = CMD_ITM_ENABLE;
             _reportBuf[2] = SUBCMD_ENABLE;
-            _reportBuf[3] = page;
+            _reportBuf[3] = 0x00;   // not a page
             return _transport.SendCol03(_reportBuf);
         }
 
@@ -255,24 +251,9 @@ namespace FanaBridge.Protocol
             Array.Clear(_reportBuf, 0, REPORT_LENGTH);
             _reportBuf[0] = REPORT_PREFIX;
             _reportBuf[1] = CMD_ITM_DISPLAY;
-            _reportBuf[2] = SUBCMD_CONFIG;
+            _reportBuf[2] = SUBCMD_PAGESET;
             _reportBuf[3] = deviceId;
             _reportBuf[4] = page;
-            return _transport.SendCol03(_reportBuf);
-        }
-
-        /// <summary>
-        /// Sends the ITM keepalive. Must be sent roughly every 100&#160;ms to keep the
-        /// display awake — the caller owns the scheduling.
-        /// </summary>
-        public bool SendKeepalive()
-        {
-            Array.Clear(_reportBuf, 0, REPORT_LENGTH);
-            _reportBuf[0] = REPORT_PREFIX;
-            _reportBuf[1] = CMD_ITM_DISPLAY;
-            _reportBuf[2] = SUBCMD_CONFIG;
-            _reportBuf[3] = KEEPALIVE_CONFIG_TYPE;
-            _reportBuf[4] = KEEPALIVE_CONFIG_VALUE;
             return _transport.SendCol03(_reportBuf);
         }
 
@@ -313,7 +294,7 @@ namespace FanaBridge.Protocol
                         if (pos + entryLen > REPORT_LENGTH)
                             break;
 
-                        _reportBuf[pos++] = MARKER_PARAM_DEF;
+                        _reportBuf[pos++] = ENTRY_DEVICE_ID;
                         _reportBuf[pos++] = d.SlotId;
                         _reportBuf[pos++] = (byte)(d.Position & 0xFF);
                         _reportBuf[pos++] = (byte)((d.Position >> 8) & 0xFF);
@@ -365,7 +346,7 @@ namespace FanaBridge.Protocol
                         if (pos + entryLen > REPORT_LENGTH)
                             break;
 
-                        _reportBuf[pos++] = MARKER_VALUE;
+                        _reportBuf[pos++] = ENTRY_DEVICE_ID;
                         _reportBuf[pos++] = v.Handle;
                         _reportBuf[pos++] = (byte)(v.ParamId & 0xFF);
                         _reportBuf[pos++] = (byte)((v.ParamId >> 8) & 0xFF);

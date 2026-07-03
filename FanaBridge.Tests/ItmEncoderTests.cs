@@ -79,17 +79,7 @@ namespace FanaBridge.Tests
             Assert.Equal(0xFF, r[0]);
             Assert.Equal(0x02, r[1]);   // command class — ITM enable
             Assert.Equal(0x02, r[2]);   // sub-command
-            Assert.Equal(0x00, r[3]);   // default page
-        }
-
-        [Fact]
-        public void EnableItm_CarriesPageByte()
-        {
-            var encoder = MakeEncoder(out var t);
-
-            encoder.EnableItm(4);
-
-            Assert.Equal(0x04, t.Last[3]);
+            Assert.Equal(0x00, r[3]);   // byte[3] fixed 0x00 (not a page)
         }
 
         [Fact]
@@ -135,23 +125,6 @@ namespace FanaBridge.Tests
 
             encoder.SetPage(ItmDevice.Bentley, 2);
             Assert.Equal(0x04, t.Last[3]);
-        }
-
-        // ── Keepalive ────────────────────────────────────────────────────
-
-        [Fact]
-        public void SendKeepalive_BuildsExpectedFrame()
-        {
-            var encoder = MakeEncoder(out var t);
-
-            encoder.SendKeepalive();
-
-            var r = t.Last;
-            Assert.Equal(0xFF, r[0]);
-            Assert.Equal(0x05, r[1]);
-            Assert.Equal(0x04, r[2]);
-            Assert.Equal(0x02, r[3]);
-            Assert.Equal(0x0B, r[4]);
         }
 
         // ── ValueUpdate framing ──────────────────────────────────────────

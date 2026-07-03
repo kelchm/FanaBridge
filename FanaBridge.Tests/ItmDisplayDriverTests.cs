@@ -19,13 +19,15 @@ namespace FanaBridge.Tests
             public bool IsConnected { get; set; } = true;
             public int Col03MaxInputReportLength { get; set; } = 64;
             public List<byte[]> Sent { get; } = new List<byte[]>();
+            // Simulate a transport-level send failure (SendCol03 returns false).
+            public bool SendReturns { get; set; } = true;
 
             public bool SendCol03(byte[] data)
             {
                 var copy = new byte[data.Length];
                 Array.Copy(data, copy, data.Length);
                 Sent.Add(copy);
-                return true;
+                return SendReturns;
             }
 
             public bool SendCol01(byte[] data) => true;
@@ -37,7 +39,6 @@ namespace FanaBridge.Tests
         // Frame classifiers (col03: [0]=0xFF, [1]=class, [2]=subcmd)
         private static bool IsEnable(byte[] r) => r[1] == 0x02 && r[2] == 0x02;
         private static bool IsValueUpdate(byte[] r) => r[1] == 0x05 && r[2] == 0x01;
-        private static bool IsKeepalive(byte[] r) => r[1] == 0x05 && r[2] == 0x04 && r[3] == 0x02 && r[4] == 0x0B;
 
         private sealed class Clock { public long T; public long Now() => T; }
 
@@ -98,15 +99,15 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void BringUp_EnablesFirmwareItmGateBeforeSession()
+        public void BringUp_ForcesDefaultPage()
         {
             var driver = MakeDriver(out var t, out var clock);
             Enable(driver, clock);
 
-            int gateIdx = t.Sent.FindIndex(IsItmModeOn);
-            int enableIdx = t.Sent.FindIndex(IsEnable);
-            Assert.True(gateIdx >= 0, "ITM gate (FF 05 02 01) was not sent");
-            Assert.True(gateIdx < enableIdx, "ITM gate must precede the session enable");
+            // Bring-up starts the session (FF 02 02) and forces page 1 (FF 05 04 03 01) so the
+            // display matches the Lap Info seed. Detecting the wheel's actual page is deferred (#43).
+            Assert.Contains(t.Sent, IsEnable);
+            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[3] == 0x03 && r[4] == 0x01);
         }
 
         [Fact]
@@ -115,8 +116,8 @@ namespace FanaBridge.Tests
             var driver = MakeDriver(out _, out var clock);
             Enable(driver, clock);
 
-            // Lap Info has 6 params; seeded so the first (Enable-default) page populates
-            // before any firmware push.
+            // Lap Info has 6 params; seeded so the forced page 1 populates immediately,
+            // before the firmware's push (from the SetPage) arrives.
             Assert.Equal(6, driver.SubscriptionCount);
         }
 
@@ -128,19 +129,6 @@ namespace FanaBridge.Tests
             Enable(driver, clock);
 
             Assert.Equal(4, driver.SubscriptionCount);    // seed skipped
-        }
-
-        [Fact]
-        public void Running_SendsKeepalive_OnInterval()
-        {
-            var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            t.Sent.Clear();
-
-            clock.T += 100;
-            driver.Update(EmptyData());
-
-            Assert.Contains(t.Sent, IsKeepalive);
         }
 
         // ── Enable/disable gate ──────────────────────────────────────────
@@ -160,7 +148,7 @@ namespace FanaBridge.Tests
             Assert.False(driver.IsRunning);
             Assert.Equal(0, driver.SubscriptionCount);
 
-            // Dormant: no keepalives/values on later ticks.
+            // Dormant: no values on later ticks.
             t.Sent.Clear();
             clock.T += 500;
             driver.Update(EmptyData());
@@ -320,7 +308,7 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void Total_ClearedWithEmptySuffix_WhenItBecomesImplausible()
+        public void Total_ClearedWithBlankSuffix_WhenItBecomesImplausible()
         {
             var driver = MakeDriver(out var t, out var clock);
             var s = NewStatus();
@@ -335,11 +323,12 @@ namespace FanaBridge.Tests
             clock.T += 40;
             driver.Update(Data(s));
 
-            // The position slot (0x83) must be re-emitted with an empty suffix to clear it.
+            // The position slot (0x83) must be re-emitted with a blank " " suffix to clear it —
+            // a zero-length suffix does NOT overwrite the firmware's default "/0" on hardware.
             var pd = t.Sent.First(IsParamDefs);
             bool clearsPosition = false;
             for (int i = 3; i + 5 <= pd.Length && pd[i] == 0x03; i += 5 + pd[i + 4])
-                if (pd[i + 1] == 0x83 && pd[i + 4] == 0x00) clearsPosition = true;
+                if (pd[i + 1] == 0x83 && pd[i + 4] == 0x01 && pd[i + 5] == (byte)' ') clearsPosition = true;
             Assert.True(clearsPosition);
         }
 
@@ -355,10 +344,55 @@ namespace FanaBridge.Tests
             clock.T += 40;
             driver.Update(Data(s));
 
-            // Position slot (0x83) is present but with an empty suffix (length 0).
+            // Position slot (0x83) is present but blanked with a " " suffix (length 1) — a
+            // zero-length suffix would leave the firmware's default "/0" showing.
             var pd = t.Sent.First(IsParamDefs);
             for (int i = 3; i + 5 <= pd.Length && pd[i] == 0x03; i += 5 + pd[i + 4])
-                if (pd[i + 1] == 0x83) Assert.Equal(0x00, pd[i + 4]);   // suffix length 0
+                if (pd[i + 1] == 0x83) { Assert.Equal(0x01, pd[i + 4]); Assert.Equal((byte)' ', pd[i + 5]); }
+        }
+
+        [Fact]
+        public void Fuel_FallsBackToUnitLabel_WhenNoCapacity()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            driver.OnSubscriptionReport(HexToBytes("ff05010382050018"));   // fuel @ handle 2 (slot 0x82)
+            Enable(driver, clock);                                          // seed skipped; only fuel subscribed
+
+            var s = NewStatus();
+            Set(s, "Fuel", 12.0); Set(s, "MaxFuel", 0.0);   // no tank capacity reported
+            t.Sent.Clear();
+            clock.T += 40;
+            driver.Update(Data(s));
+
+            // With no capacity, the fuel slot (0x82) falls back to the unit label "L" (not a
+            // blank " "), so a bare fuel value still reads as fuel.
+            var pd = t.Sent.First(IsParamDefs);
+            bool fuelLabeled = false;
+            for (int i = 3; i + 5 <= pd.Length && pd[i] == 0x03; i += 5 + pd[i + 4])
+                if (pd[i + 1] == 0x82 && pd[i + 4] == 0x01 && pd[i + 5] == (byte)'L') fuelLabeled = true;
+            Assert.True(fuelLabeled);
+        }
+
+        [Fact]
+        public void TempSuffix_FollowsFrameUnit()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            driver.OnSubscriptionReport(TyreSubReport);   // tyre temps @ 0x82/0x83
+            Enable(driver, clock);
+
+            var s = NewStatus();
+            Set(s, "TemperatureUnit", "F");   // frame reports Fahrenheit
+            t.Sent.Clear();
+            clock.T += 40;
+            driver.Update(Data(s));
+
+            // The tyre slot (0x82) label comes from the frame's TemperatureUnit, not a fixed
+            // default — normalized to a single char.
+            var pd = t.Sent.First(IsParamDefs);
+            bool tyreF = false;
+            for (int i = 3; i + 5 <= pd.Length && pd[i] == 0x03; i += 5 + pd[i + 4])
+                if (pd[i + 1] == 0x82 && pd[i + 4] == 0x01 && pd[i + 5] == (byte)'F') tyreF = true;
+            Assert.True(tyreF);
         }
 
         private static bool IsParamDefs(byte[] r) => r[1] == 0x05 && r[2] == 0x03;
@@ -441,6 +475,31 @@ namespace FanaBridge.Tests
             driver.Update(Data(s));
 
             Assert.DoesNotContain(t.Sent, IsValueUpdate);
+        }
+
+        [Fact]
+        public void Values_RetriedAfterFailedSend()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);
+            driver.OnSubscriptionReport(TyreSubReport);
+
+            var s = NewStatus();
+            Set(s, "TyreTemperatureFrontLeft", 80.0);
+
+            // A value send that fails at the transport must NOT be recorded as last-sent...
+            t.SendReturns = false;
+            clock.T += 40;
+            driver.Update(Data(s));
+            t.Sent.Clear();
+
+            // ...so when the transport recovers, the (unchanged) values are retried rather
+            // than skipped as "already sent".
+            t.SendReturns = true;
+            clock.T += 40;
+            driver.Update(Data(s));
+
+            Assert.Contains(t.Sent, IsValueUpdate);
         }
 
         // ── Stop / restart ───────────────────────────────────────────────

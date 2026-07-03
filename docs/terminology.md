@@ -95,7 +95,7 @@ The modern 64-byte HID collection. Used for: modern LED control (RGB565), ITM di
 col01 and col03 are separate HID interfaces. The host opens and writes to each independently. The Fanatec SDK provides a single send path that uses the first byte of the application buffer as a routing hint (`0xFF` → col03, anything else → col01), but this is an SDK convenience — on the wire, the collection is determined by which interface the host writes to.
 
 ### Command Class
-The second byte of a col03 report, identifying the protocol domain: `0x01` = LED control, `0x02` = ITM enable / analysis page, `0x03` = tuning menu, `0x05` = ITM display (page set, param defs, value updates, keepalive), `0x08` = system report (identity).
+The second byte of a col03 report, identifying the protocol domain: `0x01` = LED control, `0x02` = ITM enable, `0x03` = tuning menu, `0x05` = ITM display (mode gate, page set, param defs, value updates, display reset), `0x08` = system report (identity).
 
 ### Report Trigger
 A general-purpose, SubId-parameterized notification mechanism using col01 reports — not specific to any single function. Sends an ON/OFF pair: `[RID, F8, 09, 01, 06, FF, <SubId>, 00]` followed by `[RID, F8, 09, 01, 06, 00, 00, 00]`. The SubId selects the purpose: 1 = button-module re-detect, 2 = clutch bite point, 3 = legacy hardware-identity (superseded by the system report on modern bases). See [Report Trigger](reference/protocol.md#0x06--report-trigger--ack).
@@ -139,7 +139,7 @@ Parameter definition reports (`FF 05 03 ...`) that tell the firmware what parame
 Parameter value reports (`FF 05 01 ...`) that send actual telemetry data for display. Each entry contains a handle, parameter ID, size, and value.
 
 ### Keepalive
-A periodic packet (`FF 05 04 02 0B ...`) that must be sent every ~100ms to keep the ITM display alive.
+Historically a periodic `FF 05 04 02 0B` packet thought to keep the ITM display alive. It is actually a [PageSet](reference/protocol.md#0x04--pageset) to 'device 2' (seemingly absent on current hardware); captures show the official software does not send it, and the ValueUpdate stream is what keeps the display fed. Hardware testing indicates the display has no idle timeout, so no keepalive is needed; FanaBridge no longer sends one.
 
 ### Page
 An ITM display layout showing a specific set of telemetry parameters. Most devices have 6 pages (page 6 = legacy), some have 5 (page 5 = legacy). Pages contain SPEED and GEAR as persistent headers plus page-specific parameters. See [Page Layouts](reference/protocol.md#itm-page-layouts).
