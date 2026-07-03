@@ -7,25 +7,20 @@ using GameReaderCommon;
 namespace FanaBridge.Adapters
 {
     /// <summary>
-    /// Drives a Fanatec ITM telemetry display, firmware-driven: it enables ITM once,
-    /// keeps the display alive with periodic keepalives, and sends rate-limited value
-    /// updates for exactly the parameters the firmware has subscribed.
+    /// Drives a Fanatec ITM telemetry display, firmware-driven: it enables ITM once and
+    /// sends rate-limited value updates for exactly the parameters the firmware has
+    /// subscribed. No keepalive is needed — the display has no idle timeout (hardware-
+    /// confirmed); the value stream, or simply the last frame it holds, keeps it lit.
     ///
-    /// The wheel owns page selection. When the user presses the wheel's ITM page button,
-    /// the firmware pushes subscription reports on col03-IN telling the host which
-    /// parameter sits at which handle for the new page (see
+    /// This driver follows the wheel's subscription reports: when the ITM page changes, the
+    /// firmware pushes subscription reports on col03-IN telling the host which parameter
+    /// sits at which handle for the new page (see
     /// <see cref="ItmTelemetry.ParseSubscriptionReport"/>); the host echoes values back at
-    /// those handles. There is no host page-select command — host-driven page switching
-    /// (PageSet / Enable-byte) was tried and does not make the firmware accept values.
+    /// those handles.
     ///
     /// Sits above <see cref="ItmEncoder"/> (framing) and <see cref="ItmTelemetry"/>
     /// (value encoding + subscription parsing). The clock is injectable so the timing is
     /// unit testable.
-    ///
-    /// FIRMWARE SAFETY (PBME is the crash-prone target): Enable is sent once per bring-up
-    /// (never in a loop); value updates are rate-limited and skipped when unchanged. The
-    /// format-sensitive parameters (BRAKE_BIAS as Int32 tenths, ENGINE_MAPPING as ASCII
-    /// text) are encoded to the firmware's expected form upstream in <see cref="ItmTelemetry"/>.
     /// </summary>
     public class ItmDisplayDriver
     {
@@ -34,11 +29,6 @@ namespace FanaBridge.Adapters
         private readonly Action<string> _log;
 
         // ── Tunables (ms) ────────────────────────────────────────────────
-        /// <summary>Keepalive cadence (ms). Whether the firmware actually requires this is
-        /// unverified — the ~100ms figure is an observed send cadence, not a measured
-        /// timeout. Left at the original cadence pending investigation (see #42).</summary>
-        public int KeepaliveIntervalMs { get; set; } = 100;
-
         /// <summary>Minimum spacing between value-update sends (caps the rate).</summary>
         public int ValueIntervalMs { get; set; } = 40;
 
@@ -59,7 +49,6 @@ namespace FanaBridge.Adapters
         private enum Phase { Idle, Enabling, Running, Disabled }
         private Phase _phase = Phase.Idle;
 
-        private long _lastKeepaliveMs;
         private long _lastValuesMs;
 
         // Firmware-driven subscription map: host handle -> parameter ID. Kept sorted by
@@ -103,9 +92,8 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// Stops driving and returns to idle, dropping all subscriptions. Without
-        /// keepalives the firmware reclaims the display. A later <see cref="Start"/>
-        /// re-enables.
+        /// Stops driving and returns to idle, dropping all subscriptions. A later
+        /// <see cref="Start"/> re-enables.
         /// </summary>
         public void Stop()
         {
@@ -204,8 +192,8 @@ namespace FanaBridge.Adapters
         public void Update(GameData data)
         {
             // User turned ITM off: send the firmware "ITM off" command once, then stay
-            // dormant (no keepalives/values) so the display stays off, as the Fanatec
-            // software does. Re-enabling drops back into bring-up below.
+            // dormant (no values) so the display stays off, as the Fanatec software does.
+            // Re-enabling drops back into bring-up below.
             if (!Enabled)
             {
                 if (_phase != Phase.Disabled)
@@ -237,23 +225,16 @@ namespace FanaBridge.Adapters
                 // values right away. The wheel button navigates from there; detecting the wheel's
                 // current page on cold start (instead of forcing page 1) is deferred — see #43.
                 _encoder.SetItmMode(true);           // FF 05 02 01 — firmware ITM gate on
-                _encoder.EnableItm(0);               // FF 02 02 00 — start the display session
+                _encoder.EnableItm();                // FF 02 02 00 — start the display session
                 _encoder.SetPage((byte)3, (byte)1);  // FF 05 04 03 01 — force page 1
                 SeedInitialSubscriptions();          // page 1 (Lap Info) params
                 _log("ITM: enabled — seeded " + _subs.Count + " params, following firmware subscriptions");
-                _lastKeepaliveMs = now;
                 _phase = Phase.Running;
                 return;
             }
 
             // Running
             UpdateSlotDefs(data);   // refresh unit/total suffixes when they change
-            if (now - _lastKeepaliveMs >= KeepaliveIntervalMs)
-            {
-                _encoder.SendKeepalive();
-                _lastKeepaliveMs = now;
-            }
-
             if (now - _lastValuesMs >= ValueIntervalMs)
             {
                 SendSubscribedValues(data);
@@ -261,10 +242,10 @@ namespace FanaBridge.Adapters
             }
         }
 
-        // The firmware announces subscriptions only on a page change, not on bare
-        // Enable, so the initial (Enable-default) page would stay blank. Seed the Lap
-        // Info handle→param map — the firmware accepts these on its default page, and
-        // its first page-change push replaces them. Only seeds when nothing's subscribed.
+        // Bring-up forces page 1 via SetPage(3,1), which makes the firmware push page 1's
+        // subscription — but that push takes ~tens of ms to arrive, and a bare Enable
+        // announces nothing. Pre-seed the Lap Info handle→param map so values flow in that
+        // gap; the firmware's push then confirms/replaces it. Only seeds when nothing's subscribed.
         private void SeedInitialSubscriptions()
         {
             if (_subs.Count > 0)

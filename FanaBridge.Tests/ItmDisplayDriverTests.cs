@@ -39,7 +39,6 @@ namespace FanaBridge.Tests
         // Frame classifiers (col03: [0]=0xFF, [1]=class, [2]=subcmd)
         private static bool IsEnable(byte[] r) => r[1] == 0x02 && r[2] == 0x02;
         private static bool IsValueUpdate(byte[] r) => r[1] == 0x05 && r[2] == 0x01;
-        private static bool IsKeepalive(byte[] r) => r[1] == 0x05 && r[2] == 0x04 && r[3] == 0x02 && r[4] == 0x0B;
 
         private sealed class Clock { public long T; public long Now() => T; }
 
@@ -117,8 +116,8 @@ namespace FanaBridge.Tests
             var driver = MakeDriver(out _, out var clock);
             Enable(driver, clock);
 
-            // Lap Info has 6 params; seeded so the first (Enable-default) page populates
-            // before any firmware push.
+            // Lap Info has 6 params; seeded so the forced page 1 populates immediately,
+            // before the firmware's push (from the SetPage) arrives.
             Assert.Equal(6, driver.SubscriptionCount);
         }
 
@@ -130,19 +129,6 @@ namespace FanaBridge.Tests
             Enable(driver, clock);
 
             Assert.Equal(4, driver.SubscriptionCount);    // seed skipped
-        }
-
-        [Fact]
-        public void Running_SendsKeepalive_OnInterval()
-        {
-            var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            t.Sent.Clear();
-
-            clock.T += 100;
-            driver.Update(EmptyData());
-
-            Assert.Contains(t.Sent, IsKeepalive);
         }
 
         // ── Enable/disable gate ──────────────────────────────────────────
@@ -162,7 +148,7 @@ namespace FanaBridge.Tests
             Assert.False(driver.IsRunning);
             Assert.Equal(0, driver.SubscriptionCount);
 
-            // Dormant: no keepalives/values on later ticks.
+            // Dormant: no values on later ticks.
             t.Sent.Clear();
             clock.T += 500;
             driver.Update(EmptyData());

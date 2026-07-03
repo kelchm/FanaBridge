@@ -47,12 +47,12 @@ Fanatec wheelbases communicate with the host PC over USB HID (Human Interface De
     - [Live Change Notifications](#live-change-notifications)
     - [CBP in Tuning Context](#cbp-in-tuning-context)
   - [0x05 — ITM Display](#0x05--itm-display)
-    - [0x02 — ITM Mode (Enable Gate)](#0x02--itm-mode-enable-gate)
     - [0x01 — ValueUpdate](#0x01--valueupdate)
+    - [0x02 — ITM Mode (Enable Gate)](#0x02--itm-mode-enable-gate)
     - [0x03 — ParamDefs](#0x03--paramdefs)
+    - [0x04 — PageSet](#0x04--pageset)
+    - [Control Model](#control-model)
     - [Firmware Subscription Pushes (Device → Host)](#firmware-subscription-pushes-device--host)
-    - [0x04 — PageSet / Keepalive / Config](#0x04--pageset--keepalive--config)
-    - [Control Model (Firmware-Driven)](#control-model-firmware-driven)
     - [Timing & Rate Limiting](#timing--rate-limiting)
     - [Automatic Page Changes (Alerts)](#automatic-page-changes-alerts)
   - [0x08 — System Report (Identity)](#0x08--system-report-identity)
@@ -523,7 +523,7 @@ When only one has changed, send that report alone with commit = `0x01`.
 
 ### 0x02 — ITM Enable
 
-Activates ITM mode on the wheel display. Note this uses command class `0x02`, not `0x05`.
+Conventionally the ITM session **enable** (command class `0x02`, not `0x05`). It is separate from the persistent [ITM Mode gate](#0x02--itm-mode-enable-gate) (`FF 05 02`); a full bring-up uses both — see [Control Model](#control-model).
 
 ```
 FF 02 02 00 [00 x60]
@@ -534,11 +534,11 @@ FF 02 02 00 [00 x60]
 | 0 | `0xFF` | Report ID |
 | 1 | `0x02` | Command class |
 | 2 | `0x02` | Sub-command |
-| 3 | `0x00` | Page (0 = default/reset) |
+| 3 | `0x00` | Always `0x00`. Not a page selector — paging is [PageSet](#0x04--pageset). |
 
 **Important:**
-- Enable once, then keep the display alive with the [keepalive](#0x04--pageset--keepalive--config); do not call Enable in a tight loop — rapid repeated calls can crash the PBME firmware.
-- After Enable the display sits on the default page (Lap Info). Page selection is firmware-driven (the wheel button) — see [Control Model](#control-model-firmware-driven). Byte[3] nudges the displayed page but does **not** change which page's values the firmware accepts, so it is not a substitute for the firmware's [subscription pushes](#firmware-subscription-pushes-device--host).
+- Send Enable **once** at session start (as the official app does), then keep sending [value updates](#0x01--valueupdate). (Repeating it appears harmless in testing.)
+- On its own, Enable shows nothing new. What the display shows is governed by the [ITM Mode gate](#0x02--itm-mode-enable-gate) and [PageSet](#0x04--pageset) — see [Control Model](#control-model) for the bring-up.
 
 ### 0x03 — Tuning Menu
 
@@ -777,21 +777,6 @@ Byte:  [0]   [1]   [2]      [3..63]
        0xFF  0x05  subcmd   payload
 ```
 
-#### 0x02 — ITM Mode (Enable Gate)
-
-Turns ITM on or off at the firmware level — the same persistent state the Fanatec software's "ITM" switch sets. **ITM must be gated on here before anything else works**: with it off, the firmware ignores the [session enable](#0x02--itm-enable), pushes no [subscriptions](#firmware-subscription-pushes-device--host), and the wheel shows no ITM indicator or pages.
-
-```
-Enable:   FF 05 02 01 [00 x60]
-Disable:  FF 05 02 00 [00 x60]
-```
-
-| Byte | Value | Description |
-|------|-------|-------------|
-| 3 | `0x01` / `0x00` | ITM on / off |
-
-The setting is **persistent** (survives power cycles). A host bring-up should be: `FF 05 02 01` (gate on) → [`FF 02 02`](#0x02--itm-enable) (session enable) → keepalive + values. Confirmed against a capture of the official software toggling its ITM switch on/off/on/off.
-
 #### 0x01 — ValueUpdate
 
 Sends telemetry values for display. Each entry contains a handle, parameter ID, and value:
@@ -804,13 +789,35 @@ Each entry:
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| 0 | 1 | Marker | Always `0x03` |
+| 0 | 1 | Device ID | Which display this entry is for (values as in [PageSet](#0x04--pageset)) |
 | 1 | 1 | Handle | Parameter handle (dictated by the firmware — see [Firmware Subscription Pushes](#firmware-subscription-pushes-device--host)) |
 | 2–3 | 2 | Param ID | Parameter ID (little-endian). See [ITM Parameter IDs](#itm-parameter-ids). |
 | 4 | 1 | Size | Value size in bytes (1, 2, or 4) |
 | 5+ | N | Value | Parameter value (little-endian, size from above) |
 
-> **The entry marker is `0x03`, not `0x01`.** Confirmed against a USB capture of the official software on a PBME: entries marked `0x01` are silently ignored by the firmware. Multiple entries may be packed into one report; the firmware accepts batched updates.
+> **The leading byte is the display-device id** — which display the entry is for, using the same values as [PageSet](#0x04--pageset). FanaBridge only drives the PBME/GTSWX, so every entry uses device 3; entries addressed to a display that isn't attached are silently ignored.
+>
+> Multiple entries may be packed into one report; the firmware accepts batched updates.
+
+#### 0x02 — ITM Mode (Enable Gate)
+
+Turns ITM on or off at the firmware level — the same persistent state the Fanatec software's "ITM" switch sets; the on-screen "ITM" indicator (corner text) reflects it. This is the persistent `FF 05 02` gate, **not** the session [Enable](#0x02--itm-enable) (`FF 02 02`); a full bring-up uses both — see [Control Model](#control-model).
+
+- **`FF 05 02 00` (off):** the display drops to the true [legacy](#col01--legacy-control-8-bytes) 7-segment view and the "ITM" indicator disappears (any cached 7-seg value already on screen persists).
+- **`FF 05 02 01` (on):** ITM turns on and shows the page from the most recent [PageSet](#0x04--pageset) since the gate-off — **or the legacy page (6) if none** — emitting that page's subscription push (an **unsubscribe-all** clearing the old handles, then the new page's handles; a legacy target shows only the unsubscribe-all).
+
+A [PageSet](#0x04--pageset) works **even while gated off**: it's recorded (no visual, ITM is off) and applied on the next gate-on. So `gate off → PageSet(N) → gate on` lands directly on page N, whereas a bare `gate off → gate on` lands on legacy. There is always a current page — the legacy page (6) is the fallback, never "no page." (Hardware-confirmed.)
+
+```
+Enable:   FF 05 02 01 [00 x60]
+Disable:  FF 05 02 00 [00 x60]
+```
+
+| Byte | Value | Description |
+|------|-------|-------------|
+| 3 | `0x01` / `0x00` | ITM on / off |
+
+The setting is **persistent** (survives power cycles).
 
 #### 0x03 — ParamDefs
 
@@ -824,7 +831,7 @@ Each entry:
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| 0 | 1 | Marker | Always `0x03` |
+| 0 | 1 | Device ID | Which display this entry is for (values as in [PageSet](#0x04--pageset)) |
 | 1 | 1 | Slot ID | Display layout identifier (e.g., `0x82`, `0x85`, `0x88`) |
 | 2 | 1 | Position Lo | Low byte of position (typically `0x00`) |
 | 3 | 1 | Position Hi | High byte of position (typically `0x00`) |
@@ -841,20 +848,66 @@ The suffix system attaches a unit/total to a slot (e.g. `2F 30` = "/0" total den
 
 Maximum subscribed parameters per device: **16**.
 
+#### 0x04 — PageSet
+
+Selects which ITM page is active on a specific display device. Byte[3] is always the
+display-device id; byte[4] is the page:
+
+```
+FF 05 04 <deviceId> <page> [00 x59]
+```
+
+| Byte | Field | Description |
+|------|-------|-------------|
+| 3 | Device ID | Target display (1=Base, 2=not present on tested hardware, 3=BME/GTSWX, 4=Bentley) |
+| 4 | Page number | Page to display (1–6, device-dependent). See [ITM Page Layouts](#itm-page-layouts). |
+
+Page change commands should be spaced at least 100ms apart. The firmware needs time to reconfigure its internal display state between pages.
+
+**We've observed `PageSet` commands being ignored, but the root cause isn't understood.** In testing, some `PageSet` commands produced no page change and no [subscription push](#firmware-subscription-pushes-device--host) — intermittently, and *regardless* of spacing (failures happened seconds apart, far beyond the 100 ms floor). Re-sending the identical command then worked.
+
+What makes this genuinely hard to detect is that there is an **expected** case that looks identical to a dropped command: **the firmware only pushes on an actual page *change*. A `PageSet` for the page the display is already on correctly produces no push.** So the absence of a push is ambiguous — the host cannot tell "already on this page, nothing to do" from "the command was ignored." (Observed directly: a first `PageSet(5)` pushes page 5's subscription; three further `PageSet(5)` in a row push nothing, because the display is already there; a following `PageSet(6)` pushes again as it switches.)
+
+Practical guidance for host-driven paging: track the page you believe is current, and treat a missing push as a *possible* failure only when you targeted a *different* page — then retry. Even so, whether such a miss is a firmware drop or a page switch that wasn't re-announced is still open, and needs a display-vs-push cross-check to resolve.
+
+**The legacy "keepalive" is just a PageSet.** `FF 05 04 02 0B` decodes as `PageSet(device 2, page 11)` — addressed to a display not present on the tested hardware, so it does nothing visible, and it appears in zero live captures. No periodic frame is needed to keep the display fed by [ValueUpdate](#0x01--valueupdate)s: the display has **no idle timeout** (see [Control Model](#control-model)), and FanaBridge sends no keepalive.
+
+#### Control Model
+
+Control of the ITM display is **split** between the host and the firmware — neither drives it alone:
+
+- **The host selects the page.** A host [PageSet](#0x04--pageset) chooses which page is shown; the wheel's display button does the same thing. The two are equivalent triggers, and either can change the page at any time.
+- **The firmware assigns the handles.** On every page change it *pushes* the new page's parameter subscriptions (see [Firmware Subscription Pushes](#firmware-subscription-pushes-device--host)); the host echoes [ValueUpdate](#0x01--valueupdate)s only at the handles the firmware pushed. Values sent at *guessed* handles — for a page the firmware hasn't announced — are ignored.
+
+So the host chooses *what page*; the firmware chooses *which handles*.
+
+**Bring-up sequence** (hardware-verified on a PBME):
+
+```
+1. FF 05 02 01 ...        ← ITM Mode gate ON (persistent — 0x02 above)
+2. FF 02 02 00 ...        ← session Enable (once — never in a loop; see 0x02 — ITM Enable)
+3. FF 05 04 <dev> <page>  ← PageSet to establish a page
+4. FF 05 01 <entries>     ← ValueUpdates at the handles the PageSet pushes back
+```
+
+Step 3 is what actually brings a page up: in testing, a bare [`FF 02 02`](#0x02--itm-enable) enable with no PageSet produced no push and no page. Once the gate is on (it is persistent) and enable has run, a [PageSet](#0x04--pageset) — or a wheel-button press — is all that's needed to make the firmware push a page's subscription.
+
+**No keepalive.** The display has no idle timeout: it holds its content indefinitely, and the value stream isn't even required to keep it lit. FanaBridge sends no keepalive, and the official software sends none either. (Hardware-confirmed.)
+
 #### Firmware Subscription Pushes (Device → Host)
 
-This is the key to multi-page support. **The wheel — not the host — owns page selection** (the wheel's display button cycles pages). On every page change the firmware *pushes* one or more `FF 05 01` reports on the col03 **input** endpoint telling the host exactly which parameters to display at which handles for the new page. The host then echoes [ValueUpdate](#0x01--valueupdate)s for those subscriptions. There is no working host page-select command — `PageSet` and the Enable page byte change the layout but do **not** make the firmware accept a page's values; only the firmware's own (button-driven) page state does.
+This is the mechanism behind the [Control Model](#control-model) above. When the page changes — from a host [PageSet](#0x04--pageset) or the wheel button — the firmware *pushes* one or more `FF 05 01` reports on the col03 **input** endpoint, telling the host exactly which parameters to display at which handles. A host `PageSet` makes the firmware push the new page's subscription ~10–40 ms later; the host then echoes [ValueUpdate](#0x01--valueupdate)s for those subscriptions.
 
 Each pushed report uses the same `FF 05 01` framing, with 5-byte entries:
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| 0 | 1 | Marker | Always `0x03` |
+| 0 | 1 | Device ID | Which display this entry is for (values as in [PageSet](#0x04--pageset)) |
 | 1 | 1 | Handle | Firmware handle. The `0x80` bit marks a "slot" param (one with a ParamDefs unit). **Host ValueUpdate handle = handle `& 0x7F`.** |
 | 2–3 | 2 | Param ID | Subscribed parameter (little-endian), or `0xFFFF` = **unsubscribe** that handle. |
-| 4 | 1 | Unit | Unit/format hint (see [ITM Unit System](#itm-unit-system)). |
+| 4 | 1 | Type | Value data-type/size selector (1/2/4-byte int, float, or text) — not the display unit. |
 
-A page change arrives as an UNSUBSCRIBE report (old params, `0xFFFF`) followed by the new page's subscriptions. Example — switching to the Tyre Temps page:
+A page change arrives across **several** reports — an unsubscribe of the old handles (`0xFFFF`), plus one or more (often overlapping / partial) reports listing the new page's handles. **The host must accumulate them** — apply each entry as it arrives (subscribe, or `0xFFFF` = unsubscribe) — never treating a single report as the complete set. (E.g. page 3's 7 handles arrive as two reports sharing `h1–h5`, one adding `h6=BRAKE_BIAS`, the other `h0=SPEED`.) Example — switching to the Tyre Temps page:
 
 ```
 FF 05 01  03 00 0001 34  03 01 0004 12  03 82 002A 32  03 83 0030 32 ...
@@ -863,46 +916,9 @@ FF 05 01  03 00 0001 34  03 01 0004 12  03 82 002A 32  03 83 0030 32 ...
 
 (`0x82 & 0x7F = 2`, so the host sends TYRE_FL at handle 2.)
 
-**Initial page.** The firmware pushes a subscription only on a *change*, not on the initial [Enable](#0x02--itm-enable). After Enable the display sits on its default page (Lap Info), which the host can populate directly by sending that page's ValueUpdates — the firmware accepts the default page's params without a push. Subsequent button presses then drive the subscription pushes.
+**Handles are double-buffered — never assume a fixed page→handle map.** The firmware alternates the handle *base* between two regions (≈`h0–h5` and `h6–h11`) on every page change: it subscribes the new page's params on the currently-free region, then unsubscribes the old region. So the *same* page appears at different handles on successive visits — Lap Info is `h0=SPEED …` one time and `h6=SPEED …` the next. This is why every page change carries an unsubscribe of the old region alongside the new subscriptions, and why **the host must follow the pushed handles each time** rather than caching a map. (Confirmed by strict base alternation across a full page cycle: `6, 0, 6, 0, 6 …`.)
 
-#### 0x04 — PageSet / Keepalive / Config
-
-Subcmd `0x04` is overloaded for several functions based on byte[3]:
-
-**PageSet** — selects which ITM page is active on a specific display device:
-
-```
-FF 05 04 <deviceId> <page> [00 x59]
-```
-
-| Byte | Field | Description |
-|------|-------|-------------|
-| 3 | Device ID | Target display (1=Base, 3=BME/GTSWX, 4=Bentley) |
-| 4 | Page number | Page to display (1–6, device-dependent). See [ITM Page Layouts](#itm-page-layouts). |
-
-Page change commands should be spaced at least 100ms apart. The firmware needs time to reconfigure its internal display state between pages.
-
-**Keepalive** — must be sent every ~100ms to keep the ITM display alive:
-
-```
-FF 05 04 02 0B [00 x59]
-```
-
-| Byte | Value | Description |
-|------|-------|-------------|
-| 3 | `0x02` | Config type |
-| 4 | `0x0B` | Config value |
-
-#### Control Model (Firmware-Driven)
-
-The working model — verified on a PBME — is firmware-driven:
-
-1. **Enable** ITM once (`FF 02 02 00`).
-2. **Keepalive** every ~100&#160;ms (`FF 05 04 02 0B`) to keep the display awake.
-3. The firmware owns page selection (wheel button) and **pushes** the current page's [subscriptions](#firmware-subscription-pushes-device--host) on col03-IN.
-4. The host **reads** those pushes and sends [ValueUpdate](#0x01--valueupdate)s at the firmware-dictated handles, for the subscribed params only.
-
-The host does not choose the page or the handles. A purely host-driven approach (PageSet / ParamDefs / guessed handles) was tried and does **not** work — the firmware ignores values for a page it has not announced. The [page layouts](#itm-page-layouts) below are still useful for seeding the default page and as a reference for what each page contains, but the authoritative handle→param map for any page is whatever the firmware pushes.
+**Getting the first page.** The firmware pushes a subscription only when a page is *established or changed*. So after enabling, send a [PageSet](#0x04--pageset) (or wait for a wheel-button press) and populate the handles it pushes back; values sent before that push, at guessed handles, are ignored. See [Control Model](#control-model) for the full bring-up.
 
 #### Timing & Rate Limiting
 
@@ -917,7 +933,7 @@ Not all parameters need to be sent at full rate. Recommended minimum intervals:
 
 #### Automatic Page Changes (Alerts)
 
-The official software supports automatic page switching based on telemetry events:
+The official software supports automatic page switching based on telemetry events (page contents are in [ITM Page Layouts](#itm-page-layouts)):
 
 **Value-Change Triggers:**
 

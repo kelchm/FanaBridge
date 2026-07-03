@@ -8,6 +8,8 @@ namespace FanaBridge.Protocol
     /// ITM telemetry page. Each page is a fixed parameter layout the firmware
     /// renders; SPEED and GEAR appear on every page as persistent headers. Values
     /// match the Base/BME page numbering in the protocol reference, "ITM Page Layouts".
+    /// The numbering is Base/BME-specific — a Bentley display has no Car Settings page
+    /// and a different legacy page (5, not 6), so this enum does not map to a Bentley.
     /// </summary>
     public enum ItmPage : byte
     {
@@ -92,8 +94,8 @@ namespace FanaBridge.Protocol
     ///
     /// This is the pure, per-frame translation step — the ITM analogue of
     /// <c>FanatecDisplayDriver</c>'s telemetry reads. It holds no state and does
-    /// no I/O; page selection, keepalive scheduling, and the enable/ParamDefs
-    /// sequence belong to the (future) ITM display driver above it.
+    /// no I/O; page selection and the enable/ParamDefs sequence belong to the
+    /// (future) ITM display driver above it.
     ///
     /// Handles are assigned sequentially (0..N-1) in page-field order. That mirrors
     /// a straightforward ParamDefs slot layout; if the on-hardware slot/handle
@@ -356,8 +358,9 @@ namespace FanaBridge.Protocol
 
         /// <summary>
         /// Parses a firmware ITM subscription report (col03-IN, <c>FF 05 01</c>) into its
-        /// entries. Each entry is <c>[03][fwHandle][paramId-LE][unit]</c>; the host handle
-        /// is <c>fwHandle &amp; 0x7F</c> and <c>paramId == 0xFFFF</c> means unsubscribe.
+        /// entries. Each entry is <c>[deviceId][fwHandle][paramId-LE][dataType]</c> — the leading
+        /// byte is the display-device id (which display the entry is for), not a marker; the host
+        /// handle is <c>fwHandle &amp; 0x7F</c> and <c>paramId == 0xFFFF</c> means unsubscribe.
         /// Returns an empty list if the report carries no recognizable entries.
         /// </summary>
         public static IReadOnlyList<ItmSubscription> ParseSubscriptionReport(byte[] report, int len)
@@ -376,10 +379,12 @@ namespace FanaBridge.Protocol
                 }
             if (start < 0) return result;
 
-            // Entries: [03][fwHandle][idLo][idHi][unit], 5 bytes each, until a non-0x03 marker.
+            // Entries: [deviceId][fwHandle][idLo][idHi][dataType], 5 bytes each. Byte 0 is the
+            // display-device id. We only drive the PBME/GTSWX (device 3), so stop at the first
+            // entry for any other display (base/Bentley multi-device support isn't wired up yet).
             for (int i = start; i + 5 <= len; i += 5)
             {
-                if (report[i] != 0x03) break;
+                if (report[i] != 0x03) break;   // device 3 = PBME/GTSWX (the only display we handle)
                 byte fwHandle = report[i + 1];
                 ushort pid = (ushort)(report[i + 2] | (report[i + 3] << 8));
                 result.Add(new ItmSubscription(fwHandle, pid));
