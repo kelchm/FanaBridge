@@ -142,11 +142,11 @@ namespace FanaBridge.Adapters
             foreach (var kv in _subs)
             {
                 string suffix;
-                if (ItmTelemetry.TryGetUnitSuffix(kv.Value, data, out suffix))
+                if (ItmTelemetryMapper.TryGetUnitSuffix(kv.Value, data, out suffix))
                 {
                     // Static unit label (e.g. "C").
                 }
-                else if (ItmTelemetry.IsTotalParam(kv.Value))
+                else if (ItmTelemetryMapper.IsTotalParam(kv.Value))
                 {
                     // Lap/position/fuel: always emit an entry so a total that disappears is
                     // actively cleared — a zero-length suffix does NOT overwrite the firmware's
@@ -154,9 +154,9 @@ namespace FanaBridge.Adapters
                     // tank capacity it falls back to the unit label ("L"/"G") rather than a blank,
                     // so a bare fuel value still reads as fuel.
                     suffix = ShowTotalFor(kv.Value)
-                          && ItmTelemetry.TryGetTotalSuffix(kv.Value, data, out var total)
+                          && ItmTelemetryMapper.TryGetTotalSuffix(kv.Value, data, out var total)
                         ? total
-                        : (kv.Value == ItmParam.Fuel ? ItmTelemetry.FuelUnitLabel(data) : " ");
+                        : (kv.Value == ItmParam.Fuel ? ItmTelemetryMapper.FuelUnitLabel(data) : " ");
                 }
                 else
                 {
@@ -263,7 +263,7 @@ namespace FanaBridge.Adapters
             _valueBuf.Clear();
             foreach (var kv in _subs)
             {
-                if (ItmTelemetry.TryEncodeParam(kv.Value, kv.Key, data, out var v))
+                if (ItmTelemetryMapper.TryEncodeParam(kv.Value, kv.Key, data, out var v))
                     _valueBuf.Add(v);
                 else if (_unencodableWarned.Add(kv.Value))
                     // Firmware subscribed a parameter outside our page layouts — it will

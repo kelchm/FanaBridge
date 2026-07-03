@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
+using FanaBridge.Adapters;
 using FanaBridge.Protocol;
 using GameReaderCommon;
 using Xunit;
@@ -78,25 +79,38 @@ namespace FanaBridge.Tests
             return arr;
         }
 
+        // ── Catalog ↔ mapper guard ───────────────────────────────────────
+        // The Protocol/Adapters split puts the page catalog in ItmTelemetry and the value
+        // encoders in ItmTelemetryMapper. Every param a page can carry must be encodable, or a
+        // subscribed field would silently show dashes. This test is the drift guard.
+        [Fact]
+        public void EveryCatalogParam_HasAMapperEncoder()
+        {
+            foreach (ItmPage page in Enum.GetValues(typeof(ItmPage)))
+                foreach (var id in ItmTelemetry.ParamsFor(page))
+                    Assert.True(ItmTelemetryMapper.HasEncoder(id),
+                        $"paramId {id} on page {page} has no mapper encoder");
+        }
+
         // ── BuildValues guards ───────────────────────────────────────────
 
         [Fact]
         public void BuildValues_NullData_IsEmpty()
         {
-            Assert.Empty(ItmTelemetry.BuildValues(ItmPage.LapInfo, null));
-            Assert.Empty(ItmTelemetry.BuildValues(ItmPage.LapInfo, new GameData())); // NewData null
+            Assert.Empty(ItmTelemetryMapper.BuildValues(ItmPage.LapInfo, null));
+            Assert.Empty(ItmTelemetryMapper.BuildValues(ItmPage.LapInfo, new GameData())); // NewData null
         }
 
         [Fact]
         public void BuildValues_LegacyPage_IsEmpty()
         {
-            Assert.Empty(ItmTelemetry.BuildValues(ItmPage.Legacy, Wrap(NewStatus())));
+            Assert.Empty(ItmTelemetryMapper.BuildValues(ItmPage.Legacy, Wrap(NewStatus())));
         }
 
         [Fact]
         public void BuildValues_AssignsSequentialHandles()
         {
-            var values = ItmTelemetry.BuildValues(ItmPage.LapInfo, Wrap(NewStatus()));
+            var values = ItmTelemetryMapper.BuildValues(ItmPage.LapInfo, Wrap(NewStatus()));
 
             for (int i = 0; i < values.Count; i++)
                 Assert.Equal((byte)i, values[i].Handle);
@@ -105,7 +119,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void BuildValues_HandleBase_OffsetsHandles()
         {
-            var values = ItmTelemetry.BuildValues(ItmPage.LapInfo, Wrap(NewStatus()), handleBase: 2);
+            var values = ItmTelemetryMapper.BuildValues(ItmPage.LapInfo, Wrap(NewStatus()), handleBase: 2);
 
             for (int i = 0; i < values.Count; i++)
                 Assert.Equal((byte)(2 + i), values[i].Handle);
@@ -124,7 +138,7 @@ namespace FanaBridge.Tests
             Set(s, "CurrentLapTime", TimeSpan.FromSeconds(83.5));
             Set(s, "LastLapTime", TimeSpan.FromSeconds(82.25));
 
-            var v = ItmTelemetry.BuildValues(ItmPage.LapInfo, Wrap(s));
+            var v = ItmTelemetryMapper.BuildValues(ItmPage.LapInfo, Wrap(s));
 
             Assert.Equal(ItmParam.Speed, v[0].ParamId);
             Assert.Equal((short)142, AsI16(v[0]));     // SpeedLocal rounded
@@ -150,13 +164,13 @@ namespace FanaBridge.Tests
             Set(s, "OilTemperature", double.PositiveInfinity);
             Set(s, "ERSPercent", double.NaN);
 
-            var lap = ItmTelemetry.BuildValues(ItmPage.LapInfo, Wrap(s));
+            var lap = ItmTelemetryMapper.BuildValues(ItmPage.LapInfo, Wrap(s));
             Assert.Equal((short)0, AsI16(lap[0]));   // ClampSpeed(NaN) -> 0
 
-            Assert.True(ItmTelemetry.TryEncodeParam(ItmParam.OilTemp, 5, Wrap(s), out var oil));
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.OilTemp, 5, Wrap(s), out var oil));
             Assert.Equal((byte)0, AsU8(oil));        // ClampByte(Inf) -> 0
 
-            Assert.True(ItmTelemetry.TryEncodeParam(ItmParam.ErsLevel, 3, Wrap(s), out var ers));
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.ErsLevel, 3, Wrap(s), out var ers));
             Assert.Equal(0, AsI32(ers));             // SafeRound(NaN) -> 0
         }
 
@@ -172,7 +186,7 @@ namespace FanaBridge.Tests
             var s = NewStatus();
             Set(s, "Gear", gear);
 
-            var v = ItmTelemetry.BuildValues(ItmPage.LapInfo, Wrap(s));
+            var v = ItmTelemetryMapper.BuildValues(ItmPage.LapInfo, Wrap(s));
 
             Assert.Equal((byte)expected, AsU8(v[1]));
         }
@@ -185,7 +199,7 @@ namespace FanaBridge.Tests
             var s = NewStatus();
             Set(s, "SpeedLocal", speedLocal);
 
-            var v = ItmTelemetry.BuildValues(ItmPage.LapInfo, Wrap(s));
+            var v = ItmTelemetryMapper.BuildValues(ItmPage.LapInfo, Wrap(s));
 
             Assert.Equal((short)expected, AsI16(v[0]));
         }
@@ -198,7 +212,7 @@ namespace FanaBridge.Tests
             var s = NewStatus();
             Set(s, "BrakeBias", 51.2);   // percentage from SimHub
 
-            var v = ItmTelemetry.BuildValues(ItmPage.CarSettings, Wrap(s));
+            var v = ItmTelemetryMapper.BuildValues(ItmPage.CarSettings, Wrap(s));
 
             // Order (per capture): Speed, Gear, TC, ABS, EngineMap, OilTemp, BrakeBias.
             // Int32 in tenths of a percent — 51.2% => 512 (confirmed by capture).
@@ -213,7 +227,7 @@ namespace FanaBridge.Tests
             var s = NewStatus();
             Set(s, "BrakeBias", 150.0);   // absurd; clamps to 1000 (100.0%)
 
-            var v = ItmTelemetry.BuildValues(ItmPage.CarSettings, Wrap(s));
+            var v = ItmTelemetryMapper.BuildValues(ItmPage.CarSettings, Wrap(s));
 
             Assert.Equal(1000, AsI32(v[6]));
         }
@@ -227,7 +241,7 @@ namespace FanaBridge.Tests
             Set(s, "EngineMap", 6);
             Set(s, "OilTemperature", 98.7);
 
-            var v = ItmTelemetry.BuildValues(ItmPage.CarSettings, Wrap(s));
+            var v = ItmTelemetryMapper.BuildValues(ItmPage.CarSettings, Wrap(s));
 
             Assert.Equal(ItmParam.TcSetting, v[2].ParamId);
             Assert.Equal((byte)4, AsU8(v[2]));
@@ -252,7 +266,7 @@ namespace FanaBridge.Tests
             Set(s, "DRSAvailable", 1);
             Set(s, "DRSEnabled", 0);
 
-            var v = ItmTelemetry.BuildValues(ItmPage.FuelErsDrs, Wrap(s));
+            var v = ItmTelemetryMapper.BuildValues(ItmPage.FuelErsDrs, Wrap(s));
 
             Assert.Equal(ItmParam.Fuel, v[2].ParamId);
             Assert.Equal(12.5f, AsF32(v[2]), 3);
@@ -320,7 +334,7 @@ namespace FanaBridge.Tests
             var s = NewStatus();
             Set(s, "TyreTemperatureFrontLeft", 88.0);
 
-            Assert.True(ItmTelemetry.TryEncodeParam(ItmParam.TyreFlTemp, 2, Wrap(s), out var v));
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.TyreFlTemp, 2, Wrap(s), out var v));
             Assert.Equal(2, v.Handle);
             Assert.Equal(ItmParam.TyreFlTemp, v.ParamId);
             Assert.Equal((byte)88, AsU8(v));
@@ -329,7 +343,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void TryEncodeParam_UnknownParam_ReturnsFalse()
         {
-            Assert.False(ItmTelemetry.TryEncodeParam(9999, 0, Wrap(NewStatus()), out _));
+            Assert.False(ItmTelemetryMapper.TryEncodeParam(9999, 0, Wrap(NewStatus()), out _));
         }
 
         [Fact]
@@ -338,7 +352,7 @@ namespace FanaBridge.Tests
             // ENGINE_MAPPING is ASCII on the wire: map 3 => single byte '3' (0x33).
             var s = NewStatus();
             Set(s, "EngineMap", 3);
-            Assert.True(ItmTelemetry.TryEncodeParam(ItmParam.EngineMapping, 4, Wrap(s), out var v));
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.EngineMapping, 4, Wrap(s), out var v));
             Assert.Equal((byte)1, v.Size);
             Assert.Equal("3", AsAscii(v));
         }
@@ -349,7 +363,7 @@ namespace FanaBridge.Tests
             // Map 10 => two bytes '1','0' (matches official capture: p26 sz2 = 3130).
             var s = NewStatus();
             Set(s, "EngineMap", 10);
-            Assert.True(ItmTelemetry.TryEncodeParam(ItmParam.EngineMapping, 4, Wrap(s), out var v));
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.EngineMapping, 4, Wrap(s), out var v));
             Assert.Equal((byte)2, v.Size);
             Assert.Equal("10", AsAscii(v));
         }
@@ -375,7 +389,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void CarAhead_NoOpponents_IsZero()
         {
-            Assert.True(ItmTelemetry.TryEncodeParam(ItmParam.CarAhead, 4, Wrap(NewStatus()), out var v));
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.CarAhead, 4, Wrap(NewStatus()), out var v));
             Assert.Equal(0f, AsF32(v), 3);
         }
 
@@ -387,9 +401,9 @@ namespace FanaBridge.Tests
             Set(s, "OpponentsBehindOnTrack", OpponentList(-1.2, -3.4));     // nearest = 1.2 (abs)
 
             // Car ahead is negative (you're behind them); car behind is positive.
-            Assert.True(ItmTelemetry.TryEncodeParam(ItmParam.CarAhead, 4, Wrap(s), out var ahead));
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.CarAhead, 4, Wrap(s), out var ahead));
             Assert.Equal(-0.8f, AsF32(ahead), 3);
-            Assert.True(ItmTelemetry.TryEncodeParam(ItmParam.CarBehind, 5, Wrap(s), out var behind));
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.CarBehind, 5, Wrap(s), out var behind));
             Assert.Equal(1.2f, AsF32(behind), 3);
         }
 
@@ -402,9 +416,9 @@ namespace FanaBridge.Tests
             Set(s, "TotalLaps", 34); Set(s, "CurrentLap", 5);
             Set(s, "OpponentsCount", 20); Set(s, "Position", 7);
 
-            Assert.True(ItmTelemetry.TryGetTotalSuffix(ItmParam.Lap, Wrap(s), out var lap));
+            Assert.True(ItmTelemetryMapper.TryGetTotalSuffix(ItmParam.Lap, Wrap(s), out var lap));
             Assert.Equal("/34", lap);
-            Assert.True(ItmTelemetry.TryGetTotalSuffix(ItmParam.Position, Wrap(s), out var pos));
+            Assert.True(ItmTelemetryMapper.TryGetTotalSuffix(ItmParam.Position, Wrap(s), out var pos));
             Assert.Equal("/20", pos);   // field = OpponentsCount (list includes the player)
         }
 
@@ -416,14 +430,14 @@ namespace FanaBridge.Tests
             Set(s, "TotalLaps", 0); Set(s, "CurrentLap", 1);
             Set(s, "OpponentsCount", 1); Set(s, "Position", 7);
 
-            Assert.False(ItmTelemetry.TryGetTotalSuffix(ItmParam.Lap, Wrap(s), out _));
-            Assert.False(ItmTelemetry.TryGetTotalSuffix(ItmParam.Position, Wrap(s), out _));
+            Assert.False(ItmTelemetryMapper.TryGetTotalSuffix(ItmParam.Lap, Wrap(s), out _));
+            Assert.False(ItmTelemetryMapper.TryGetTotalSuffix(ItmParam.Position, Wrap(s), out _));
         }
 
         [Fact]
         public void TotalSuffix_NoneForParamWithoutTotal()
         {
-            Assert.False(ItmTelemetry.TryGetTotalSuffix(ItmParam.Speed, Wrap(NewStatus()), out _));
+            Assert.False(ItmTelemetryMapper.TryGetTotalSuffix(ItmParam.Speed, Wrap(NewStatus()), out _));
         }
 
         [Fact]
@@ -432,7 +446,7 @@ namespace FanaBridge.Tests
             // The stock app renders fuel as value/capacity (e.g. "/23"), not a unit label.
             var s = NewStatus();
             Set(s, "Fuel", 12.0); Set(s, "MaxFuel", 23.0);
-            Assert.True(ItmTelemetry.TryGetTotalSuffix(ItmParam.Fuel, Wrap(s), out var fuel));
+            Assert.True(ItmTelemetryMapper.TryGetTotalSuffix(ItmParam.Fuel, Wrap(s), out var fuel));
             Assert.Equal("/23", fuel);
         }
 
@@ -442,7 +456,7 @@ namespace FanaBridge.Tests
             // Games that don't report a tank capacity get no "/0" — fall back to bare value.
             var s = NewStatus();
             Set(s, "Fuel", 12.0); Set(s, "MaxFuel", 0.0);
-            Assert.False(ItmTelemetry.TryGetTotalSuffix(ItmParam.Fuel, Wrap(s), out _));
+            Assert.False(ItmTelemetryMapper.TryGetTotalSuffix(ItmParam.Fuel, Wrap(s), out _));
         }
 
         [Fact]
@@ -454,7 +468,7 @@ namespace FanaBridge.Tests
             Set(s, "TyreTemperatureRearLeft", 90.0);
             Set(s, "TyreTemperatureRearRight", 91.0);
 
-            var v = ItmTelemetry.BuildValues(ItmPage.TyreTemps, Wrap(s));
+            var v = ItmTelemetryMapper.BuildValues(ItmPage.TyreTemps, Wrap(s));
 
             // Order (per capture): FL, RL, FR, RR
             Assert.Equal(ItmParam.TyreFlTemp, v[2].ParamId);
