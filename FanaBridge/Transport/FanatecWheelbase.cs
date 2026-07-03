@@ -43,6 +43,7 @@ namespace FanaBridge.Transport
         public FanatecWheelbase()
         {
             _ingest = OnDrainReading;
+            _bufferItm = BufferItmReport;
         }
 
         /// <summary>The wheelbase's HID transport — used by LED/display/tuning encoders.</summary>
@@ -63,6 +64,17 @@ namespace FanaBridge.Transport
         private readonly Action<SystemReportReader.Reading> _ingest;
         private long _lastEnableMs;
         private long _drainNow;
+
+        // ── ITM subscription reports (col03-IN FF 05 pushes) ──────────────
+        // The firmware pushes these on ITM page changes; they tell the host which
+        // params to display at which handles. Buffered here during the identity
+        // drain and consumed by the ITM display driver each frame.
+        private readonly Action<byte[]> _bufferItm;
+        private readonly object _itmLock = new object();
+        private readonly System.Collections.Generic.List<byte[]> _itmReports =
+            new System.Collections.Generic.List<byte[]>();
+        private const int ItmReportBufferCap = 32;
+        private bool _itmDropWarned;
 
         // Most recent drained reading; decoded into the public properties on commit.
         private SystemReportReader.Reading _lastReading;
@@ -422,7 +434,7 @@ namespace FanaBridge.Transport
             }
 
             _drainNow = now;
-            _reportReader.DrainPushes(_transport, _ingest);
+            _reportReader.DrainPushes(_transport, _ingest, _bufferItm);
 
             bool changed = _settler.Tick(now, out _, out _);
             _identityStable = _settler.IsStable;
@@ -434,6 +446,49 @@ namespace FanaBridge.Transport
         // Drain callback: record the reading and offer it to the settler. _drainNow
         // carries the current clock so the cached delegate needs no per-frame closure.
         private void OnDrainReading(SystemReportReader.Reading r) => IngestReading(r, _drainNow);
+
+        // Drain callback for ITM subscription reports: buffer them for the ITM driver.
+        private void BufferItmReport(byte[] report)
+        {
+            lock (_itmLock)
+            {
+                // Bound the buffer so a consumer that stalls (e.g. during the setup wizard)
+                // can't grow it without limit. Evict the OLDEST when full — only the latest
+                // subscription state matters, so keeping the newest reports is what the
+                // driver needs. Warn once so a stall is diagnosable.
+                if (_itmReports.Count >= ItmReportBufferCap)
+                {
+                    _itmReports.RemoveAt(0);
+                    if (!_itmDropWarned)
+                    {
+                        _itmDropWarned = true;
+                        SimHub.Logging.Current.Warn(
+                            "FanatecWheelbase: ITM subscription buffer full (" + ItmReportBufferCap +
+                            ") — dropping oldest reports; is the ITM driver draining?");
+                    }
+                }
+                _itmReports.Add(report);
+            }
+        }
+
+        /// <summary>
+        /// Passes each ITM subscription report the firmware has pushed since the last
+        /// call to <paramref name="handler"/>, then clears the buffer. Called each frame
+        /// by the ITM display driver so it can follow the wheel's current page.
+        /// </summary>
+        public void DrainItmReports(Action<byte[]> handler)
+        {
+            if (handler == null) return;
+            byte[][] batch;
+            lock (_itmLock)
+            {
+                if (_itmReports.Count == 0) return;
+                batch = _itmReports.ToArray();
+                _itmReports.Clear();
+            }
+            foreach (var r in batch)
+                handler(r);
+        }
 
         private void IngestReading(SystemReportReader.Reading r, long now)
         {
@@ -533,6 +588,7 @@ namespace FanaBridge.Transport
             _settler.Reset();
             _identityStable = true;
             _lastReading = default;
+            lock (_itmLock) _itmReports.Clear();
 
             ConnectedProductId = 0;
             ProductName = null;

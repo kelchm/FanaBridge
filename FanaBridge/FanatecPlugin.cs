@@ -32,6 +32,7 @@ namespace FanaBridge
         private LedEncoder _leds;
         private LegacyLedEncoder _legacyLeds;
         private DisplayEncoder _display;
+        private ItmEncoder _itm;
 
         /// <summary>
         /// Experimental Control Mapper integration bridge. Lazily constructed
@@ -196,6 +197,9 @@ namespace FanaBridge
         /// <summary>Shared display encoder — used by DeviceInstance display managers and wizard.</summary>
         public DisplayEncoder Display => _display;
 
+        /// <summary>Shared ITM encoder (col03) — used by DeviceInstance ITM display drivers.</summary>
+        public ItmEncoder Itm => _itm;
+
         /// <summary>Shared tuning controller — used by TuningSettingsPanel for encoder config.</summary>
         public FanatecTuningController Tuning => _tuning;
 
@@ -222,6 +226,7 @@ namespace FanaBridge
             _leds = new LedEncoder(transport);
             _legacyLeds = new LegacyLedEncoder(transport);
             _display = new DisplayEncoder(transport);
+            _itm = new ItmEncoder(transport);
             _tuning = new FanatecTuningController(
                 transport,
                 msg => SimHub.Logging.Current.Warn(msg),

@@ -47,11 +47,12 @@ Fanatec wheelbases communicate with the host PC over USB HID (Human Interface De
     - [Live Change Notifications](#live-change-notifications)
     - [CBP in Tuning Context](#cbp-in-tuning-context)
   - [0x05 — ITM Display](#0x05--itm-display)
+    - [0x02 — ITM Mode (Enable Gate)](#0x02--itm-mode-enable-gate)
     - [0x01 — ValueUpdate](#0x01--valueupdate)
     - [0x03 — ParamDefs](#0x03--paramdefs)
+    - [Firmware Subscription Pushes (Device → Host)](#firmware-subscription-pushes-device--host)
     - [0x04 — PageSet / Keepalive / Config](#0x04--pageset--keepalive--config)
-    - [Slot & Handle Mapping (Raw HID)](#slot--handle-mapping-raw-hid)
-    - [Control Model: Official Software vs Raw HID](#control-model-official-software-vs-raw-hid)
+    - [Control Model (Firmware-Driven)](#control-model-firmware-driven)
     - [Timing & Rate Limiting](#timing--rate-limiting)
     - [Automatic Page Changes (Alerts)](#automatic-page-changes-alerts)
   - [0x08 — System Report (Identity)](#0x08--system-report-identity)
@@ -536,9 +537,8 @@ FF 02 02 00 [00 x60]
 | 3 | `0x00` | Page (0 = default/reset) |
 
 **Important:**
-- Enable **resets the slot table** — ParamDefs must be re-sent after each Enable.
-- Do not call Enable in a tight loop — rapid repeated calls can crash the PBME firmware.
-- Byte[3] can also be set to 0–6 to select the analysis page.
+- Enable once, then keep the display alive with the [keepalive](#0x04--pageset--keepalive--config); do not call Enable in a tight loop — rapid repeated calls can crash the PBME firmware.
+- After Enable the display sits on the default page (Lap Info). Page selection is firmware-driven (the wheel button) — see [Control Model](#control-model-firmware-driven). Byte[3] nudges the displayed page but does **not** change which page's values the firmware accepts, so it is not a substitute for the firmware's [subscription pushes](#firmware-subscription-pushes-device--host).
 
 ### 0x03 — Tuning Menu
 
@@ -777,6 +777,21 @@ Byte:  [0]   [1]   [2]      [3..63]
        0xFF  0x05  subcmd   payload
 ```
 
+#### 0x02 — ITM Mode (Enable Gate)
+
+Turns ITM on or off at the firmware level — the same persistent state the Fanatec software's "ITM" switch sets. **ITM must be gated on here before anything else works**: with it off, the firmware ignores the [session enable](#0x02--itm-enable), pushes no [subscriptions](#firmware-subscription-pushes-device--host), and the wheel shows no ITM indicator or pages.
+
+```
+Enable:   FF 05 02 01 [00 x60]
+Disable:  FF 05 02 00 [00 x60]
+```
+
+| Byte | Value | Description |
+|------|-------|-------------|
+| 3 | `0x01` / `0x00` | ITM on / off |
+
+The setting is **persistent** (survives power cycles). A host bring-up should be: `FF 05 02 01` (gate on) → [`FF 02 02`](#0x02--itm-enable) (session enable) → keepalive + values. Confirmed against a capture of the official software toggling its ITM switch on/off/on/off.
+
 #### 0x01 — ValueUpdate
 
 Sends telemetry values for display. Each entry contains a handle, parameter ID, and value:
@@ -789,11 +804,13 @@ Each entry:
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| 0 | 1 | Marker | Always `0x01` |
-| 1 | 1 | Handle | Parameter handle (assigned during ParamDefs) |
+| 0 | 1 | Marker | Always `0x03` |
+| 1 | 1 | Handle | Parameter handle (dictated by the firmware — see [Firmware Subscription Pushes](#firmware-subscription-pushes-device--host)) |
 | 2–3 | 2 | Param ID | Parameter ID (little-endian). See [ITM Parameter IDs](#itm-parameter-ids). |
 | 4 | 1 | Size | Value size in bytes (1, 2, or 4) |
 | 5+ | N | Value | Parameter value (little-endian, size from above) |
+
+> **The entry marker is `0x03`, not `0x01`.** Confirmed against a USB capture of the official software on a PBME: entries marked `0x01` are silently ignored by the firmware. Multiple entries may be packed into one report; the firmware accepts batched updates.
 
 #### 0x03 — ParamDefs
 
@@ -820,9 +837,33 @@ Each entry:
 03 83 00 00 02 2F 30   ← slot 0x83, suffix "/0"
 ```
 
-The suffix system corresponds to the unit display feature in the official software — the "/0" suffix likely represents the total denominator (e.g., "Lap 5 / 20").
+The suffix system attaches a unit/total to a slot (e.g. `2F 30` = "/0" total denominator → "Lap 5 / 20"; `43` = "C" for °C on temperature params). **The slot ID is `0x80 + handle`** — i.e. ParamDefs decorates the same handles used by [ValueUpdate](#0x01--valueupdate), but with the high bit set. ParamDefs is **cosmetic** (units only): a param's value renders from its ValueUpdate alone; only params that carry a unit/total get a ParamDefs entry.
 
 Maximum subscribed parameters per device: **16**.
+
+#### Firmware Subscription Pushes (Device → Host)
+
+This is the key to multi-page support. **The wheel — not the host — owns page selection** (the wheel's display button cycles pages). On every page change the firmware *pushes* one or more `FF 05 01` reports on the col03 **input** endpoint telling the host exactly which parameters to display at which handles for the new page. The host then echoes [ValueUpdate](#0x01--valueupdate)s for those subscriptions. There is no working host page-select command — `PageSet` and the Enable page byte change the layout but do **not** make the firmware accept a page's values; only the firmware's own (button-driven) page state does.
+
+Each pushed report uses the same `FF 05 01` framing, with 5-byte entries:
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 1 | Marker | Always `0x03` |
+| 1 | 1 | Handle | Firmware handle. The `0x80` bit marks a "slot" param (one with a ParamDefs unit). **Host ValueUpdate handle = handle `& 0x7F`.** |
+| 2–3 | 2 | Param ID | Subscribed parameter (little-endian), or `0xFFFF` = **unsubscribe** that handle. |
+| 4 | 1 | Unit | Unit/format hint (see [ITM Unit System](#itm-unit-system)). |
+
+A page change arrives as an UNSUBSCRIBE report (old params, `0xFFFF`) followed by the new page's subscriptions. Example — switching to the Tyre Temps page:
+
+```
+FF 05 01  03 00 0001 34  03 01 0004 12  03 82 002A 32  03 83 0030 32 ...
+          └ h0=SPEED ┘   └ h1=GEAR ┘    └ h2=TYRE_FL ┘ └ h3=TYRE_RL ┘
+```
+
+(`0x82 & 0x7F = 2`, so the host sends TYRE_FL at handle 2.)
+
+**Initial page.** The firmware pushes a subscription only on a *change*, not on the initial [Enable](#0x02--itm-enable). After Enable the display sits on its default page (Lap Info), which the host can populate directly by sending that page's ValueUpdates — the firmware accepts the default page's params without a push. Subsequent button presses then drive the subscription pushes.
 
 #### 0x04 — PageSet / Keepalive / Config
 
@@ -852,35 +893,16 @@ FF 05 04 02 0B [00 x59]
 | 3 | `0x02` | Config type |
 | 4 | `0x0B` | Config value |
 
-#### Slot & Handle Mapping (Raw HID)
+#### Control Model (Firmware-Driven)
 
-When using raw HID (bypassing the official software), displays require explicit slot configuration via ParamDefs:
+The working model — verified on a PBME — is firmware-driven:
 
-| Page(s) | Slot IDs | Handle Range | Suffix |
-|---------|----------|--------------|--------|
-| 1, 5 | 0x82, 0x83, 0x84, 0x85 | 0–5 | "/0" (Page 1 only) |
-| 2, 4 | 0x88 | 6–12 | "/0" (Page 2 only) |
-| 3 | 0x85 | 0–5 + 13 | none |
+1. **Enable** ITM once (`FF 02 02 00`).
+2. **Keepalive** every ~100&#160;ms (`FF 05 04 02 0B`) to keep the display awake.
+3. The firmware owns page selection (wheel button) and **pushes** the current page's [subscriptions](#firmware-subscription-pushes-device--host) on col03-IN.
+4. The host **reads** those pushes and sends [ValueUpdate](#0x01--valueupdate)s at the firmware-dictated handles, for the subscribed params only.
 
-#### Control Model: Official Software vs Raw HID
-
-**Official Software Approach (Firmware-Driven):**
-
-The firmware maintains a subscription table of up to 16 parameter slots. The host queries which parameters the firmware expects for the current page, then populates them:
-
-1. Firmware owns the page layout
-2. Host queries the firmware to learn what params are needed for the current page
-3. Host sends values for subscribed params only
-4. Page content is fixed by firmware
-
-**Raw HID Approach (Host-Driven):**
-
-1. Host sends PageSet — tells firmware which page
-2. Host sends ParamDefs — tells firmware the slot layout
-3. Host sends ValueUpdate — sends actual data
-4. Host can potentially choose which params appear on each page
-
-The raw HID approach gives more flexibility but requires knowing the [page layouts](#itm-page-layouts) in advance and carries the risk that untested parameter IDs may not render correctly.
+The host does not choose the page or the handles. A purely host-driven approach (PageSet / ParamDefs / guessed handles) was tried and does **not** work — the firmware ignores values for a page it has not announced. The [page layouts](#itm-page-layouts) below are still useful for seeding the default page and as a reference for what each page contains, but the authoritative handle→param map for any page is whatever the firmware pushes.
 
 #### Timing & Rate Limiting
 
@@ -1118,8 +1140,8 @@ The firmware recognizes a vocabulary of parameter IDs. Only a subset is confirme
 | 15 | DRS_ACTIVE | 1 | Uint8 | 0 or 1 |
 | 18 | ABS_SETTING | 1 | Uint8 | |
 | 20 | TC_SETTING | 1 | Uint8 | |
-| 25 | BRAKE_BIAS | 4 | Float32 LE | Must be 4 bytes — values >= 127 can crash PBME firmware |
-| 26 | ENGINE_MAPPING | 1 | Uint8 | |
+| 25 | BRAKE_BIAS | 4 | Int32 LE | Tenths of a percent — 51.2% = `512`. **Int32, not Float32** (confirmed by capture; sending a float displays a capped 99.9%). |
+| 26 | ENGINE_MAPPING | 1–2 | ASCII text | The map **rendered as text** — map 10 travels as bytes `'1' '0'` (`31 30`), size = digit count. **Not a Uint8** (confirmed by capture; sending the numeric byte hangs the PBME Car Settings page). |
 | 33 | OIL_TEMP | 1 | Uint8 | Unit-converted (C/F) |
 | 42 | TYRE_FL_C_TEMP | 1 | Uint8 | Unit-converted (C/F) |
 | 45 | TYRE_FR_C_TEMP | 1 | Uint8 | Unit-converted (C/F) |
@@ -1212,13 +1234,13 @@ Detection signature: ERS_LEVEL (9).
 | 4 | GEAR | 1 | Uint8 |
 | 20 | TC_SETTING | 1 | Uint8 |
 | 18 | ABS_SETTING | 1 | Uint8 |
-| 25 | BRAKE_BIAS | 4 | Float32 LE |
-| 26 | ENGINE_MAPPING | 1 | Uint8 |
+| 25 | BRAKE_BIAS | 4 | Int32 LE (tenths of a percent) |
+| 26 | ENGINE_MAPPING | 1–2 | ASCII text |
 | 33 | OIL_TEMP | 1 | Uint8 |
 
 Detection signature: OIL_TEMP (33).
 
-> **Warning:** BRAKE_BIAS values >= 127 have been observed to crash PBME firmware. Rapid value cycling on this page can also cause firmware lockups.
+> **Warning:** This page is format-sensitive. BRAKE_BIAS is an Int32 in tenths of a percent (a Float32 shows a capped 99.9%), and ENGINE_MAPPING is ASCII text (map 10 = `31 30`) — sending it as a numeric Uint8 hangs the PBME firmware. Rapid value cycling on this page can also cause firmware lockups.
 
 **Page 4 — Lap Times:**
 
