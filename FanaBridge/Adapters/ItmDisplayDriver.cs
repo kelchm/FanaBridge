@@ -25,6 +25,7 @@ namespace FanaBridge.Adapters
     public class ItmDisplayDriver
     {
         private readonly ItmEncoder _encoder;
+        private readonly byte _deviceId;   // which display this driver targets (PageSet + per-entry id)
         private readonly Func<long> _now;
         private readonly Action<string> _log;
 
@@ -62,11 +63,13 @@ namespace FanaBridge.Adapters
         // Subscribed paramIds we've already warned have no encoder — log each once.
         private readonly HashSet<ushort> _unencodableWarned = new HashSet<ushort>();
 
-        public ItmDisplayDriver(ItmEncoder encoder, Func<long> nowMs = null, Action<string> log = null)
+        public ItmDisplayDriver(ItmEncoder encoder, Func<long> nowMs = null, Action<string> log = null,
+            byte deviceId = ItmEncoder.DefaultDeviceId)
         {
             _encoder = encoder ?? throw new ArgumentNullException(nameof(encoder));
             _now = nowMs ?? DefaultClock();
             _log = log ?? (_ => { });
+            _deviceId = deviceId;
         }
 
         private static Func<long> DefaultClock()
@@ -111,7 +114,7 @@ namespace FanaBridge.Adapters
         /// </summary>
         public void OnSubscriptionReport(byte[] report)
         {
-            var subs = ItmTelemetry.ParseSubscriptionReport(report, report?.Length ?? 0);
+            var subs = ItmTelemetry.ParseSubscriptionReport(report, report?.Length ?? 0, _deviceId);
             if (subs.Count == 0)
                 return;
 
@@ -175,7 +178,7 @@ namespace FanaBridge.Adapters
 
             if (defs != null)
             {
-                _encoder.SetParamDefs(defs);
+                _encoder.SetParamDefs(defs, _deviceId);
                 _log("ITM: ParamDefs sent — suffixes: " + s);
             }
         }
@@ -221,12 +224,12 @@ namespace FanaBridge.Adapters
             if (_phase == Phase.Enabling)
             {
                 // Bring-up: gate ITM on (FF 05 02 01), start the session (FF 02 02 00), then force
-                // page 1 (FF 05 04 03 01) so the display matches our Lap Info seed and shows correct
+                // page 1 (FF 05 04 <dev> 01) so the display matches our Lap Info seed and shows correct
                 // values right away. The wheel button navigates from there; detecting the wheel's
                 // current page on cold start (instead of forcing page 1) is deferred — see #43.
                 _encoder.SetItmMode(true);           // FF 05 02 01 — firmware ITM gate on
                 _encoder.EnableItm();                // FF 02 02 00 — start the display session
-                _encoder.SetPage((byte)3, (byte)1);  // FF 05 04 03 01 — force page 1
+                _encoder.SetPage(_deviceId, 1);      // force page 1 (Lap Info) on this display
                 SeedInitialSubscriptions();          // page 1 (Lap Info) params
                 _log("ITM: enabled — seeded " + _subs.Count + " params, following firmware subscriptions");
                 _phase = Phase.Running;
@@ -242,7 +245,7 @@ namespace FanaBridge.Adapters
             }
         }
 
-        // Bring-up forces page 1 via SetPage(3,1), which makes the firmware push page 1's
+        // Bring-up forces page 1 via SetPage(device, 1), which makes the firmware push page 1's
         // subscription — but that push takes ~tens of ms to arrive, and a bare Enable
         // announces nothing. Pre-seed the Lap Info handle→param map so values flow in that
         // gap; the firmware's push then confirms/replaces it. Only seeds when nothing's subscribed.
@@ -278,7 +281,7 @@ namespace FanaBridge.Adapters
             // Only record the values as last-sent (and log the first update) when the send
             // actually succeeded — a transport failure must not suppress the retry, or the
             // display would stay stale until a value changes.
-            if (!_encoder.SendValues(_valueBuf))
+            if (!_encoder.SendValues(_valueBuf, _deviceId))
                 return;
 
             Remember(_valueBuf);

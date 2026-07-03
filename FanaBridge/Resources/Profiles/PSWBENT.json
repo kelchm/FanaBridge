@@ -8,6 +8,7 @@
     "wheelType": "PSWBENT"
   },
   "display": "itm",
+  "itmDeviceId": 4,
   "verified": false,
   "leds": [
     { "channel": "revRgb",  "hwIndex": 0, "role": "rev",  "label": "Rev LED 1" },

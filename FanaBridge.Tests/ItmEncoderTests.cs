@@ -127,6 +127,32 @@ namespace FanaBridge.Tests
             Assert.Equal(0x04, t.Last[3]);
         }
 
+        // ── Per-entry device id ──────────────────────────────────────────
+
+        [Fact]
+        public void SendValues_DefaultsToDevice3()
+        {
+            var encoder = MakeEncoder(out var t);
+            Assert.True(encoder.SendValues(new[] { ItmValue.UInt8(0, 4, 1) }));
+            Assert.Equal(0x03, t.Last[3]);   // DefaultDeviceId = BmeOrGtswx
+        }
+
+        [Fact]
+        public void SendValues_WritesGivenDeviceId()
+        {
+            var encoder = MakeEncoder(out var t);
+            Assert.True(encoder.SendValues(new[] { ItmValue.UInt8(0, 4, 1) }, (byte)ItmDevice.Bentley));
+            Assert.Equal(0x04, t.Last[3]);   // per-entry device id = Bentley (4), not the default 3
+        }
+
+        [Fact]
+        public void SetParamDefs_WritesGivenDeviceId()
+        {
+            var encoder = MakeEncoder(out var t);
+            Assert.True(encoder.SetParamDefs(new[] { new ItmParamDef(0x82) }, (byte)ItmDevice.Bentley));
+            Assert.Equal(0x04, t.Last[3]);
+        }
+
         // ── ValueUpdate framing ──────────────────────────────────────────
 
         [Fact]

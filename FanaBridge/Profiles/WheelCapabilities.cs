@@ -22,6 +22,9 @@ namespace FanaBridge.Profiles
         /// <summary>Display type.</summary>
         public DisplayType Display { get; }
 
+        /// <summary>ITM display wire id — which device the ITM screen is (base=1, wheel OLED/PBME/GTSWX=3, Bentley=4).</summary>
+        public byte ItmDeviceId { get; }
+
         /// <summary>The source profile this was built from (null for the None sentinel).</summary>
         public WheelProfile Profile { get; }
 
@@ -119,6 +122,7 @@ namespace FanaBridge.Profiles
             Name = profile.Name;
             ShortName = profile.ShortName;
             Display = profile.DisplayType;
+            ItmDeviceId = profile.ItmDeviceId;
             ProfileSource = profile.Source;
             ProfileSourcePath = profile.SourcePath;
 

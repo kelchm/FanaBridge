@@ -142,9 +142,11 @@ namespace FanaBridge.Protocol
         /// entries. Each entry is <c>[deviceId][fwHandle][paramId-LE][dataType]</c> — the leading
         /// byte is the display-device id (which display the entry is for), not a marker; the host
         /// handle is <c>fwHandle &amp; 0x7F</c> and <c>paramId == 0xFFFF</c> means unsubscribe.
-        /// Returns an empty list if the report carries no recognizable entries.
+        /// Only entries for <paramref name="deviceId"/> (the display this driver targets,
+        /// default <see cref="ItmEncoder.DefaultDeviceId"/>) are returned. Returns an empty
+        /// list if the report carries no recognizable entries.
         /// </summary>
-        public static IReadOnlyList<ItmSubscription> ParseSubscriptionReport(byte[] report, int len)
+        public static IReadOnlyList<ItmSubscription> ParseSubscriptionReport(byte[] report, int len, byte deviceId = ItmEncoder.DefaultDeviceId)
         {
             var result = new List<ItmSubscription>();
             if (report == null) return result;
@@ -161,11 +163,11 @@ namespace FanaBridge.Protocol
             if (start < 0) return result;
 
             // Entries: [deviceId][fwHandle][idLo][idHi][dataType], 5 bytes each. Byte 0 is the
-            // display-device id. We only drive the PBME/GTSWX (device 3), so stop at the first
-            // entry for any other display (base/Bentley multi-device support isn't wired up yet).
+            // display-device id. Each driver targets one display, so stop at the first entry for
+            // any other device (a report can, in principle, interleave devices).
             for (int i = start; i + 5 <= len; i += 5)
             {
-                if (report[i] != 0x03) break;   // device 3 = PBME/GTSWX (the only display we handle)
+                if (report[i] != deviceId) break;   // entries for the display this driver targets
                 byte fwHandle = report[i + 1];
                 ushort pid = (ushort)(report[i + 2] | (report[i + 3] << 8));
                 result.Add(new ItmSubscription(fwHandle, pid));

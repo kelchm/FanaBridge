@@ -306,7 +306,8 @@ namespace FanaBridge.Adapters
                 if (_itmDisplay == null)
                 {
                     _itmDisplay = new ItmDisplayDriver(plugin.Itm,
-                        log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
+                        log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
+                        deviceId: _config.Capabilities.ItmDeviceId);
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created ITM display driver");
                 }

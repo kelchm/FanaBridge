@@ -111,6 +111,39 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void BringUp_Bentley_TargetsDevice4()
+        {
+            var t = new RecordingTransport();
+            var clock = new Clock();
+            var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, deviceId: (byte)ItmDevice.Bentley);
+
+            driver.Start();
+            driver.Update(EmptyData());   // Enabling -> Running
+
+            // The forced-page PageSet targets device 4 (Bentley), not the default 3.
+            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[3] == 0x04 && r[4] == 0x01);
+        }
+
+        [Fact]
+        public void Bentley_ValueUpdate_UsesDevice4()
+        {
+            var t = new RecordingTransport();
+            var clock = new Clock();
+            var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, deviceId: (byte)ItmDevice.Bentley);
+            driver.Start();
+            driver.Update(EmptyData());   // bring-up + Lap Info seed
+
+            var s = NewStatus();
+            Set(s, "SpeedLocal", 100.0);
+            clock.T += 1000;             // past the value interval
+            driver.Update(Data(s));
+
+            var vu = t.Sent.LastOrDefault(IsValueUpdate);
+            Assert.NotNull(vu);
+            Assert.Equal(0x04, vu[3]);   // per-entry device id = Bentley
+        }
+
+        [Fact]
         public void Enable_SeedsLapInfoSubscriptions()
         {
             var driver = MakeDriver(out _, out var clock);

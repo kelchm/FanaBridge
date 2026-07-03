@@ -329,6 +329,22 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void ParseSubscriptionReport_FiltersToGivenDevice()
+        {
+            // One entry for device 4 (Bentley): [04][h0][SPEED=0001][unit 34]
+            var report = HexToBytes("ff0501" + "0400010034");
+
+            // The default device (3) skips the device-4 entry.
+            Assert.Empty(ItmTelemetry.ParseSubscriptionReport(report, report.Length));
+
+            // Asking for device 4 accepts it.
+            var subs = ItmTelemetry.ParseSubscriptionReport(report, report.Length, (byte)ItmDevice.Bentley);
+            Assert.Single(subs);
+            Assert.Equal(ItmParam.Speed, subs[0].ParamId);
+            Assert.Equal(0, subs[0].Handle);
+        }
+
+        [Fact]
         public void TryEncodeParam_KnownParam_Encodes()
         {
             var s = NewStatus();
