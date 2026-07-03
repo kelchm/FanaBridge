@@ -257,34 +257,51 @@ namespace FanaBridge.Protocol
             return ids;
         }
 
-        // ASCII unit suffixes the display appends to a parameter's value, sent via
-        // ParamDefs. Matches the official software's suffixes from the capture
-        // ('C' on temperatures, 'L' on fuel). Temperatures assume Celsius.
-        private static readonly Dictionary<ushort, string> UnitSuffixes = new Dictionary<ushort, string>
+        // Temperatures whose value carries a unit label. SimHub delivers both the converted
+        // value AND its unit in the same frame (StatusDataBase.TemperatureUnit), so we read the
+        // label from that snapshot — no out-of-band settings lookup, always consistent with the
+        // value. (Fuel is NOT unit-labeled; it uses a "/capacity" total, with the unit only as a
+        // no-capacity fallback.)
+        private static readonly HashSet<ushort> TempParams = new HashSet<ushort>
         {
-            { ItmParam.OilTemp, "C" },
-            { ItmParam.TyreFlTemp, "C" },
-            { ItmParam.TyreFrTemp, "C" },
-            { ItmParam.TyreRlTemp, "C" },
-            { ItmParam.TyreRrTemp, "C" },
-            { ItmParam.Fuel, "L" },
+            ItmParam.OilTemp, ItmParam.TyreFlTemp, ItmParam.TyreFrTemp,
+            ItmParam.TyreRlTemp, ItmParam.TyreRrTemp,
         };
 
         /// <summary>
-        /// The ASCII unit suffix a parameter's value should display (e.g. "C" for a
-        /// temperature), or false if it has none. Used to build ParamDefs entries.
+        /// The unit suffix a temperature's value should display (single char, e.g. "C"/"F"/"K"),
+        /// or false if the parameter isn't a temperature. Read from the frame's
+        /// <c>TemperatureUnit</c> so it stays consistent with the already-converted value.
         /// </summary>
-        public static bool TryGetUnitSuffix(ushort paramId, out string suffix)
-            => UnitSuffixes.TryGetValue(paramId, out suffix);
+        public static bool TryGetUnitSuffix(ushort paramId, GameData data, out string suffix)
+        {
+            if (TempParams.Contains(paramId)) { suffix = UnitLabel(data?.NewData?.TemperatureUnit, "C"); return true; }
+            suffix = null;
+            return false;
+        }
 
-        /// <summary>Whether a parameter can carry a dynamic "/total" suffix (lap, position).</summary>
+        /// <summary>The fuel unit as a single-char label (e.g. "L"/"G"), from the frame's
+        /// <c>FuelUnit</c>. Used only as a fallback when no tank capacity is available.</summary>
+        public static string FuelUnitLabel(GameData data) => UnitLabel(data?.NewData?.FuelUnit, "L");
+
+        // A unit string's first letter, uppercased — a single char for the display's tight space,
+        // robust to formats like "C" / "°C" / "Celsius" / "gal". Falls back when empty.
+        private static string UnitLabel(string raw, string fallback)
+        {
+            if (!string.IsNullOrEmpty(raw))
+                foreach (var c in raw)
+                    if (char.IsLetter(c)) return char.ToUpperInvariant(c).ToString();
+            return fallback;
+        }
+
+        /// <summary>Whether a parameter carries a "/total" suffix (lap, position, or fuel/capacity).</summary>
         public static bool IsTotalParam(ushort paramId)
-            => paramId == ItmParam.Lap || paramId == ItmParam.Position;
+            => paramId == ItmParam.Lap || paramId == ItmParam.Position || paramId == ItmParam.Fuel;
 
         /// <summary>
-        /// The dynamic "/total" suffix for a parameter that has one — lap of total laps
-        /// ("/34") and position of field size ("/20") — computed from the current
-        /// telemetry. The firmware cannot know these, so the host supplies them.
+        /// The "/total" suffix for a parameter that has one — lap of total laps ("/34"),
+        /// position of field size ("/20"), fuel of tank capacity ("/23") — computed from the
+        /// current telemetry. The firmware cannot know these, so the host supplies them.
         ///
         /// Returns false (no suffix) when the parameter has no total, there is no
         /// telemetry frame, or the game does not report a plausible total — i.e. the
@@ -308,6 +325,12 @@ namespace FanaBridge.Protocol
                     int field = s.OpponentsCount;   // SimHub's opponents list already includes the player
                     if (field > 1 && field >= s.Position)
                         suffix = "/" + field;
+                    return suffix != null;
+                case ItmParam.Fuel:
+                    // Fuel of tank capacity (e.g. "/90"), in the user's SimHub unit. Suppress
+                    // when no capacity is reported so we never show a bare "/0".
+                    if (s.MaxFuel > 0 && s.MaxFuel >= s.Fuel)
+                        suffix = "/" + (int)System.Math.Round(s.MaxFuel);
                     return suffix != null;
                 default:
                     return false;

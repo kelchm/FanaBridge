@@ -34,7 +34,9 @@ namespace FanaBridge.Adapters
         private readonly Action<string> _log;
 
         // ── Tunables (ms) ────────────────────────────────────────────────
-        /// <summary>Keepalive cadence. The display sleeps without one roughly every 100&#160;ms.</summary>
+        /// <summary>Keepalive cadence (ms). Whether the firmware actually requires this is
+        /// unverified — the ~100ms figure is an observed send cadence, not a measured
+        /// timeout. Left at the original cadence pending investigation (see #42).</summary>
         public int KeepaliveIntervalMs { get; set; } = 100;
 
         /// <summary>Minimum spacing between value-update sends (caps the rate).</summary>
@@ -152,18 +154,21 @@ namespace FanaBridge.Adapters
             foreach (var kv in _subs)
             {
                 string suffix;
-                if (ItmTelemetry.TryGetUnitSuffix(kv.Value, out suffix))
+                if (ItmTelemetry.TryGetUnitSuffix(kv.Value, data, out suffix))
                 {
-                    // Static unit (e.g. "C", "L").
+                    // Static unit label (e.g. "C").
                 }
                 else if (ItmTelemetry.IsTotalParam(kv.Value))
                 {
-                    // Lap/position: always emit an entry so a total that disappears is
-                    // actively cleared (empty suffix), not left stale on the firmware.
+                    // Lap/position/fuel: always emit an entry so a total that disappears is
+                    // actively cleared — a zero-length suffix does NOT overwrite the firmware's
+                    // default "/0", so we write a blank " " to clear it. Fuel is special: with no
+                    // tank capacity it falls back to the unit label ("L"/"G") rather than a blank,
+                    // so a bare fuel value still reads as fuel.
                     suffix = ShowTotalFor(kv.Value)
                           && ItmTelemetry.TryGetTotalSuffix(kv.Value, data, out var total)
                         ? total
-                        : "";
+                        : (kv.Value == ItmParam.Fuel ? ItmTelemetry.FuelUnitLabel(data) : " ");
                 }
                 else
                 {
@@ -191,6 +196,7 @@ namespace FanaBridge.Adapters
         {
             if (paramId == ItmParam.Lap) return ShowLapTotal;
             if (paramId == ItmParam.Position) return ShowPositionTotal;
+            if (paramId == ItmParam.Fuel) return true;   // fuel/capacity has no user toggle
             return false;
         }
 
@@ -226,9 +232,14 @@ namespace FanaBridge.Adapters
 
             if (_phase == Phase.Enabling)
             {
-                _encoder.SetItmMode(true);   // ensure the firmware ITM gate is on (FF 05 02 01)
-                _encoder.EnableItm(0);       // start ITM on the default (Lap Info) page
-                SeedInitialSubscriptions();
+                // Bring-up: gate ITM on (FF 05 02 01), start the session (FF 02 02 00), then force
+                // page 1 (FF 05 04 03 01) so the display matches our Lap Info seed and shows correct
+                // values right away. The wheel button navigates from there; detecting the wheel's
+                // current page on cold start (instead of forcing page 1) is deferred — see #43.
+                _encoder.SetItmMode(true);           // FF 05 02 01 — firmware ITM gate on
+                _encoder.EnableItm(0);               // FF 02 02 00 — start the display session
+                _encoder.SetPage((byte)3, (byte)1);  // FF 05 04 03 01 — force page 1
+                SeedInitialSubscriptions();          // page 1 (Lap Info) params
                 _log("ITM: enabled — seeded " + _subs.Count + " params, following firmware subscriptions");
                 _lastKeepaliveMs = now;
                 _phase = Phase.Running;
@@ -283,7 +294,12 @@ namespace FanaBridge.Adapters
             if (_valueBuf.Count == 0 || !HasChanged(_valueBuf))
                 return;
 
-            _encoder.SendValues(_valueBuf);
+            // Only record the values as last-sent (and log the first update) when the send
+            // actually succeeded — a transport failure must not suppress the retry, or the
+            // display would stay stale until a value changes.
+            if (!_encoder.SendValues(_valueBuf))
+                return;
+
             Remember(_valueBuf);
 
             if (!_loggedFirstValues)
