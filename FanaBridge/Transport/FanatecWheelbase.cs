@@ -59,6 +59,7 @@ namespace FanaBridge.Transport
         private const int IdentityReEnableMs = 10000;   // keep the push subscription alive
 
         private readonly SystemReportReader _reportReader = new SystemReportReader();
+        private readonly SrmConverterIdentity _srmReader = new SrmConverterIdentity();
         private readonly IdentitySettler _settler = new IdentitySettler(IdentitySettleMs);
         private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
         private readonly Action<SystemReportReader.Reading> _ingest;
@@ -137,6 +138,16 @@ namespace FanaBridge.Transport
         /// present but not in the decode table (report it). 0 when no module.
         /// </summary>
         public byte ModuleWireCode { get; private set; }
+
+        /// <summary>
+        /// Whether the connected device is an SRM Conversion Kit (a wheel-side base impersonator),
+        /// identified via its <c>DE FA</c> channel rather than <c>FF 08</c>. Its wheel is hard-wired,
+        /// so this identity is fixed for the connection. False for a genuine Fanatec base.
+        /// </summary>
+        public bool IsSrmConverter { get; private set; }
+
+        /// <summary>SRM Conversion Kit firmware (e.g. "6.12") when <see cref="IsSrmConverter"/>, else null.</summary>
+        public string SrmKitFirmware { get; private set; }
 
         /// <summary>Resolved capability profile for the current wheel + module combination.</summary>
         public WheelCapabilities CurrentCapabilities { get; private set; }
@@ -331,6 +342,11 @@ namespace FanaBridge.Transport
                 _lastEnableMs = _clock.ElapsedMilliseconds;
                 if (_reportReader.ReadInitial(_transport, out var reading))
                     IngestReading(reading, _clock.ElapsedMilliseconds);
+                // FF 08 was silent — this may be an SRM Conversion Kit (which emulates a base but
+                // does not reliably emit FF 08). Probe its DE FA channel. A genuine base never
+                // reaches here (its FF 08 answered), so converter support cannot touch normal hardware.
+                else if (_srmReader.TryProbe(_transport, out var srm))
+                    CommitSrmIdentity(srm);
 
                 // Confirm the per-frame drain is non-blocking on this hardware — a
                 // blocking ReadCol03(buf, 0) would stall the frame thread. Done once
@@ -421,6 +437,11 @@ namespace FanaBridge.Transport
         public bool UpdateIdentity()
         {
             if (!IsConnected)
+                return false;
+
+            // An SRM converter's wheel is hard-wired — the identity is fixed at connect, so there is
+            // nothing to drain or re-settle here. Genuine bases fall through to the unchanged FF 08 path.
+            if (IsSrmConverter)
                 return false;
 
             long now = _clock.ElapsedMilliseconds;
@@ -517,6 +538,34 @@ namespace FanaBridge.Transport
             WheelChanged?.Invoke(this);
         }
 
+        // Commit a fixed SRM converter identity from the DE FA channel. The wheel is hard-wired, so
+        // this is a one-shot (no settler, no re-drain). Rim + module come from DE FA, not FF 08;
+        // BaseType stays 0 — the converter's emulated base is not a trustworthy model to surface.
+        private void CommitSrmIdentity(SrmConverterIdentity.Result srm)
+        {
+            IsSrmConverter = true;
+            SrmKitFirmware = srm.KitFirmware;
+
+            byte wire = srm.WheelId;
+            bool isHub = FanatecIdentity.IsHub(wire);
+
+            WheelDetected = wire != 0;
+            WheelCode = srm.WheelCode;                       // SRM map (handles 0x17); null when unknown id
+            WheelWireCode = wire;
+            IsHub = isHub;
+            ModuleCode = isHub ? srm.ModuleCode : null;      // module only meaningful on a hub
+            ModuleWireCode = isHub ? srm.ModuleRaw : (byte)0;
+            BaseType = 0;
+            BaseCode = null;
+            _identityStable = true;                          // fixed identity — always settled
+
+            ResolveCapabilities("SRM converter identified");
+            WheelChanged?.Invoke(this);
+            SimHub.Logging.Current.Info(string.Format(
+                "FanatecWheelbase: SRM Conversion Kit — Wheel={0} (id 0x{1:X2}), Module={2}, KitFw={3}",
+                WheelCode ?? "unknown", wire, ModuleCode ?? "(none)", SrmKitFirmware ?? "?"));
+        }
+
         /// <summary>
         /// Forces a re-evaluation of capabilities against the current profile store.
         /// Call after <see cref="WheelProfileStore.Reload"/> to pick up newly-saved
@@ -600,6 +649,8 @@ namespace FanaBridge.Transport
             ModuleWireCode = 0;
             BaseType = 0;
             BaseCode = null;
+            IsSrmConverter = false;
+            SrmKitFirmware = null;
             CurrentCapabilities = WheelCapabilities.None;
             LastRawReport = null;
             // LastConnectError is intentionally left intact — it reflects the most

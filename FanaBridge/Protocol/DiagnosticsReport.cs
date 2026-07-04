@@ -411,6 +411,23 @@ namespace FanaBridge.Protocol
             byte[] raw = wb?.LastRawReport;
             if (!connected || wb == null || raw == null || raw.Length == 0)
             {
+                // A committed SRM converter identity has no FF 08 frame (it came from the DE FA
+                // channel) — surface it so the report doesn't read as "unidentified".
+                if (wb != null && wb.IsSrmConverter)
+                {
+                    sb.AppendLine(Kv("Identity source", "SRM Conversion Kit (DE FA channel — no FF 08)"));
+                    sb.AppendLine(Kv("Steering wheel", wb.WheelDetected
+                        ? (wb.WheelCode ?? string.Format("Unknown (id 0x{0:X2})", wb.WheelWireCode))
+                            + (wb.IsHub ? " [hub]" : "")
+                        : "(nothing attached)"));
+                    if (wb.IsHub)
+                        sb.AppendLine(Kv("Button module", (wb.ModuleCode
+                            ?? (wb.ModuleWireCode != 0 ? string.Format("Unknown (0x{0:X2})", wb.ModuleWireCode) : "(none)"))
+                            + (wb.ModuleWireCode != 0 ? "   [converter-module decode UNVALIDATED — please report]" : "")));
+                    sb.AppendLine(Kv("Kit firmware", wb.SrmKitFirmware ?? "?"));
+                    return;
+                }
+
                 sb.AppendLine("  (no FF 08 captured — not connected, no col03 interface, or no wheel");
                 sb.AppendLine("   attached. If a wheel IS attached, a full USB capture may be needed —");
                 sb.AppendLine("   see the Fanatec-RE capture-fanatec-usb.ps1 workflow.)");
