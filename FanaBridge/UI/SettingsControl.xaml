@@ -48,20 +48,34 @@
 
                     <!-- Shown when the attached wheel resolves to a registered SimHub
                          device the user hasn't added yet — LED/display output never
-                         starts without the device. Text and button visibility are
-                         driven by UpdateAddDevicePrompt. -->
+                         starts without the device. Laid out as a callout bar: glyph,
+                         headline + muted detail, action button; left-anchored and
+                         width-capped so it doesn't sprawl on wide windows. Texts and
+                         button visibility are driven by UpdateAddDevicePrompt. -->
                     <Border x:Name="borderAddDeviceAlert" Visibility="Collapsed"
                             Background="#1AFFCC00" BorderBrush="#FFCC00" BorderThickness="1"
-                            CornerRadius="4" Padding="10,8" Margin="0,0,0,12">
-                        <StackPanel>
-                            <TextBlock x:Name="txtAddDeviceText" Foreground="#FFEEBB" FontSize="12"
-                                       TextWrapping="Wrap" />
-                            <styles:SHButtonPrimary x:Name="btnAddDevice" Click="BtnAddDevice_Click"
-                                                    HorizontalAlignment="Left" Margin="0,8,0,0"
+                            CornerRadius="4" Padding="12,10" Margin="0,0,0,12"
+                            HorizontalAlignment="Left" MaxWidth="700">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="&#x26A0;" FontSize="18" Foreground="#FFCC00"
+                                       VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock x:Name="txtAddDeviceTitle" Foreground="#FFEEBB" FontSize="12"
+                                           FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock x:Name="txtAddDeviceDetail" Foreground="#FFEEBB" Opacity="0.7"
+                                           FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <styles:SHButtonPrimary Grid.Column="2" x:Name="btnAddDevice" Click="BtnAddDevice_Click"
+                                                    VerticalAlignment="Center" Margin="16,0,0,0"
                                                     ToolTip="Add the detected wheel or hub/module combo to SimHub's device list. SimHub switches to its Devices page once added.">
-                                Add Device to SimHub
+                                Add to SimHub
                             </styles:SHButtonPrimary>
-                        </StackPanel>
+                        </Grid>
                     </Border>
 
                     <!-- Capabilities — styled like a chain node (value + caption) -->

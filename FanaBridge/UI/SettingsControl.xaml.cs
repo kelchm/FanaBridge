@@ -406,16 +406,16 @@ namespace FanaBridge.UI
             {
                 // SimHub would answer the add with its instance-cap error dialog,
                 // so explain the conflict instead of offering the button.
-                txtAddDeviceText.Text = "⚠  " + name + " is detected, but SimHub won't "
-                    + "add it while \"" + blocking.MainDisplayName + "\" is in its device "
-                    + "list — remove that device on SimHub's Devices page first.";
+                txtAddDeviceTitle.Text = name + " can't be added yet";
+                txtAddDeviceDetail.Text = "SimHub allows only one of these devices at a time "
+                    + "— remove \"" + blocking.MainDisplayName + "\" on SimHub's Devices page first.";
                 btnAddDevice.Visibility = Visibility.Collapsed;
             }
             else
             {
-                txtAddDeviceText.Text = "⚠  " + name + " is detected, but it hasn't "
-                    + "been added to SimHub's devices yet — LEDs and display output stay "
-                    + "off until it is.";
+                txtAddDeviceTitle.Text = name + " isn't added to SimHub yet";
+                txtAddDeviceDetail.Text = "LED and display output stays off until it's added "
+                    + "as a SimHub device.";
                 btnAddDevice.Visibility = Visibility.Visible;
                 btnAddDevice.IsEnabled = true;
                 _promptDeviceTypeId = config.DeviceTypeId;
