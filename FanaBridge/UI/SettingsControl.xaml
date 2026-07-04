@@ -46,6 +46,24 @@
                     <TextBlock x:Name="txtStatusDetail" Foreground="#E0A800" FontSize="11"
                                TextWrapping="Wrap" Margin="0,0,0,10" Visibility="Collapsed" />
 
+                    <!-- Shown when the attached wheel resolves to a registered SimHub
+                         device the user hasn't added yet — LED/display output never
+                         starts without the device. Text and button visibility are
+                         driven by UpdateAddDevicePrompt. -->
+                    <Border x:Name="borderAddDeviceAlert" Visibility="Collapsed"
+                            Background="#1AFFCC00" BorderBrush="#FFCC00" BorderThickness="1"
+                            CornerRadius="4" Padding="10,8" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock x:Name="txtAddDeviceText" Foreground="#FFEEBB" FontSize="12"
+                                       TextWrapping="Wrap" />
+                            <styles:SHButtonPrimary x:Name="btnAddDevice" Click="BtnAddDevice_Click"
+                                                    HorizontalAlignment="Left" Margin="0,8,0,0"
+                                                    ToolTip="Add the detected wheel or hub/module combo to SimHub's device list. SimHub switches to its Devices page once added.">
+                                Add Device to SimHub
+                            </styles:SHButtonPrimary>
+                        </StackPanel>
+                    </Border>
+
                     <!-- Capabilities — styled like a chain node (value + caption) -->
                     <StackPanel Margin="0,0,0,2">
                         <TextBlock x:Name="txtCapabilities" Text="—" TextWrapping="Wrap" />

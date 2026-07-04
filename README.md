@@ -58,7 +58,9 @@ If your wheel isn't listed, use the **Wheel Profile Wizard** (see [Usage](#usage
 
 1. In the Fanatec software, set **Fanatec App LED/Display output** to **Disabled** (otherwise the Fanatec driver and FanaBridge will fight over control of the LEDs and display)
 2. Connect your Fanatec wheelbase and attach a supported wheel
-3. In SimHub, go to **Devices**, click **Add** (+), then **Add New Device**, and choose your wheel or hub/module combo
+3. Add the wheel as a SimHub device — either:
+   - Open the **FanaBridge** settings tab and click **Add Device to SimHub** on the prompt that appears when a detected wheel or hub hasn't been added yet, or
+   - In SimHub, go to **Devices**, click **Add** (+), then **Add New Device**, and choose your wheel or hub/module combo
 4. Configure LED profiles using SimHub's built-in LED Editor, or with a third-party LED profile plugin like [ATSR Hub EVO](https://github.com/ATSR-Alex/ATSR-Hub-EVO)
 
 ### Adding an unsupported wheel

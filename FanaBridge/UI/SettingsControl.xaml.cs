@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
@@ -7,9 +9,11 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Navigation;
 using System.Windows.Threading;
+using FanaBridge.Adapters;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
+using SimHub.Plugins.Devices;
 using Timer = System.Timers.Timer;
 
 namespace FanaBridge.UI
@@ -28,6 +32,18 @@ namespace FanaBridge.UI
         /// </summary>
         private WheelCapabilities _bootCaps;
         private bool _restartPromptDismissed;
+
+        /// <summary>
+        /// DeviceTypeID the add-device prompt's button would add; null while
+        /// the prompt is hidden or the add is blocked by a similar device.
+        /// </summary>
+        private string _promptDeviceTypeId;
+
+        /// <summary>
+        /// SimHub's device collection, watched while this control is loaded so
+        /// the add-device prompt tracks devices added/removed outside this page.
+        /// </summary>
+        private ObservableCollection<DeviceInstance> _watchedDevices;
 
         public SettingsControl()
         {
@@ -255,6 +271,8 @@ namespace FanaBridge.UI
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             StopScroll();
+            StopPromptRetry();
+            UnwatchSimHubDevices();
             Plugin.StateChanged -= OnPluginStateChanged;
         }
 
@@ -270,6 +288,10 @@ namespace FanaBridge.UI
             // Independent of device connection (Control Mapper is configured with or
             // without a wheel attached), so it runs ahead of the connection returns.
             UpdateControlMapperStatus();
+
+            // Also self-contained (hides itself while disconnected), so it runs
+            // ahead of the early returns below and stays correct on every path.
+            UpdateAddDevicePrompt();
 
             if (!Plugin.IsDeviceConnected)
             {
@@ -315,6 +337,199 @@ namespace FanaBridge.UI
             UpdateProfilePicker(
                 wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode,
                 identified ? caps : null);
+        }
+
+        // =====================================================================
+        // ADD-DEVICE PROMPT
+        //
+        // LEDs and display output only start once the user adds the wheel's
+        // device entry in SimHub — a step many users miss after installing the
+        // plugin. Whenever the attached wheel resolves to a registered
+        // descriptor with no added device yet, show a banner with a one-click
+        // add. Added-ness lives in SimHub's Devices plugin, so besides
+        // StateChanged this also watches SimHub's device collection while the
+        // page is visible.
+        // =====================================================================
+
+        private void UpdateAddDevicePrompt()
+        {
+            _promptDeviceTypeId = null;
+
+            var wheelbase = Plugin?.Wheelbase;
+            if (wheelbase == null || !Plugin.IsDeviceConnected || !wheelbase.HasIdentity
+                || !wheelbase.WheelDetected)
+            {
+                // Every way out of these states (connect/disconnect, identity
+                // commit) raises StateChanged, so no re-poll is needed.
+                StopPromptRetry();
+                borderAddDeviceAlert.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            if (!wheelbase.IdentityStable)
+            {
+                // The unstable→stable edge is silent when the identity settles
+                // back UNCHANGED (nothing commits, so no StateChanged) — re-poll
+                // until stable or the banner could stay hidden indefinitely
+                // after an update landed inside the settle window.
+                ArmPromptRetry();
+                borderAddDeviceAlert.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            StopPromptRetry();
+
+            var devices = SimHubDevicesGateway.Resolve(Plugin.PluginManager);
+            if (devices != null)
+                WatchSimHubDevices(devices);
+
+            var config = FanatecDevicesRegistry.FindConfigForAttachment(
+                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
+
+            // Stay quiet when there is nothing addable: no matching registered
+            // config, a config whose descriptor SimHub doesn't know (a profile
+            // created this session — the restart notice owns that message), or
+            // the device is already added.
+            if (config == null || devices == null
+                || !SimHubDevicesGateway.HasDescriptor(devices, config.DeviceTypeId)
+                || SimHubDevicesGateway.IsDeviceAdded(devices, config.DeviceTypeId))
+            {
+                borderAddDeviceAlert.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            string name = config.Capabilities?.ShortName ?? config.Capabilities?.Name ?? "This device";
+
+            var blocking = SimHubDevicesGateway.FindBlockingDevice(
+                devices, config.DeviceTypeId, config.ParentDeviceTypeId);
+            if (blocking != null)
+            {
+                // SimHub would answer the add with its instance-cap error dialog,
+                // so explain the conflict instead of offering the button.
+                txtAddDeviceText.Text = "⚠  " + name + " is detected, but SimHub won't "
+                    + "add it while \"" + blocking.MainDisplayName + "\" is in its device "
+                    + "list — remove that device on SimHub's Devices page first.";
+                btnAddDevice.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                txtAddDeviceText.Text = "⚠  " + name + " is detected, but it hasn't "
+                    + "been added to SimHub's devices yet — LEDs and display output stay "
+                    + "off until it is.";
+                btnAddDevice.Visibility = Visibility.Visible;
+                btnAddDevice.IsEnabled = true;
+                _promptDeviceTypeId = config.DeviceTypeId;
+            }
+
+            borderAddDeviceAlert.Visibility = Visibility.Visible;
+        }
+
+        private async void BtnAddDevice_Click(object sender, RoutedEventArgs e)
+        {
+            string deviceTypeId = _promptDeviceTypeId;
+            if (Plugin == null || deviceTypeId == null)
+                return;
+
+            var devices = SimHubDevicesGateway.Resolve(Plugin.PluginManager);
+            if (devices == null)
+                return;
+
+            // Re-check right before adding — a double-add would end in SimHub's
+            // instance-cap error dialog.
+            if (SimHubDevicesGateway.IsDeviceAdded(devices, deviceTypeId))
+            {
+                UpdateStatus();
+                return;
+            }
+
+            btnAddDevice.IsEnabled = false;
+            try
+            {
+                // Sanctioned add path: wires extensions, default settings and
+                // Init like a manual add; autoName skips the naming dialog. On
+                // success SimHub switches to its Devices page so the user sees
+                // the new entry. Returns null if the user cancelled or SimHub
+                // refused; the add isn't persisted until SaveSettings.
+                var instance = await devices.ShowAddDevice(
+                    this, deviceTypeId, requestName: false, autoName: true);
+                if (instance != null)
+                {
+                    devices.SaveSettings();
+                    SimHub.Logging.Current.Info(
+                        "FanaBridge: Added SimHub device " + deviceTypeId + " from the settings prompt");
+                }
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn(
+                    "FanaBridge: Failed to add SimHub device " + deviceTypeId + ": " + ex.Message);
+            }
+            finally
+            {
+                btnAddDevice.IsEnabled = true;
+                UpdateStatus();
+            }
+        }
+
+        // Re-polls the prompt while the wheel identity is settling; interval is
+        // comfortably above the settler's 200 ms quiet window. Created lazily,
+        // stopped whenever the identity is readable again or the page unloads.
+        private DispatcherTimer _promptRetryTimer;
+
+        private void ArmPromptRetry()
+        {
+            if (!IsLoaded)
+                return;
+
+            if (_promptRetryTimer == null)
+            {
+                _promptRetryTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                _promptRetryTimer.Tick += (s, e) => UpdateAddDevicePrompt();
+            }
+
+            _promptRetryTimer.Start();
+        }
+
+        private void StopPromptRetry()
+        {
+            _promptRetryTimer?.Stop();
+        }
+
+        // SimHub raises no event of its own when the user adds or removes a
+        // device, and Plugin.StateChanged doesn't fire for it either — watching
+        // the (public) device collection keeps the banner honest without
+        // polling. Subscribed lazily on first prompt evaluation, dropped on
+        // Unloaded, symmetric across tab switches.
+        private void WatchSimHubDevices(DevicesPlugin devices)
+        {
+            // A StateChanged racing OnUnloaded can queue an UpdateStatus that
+            // runs after the unsubscribes; without this guard it would
+            // re-subscribe on a control SimHub has already discarded, pinning
+            // it (and re-running the prompt) for the rest of the app's life.
+            if (!IsLoaded)
+                return;
+
+            var collection = devices?.DevicesPluginSettings?.Devices;
+            if (collection == null || ReferenceEquals(_watchedDevices, collection))
+                return;
+
+            UnwatchSimHubDevices();
+            _watchedDevices = collection;
+            _watchedDevices.CollectionChanged += OnSimHubDevicesChanged;
+        }
+
+        private void UnwatchSimHubDevices()
+        {
+            if (_watchedDevices == null)
+                return;
+
+            _watchedDevices.CollectionChanged -= OnSimHubDevicesChanged;
+            _watchedDevices = null;
+        }
+
+        private void OnSimHubDevicesChanged(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            Dispatcher.BeginInvoke(new Action(UpdateAddDevicePrompt));
         }
 
         // =====================================================================
