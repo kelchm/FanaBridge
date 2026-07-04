@@ -46,15 +46,23 @@
                     <TextBlock x:Name="txtStatusDetail" Foreground="#E0A800" FontSize="11"
                                TextWrapping="Wrap" Margin="0,0,0,10" Visibility="Collapsed" />
 
+                    <!-- Capabilities — styled like a chain node (value + caption) -->
+                    <StackPanel Margin="0,0,0,2">
+                        <TextBlock x:Name="txtCapabilities" Text="—" TextWrapping="Wrap" />
+                        <TextBlock Text="Capabilities" Foreground="#888888" FontSize="11" />
+                    </StackPanel>
+
                     <!-- Shown when the attached wheel resolves to a registered SimHub
                          device the user hasn't added yet — LED/display output never
-                         starts without the device. Laid out as a callout bar: glyph,
-                         headline + muted detail, action button; left-anchored and
-                         width-capped so it doesn't sprawl on wide windows. Texts and
-                         button visibility are driven by UpdateAddDevicePrompt. -->
+                         starts without the device. Sits below the status readout
+                         (chain + capabilities) with the actions, so it doesn't split
+                         them apart. Laid out as a callout bar: glyph, headline +
+                         muted detail, action button; left-anchored and width-capped
+                         so it doesn't sprawl on wide windows. Texts and button
+                         visibility are driven by UpdateAddDevicePrompt. -->
                     <Border x:Name="borderAddDeviceAlert" Visibility="Collapsed"
                             Background="#1AFFCC00" BorderBrush="#FFCC00" BorderThickness="1"
-                            CornerRadius="4" Padding="12,10" Margin="0,0,0,12"
+                            CornerRadius="4" Padding="12,10" Margin="0,10,0,2"
                             HorizontalAlignment="Left" MaxWidth="700">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -77,12 +85,6 @@
                             </styles:SHButtonPrimary>
                         </Grid>
                     </Border>
-
-                    <!-- Capabilities — styled like a chain node (value + caption) -->
-                    <StackPanel Margin="0,0,0,2">
-                        <TextBlock x:Name="txtCapabilities" Text="—" TextWrapping="Wrap" />
-                        <TextBlock Text="Capabilities" Foreground="#888888" FontSize="11" />
-                    </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,8">
                         <styles:SHButtonPrimary x:Name="btnReconnect" Click="BtnReconnect_Click" HorizontalAlignment="Left">
                             Reconnect
