@@ -795,7 +795,7 @@ Each entry:
 | 4 | 1 | Size | Value size in bytes (1, 2, or 4) |
 | 5+ | N | Value | Parameter value (little-endian, size from above) |
 
-> **The leading byte is the display-device id** — which display the entry is for, using the same values as [PageSet](#0x04--pageset). FanaBridge only drives the PBME/GTSWX, so every entry uses device 3; entries addressed to a display that isn't attached are silently ignored.
+> **The leading byte is the display-device id** — which display the entry is for, using the same values as [PageSet](#0x04--pageset). Entries addressed to a display that isn't attached are silently ignored.
 >
 > Multiple entries may be packed into one report; the firmware accepts batched updates.
 
