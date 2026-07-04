@@ -131,6 +131,7 @@ namespace FanaBridge.Adapters
                 ["itmEnabled"] = DisplaySettings.DefaultItmEnabled,
                 ["itmShowLapTotal"] = DisplaySettings.DefaultShowLapTotal,
                 ["itmShowPositionTotal"] = DisplaySettings.DefaultShowPositionTotal,
+                ["itmDefaultPage"] = DisplaySettings.DefaultItmDefaultPage,
             };
             _displaySettings = new DisplaySettings();
 
@@ -216,7 +217,7 @@ namespace FanaBridge.Adapters
             // Extract custom settings
             _customSettings = new JObject();
             foreach (var key in new[] { "wheelType", "moduleType", "displayMode", "itmEnabled",
-                                        "itmShowLapTotal", "itmShowPositionTotal" })
+                                        "itmShowLapTotal", "itmShowPositionTotal", "itmDefaultPage" })
             {
                 if (obj[key] != null)
                     _customSettings[key] = obj[key].DeepClone();
@@ -251,6 +252,7 @@ namespace FanaBridge.Adapters
                 ItmEnabled = (bool?)_customSettings["itmEnabled"] ?? DisplaySettings.DefaultItmEnabled,
                 ItmShowLapTotal = (bool?)_customSettings["itmShowLapTotal"] ?? DisplaySettings.DefaultShowLapTotal,
                 ItmShowPositionTotal = (bool?)_customSettings["itmShowPositionTotal"] ?? DisplaySettings.DefaultShowPositionTotal,
+                ItmDefaultPage = (byte?)_customSettings["itmDefaultPage"] ?? DisplaySettings.DefaultItmDefaultPage,
             };
 
             _displayManager?.UpdateSettings(_displaySettings);
@@ -306,7 +308,8 @@ namespace FanaBridge.Adapters
                 if (_itmDisplay == null)
                 {
                     _itmDisplay = new ItmDisplayDriver(plugin.Itm,
-                        log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
+                        log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
+                        deviceId: _config.Capabilities.ItmDeviceId);
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created ITM display driver");
                 }
@@ -321,6 +324,7 @@ namespace FanaBridge.Adapters
                         _itmDisplay.Start();   // idempotent — re-arms bring-up after a disconnect
                     _itmDisplay.ShowLapTotal = _displaySettings.ItmShowLapTotal;
                     _itmDisplay.ShowPositionTotal = _displaySettings.ItmShowPositionTotal;
+                    _itmDisplay.DefaultPage = _displaySettings.ItmDefaultPage;
 
                     // Feed the firmware's pushed ITM subscription reports (col03-IN) to the
                     // driver so it follows the page the wheel button selects.
@@ -430,7 +434,7 @@ namespace FanaBridge.Adapters
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 var screenPanel = new ScreenSettingsPanel();
-                screenPanel.Bind(_displaySettings, _config.Capabilities.Display);
+                screenPanel.Bind(_displaySettings, _config.Capabilities.Display, _config.Capabilities.ItmDeviceId);
                 screenPanel.SettingsChanged += () =>
                 {
                     // Sync back to JObject for persistence.
@@ -438,6 +442,7 @@ namespace FanaBridge.Adapters
                     _customSettings["itmEnabled"] = _displaySettings.ItmEnabled;
                     _customSettings["itmShowLapTotal"] = _displaySettings.ItmShowLapTotal;
                     _customSettings["itmShowPositionTotal"] = _displaySettings.ItmShowPositionTotal;
+                    _customSettings["itmDefaultPage"] = _displaySettings.ItmDefaultPage;
                     _displayManager?.UpdateSettings(_displaySettings);
                     // ITM driver reads _displaySettings live each frame.
                 };

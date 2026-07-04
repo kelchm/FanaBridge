@@ -7,26 +7,6 @@ using FanaBridge.Transport;
 namespace FanaBridge.Protocol
 {
     /// <summary>
-    /// Target display device for an ITM page change (col03 <c>FF 05 04</c>, byte[3]).
-    /// Multiple ITM-capable surfaces can be present at once, each addressed by its
-    /// own device ID. See the protocol reference, "ITM Supported Devices".
-    /// </summary>
-    public enum ItmDevice : byte
-    {
-        /// <summary>The wheelbase's own display (PDD1/PDD1-PS4/PDD2).</summary>
-        Base = 1,
-
-        /// <summary>
-        /// The PBME's large OLED or the GTSWX's built-in display. These share device
-        /// ID 3 on the wire and are mutually exclusive — a setup has one or the other.
-        /// </summary>
-        BmeOrGtswx = 3,
-
-        /// <summary>The Bentley GT3 wheel's built-in display.</summary>
-        Bentley = 4,
-    }
-
-    /// <summary>
     /// A single telemetry value for an ITM ValueUpdate entry (col03 <c>FF 05 01</c>).
     /// The <see cref="Raw"/> bits are emitted little-endian, <see cref="Size"/> bytes
     /// wide. Use the typed factory helpers (<see cref="UInt8"/>, <see cref="Int16"/>,
@@ -173,14 +153,18 @@ namespace FanaBridge.Protocol
         private const byte SUBCMD_PARAM_DEFS = 0x03;
         private const byte SUBCMD_PAGESET = 0x04;    // PageSet: byte[3]=display-device id, byte[4]=page
 
-        // First byte of every ValueUpdate/ParamDefs entry: the display-device id (which
-        // display the entry targets), not a marker. FanaBridge only drives the PBME/GTSWX
-        // (device 3), so it is hardcoded to 3; base (1) / Bentley (4) support would derive
-        // it per identity (#43).
-        private const byte ENTRY_DEVICE_ID = 0x03;
+        // First byte of every ValueUpdate/ParamDefs entry is the display-device id — which
+        // display the entry targets, not a marker. Callers pass the id for the display they
+        // drive; DefaultDeviceId (the wheel OLED, device 3) is used when omitted.
+
+        /// <summary>
+        /// Default ITM display-device wire id when a caller doesn't specify one: <b>3</b> — the
+        /// wheel's OLED (PBME, GTSWX, Formula V3, …). Other displays: base = 1, Bentley = 4.
+        /// </summary>
+        public const byte DefaultDeviceId = 3;
 
         // Fixed-size prefixes of a single entry, before the variable tail. The leading
-        // byte is the display-device id (see ENTRY_DEVICE_ID), not a marker.
+        // byte is the display-device id, not a marker.
         // ValueUpdate:  deviceId, handle, idLo, idHi, size          (+ Size value bytes)
         // ParamDefs:    deviceId, slotId, posLo, posHi, suffixLen   (+ suffix bytes)
         private const int VALUE_ENTRY_HEADER = 5;
@@ -239,13 +223,10 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Selects the active ITM page on a specific display device. Page changes
-        /// should be spaced at least 100&#160;ms apart (firmware reconfiguration time) —
-        /// the caller is responsible for that spacing.
+        /// Selects the active ITM page on a display device (byte[3] = wire device id,
+        /// byte[4] = page). Page changes should be spaced at least 100&#160;ms apart (firmware
+        /// reconfiguration time) — the caller is responsible for that spacing.
         /// </summary>
-        public bool SetPage(ItmDevice device, byte page) => SetPage((byte)device, page);
-
-        /// <summary>Raw overload of <see cref="SetPage(ItmDevice, byte)"/> for an arbitrary device ID.</summary>
         public bool SetPage(byte deviceId, byte page)
         {
             Array.Clear(_reportBuf, 0, REPORT_LENGTH);
@@ -262,9 +243,10 @@ namespace FanaBridge.Protocol
         /// many 64-byte reports as needed, each carrying the <c>FF 05 03</c> header.
         /// Re-send after every <see cref="EnableItm"/>. Returns false if the list is
         /// null/empty, exceeds <see cref="MaxParams"/>, or any suffix exceeds
-        /// <see cref="MaxSuffixLength"/>.
+        /// <see cref="MaxSuffixLength"/>. <paramref name="deviceId"/> is the target display
+        /// (defaults to <see cref="DefaultDeviceId"/>).
         /// </summary>
-        public bool SetParamDefs(IReadOnlyList<ItmParamDef> defs)
+        public bool SetParamDefs(IReadOnlyList<ItmParamDef> defs, byte deviceId = DefaultDeviceId)
         {
             if (defs == null || defs.Count == 0 || defs.Count > MaxParams)
                 return false;
@@ -294,7 +276,7 @@ namespace FanaBridge.Protocol
                         if (pos + entryLen > REPORT_LENGTH)
                             break;
 
-                        _reportBuf[pos++] = ENTRY_DEVICE_ID;
+                        _reportBuf[pos++] = deviceId;
                         _reportBuf[pos++] = d.SlotId;
                         _reportBuf[pos++] = (byte)(d.Position & 0xFF);
                         _reportBuf[pos++] = (byte)((d.Position >> 8) & 0xFF);
@@ -316,9 +298,10 @@ namespace FanaBridge.Protocol
         /// Sends telemetry values (subcmd 0x01). Entries are packed into as many
         /// 64-byte reports as needed, each carrying the <c>FF 05 01</c> header.
         /// Returns false if the list is null/empty, exceeds <see cref="MaxParams"/>,
-        /// or any entry has a size other than 1, 2, or 4.
+        /// or any entry has a size other than 1, 2, or 4. <paramref name="deviceId"/> is the
+        /// target display (defaults to <see cref="DefaultDeviceId"/>).
         /// </summary>
-        public bool SendValues(IReadOnlyList<ItmValue> values)
+        public bool SendValues(IReadOnlyList<ItmValue> values, byte deviceId = DefaultDeviceId)
         {
             if (values == null || values.Count == 0 || values.Count > MaxParams)
                 return false;
@@ -346,7 +329,7 @@ namespace FanaBridge.Protocol
                         if (pos + entryLen > REPORT_LENGTH)
                             break;
 
-                        _reportBuf[pos++] = ENTRY_DEVICE_ID;
+                        _reportBuf[pos++] = deviceId;
                         _reportBuf[pos++] = v.Handle;
                         _reportBuf[pos++] = (byte)(v.ParamId & 0xFF);
                         _reportBuf[pos++] = (byte)((v.ParamId >> 8) & 0xFF);

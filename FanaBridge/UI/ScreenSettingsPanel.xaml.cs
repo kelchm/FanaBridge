@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using FanaBridge.Adapters;
 using FanaBridge.Profiles;
+using FanaBridge.Protocol;
 
 namespace FanaBridge.UI
 {
@@ -23,7 +24,8 @@ namespace FanaBridge.UI
         /// Binds the panel to a DisplaySettings instance.
         /// Call once after construction, before the panel is displayed.
         /// </summary>
-        public void Bind(DisplaySettings settings, DisplayType displayType = DisplayType.Basic)
+        public void Bind(DisplaySettings settings, DisplayType displayType = DisplayType.Basic,
+            byte itmDeviceId = ItmEncoder.DefaultDeviceId)
         {
             _settings = settings ?? new DisplaySettings();
             _suppressEvents = true;
@@ -40,6 +42,10 @@ namespace FanaBridge.UI
             chkShowLapTotal.IsChecked = _settings.ItmShowLapTotal;
             chkShowPositionTotal.IsChecked = _settings.ItmShowPositionTotal;
 
+            // Default-page choices depend on the display device (e.g. Bentley has fewer pages).
+            PopulateDefaultPages(itmDeviceId);
+            SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
+
             borderItmInfo.Visibility = isItm ? Visibility.Visible : Visibility.Collapsed;
             sectionItmOptions.Visibility = isItm ? Visibility.Visible : Visibility.Collapsed;
             // The mode selector drives the simple 7-seg gear/speed — the only display on
@@ -47,6 +53,8 @@ namespace FanaBridge.UI
             // cases, but titled "Legacy Display Mode" on ITM wheels.
             sectionDisplayMode.Title = isItm ? "Legacy Display Mode" : "Display Mode";
             sectionDisplayMode.Visibility = Visibility.Visible;
+
+            UpdateItmEnabledState();   // grey out the ITM sub-options when the display is off
 
             _suppressEvents = false;
         }
@@ -81,7 +89,58 @@ namespace FanaBridge.UI
             _settings.ItmEnabled = chkEnableItm.IsChecked == true;
             _settings.ItmShowLapTotal = chkShowLapTotal.IsChecked == true;
             _settings.ItmShowPositionTotal = chkShowPositionTotal.IsChecked == true;
+            UpdateItmEnabledState();   // enabling/disabling ITM greys the dependent options
             SettingsChanged?.Invoke();
+        }
+
+        // Populate the default-page choices for the given display device — name shown, wire page
+        // number stored. Includes the legacy page (some setups prefer to start there).
+        private void PopulateDefaultPages(byte itmDeviceId)
+        {
+            cmbDefaultPage.Items.Clear();
+            foreach (var page in ItmDeviceCatalog.PagesFor(itmDeviceId))
+                cmbDefaultPage.Items.Add(new ComboBoxItem { Content = page.Name, Tag = page.Number });
+        }
+
+        private void SelectByPageNumber(ComboBox combo, byte pageNumber)
+        {
+            foreach (ComboBoxItem item in combo.Items)
+            {
+                if (item.Tag is byte n && n == pageNumber)
+                {
+                    combo.SelectedItem = item;
+                    return;
+                }
+            }
+            // Stored page isn't offered by this device — fall back to the first page AND correct the
+            // backing setting, so it can't persist a page this device doesn't have. (SelectionChanged
+            // is suppressed during Bind, so the setting is synced here directly.)
+            if (combo.Items.Count > 0)
+            {
+                combo.SelectedIndex = 0;
+                if (_settings != null && ((ComboBoxItem)combo.Items[0]).Tag is byte first)
+                    _settings.ItmDefaultPage = first;
+            }
+        }
+
+        private void CmbDefaultPage_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents || _settings == null) return;
+
+            if (cmbDefaultPage.SelectedItem is ComboBoxItem selected && selected.Tag is byte pageNumber)
+            {
+                _settings.ItmDefaultPage = pageNumber;
+                SettingsChanged?.Invoke();
+            }
+        }
+
+        // Grey out the ITM sub-options (default page, totals) when the display is disabled —
+        // they have no effect until ITM is turned back on.
+        private void UpdateItmEnabledState()
+        {
+            bool on = chkEnableItm.IsChecked == true;
+            panelDefaultPage.IsEnabled = on;
+            panelTotals.IsEnabled = on;
         }
     }
 }

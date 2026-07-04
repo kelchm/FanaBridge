@@ -49,6 +49,11 @@ namespace FanaBridge.Profiles
         [JsonProperty("display")]
         public string Display { get; set; }
 
+        /// <summary>ITM display wire id — 1 base, 3 wheel OLED (PBME/GTSWX), 4 Bentley.
+        /// Omit to default to 3 (correct for PBME/GTSWX).</summary>
+        [JsonProperty("itmDeviceId", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public byte? ItmDeviceIdRaw { get; set; }
+
         /// <summary>
         /// Pixel encoding for the Color LED channel.
         /// Defaults to "Rgb565" when omitted.  Set to "Rgb555" for hardware
@@ -102,6 +107,14 @@ namespace FanaBridge.Profiles
                 return FanaBridge.Profiles.DisplayType.None;
             }
         }
+
+        /// <summary>
+        /// ITM display wire id (which device the wheel's ITM screen is: 1 base, 3 wheel OLED,
+        /// 4 Bentley). Defaults to <see cref="FanaBridge.Protocol.ItmEncoder.DefaultDeviceId"/>
+        /// (3) when omitted — correct for PBME and GTSWX.
+        /// </summary>
+        [JsonIgnore]
+        public byte ItmDeviceId => ItmDeviceIdRaw ?? FanaBridge.Protocol.ItmEncoder.DefaultDeviceId;
 
         /// <summary>Total LED count across all channels.</summary>
         [JsonIgnore]

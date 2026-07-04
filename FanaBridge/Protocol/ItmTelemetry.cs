@@ -1,25 +1,24 @@
 using System;
 using System.Collections.Generic;
-using GameReaderCommon;
 
 namespace FanaBridge.Protocol
 {
     /// <summary>
-    /// ITM telemetry page. Each page is a fixed parameter layout the firmware
-    /// renders; SPEED and GEAR appear on every page as persistent headers. Values
-    /// match the Base/BME page numbering in the protocol reference, "ITM Page Layouts".
-    /// The numbering is Base/BME-specific — a Bentley display has no Car Settings page
-    /// and a different legacy page (5, not 6), so this enum does not map to a Bentley.
+    /// A page's <b>content identity</b> — the fixed parameter layout the firmware renders (SPEED
+    /// and GEAR appear on every page as persistent headers). This is <b>not</b> a wire page number:
+    /// the on-wire number is assigned per device by <see cref="ItmDeviceCatalog"/> (Car Settings is
+    /// wire page 3 on a standard display but absent on a Bentley, which renumbers the rest). Use it
+    /// only to look up a page's parameters via <see cref="ParamsFor"/>.
     /// </summary>
-    public enum ItmPage : byte
+    public enum ItmPage
     {
-        LapInfo = 1,
-        FuelErsDrs = 2,
-        CarSettings = 3,
-        LapTimes = 4,
-        TyreTemps = 5,
+        LapInfo,
+        FuelErsDrs,
+        CarSettings,
+        LapTimes,
+        TyreTemps,
         /// <summary>Legacy / default fallback — carries no telemetry parameters.</summary>
-        Legacy = 6,
+        Legacy,
     }
 
     /// <summary>
@@ -88,272 +87,72 @@ namespace FanaBridge.Protocol
     }
 
     /// <summary>
-    /// Maps SimHub <see cref="GameData"/> telemetry to the encoded
-    /// <see cref="ItmValue"/> entries for a given <see cref="ItmPage"/>, ready to
-    /// hand to <see cref="ItmEncoder.SendValues"/>.
+    /// Wire-side ITM protocol vocabulary: the per-page parameter <b>catalog</b> (which
+    /// parameter IDs a page carries, in order) and firmware subscription-report parsing.
+    /// This is pure wire — no SimHub <c>GameData</c>. The SimHub telemetry → value/suffix
+    /// mapping lives in <c>ItmTelemetryMapper</c> (Adapters), which knows both sides.
     ///
-    /// This is the pure, per-frame translation step — the ITM analogue of
-    /// <c>FanatecDisplayDriver</c>'s telemetry reads. It holds no state and does
-    /// no I/O; page selection and the enable/ParamDefs sequence belong to the
-    /// (future) ITM display driver above it.
-    ///
-    /// Handles are assigned sequentially (0..N-1) in page-field order. That mirrors
-    /// a straightforward ParamDefs slot layout; if the on-hardware slot/handle
-    /// mapping (protocol reference, "Slot &amp; Handle Mapping") proves to need
-    /// specific handle ranges per page, this is the single place to change it.
+    /// This declares each page's parameter list (<see cref="ParamsFor"/>) and display name
+    /// (<see cref="NameOf"/>), keyed by the <see cref="ItmPage"/> content identity. Which pages a
+    /// given display exposes — and their on-wire numbering is declared in <see cref="ItmDeviceCatalog"/>.
     /// </summary>
     public static class ItmTelemetry
     {
-        // A single page field: its parameter ID plus how to read+encode it from
-        // a telemetry frame for a given handle.
-        private sealed class Field
-        {
-            public readonly ushort ParamId;
-            private readonly Func<StatusDataBase, byte, ItmValue> _encode;
+        // ── Page catalog (paramId order per page, matching the official-software captures) ──
+        // Handles are assigned sequentially (0..N-1) in this order.
 
-            public Field(ushort paramId, Func<StatusDataBase, byte, ItmValue> encode)
-            {
-                ParamId = paramId;
-                _encode = encode;
-            }
+        private static readonly IReadOnlyList<ushort> LapInfoParams = Array.AsReadOnly(new ushort[]
+            { ItmParam.Speed, ItmParam.Gear, ItmParam.Lap, ItmParam.Position, ItmParam.LapTime, ItmParam.LastLapTime });
 
-            public ItmValue Encode(StatusDataBase data, byte handle) => _encode(data, handle);
-        }
+        private static readonly IReadOnlyList<ushort> FuelErsDrsParams = Array.AsReadOnly(new ushort[]
+            { ItmParam.Speed, ItmParam.Gear, ItmParam.Fuel, ItmParam.ErsLevel, ItmParam.DrsZone, ItmParam.DrsActive, ItmParam.DeltaOwnBest });
 
-        // ── Typed field builders ─────────────────────────────────────────
-        private static Field U8(ushort id, Func<StatusDataBase, byte> sel)
-            => new Field(id, (d, h) => ItmValue.UInt8(h, id, sel(d)));
+        // Order (handles 2..6) matches the official-software capture: TC, ABS, EngineMap, OilTemp, BrakeBias.
+        private static readonly IReadOnlyList<ushort> CarSettingsParams = Array.AsReadOnly(new ushort[]
+            { ItmParam.Speed, ItmParam.Gear, ItmParam.TcSetting, ItmParam.AbsSetting, ItmParam.EngineMapping, ItmParam.OilTemp, ItmParam.BrakeBias });
 
-        private static Field I16(ushort id, Func<StatusDataBase, short> sel)
-            => new Field(id, (d, h) => ItmValue.Int16(h, id, sel(d)));
+        private static readonly IReadOnlyList<ushort> LapTimesParams = Array.AsReadOnly(new ushort[]
+            { ItmParam.Speed, ItmParam.Gear, ItmParam.LastLapTime, ItmParam.BestLapTime, ItmParam.CarAhead, ItmParam.CarBehind });
 
-        private static Field I32(ushort id, Func<StatusDataBase, int> sel)
-            => new Field(id, (d, h) => ItmValue.Int32(h, id, sel(d)));
+        // Order (handles 2..5) matches the official-software capture: FL, RL, FR, RR.
+        private static readonly IReadOnlyList<ushort> TyreTempsParams = Array.AsReadOnly(new ushort[]
+            { ItmParam.Speed, ItmParam.Gear, ItmParam.TyreFlTemp, ItmParam.TyreRlTemp, ItmParam.TyreFrTemp, ItmParam.TyreRrTemp });
 
-        private static Field F32(ushort id, Func<StatusDataBase, float> sel)
-            => new Field(id, (d, h) => ItmValue.Float32(h, id, sel(d)));
-
-        private static Field Str(ushort id, Func<StatusDataBase, string> sel)
-            => new Field(id, (d, h) => ItmValue.Ascii(h, id, sel(d)));
-
-        // SPEED + GEAR head every page (protocol reference, "ITM Page Layouts").
-        // SpeedLocal honours the user's km/h vs mph choice, matching the 7-seg driver.
-        private static readonly Field SpeedField = I16(ItmParam.Speed, d => ClampSpeed(d.SpeedLocal));
-        private static readonly Field GearField = U8(ItmParam.Gear, d => EncodeGear(d.Gear));
-        // Shared: appears on both the Lap Info and Lap Times pages.
-        private static readonly Field LastLapTimeField = F32(ItmParam.LastLapTime, d => Seconds(d.LastLapTime));
-
-        // ── Page layouts ─────────────────────────────────────────────────
-        private static readonly Field[] LapInfo =
-        {
-            SpeedField,
-            GearField,
-            U8(ItmParam.Lap, d => ClampByte(d.CurrentLap)),
-            U8(ItmParam.Position, d => ClampByte(d.Position)),
-            F32(ItmParam.LapTime, d => Seconds(d.CurrentLapTime)),
-            LastLapTimeField,
-        };
-
-        private static readonly Field[] FuelErsDrs =
-        {
-            SpeedField,
-            GearField,
-            F32(ItmParam.Fuel, d => (float)d.Fuel),
-            I32(ItmParam.ErsLevel, d => SafeRound(d.ERSPercent)),
-            U8(ItmParam.DrsZone, d => (byte)(d.DRSAvailable != 0 ? 1 : 0)),
-            U8(ItmParam.DrsActive, d => (byte)(d.DRSEnabled != 0 ? 1 : 0)),
-            F32(ItmParam.DeltaOwnBest, d => (float)(d.DeltaToSessionBest ?? 0.0)),
-        };
-
-        // Field order (handles 2..6) matches the official-software capture:
-        // TC, ABS, EngineMap, OilTemp, BrakeBias.
-        private static readonly Field[] CarSettings =
-        {
-            SpeedField,
-            GearField,
-            U8(ItmParam.TcSetting, d => ClampByte(d.TCLevel)),
-            U8(ItmParam.AbsSetting, d => ClampByte(d.ABSLevel)),
-            // ENGINE_MAPPING is ASCII text on the wire — map 10 travels as "10", not 0x0A.
-            // Sending the numeric byte wedges the firmware (verified via official capture).
-            Str(ItmParam.EngineMapping, d => EngineMapText(d.EngineMap)),
-            U8(ItmParam.OilTemp, d => ClampByte(d.OilTemperature)),
-            // BRAKE_BIAS is Int32 tenths of a percent (512 = 51.2%); see BrakeBiasTenths.
-            I32(ItmParam.BrakeBias, d => BrakeBiasTenths(d.BrakeBias)),
-        };
-
-        private static readonly Field[] LapTimes =
-        {
-            SpeedField,
-            GearField,
-            LastLapTimeField,
-            F32(ItmParam.BestLapTime, d => Seconds(d.BestLapTime)),
-            // Car ahead is shown as a negative gap (you're behind them); car behind positive.
-            F32(ItmParam.CarAhead, d => -NearestGap(d.OpponentsAheadOnTrack)),
-            F32(ItmParam.CarBehind, d => NearestGap(d.OpponentsBehindOnTrack)),
-        };
-
-        // Field order (handles 2..5) matches the official-software capture:
-        // FL, RL, FR, RR (left column, then right column).
-        private static readonly Field[] TyreTemps =
-        {
-            SpeedField,
-            GearField,
-            U8(ItmParam.TyreFlTemp, d => ClampByte(d.TyreTemperatureFrontLeft)),
-            U8(ItmParam.TyreRlTemp, d => ClampByte(d.TyreTemperatureRearLeft)),
-            U8(ItmParam.TyreFrTemp, d => ClampByte(d.TyreTemperatureFrontRight)),
-            U8(ItmParam.TyreRrTemp, d => ClampByte(d.TyreTemperatureRearRight)),
-        };
-
-        private static readonly Field[] Empty = new Field[0];
-
-        // Flat paramId -> encoder registry, built from every page's fields. Lets the
-        // firmware-driven path encode a value for any subscribed parameter ID without
-        // caring which page it belongs to.
-        private static readonly Dictionary<ushort, Field> ByParam = BuildRegistry();
-
-        // Parameters that wedge the PBME firmware when sent — never put them on the wire.
-        // The firmware may still subscribe them (so the field shows dashes), but sending a
-        // value locks up the display.
-        //
-        // Currently empty: ENGINE_MAPPING used to live here because sending it as a numeric
-        // byte froze the Car Settings page. A USBPcap of the official software revealed it is
-        // ASCII text (map "10" = bytes '1','0'), so it is now sent via Str(...) instead of
-        // being suppressed. Keep the set for any future param that proves unsendable.
-        private static readonly HashSet<ushort> Unsupported = new HashSet<ushort>();
-
-        private static Dictionary<ushort, Field> BuildRegistry()
-        {
-            var map = new Dictionary<ushort, Field>();
-            foreach (var page in new[] { LapInfo, FuelErsDrs, CarSettings, LapTimes, TyreTemps })
-                foreach (var f in page)
-                    if (!map.ContainsKey(f.ParamId))
-                        map[f.ParamId] = f;
-            return map;
-        }
-
-        private static Field[] FieldsFor(ItmPage page)
-        {
-            switch (page)
-            {
-                case ItmPage.LapInfo: return LapInfo;
-                case ItmPage.FuelErsDrs: return FuelErsDrs;
-                case ItmPage.CarSettings: return CarSettings;
-                case ItmPage.LapTimes: return LapTimes;
-                case ItmPage.TyreTemps: return TyreTemps;
-                default: return Empty;   // Legacy / unknown: no parameters
-            }
-        }
-
-        // ── Public API ───────────────────────────────────────────────────
+        private static readonly IReadOnlyList<ushort> NoParams = Array.AsReadOnly(new ushort[0]);
 
         /// <summary>
-        /// The ordered parameter IDs that make up a page. Use to build the
-        /// ParamDefs slot layout. Empty for <see cref="ItmPage.Legacy"/>.
+        /// The ordered parameter IDs that make up a page — for building the ParamDefs slot
+        /// layout and the cold-start seed. Empty for <see cref="ItmPage.Legacy"/>.
         /// </summary>
         public static IReadOnlyList<ushort> ParamsFor(ItmPage page)
         {
-            var fields = FieldsFor(page);
-            var ids = new ushort[fields.Length];
-            for (int i = 0; i < fields.Length; i++)
-                ids[i] = fields[i].ParamId;
-            return ids;
-        }
-
-        // Temperatures whose value carries a unit label. SimHub delivers both the converted
-        // value AND its unit in the same frame (StatusDataBase.TemperatureUnit), so we read the
-        // label from that snapshot — no out-of-band settings lookup, always consistent with the
-        // value. (Fuel is NOT unit-labeled; it uses a "/capacity" total, with the unit only as a
-        // no-capacity fallback.)
-        private static readonly HashSet<ushort> TempParams = new HashSet<ushort>
-        {
-            ItmParam.OilTemp, ItmParam.TyreFlTemp, ItmParam.TyreFrTemp,
-            ItmParam.TyreRlTemp, ItmParam.TyreRrTemp,
-        };
-
-        /// <summary>
-        /// The unit suffix a temperature's value should display (single char, e.g. "C"/"F"/"K"),
-        /// or false if the parameter isn't a temperature. Read from the frame's
-        /// <c>TemperatureUnit</c> so it stays consistent with the already-converted value.
-        /// </summary>
-        public static bool TryGetUnitSuffix(ushort paramId, GameData data, out string suffix)
-        {
-            if (TempParams.Contains(paramId)) { suffix = UnitLabel(data?.NewData?.TemperatureUnit, "C"); return true; }
-            suffix = null;
-            return false;
-        }
-
-        /// <summary>The fuel unit as a single-char label (e.g. "L"/"G"), from the frame's
-        /// <c>FuelUnit</c>. Used only as a fallback when no tank capacity is available.</summary>
-        public static string FuelUnitLabel(GameData data) => UnitLabel(data?.NewData?.FuelUnit, "L");
-
-        // A unit string's first letter, uppercased — a single char for the display's tight space,
-        // robust to formats like "C" / "°C" / "Celsius" / "gal". Falls back when empty.
-        private static string UnitLabel(string raw, string fallback)
-        {
-            if (!string.IsNullOrEmpty(raw))
-                foreach (var c in raw)
-                    if (char.IsLetter(c)) return char.ToUpperInvariant(c).ToString();
-            return fallback;
-        }
-
-        /// <summary>Whether a parameter carries a "/total" suffix (lap, position, or fuel/capacity).</summary>
-        public static bool IsTotalParam(ushort paramId)
-            => paramId == ItmParam.Lap || paramId == ItmParam.Position || paramId == ItmParam.Fuel;
-
-        /// <summary>
-        /// The "/total" suffix for a parameter that has one — lap of total laps ("/34"),
-        /// position of field size ("/20"), fuel of tank capacity ("/23") — computed from the
-        /// current telemetry. The firmware cannot know these, so the host supplies them.
-        ///
-        /// Returns false (no suffix) when the parameter has no total, there is no
-        /// telemetry frame, or the game does not report a plausible total — i.e. the
-        /// total must be present and at least the current value. This drops misleading
-        /// "/0" / "/2" suffixes from games (e.g. Forza Horizon) that don't expose a race
-        /// structure, while real races still show the total.
-        /// </summary>
-        public static bool TryGetTotalSuffix(ushort paramId, GameData data, out string suffix)
-        {
-            suffix = null;
-            var s = data?.NewData;
-            if (s == null) return false;
-
-            switch (paramId)
+            switch (page)
             {
-                case ItmParam.Lap:
-                    if (s.TotalLaps > 0 && s.TotalLaps >= s.CurrentLap)
-                        suffix = "/" + s.TotalLaps;
-                    return suffix != null;
-                case ItmParam.Position:
-                    int field = s.OpponentsCount;   // SimHub's opponents list already includes the player
-                    if (field > 1 && field >= s.Position)
-                        suffix = "/" + field;
-                    return suffix != null;
-                case ItmParam.Fuel:
-                    // Fuel of tank capacity (e.g. "/90"), in the user's SimHub unit. Suppress
-                    // when no capacity is reported so we never show a bare "/0".
-                    if (s.MaxFuel > 0 && s.MaxFuel >= s.Fuel)
-                        suffix = "/" + (int)System.Math.Round(s.MaxFuel);
-                    return suffix != null;
-                default:
-                    return false;
+                case ItmPage.LapInfo: return LapInfoParams;
+                case ItmPage.FuelErsDrs: return FuelErsDrsParams;
+                case ItmPage.CarSettings: return CarSettingsParams;
+                case ItmPage.LapTimes: return LapTimesParams;
+                case ItmPage.TyreTemps: return TyreTempsParams;
+                default: return NoParams;   // Legacy / unknown: no parameters
             }
         }
 
         /// <summary>
-        /// Encodes a single subscribed parameter's current value at <paramref name="handle"/>,
-        /// for the firmware-driven path. Returns false when there is no telemetry frame or
-        /// the parameter has no known encoder.
+        /// The page's canonical display name (reference data, e.g. "Lap Info") — the same across
+        /// every device that shows the page. Used by UI page pickers.
         /// </summary>
-        public static bool TryEncodeParam(ushort paramId, byte handle, GameData data, out ItmValue value)
+        public static string NameOf(ItmPage page)
         {
-            value = default;
-            if (Unsupported.Contains(paramId))
-                return false;   // never send — wedges the firmware
-            var status = data?.NewData;
-            if (status == null || !ByParam.TryGetValue(paramId, out var field))
-                return false;
-            value = field.Encode(status, handle);
-            return true;
+            switch (page)
+            {
+                case ItmPage.LapInfo: return "Lap Info";
+                case ItmPage.FuelErsDrs: return "Fuel / ERS / DRS";
+                case ItmPage.CarSettings: return "Car Settings";
+                case ItmPage.LapTimes: return "Lap Times";
+                case ItmPage.TyreTemps: return "Tyre Temps";
+                case ItmPage.Legacy: return "Legacy";
+                default: return page.ToString();
+            }
         }
 
         /// <summary>
@@ -361,9 +160,11 @@ namespace FanaBridge.Protocol
         /// entries. Each entry is <c>[deviceId][fwHandle][paramId-LE][dataType]</c> — the leading
         /// byte is the display-device id (which display the entry is for), not a marker; the host
         /// handle is <c>fwHandle &amp; 0x7F</c> and <c>paramId == 0xFFFF</c> means unsubscribe.
-        /// Returns an empty list if the report carries no recognizable entries.
+        /// Only entries for <paramref name="deviceId"/> (the display this driver targets,
+        /// default <see cref="ItmEncoder.DefaultDeviceId"/>) are returned. Returns an empty
+        /// list if the report carries no recognizable entries.
         /// </summary>
-        public static IReadOnlyList<ItmSubscription> ParseSubscriptionReport(byte[] report, int len)
+        public static IReadOnlyList<ItmSubscription> ParseSubscriptionReport(byte[] report, int len, byte deviceId = ItmEncoder.DefaultDeviceId)
         {
             var result = new List<ItmSubscription>();
             if (report == null) return result;
@@ -380,132 +181,17 @@ namespace FanaBridge.Protocol
             if (start < 0) return result;
 
             // Entries: [deviceId][fwHandle][idLo][idHi][dataType], 5 bytes each. Byte 0 is the
-            // display-device id. We only drive the PBME/GTSWX (device 3), so stop at the first
-            // entry for any other display (base/Bentley multi-device support isn't wired up yet).
+            // display-device id. Each driver targets one display, so skip entries for any other
+            // device rather than stopping — a report can interleave devices, and a later matching
+            // entry must still be collected. (Zero-padding never matches a real device id.)
             for (int i = start; i + 5 <= len; i += 5)
             {
-                if (report[i] != 0x03) break;   // device 3 = PBME/GTSWX (the only display we handle)
+                if (report[i] != deviceId) continue;   // entry for a different display — skip it
                 byte fwHandle = report[i + 1];
                 ushort pid = (ushort)(report[i + 2] | (report[i + 3] << 8));
                 result.Add(new ItmSubscription(fwHandle, pid));
             }
             return result;
-        }
-
-        /// <summary>
-        /// Encodes the current telemetry for <paramref name="page"/> into the value
-        /// entries to send via <see cref="ItmEncoder.SendValues"/>. Handles are
-        /// assigned <paramref name="handleBase"/>..+N-1 in field order. Returns an
-        /// empty list when there is no telemetry frame or the page carries no parameters.
-        /// </summary>
-        public static IReadOnlyList<ItmValue> BuildValues(ItmPage page, GameData data, byte handleBase = 0)
-        {
-            var status = data?.NewData;
-            var fields = FieldsFor(page);
-            if (status == null || fields.Length == 0)
-                return Array.Empty<ItmValue>();
-
-            var values = new ItmValue[fields.Length];
-            for (int i = 0; i < fields.Length; i++)
-                values[i] = fields[i].Encode(status, (byte)(handleBase + i));
-            return values;
-        }
-
-        // ── Encoding helpers ─────────────────────────────────────────────
-
-        private static float Seconds(TimeSpan t) => (float)t.TotalSeconds;
-
-        // The nearest on-track gap (seconds) among a set of opponents, or 0 if none /
-        // unknown. SimHub gives no scalar gap-to-car-ahead/behind, so take the smallest
-        // |RelativeGapToPlayer| from the ahead/behind list (robust to list ordering).
-        private static float NearestGap(System.Collections.Generic.IEnumerable<Opponent> opponents)
-        {
-            if (opponents == null) return 0f;
-            double best = double.MaxValue;
-            foreach (var o in opponents)
-            {
-                double? g = o?.RelativeGapToPlayer;
-                if (g.HasValue)
-                {
-                    double a = Math.Abs(g.Value);
-                    if (a < best) best = a;
-                }
-            }
-            return best == double.MaxValue ? 0f : (float)best;
-        }
-
-        // Round a possibly non-finite value to int, mapping NaN/Infinity to 0. A NaN
-        // would otherwise slip through range comparisons (all false) into an undefined
-        // cast — the same firmware-safety concern BrakeBiasTenths guards against.
-        private static int SafeRound(double value)
-            => double.IsNaN(value) || double.IsInfinity(value) ? 0 : (int)Math.Round(value);
-
-        // Speed is non-negative; clamp to [0, Int16 max] (the SPEED param is Int16).
-        private static short ClampSpeed(double value)
-        {
-            if (double.IsNaN(value) || double.IsInfinity(value)) return 0;
-            double v = Math.Round(value);
-            if (v < 0) return 0;
-            if (v > short.MaxValue) return short.MaxValue;
-            return (short)v;
-        }
-
-        private static byte ClampByte(double value)
-        {
-            if (double.IsNaN(value) || double.IsInfinity(value)) return 0;
-            double v = Math.Round(value);
-            if (v < 0) return 0;
-            if (v > 255) return 255;
-            return (byte)v;
-        }
-
-        private static byte ClampByte(int value)
-        {
-            if (value < 0) return 0;
-            if (value > 255) return 255;
-            return (byte)value;
-        }
-
-        // BRAKE_BIAS is an Int32 in tenths of a percent (confirmed by capture: 51.2% =>
-        // 512). SimHub reports a percentage, so send round(percent * 10), clamped to
-        // [0, 1000] (0–100.0%).
-        private static int BrakeBiasTenths(double percent)
-        {
-            if (double.IsNaN(percent) || double.IsInfinity(percent)) return 0;
-            int v = (int)Math.Round(percent * 10.0);
-            if (v < 0) return 0;
-            if (v > 1000) return 1000;
-            return v;
-        }
-
-        // ENGINE_MAPPING is rendered by the firmware as text (e.g. "1", "10"). SimHub reports
-        // the map as an int; send its decimal string. Clamp to [0, 99] so the payload stays
-        // within two ASCII bytes (the range the official software was observed to use).
-        private static string EngineMapText(int map)
-        {
-            if (map < 0) map = 0;
-            if (map > 99) map = 99;
-            return map.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }
-
-        /// <summary>Reverse sentinel: -1 as a Uint8, which the firmware renders as "r".</summary>
-        private const byte GearReverse = 0xFF;
-
-        /// <summary>
-        /// Parses SimHub's gear string to the ITM Uint8 gear value: "N"/empty = 0,
-        /// "1".."9" = that number, "R" = <see cref="GearReverse"/>. Forward gears are
-        /// literal, confirmed against an official-software capture (N=0, 2=2, 3=3).
-        /// </summary>
-        private static byte EncodeGear(string gear)
-        {
-            if (string.IsNullOrEmpty(gear))
-                return 0;
-
-            gear = gear.Trim().ToUpperInvariant();
-            if (gear == "R" || gear == "REVERSE") return GearReverse;
-            if (gear == "N" || gear == "NEUTRAL") return 0;
-
-            return int.TryParse(gear, out int g) && g >= 0 && g <= 254 ? (byte)g : (byte)0;
         }
     }
 }

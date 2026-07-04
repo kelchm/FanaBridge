@@ -42,5 +42,13 @@ namespace FanaBridge.Adapters
         public const bool DefaultShowPositionTotal = true;
         /// <summary>Show the "/field size" suffix on the ITM position field.</summary>
         public bool ItmShowPositionTotal { get; set; } = DefaultShowPositionTotal;
+
+        public const byte DefaultItmDefaultPage = 1;   // Lap Info
+        /// <summary>
+        /// The ITM page (wire page number) forced when the display starts. The wheel's display
+        /// button navigates from there. Defaults to page 1 (Lap Info). Valid page numbers depend
+        /// on the display device — see <c>ItmDeviceCatalog.PagesFor</c>.
+        /// </summary>
+        public byte ItmDefaultPage { get; set; } = DefaultItmDefaultPage;
     }
 }

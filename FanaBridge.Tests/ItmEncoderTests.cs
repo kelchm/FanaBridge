@@ -105,7 +105,7 @@ namespace FanaBridge.Tests
         {
             var encoder = MakeEncoder(out var t);
 
-            encoder.SetPage(ItmDevice.BmeOrGtswx, 3);
+            encoder.SetPage(3, 3);
 
             var r = t.Last;
             Assert.Equal(0xFF, r[0]);
@@ -116,14 +116,40 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void SetPage_DeviceEnumMapsToWireId()
+        public void SetPage_WritesGivenDeviceId()
         {
             var encoder = MakeEncoder(out var t);
 
-            encoder.SetPage(ItmDevice.Base, 1);
+            encoder.SetPage(1, 1);
             Assert.Equal(0x01, t.Last[3]);
 
-            encoder.SetPage(ItmDevice.Bentley, 2);
+            encoder.SetPage(4, 2);
+            Assert.Equal(0x04, t.Last[3]);
+        }
+
+        // ── Per-entry device id ──────────────────────────────────────────
+
+        [Fact]
+        public void SendValues_DefaultsToDevice3()
+        {
+            var encoder = MakeEncoder(out var t);
+            Assert.True(encoder.SendValues(new[] { ItmValue.UInt8(0, 4, 1) }));
+            Assert.Equal(0x03, t.Last[3]);   // DefaultDeviceId = BmeOrGtswx
+        }
+
+        [Fact]
+        public void SendValues_WritesGivenDeviceId()
+        {
+            var encoder = MakeEncoder(out var t);
+            Assert.True(encoder.SendValues(new[] { ItmValue.UInt8(0, 4, 1) }, 4));
+            Assert.Equal(0x04, t.Last[3]);   // per-entry device id = Bentley (4), not the default 3
+        }
+
+        [Fact]
+        public void SetParamDefs_WritesGivenDeviceId()
+        {
+            var encoder = MakeEncoder(out var t);
+            Assert.True(encoder.SetParamDefs(new[] { new ItmParamDef(0x82) }, 4));
             Assert.Equal(0x04, t.Last[3]);
         }
 
