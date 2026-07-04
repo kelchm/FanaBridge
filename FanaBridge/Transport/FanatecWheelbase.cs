@@ -43,6 +43,7 @@ namespace FanaBridge.Transport
         public FanatecWheelbase()
         {
             _ingest = OnDrainReading;
+            _ingestSrm = OnDrainSrm;
             _bufferItm = BufferItmReport;
         }
 
@@ -60,9 +61,15 @@ namespace FanaBridge.Transport
 
         private readonly SystemReportReader _reportReader = new SystemReportReader();
         private readonly SrmConverterIdentity _srmReader = new SrmConverterIdentity();
+        // Converter identity: while unidentified we ping the SRM DE FA channel (harmless — a genuine
+        // base does not answer). Its 0xDD reply arrives via the shared col03 drain into _ingestSrm.
+        private const int SrmQueryMs = 1000;              // re-ping cadence while unidentified
+        private long _lastSrmQueryMs;
+        private SrmConverterIdentity.Result? _pendingSrm;  // a 0xDD reply seen in the drain, committed after it
         private readonly IdentitySettler _settler = new IdentitySettler(IdentitySettleMs);
         private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
         private readonly Action<SystemReportReader.Reading> _ingest;
+        private readonly Action<byte[]> _ingestSrm;
         private long _lastEnableMs;
         private long _drainNow;
 
@@ -173,7 +180,7 @@ namespace FanaBridge.Transport
         /// <see cref="BaseType"/> (0 until the first commit, reset to 0 on
         /// disconnect), so there is no separate flag to keep in sync.
         /// </summary>
-        public bool HasIdentity => BaseType != 0;
+        public bool HasIdentity => BaseType != 0 || IsSrmConverter;
 
         /// <summary>
         /// Display name for the current wheel/hub: the matched profile's name, else
@@ -339,14 +346,14 @@ namespace FanaBridge.Transport
             // listens for pushes — no triggering.
             try
             {
-                _lastEnableMs = _clock.ElapsedMilliseconds;
+                long connectNow = _clock.ElapsedMilliseconds;
+                _lastEnableMs = connectNow;
+                _lastSrmQueryMs = connectNow - SrmQueryMs;   // allow an immediate SRM ping if FF 08 is silent
+                _pendingSrm = null;
                 if (_reportReader.ReadInitial(_transport, out var reading))
-                    IngestReading(reading, _clock.ElapsedMilliseconds);
-                // FF 08 was silent — this may be an SRM Conversion Kit (which emulates a base but
-                // does not reliably emit FF 08). Probe its DE FA channel. A genuine base never
-                // reaches here (its FF 08 answered), so converter support cannot touch normal hardware.
-                else if (_srmReader.TryProbe(_transport, out var srm))
-                    CommitSrmIdentity(srm);
+                    IngestReading(reading, connectNow);
+                // If FF 08 was silent this might be an SRM kit (or a slow genuine base). No probe here:
+                // UpdateIdentity keeps reading FF 08 and pings DE FA while unidentified; whichever wins.
 
                 // Confirm the per-frame drain is non-blocking on this hardware — a
                 // blocking ReadCol03(buf, 0) would stall the frame thread. Done once
@@ -439,8 +446,8 @@ namespace FanaBridge.Transport
             if (!IsConnected)
                 return false;
 
-            // An SRM converter's wheel is hard-wired — the identity is fixed at connect, so there is
-            // nothing to drain or re-settle here. Genuine bases fall through to the unchanged FF 08 path.
+            // An SRM converter's identity is a fixed one-shot — nothing to drain or re-settle once
+            // committed. Genuine bases fall through to the unchanged FF 08 path.
             if (IsSrmConverter)
                 return false;
 
@@ -454,19 +461,47 @@ namespace FanaBridge.Transport
                 catch { /* transient; the next tick retries */ }
             }
 
+            // One col03 read loop, dispatched by signature: FF 08 -> _ingest, 0xDD -> _ingestSrm, FF 05 -> ITM.
             _drainNow = now;
-            _reportReader.DrainPushes(_transport, _ingest, _bufferItm);
+            _reportReader.DrainPushes(_transport, _ingest, _bufferItm, _ingestSrm);
+
+            // Commit a converter identity the drain routed to us — after the batch, so WheelChanged
+            // isn't raised under the transport write lock.
+            if (_pendingSrm.HasValue)
+            {
+                var srm = _pendingSrm.Value;
+                _pendingSrm = null;
+                CommitSrmIdentity(srm);
+            }
 
             bool changed = _settler.Tick(now, out _, out _);
             _identityStable = _settler.IsStable;
-            if (changed)
+            if (changed && !IsSrmConverter)
                 CommitIdentity();
+
+            // Still unidentified and idle? Ping the DE FA channel (harmless to a genuine base). Any 0xDD
+            // reply is picked up by the next drain. Once FF 08 identifies a base, we never get here.
+            if (!WheelDetected && _identityStable && !IsSrmConverter && now - _lastSrmQueryMs >= SrmQueryMs)
+            {
+                _lastSrmQueryMs = now;
+                try { _srmReader.SendQuery(_transport); }
+                catch { /* transient */ }
+            }
+
             return changed;
         }
 
         // Drain callback: record the reading and offer it to the settler. _drainNow
         // carries the current clock so the cached delegate needs no per-frame closure.
         private void OnDrainReading(SystemReportReader.Reading r) => IngestReading(r, _drainNow);
+
+        // Drain callback for a 0xDD frame: decode + stash; UpdateIdentity commits it after the batch.
+        private void OnDrainSrm(byte[] frame)
+        {
+            if (IsSrmConverter || _pendingSrm.HasValue) return;
+            if (SrmConverterIdentity.TryDecodeFrame(frame, frame.Length, out var srm))
+                _pendingSrm = srm;
+        }
 
         // Drain callback for ITM subscription reports: buffer them for the ITM driver.
         private void BufferItmReport(byte[] report)
@@ -538,9 +573,8 @@ namespace FanaBridge.Transport
             WheelChanged?.Invoke(this);
         }
 
-        // Commit a fixed SRM converter identity from the DE FA channel. The wheel is hard-wired, so
-        // this is a one-shot (no settler, no re-drain). Rim + module come from DE FA, not FF 08;
-        // BaseType stays 0 — the converter's emulated base is not a trustworthy model to surface.
+        // Commit a fixed SRM converter identity from the DE FA channel (a one-shot — no settler). Rim +
+        // module come from DE FA, not FF 08; BaseType stays 0 (the emulated base is not a real model).
         private void CommitSrmIdentity(SrmConverterIdentity.Result srm)
         {
             IsSrmConverter = true;
@@ -651,6 +685,7 @@ namespace FanaBridge.Transport
             BaseCode = null;
             IsSrmConverter = false;
             SrmKitFirmware = null;
+            _pendingSrm = null;
             CurrentCapabilities = WheelCapabilities.None;
             LastRawReport = null;
             // LastConnectError is intentionally left intact — it reflects the most

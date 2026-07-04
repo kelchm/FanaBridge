@@ -37,14 +37,15 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void Col01Tail_ExtInfoType1_ShowsRawB1AndModule()
+        public void Col01Tail_ExtInfoType1_ShowsRawBytesButNotAModuleClaim()
         {
-            // EXT_INFO type-1, b1=0x15 -> PBME (0x15 - 0x14 = 0x01). The RAW b1 is always shown so a
-            // future 0x16 (PBMR) is visible even though this hardware only ever emits 0x15.
+            // col01 is COARSE — a PBMR and a PBME both emit b1=0x15 — so we keep the RAW byte but must
+            // NOT present a "PBME"/"PBMR" label (that would be a guess). The module comes from FF 08 / DE FA.
             var r = ConverterCaptureProbe.DescribeCol01Tail(Col01(0xFF, type: 0x01, b1: 0x15, b2: 0x06), 34);
             Assert.Contains("EXT_INFO type=1", r);
-            Assert.Contains("b1=0x15", r);
-            Assert.Contains("PBME", r);
+            Assert.Contains("b1=0x15", r);                    // raw byte kept …
+            Assert.DoesNotContain("button module: PBME", r);  // … but no misleading interpretation
+            Assert.DoesNotContain("button module: PBMR", r);
         }
 
         [Fact]
@@ -53,20 +54,6 @@ namespace FanaBridge.Tests
             var r = ConverterCaptureProbe.DescribeCol01Tail(Col01(0xFF, type: 0x02), 34);
             Assert.Contains("EXT_INFO type=2", r);
             Assert.Contains("accessories", r);
-        }
-
-        [Theory]
-        [InlineData((byte)0x15, "PBME")]
-        [InlineData((byte)0x16, "PBMR")]
-        public void Col01ModuleName_MapsViaMinus0x14(byte b1, string expected)
-        {
-            Assert.Equal(expected, ConverterCaptureProbe.Col01ModuleName(b1));
-        }
-
-        [Fact]
-        public void Col01ModuleName_Zero_IsNone()
-        {
-            Assert.Equal("none", ConverterCaptureProbe.Col01ModuleName(0x00));
         }
 
         [Fact]

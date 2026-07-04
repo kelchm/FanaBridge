@@ -26,8 +26,8 @@ namespace FanaBridge.Tests
         [Fact]
         public void Decode_HubWithModule_ResolvesBoth()
         {
-            // Documented (converter-support §5/§6) but UNVALIDATED: PHUB (0x0C) + PBMR (module 2).
-            // DE FA carries hub and module as separate bytes, so this decodes cleanly.
+            // Documented but UNVALIDATED for SRM converters: PHUB (0x0C) + PBMR (module 2).
+            // DE FA carries the hub and the module as separate bytes, so this decodes cleanly.
             var buf = new byte[] { 0x00, 0xDD, 0x07, 0x00, 0x0C, 0x00, 0x02, 0x00 };
             var r = SrmConverterIdentity.Decode(buf, 1, buf.Length);
             Assert.Equal("PHUB", r.WheelCode);
@@ -56,6 +56,25 @@ namespace FanaBridge.Tests
             Assert.Equal("PHUB", SrmConverterIdentity.DecodeSrmWheel(0x0C));
             Assert.Equal("CSLSWUH", SrmConverterIdentity.DecodeSrmWheel(0x11));
             Assert.Equal("CSUHV2", SrmConverterIdentity.DecodeSrmWheel(0x15));
+        }
+
+        [Fact]
+        public void DecodeSrmWheel_UniversalHubRows_MatchTheWireTable()
+        {
+            // 0x04=CSSWUH, 0x06=CSSWUHX, 0x05=gap — straight from the shared wire table.
+            Assert.Equal("CSSWUH", SrmConverterIdentity.DecodeSrmWheel(0x04));
+            Assert.Equal("CSSWUHX", SrmConverterIdentity.DecodeSrmWheel(0x06));
+            Assert.Null(SrmConverterIdentity.DecodeSrmWheel(0x05)); // gap — no wheel
+        }
+
+        [Fact]
+        public void DecodeSrmWheel_NewerWheels_ResolveViaSharedTable()
+        {
+            // Delegating to the wire table means wheels added there resolve for converters too —
+            // no separate SRM map to drift out of sync.
+            Assert.Equal("CSSWFORMV3", SrmConverterIdentity.DecodeSrmWheel(0x1C));
+            Assert.Equal("GTSWX", SrmConverterIdentity.DecodeSrmWheel(0x18));
+            Assert.Equal("CSLSWGT3", SrmConverterIdentity.DecodeSrmWheel(0x1D));
         }
     }
 }

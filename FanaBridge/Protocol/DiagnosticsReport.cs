@@ -16,14 +16,14 @@ namespace FanaBridge.Protocol
     /// FanaBridge already drained (identity + firmware versions), flags the col03 control
     /// interface the same way the transport selects it (the &amp;col03 path token, else a
     /// 64-byte OUTPUT report), and takes a col01 input snapshot. It also runs one ACTIVE
-    /// "converter identity probe" — the kernel filter's engage handshake plus the SRM
-    /// <c>DE FA AD</c> query — then dumps what the device volunteers on both surfaces and the
-    /// SRM <c>0xDD</c> channel. The only writes are identity handshakes, never tuning/config.
+    /// "converter identity probe" — the engage handshake plus the SRM <c>DE FA AD</c> query —
+    /// then dumps what the device volunteers on both surfaces and the SRM <c>0xDD</c> channel.
+    /// The only writes are identity handshakes, never tuning/config.
     ///
     /// The output is a fenced Markdown block ready to paste into a GitHub issue,
     /// emitting the same wire bytes (raw FF 08 hex + the 0x02/0x18/0x1F key bytes)
-    /// as every existing RE capture, so an unrecognized wheel/hub/module is
-    /// byte-comparable and directly reportable.
+    /// as a raw USB capture, so an unrecognized wheel/hub/module is byte-comparable
+    /// and directly reportable.
     /// </summary>
     public static class DiagnosticsReport
     {
@@ -74,12 +74,10 @@ namespace FanaBridge.Protocol
         }
 
         // ── Converter identity probe (active engage) ─────────────────────
-        // The passive FF 08 section above is the device's RESTING state. This actively runs the
-        // kernel filter's engage handshake and dumps what the device volunteers on BOTH surfaces
-        // (col01 records + the col03 FF 08 report) plus the SRM DE FA AD -> 0xDD channel — so a
-        // SINGLE report from an SRM Conversion Kit user carries everything needed to build and
-        // validate driverless identity, with no external USB capture. Read-only; a genuine base
-        // just answers no 0xDD.
+        // The passive FF 08 section above is the device's resting state. This actively runs the engage
+        // handshake and dumps what the device volunteers on both surfaces (col01 records + the col03
+        // FF 08 report) plus the SRM DE FA AD -> 0xDD channel, so a single report from an SRM Conversion
+        // Kit user carries everything needed to identify it. Read-only; a genuine base answers no 0xDD.
         private static void AppendConverterProbe(StringBuilder sb, FanatecWheelbase wb, bool connected)
         {
             sb.AppendLine("Converter identity probe (active engage — read-only):");

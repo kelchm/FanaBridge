@@ -10,12 +10,10 @@ namespace FanaBridge.Protocol
     /// an SRM Conversion Kit user contains everything we need to build/validate driverless identity —
     /// no external USB capture, no Fanatec software.
     ///
-    /// It replicates the kernel filter's ENGAGE handshake for the wired SRM classes (id 8 = PID 0x0005,
-    /// id 14 = PID 0x0020): the col03 <c>FF 08</c> enable+trigger, then the col01 SubId triggers. Per
-    /// the RE (command-protocol §3), the SubId triggers are a timed <b>ON(SubId)/OFF(0) pulse with a
-    /// ~100 ms gap</b>, read BETWEEN pulses — so this pulses each SubId and drains col01 in the gap,
-    /// rather than firing them back-to-back, to give a converter's firmware time to volunteer its
-    /// module/rim records. (HostHello/ACQUIRE are NOT part of these classes' engage.)
+    /// It replicates the ENGAGE handshake for the wired SRM classes (PID 0x0005 / 0x0020): the col03
+    /// <c>FF 08</c> enable+trigger, then the col01 SubId triggers. Each SubId is a timed ON/OFF pulse
+    /// with a ~100 ms gap, read between pulses, so a converter's firmware has time to volunteer its
+    /// module/rim records.
     ///
     /// It records, from a single run:
     ///   1. the engage result (which sends the transport accepted),
@@ -124,23 +122,16 @@ namespace FanaBridge.Protocol
             if (wire == 0xFF)
             {
                 byte type = buf[n - 3], b1 = buf[n - 2], b2 = buf[n - 1];
+                // Show the RAW record only — do not interpret the type-1 module byte. col01 is coarse
+                // here (a PBMR and a PBME seemingly both emit b1=0x15), so a "PBME"/"PBMR" label would be
+                // misleading; the module must come from FF 08 / DE FA instead.
                 string note =
-                    type == 0x01 ? "  (button module: " + Col01ModuleName(b1) + ")" :
+                    type == 0x01 ? "  (button-module record — raw; col01 cannot distinguish PBME/PBMR)" :
                     type == 0x02 ? "  (accessories)" : "";
                 return string.Format("EXT_INFO type={0} b1=0x{1:X2} b2=0x{2:X2}{3}", type, b1, b2, note);
             }
             if (wire == 0x00) return "rim: (nothing attached)";
             return string.Format("rim 0x{0:X2} {1}", wire, FanatecIdentity.DecodeCode(wire) ?? "unrecognized");
-        }
-
-        // col01 type-1 DeviceModule byte = FF 08 0x1F raw + 0x14 (FWFUUtilDeviceModulePresenceGet):
-        // 0x15 -> PBME, 0x16 -> PBMR. NOTE: observed COARSE on genuine hardware — both PBMR and PBME
-        // emit 0x15; only FF 08 0x1F carries the fine split. Report the raw b1 regardless.
-        internal static string Col01ModuleName(byte b1)
-        {
-            if (b1 == 0x00) return "none";
-            if (b1 < 0x15) return "?";
-            return FanatecIdentity.DecodeModule((byte)(b1 - 0x14)) ?? "unrecognized";
         }
 
         // Read col03 for an FF 08 system report (the engage already enabled+triggered it).
@@ -170,8 +161,8 @@ namespace FanaBridge.Protocol
         }
 
         // Query the SRM Conversion Kit's DE FA AD -> 0xDD channel on col03. Tries both report-ids
-        // (0xFF emulation gen, 0x00 native/interim); a genuine base answers neither. See converter-
-        // support §3: OUT data = 00 DE FA AD; IN = DD [kitMaj] [kitMin] [wheelId] [wheelFw] [module].
+        // (0xFF and 0x00); a genuine base answers neither. OUT data = 00 DE FA AD;
+        // IN = DD [kitMaj] [kitMin] [wheelId] [wheelFw] [module].
         private static void CaptureDeFa(IDeviceTransport io, Result r)
         {
             foreach (byte reportId in new byte[] { 0xFF, 0x00 })
