@@ -40,6 +40,12 @@ namespace FanaBridge.Adapters
         public bool ShowPositionTotal { get; set; } = true;
 
         /// <summary>
+        /// The ITM page (wire page number) forced on bring-up; the wheel's display button
+        /// navigates from there. Read once per bring-up. Defaults to page 1 (Lap Info).
+        /// </summary>
+        public byte DefaultPage { get; set; } = 1;
+
+        /// <summary>
         /// Whether the ITM display is enabled. Set false to turn ITM off (the driver sends
         /// the firmware "ITM off" command and goes dormant); set true to re-enable (the
         /// next <see cref="Update"/> re-runs bring-up). Read live each frame.
@@ -51,6 +57,7 @@ namespace FanaBridge.Adapters
         private Phase _phase = Phase.Idle;
 
         private long _lastValuesMs;
+        private byte _lastPageApplied;   // last page we forced via SetPage — edge-detects a settings change
 
         // Firmware-driven subscription map: host handle -> parameter ID. Kept sorted by
         // handle so the dirty-tracking comparison sees a stable order.
@@ -224,19 +231,28 @@ namespace FanaBridge.Adapters
             if (_phase == Phase.Enabling)
             {
                 // Bring-up: gate ITM on (FF 05 02 01), start the session (FF 02 02 00), then force
-                // page 1 (FF 05 04 <dev> 01) so the display matches our Lap Info seed and shows correct
-                // values right away. The wheel button navigates from there; detecting the wheel's
-                // current page on cold start (instead of forcing page 1) is deferred — see #43.
-                _encoder.SetItmMode(true);           // FF 05 02 01 — firmware ITM gate on
-                _encoder.EnableItm();                // FF 02 02 00 — start the display session
-                _encoder.SetPage(_deviceId, 1);      // force page 1 (Lap Info) on this display
-                SeedInitialSubscriptions();          // page 1 (Lap Info) params
+                // the configured default page (FF 05 04 <dev> <page>) so the display matches our
+                // seed and shows correct values right away. The wheel button navigates from there;
+                // detecting the wheel's current page on cold start instead is deferred — see #43.
+                _encoder.SetItmMode(true);              // FF 05 02 01 — firmware ITM gate on
+                _encoder.EnableItm();                   // FF 02 02 00 — start the display session
+                _encoder.SetPage(_deviceId, DefaultPage);  // force the configured default page
+                _lastPageApplied = DefaultPage;
+                SeedInitialSubscriptions();             // the default page's params
                 _log("ITM: enabled — seeded " + _subs.Count + " params, following firmware subscriptions");
                 _phase = Phase.Running;
                 return;
             }
 
             // Running
+            // If the user changed the default page in settings, switch the display to it live
+            // (edge-triggered, so we don't fight the wheel button between changes).
+            if (DefaultPage != _lastPageApplied)
+            {
+                _encoder.SetPage(_deviceId, DefaultPage);
+                _lastPageApplied = DefaultPage;
+                _log("ITM: default page changed — forcing page " + DefaultPage);
+            }
             UpdateSlotDefs(data);   // refresh unit/total suffixes when they change
             if (now - _lastValuesMs >= ValueIntervalMs)
             {
@@ -245,17 +261,27 @@ namespace FanaBridge.Adapters
             }
         }
 
-        // Bring-up forces page 1 via SetPage(device, 1), which makes the firmware push page 1's
-        // subscription — but that push takes ~tens of ms to arrive, and a bare Enable
-        // announces nothing. Pre-seed the Lap Info handle→param map so values flow in that
-        // gap; the firmware's push then confirms/replaces it. Only seeds when nothing's subscribed.
+        // Bring-up forces the default page via SetPage(device, DefaultPage), which makes the
+        // firmware push that page's subscription — but that push takes ~tens of ms to arrive, and
+        // a bare Enable announces nothing. Pre-seed the default page's handle→param map so values
+        // flow in that gap; the firmware's push then confirms/replaces it. Seeds only when empty.
         private void SeedInitialSubscriptions()
         {
             if (_subs.Count > 0)
                 return;
-            var ids = ItmTelemetry.ParamsFor(ItmPage.LapInfo);
+            var ids = SeedParamsForPage(DefaultPage);
             for (int h = 0; h < ids.Count; h++)
                 _subs[(byte)h] = ids[h];
+        }
+
+        // The params the given page carries on this driver's device (empty for an unknown page
+        // or the legacy page). Used only to seed handles 0..N-1 before the firmware's push lands.
+        private IReadOnlyList<ushort> SeedParamsForPage(byte page)
+        {
+            foreach (var p in ItmDeviceCatalog.PagesFor(_deviceId))
+                if (p.Number == page)
+                    return p.Params;
+            return Array.Empty<ushort>();
         }
 
         private void SendSubscribedValues(GameData data)

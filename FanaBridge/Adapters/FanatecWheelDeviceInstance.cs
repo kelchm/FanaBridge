@@ -322,6 +322,7 @@ namespace FanaBridge.Adapters
                         _itmDisplay.Start();   // idempotent — re-arms bring-up after a disconnect
                     _itmDisplay.ShowLapTotal = _displaySettings.ItmShowLapTotal;
                     _itmDisplay.ShowPositionTotal = _displaySettings.ItmShowPositionTotal;
+                    _itmDisplay.DefaultPage = _displaySettings.ItmDefaultPage;
 
                     // Feed the firmware's pushed ITM subscription reports (col03-IN) to the
                     // driver so it follows the page the wheel button selects.
@@ -431,7 +432,7 @@ namespace FanaBridge.Adapters
             if (_config.Capabilities.Display != DisplayType.None)
             {
                 var screenPanel = new ScreenSettingsPanel();
-                screenPanel.Bind(_displaySettings, _config.Capabilities.Display);
+                screenPanel.Bind(_displaySettings, _config.Capabilities.Display, _config.Capabilities.ItmDeviceId);
                 screenPanel.SettingsChanged += () =>
                 {
                     // Sync back to JObject for persistence.

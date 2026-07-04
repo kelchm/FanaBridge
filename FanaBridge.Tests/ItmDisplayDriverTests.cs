@@ -111,6 +111,34 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void BringUp_ForcesConfiguredDefaultPage()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            driver.DefaultPage = 5;   // Tyre Temps
+            Enable(driver, clock);
+
+            // The forced-page PageSet uses the configured default page, not 1.
+            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[4] == 0x05);
+            // And the seed reflects that page (Tyre Temps = SPEED, GEAR + 4 tyre temps = 6 params).
+            Assert.Equal(6, driver.SubscriptionCount);
+        }
+
+        [Fact]
+        public void ChangingDefaultPageWhileRunning_ForcesItLive()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);   // bring-up on the default page (1)
+            t.Sent.Clear();          // ignore bring-up frames
+
+            driver.DefaultPage = 3;  // user picks a new default page in settings
+            clock.T += 1000;
+            driver.Update(EmptyData());
+
+            // A PageSet to the new page is issued live — no re-enable / reconnect needed.
+            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[4] == 0x03);
+        }
+
+        [Fact]
         public void BringUp_Bentley_TargetsDevice4()
         {
             var t = new RecordingTransport();
