@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using FanaBridge.Transport;
 
 namespace FanaBridge.Protocol
@@ -9,22 +10,28 @@ namespace FanaBridge.Protocol
     /// an SRM Conversion Kit user contains everything we need to build/validate driverless identity —
     /// no external USB capture, no Fanatec software.
     ///
-    /// It replicates the kernel filter's ENGAGE handshake, then records what the device emits on BOTH
-    /// surfaces plus the SRM config channel:
-    ///   1. the engage result (which of the 5 sends the transport accepted),
-    ///   2. every distinct col01 input record (the rim byte, and each EXT_INFO sub-record),
+    /// It replicates the kernel filter's ENGAGE handshake for the wired SRM classes (id 8 = PID 0x0005,
+    /// id 14 = PID 0x0020): the col03 <c>FF 08</c> enable+trigger, then the col01 SubId triggers. Per
+    /// the RE (command-protocol §3), the SubId triggers are a timed <b>ON(SubId)/OFF(0) pulse with a
+    /// ~100 ms gap</b>, read BETWEEN pulses — so this pulses each SubId and drains col01 in the gap,
+    /// rather than firing them back-to-back, to give a converter's firmware time to volunteer its
+    /// module/rim records. (HostHello/ACQUIRE are NOT part of these classes' engage.)
+    ///
+    /// It records, from a single run:
+    ///   1. the engage result (which sends the transport accepted),
+    ///   2. every DISTINCT col01 input record (the rim byte, and each EXT_INFO sub-record),
     ///   3. the col03 <c>FF 08</c> system report, if the device answers one,
     ///   4. the SRM <c>DE FA AD</c> → <c>0xDD</c> identity reply, if it is a Conversion Kit.
     ///
     /// Nothing here writes tuning/config: the engage is the identity handshake, and <c>DE FA AD</c> is
-    /// the SRM config app's "get wheel" query. See the Fanatec-RE converter-support + command-protocol
-    /// docs. Genuine (non-SRM) devices simply return no <c>0xDD</c> reply — the query is harmless.
+    /// the SRM config app's "get wheel" query. Genuine (non-SRM) devices answer no <c>0xDD</c>.
     /// </summary>
     public sealed class ConverterCaptureProbe
     {
         private const int MinCol01Len = 33;         // identity reports are report-id 1, len in {33,34}
-        private const int Col01MaxFrames = 40;      // enough to surface every EXT_INFO record variant
-        private const int Col01ReadTimeoutMs = 25;
+        private const int PulseWindowMs = 110;      // per-SubId col01 read window (~ native Sleep(100) pulse gap)
+        private const int FinalDrainMs = 160;       // trailing drain for anything still streaming
+        private const int Col01ReadTimeoutMs = 20;
         private const int Col03MaxReads = 12;
         private const int Col03ReadTimeoutMs = 40;
 
@@ -40,8 +47,6 @@ namespace FanaBridge.Protocol
             public string DeFaLine;
         }
 
-        private readonly WheelEngage _engage = new WheelEngage();
-
         public Result Run(IDeviceTransport io)
         {
             var r = new Result();
@@ -51,30 +56,52 @@ namespace FanaBridge.Protocol
                 return r;
             }
 
+            var seen = new HashSet<string>();
+            var engage = new List<string>();
+            var sw = new Stopwatch();
+
             // Hold the transport for the whole capture so the runtime's frames don't interleave ours.
             using (io.BeginBatch())
             {
-                try { r.Engage = FormatEngage(_engage.Engage(io)); }
-                catch (Exception ex) { r.Engage = "engage FAILED: " + ex.Message; }
+                // col03 FF 08 enable + trigger.
+                engage.Add("FF08 enable:" + Ok(() => io.SendCol03(Ff08(0x01, 0xFF))));
+                engage.Add("FF08 trigger:" + Ok(() => io.SendCol03(Ff08(0x02, 0x00))));
 
-                CaptureCol01(io, r);
+                // col01 SubId pulses. Each ON is followed by a read window (the native ON/Sleep(100)/OFF
+                // pulse) so the device has time to respond and we capture the response in-line.
+                Pulse(io, 0x01, "SubId=1 module", engage, seen, r, sw);
+                Pulse(io, 0x00, "SubId=0 input", engage, seen, r, sw);
+                Pulse(io, 0x04, "SubId=4", engage, seen, r, sw);
+                Pulse(io, 0x00, "SubId=0 deassert", engage, seen, r, sw);
+
+                // Trailing drain for anything still streaming after the pulses.
+                DrainCol01(io, FinalDrainMs, seen, r, sw);
+                r.Engage = "engage[" + string.Join("  ", engage) + "]";
+
                 CaptureFf08(io, r);
                 CaptureDeFa(io, r);
             }
             return r;
         }
 
-        // Read a burst of col01 frames and record each DISTINCT tail record (deduped by decoded
-        // meaning, not raw bytes — the axis fields change every frame). A representative frame's hex
-        // is kept with each record so the exact wire bytes are reportable.
-        private static void CaptureCol01(IDeviceTransport io, Result r)
+        private static void Pulse(IDeviceTransport io, byte subId, string label,
+            List<string> engage, HashSet<string> seen, Result r, Stopwatch sw)
+        {
+            engage.Add(label + ":" + Ok(() => io.SendCol01(WheelEngage.SubId(subId))));
+            DrainCol01(io, PulseWindowMs, seen, r, sw);
+        }
+
+        // Read col01 for ~windowMs, recording each DISTINCT tail record (deduped by decoded meaning,
+        // not raw bytes — the axis fields change every frame). A representative frame's hex is kept
+        // with each record so the exact wire bytes are reportable.
+        private static void DrainCol01(IDeviceTransport io, int windowMs, HashSet<string> seen, Result r, Stopwatch sw)
         {
             int len = io.Col01MaxInputReportLength;
             if (len < MinCol01Len) len = 34;
             var buf = new byte[len];
-            var seen = new HashSet<string>();
 
-            for (int i = 0; i < Col01MaxFrames; i++)
+            sw.Restart();
+            while (sw.ElapsedMilliseconds < windowMs)
             {
                 int n = io.ReadCol01(buf, Col01ReadTimeoutMs);
                 if (n <= 0) continue;
@@ -187,11 +214,18 @@ namespace FanaBridge.Protocol
                 wheelId == 0 ? "   (no rim attached)" : "");
         }
 
-        private static string FormatEngage(WheelEngage.Step[] steps)
+        private static string Ok(Func<bool> send)
         {
-            var parts = new List<string>(steps.Length);
-            foreach (var s in steps) parts.Add(s.Label + ":" + (s.Sent ? "ok" : "FAIL"));
-            return "engage[" + string.Join("  ", parts) + "]";
+            try { return send() ? "ok" : "FAIL"; }
+            catch { return "ERR"; }
+        }
+
+        // FF 08 <b2> <b3> control report (64-byte): FF 08 01 FF = enable, FF 08 02 00 = trigger.
+        private static byte[] Ff08(byte b2, byte b3)
+        {
+            var b = new byte[64];
+            b[0] = 0xFF; b[1] = 0x08; b[2] = b2; b[3] = b3;
+            return b;
         }
 
         // FF 08-style signature scan (tolerates a leading report-id byte).
