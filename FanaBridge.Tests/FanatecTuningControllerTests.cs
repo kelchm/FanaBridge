@@ -15,6 +15,8 @@ namespace FanaBridge.Tests
         {
             public bool IsConnected { get; set; } = true;
             public int Col03MaxInputReportLength { get; set; } = 64;
+            public int ReadCol01(byte[] buffer, int timeoutMs) => -1;
+            public int Col01MaxInputReportLength => 34;
 
             public List<byte[]> SentCol03Reports { get; } = new List<byte[]>();
             public List<byte[]> SentCol01Reports { get; } = new List<byte[]>();
