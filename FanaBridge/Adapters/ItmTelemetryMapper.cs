@@ -86,16 +86,6 @@ namespace FanaBridge.Adapters
                 [ItmParam.TyreRrTemp] = U8(ItmParam.TyreRrTemp, d => ClampByte(d.TyreTemperatureRearRight)),
             };
 
-        // Parameters that wedge the PBME firmware when sent — never put them on the wire. The
-        // firmware may still subscribe them (so the field shows dashes), but sending a value
-        // locks up the display.
-        //
-        // Currently empty: ENGINE_MAPPING used to live here because sending it as a numeric byte
-        // froze the Car Settings page. A USBPcap of the official software revealed it is ASCII
-        // text (map "10" = bytes '1','0'), so it is now sent via Str(...). Keep the set for any
-        // future param that proves unsendable.
-        private static readonly HashSet<ushort> Unsupported = new HashSet<ushort>();
-
         /// <summary>
         /// Whether this parameter has a value encoder. Used by the catalog guard test to prove
         /// every param a page can carry (<see cref="ItmTelemetry.ParamsFor"/>) is encodable.
@@ -194,8 +184,6 @@ namespace FanaBridge.Adapters
         public static bool TryEncodeParam(ushort paramId, byte handle, GameData data, out ItmValue value)
         {
             value = default;
-            if (Unsupported.Contains(paramId))
-                return false;   // never send — wedges the firmware
             var status = data?.NewData;
             if (status == null || !Registry.TryGetValue(paramId, out var encode))
                 return false;

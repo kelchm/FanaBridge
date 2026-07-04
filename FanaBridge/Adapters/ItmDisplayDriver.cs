@@ -251,6 +251,11 @@ namespace FanaBridge.Adapters
             {
                 _encoder.SetPage(_deviceId, DefaultPage);
                 _lastPageApplied = DefaultPage;
+                // Deliberately DON'T reseed here — keep the current subscriptions until the firmware
+                // pushes the new page's set. Unlike bring-up (which has no prior state), a live switch
+                // has valid subs to lose: if the PageSet flakes, or targets the page already shown (no
+                // push comes back), a speculative reseed would strand the display on wrong-page handles
+                // with nothing to correct it. The existing subs stay valid for whatever is displayed.
                 _log("ITM: default page changed — forcing page " + DefaultPage);
             }
             UpdateSlotDefs(data);   // refresh unit/total suffixes when they change

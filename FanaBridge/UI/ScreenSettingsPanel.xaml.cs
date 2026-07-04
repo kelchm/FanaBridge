@@ -102,7 +102,7 @@ namespace FanaBridge.UI
                 cmbDefaultPage.Items.Add(new ComboBoxItem { Content = page.Name, Tag = page.Number });
         }
 
-        private static void SelectByPageNumber(ComboBox combo, byte pageNumber)
+        private void SelectByPageNumber(ComboBox combo, byte pageNumber)
         {
             foreach (ComboBoxItem item in combo.Items)
             {
@@ -112,8 +112,15 @@ namespace FanaBridge.UI
                     return;
                 }
             }
+            // Stored page isn't offered by this device — fall back to the first page AND correct the
+            // backing setting, so it can't persist a page this device doesn't have. (SelectionChanged
+            // is suppressed during Bind, so the setting is synced here directly.)
             if (combo.Items.Count > 0)
-                combo.SelectedIndex = 0;   // stored page not offered by this device — fall back
+            {
+                combo.SelectedIndex = 0;
+                if (_settings != null && ((ComboBoxItem)combo.Items[0]).Tag is byte first)
+                    _settings.ItmDefaultPage = first;
+            }
         }
 
         private void CmbDefaultPage_SelectionChanged(object sender, SelectionChangedEventArgs e)

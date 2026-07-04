@@ -356,6 +356,21 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void ParseSubscriptionReport_InterleavedDevices_CollectsAllMatching()
+        {
+            // dev3 h0 SPEED, dev4 h0 SPEED (other display), dev3 h1 GEAR. The middle entry must be
+            // skipped, not stop the scan, so both device-3 entries are still collected.
+            var report = HexToBytes("ff0501" + "0300010034" + "0400010034" + "0301040034");
+            var subs = ItmTelemetry.ParseSubscriptionReport(report, report.Length);   // default device 3
+
+            Assert.Equal(2, subs.Count);
+            Assert.Equal(0, subs[0].Handle);
+            Assert.Equal(ItmParam.Speed, subs[0].ParamId);
+            Assert.Equal(1, subs[1].Handle);
+            Assert.Equal(ItmParam.Gear, subs[1].ParamId);
+        }
+
+        [Fact]
         public void TryEncodeParam_KnownParam_Encodes()
         {
             var s = NewStatus();

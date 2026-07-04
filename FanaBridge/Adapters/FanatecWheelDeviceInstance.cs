@@ -131,6 +131,7 @@ namespace FanaBridge.Adapters
                 ["itmEnabled"] = DisplaySettings.DefaultItmEnabled,
                 ["itmShowLapTotal"] = DisplaySettings.DefaultShowLapTotal,
                 ["itmShowPositionTotal"] = DisplaySettings.DefaultShowPositionTotal,
+                ["itmDefaultPage"] = DisplaySettings.DefaultItmDefaultPage,
             };
             _displaySettings = new DisplaySettings();
 
@@ -216,7 +217,7 @@ namespace FanaBridge.Adapters
             // Extract custom settings
             _customSettings = new JObject();
             foreach (var key in new[] { "wheelType", "moduleType", "displayMode", "itmEnabled",
-                                        "itmShowLapTotal", "itmShowPositionTotal" })
+                                        "itmShowLapTotal", "itmShowPositionTotal", "itmDefaultPage" })
             {
                 if (obj[key] != null)
                     _customSettings[key] = obj[key].DeepClone();
@@ -251,6 +252,7 @@ namespace FanaBridge.Adapters
                 ItmEnabled = (bool?)_customSettings["itmEnabled"] ?? DisplaySettings.DefaultItmEnabled,
                 ItmShowLapTotal = (bool?)_customSettings["itmShowLapTotal"] ?? DisplaySettings.DefaultShowLapTotal,
                 ItmShowPositionTotal = (bool?)_customSettings["itmShowPositionTotal"] ?? DisplaySettings.DefaultShowPositionTotal,
+                ItmDefaultPage = (byte?)_customSettings["itmDefaultPage"] ?? DisplaySettings.DefaultItmDefaultPage,
             };
 
             _displayManager?.UpdateSettings(_displaySettings);
@@ -440,6 +442,7 @@ namespace FanaBridge.Adapters
                     _customSettings["itmEnabled"] = _displaySettings.ItmEnabled;
                     _customSettings["itmShowLapTotal"] = _displaySettings.ItmShowLapTotal;
                     _customSettings["itmShowPositionTotal"] = _displaySettings.ItmShowPositionTotal;
+                    _customSettings["itmDefaultPage"] = _displaySettings.ItmDefaultPage;
                     _displayManager?.UpdateSettings(_displaySettings);
                     // ITM driver reads _displaySettings live each frame.
                 };

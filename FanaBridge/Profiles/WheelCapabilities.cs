@@ -108,6 +108,9 @@ namespace FanaBridge.Profiles
             if (Display != other.Display)
                 return "Display type changed (" + other.Display + " → " + Display + ")";
 
+            if (Display == DisplayType.Itm && ItmDeviceId != other.ItmDeviceId)
+                return "ITM display device changed (" + other.ItmDeviceId + " → " + ItmDeviceId + ")";
+
             return null;
         }
 

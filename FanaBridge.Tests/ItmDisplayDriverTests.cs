@@ -139,6 +139,25 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void ChangingDefaultPageWhileRunning_DoesNotReseedSubscriptions()
+        {
+            var driver = MakeDriver(out _, out var clock);
+            driver.DefaultPage = 1;
+            Enable(driver, clock);
+            int before = driver.SubscriptionCount;   // page 1's seeded set
+
+            driver.DefaultPage = 3;   // switch page live
+            clock.T += 1000;
+            driver.Update(EmptyData());
+
+            // The PageSet is issued (see ChangingDefaultPageWhileRunning_ForcesItLive), but the
+            // subscriptions are NOT speculatively reseeded — we wait for the firmware's push. A flaked
+            // switch, or a switch to the page already shown (no push), must not strand the display on
+            // wrong-page handles, so the existing set is kept until the firmware replaces it.
+            Assert.Equal(before, driver.SubscriptionCount);
+        }
+
+        [Fact]
         public void BringUp_Bentley_TargetsDevice4()
         {
             var t = new RecordingTransport();

@@ -22,5 +22,15 @@ namespace FanaBridge.Tests
         {
             Assert.Equal(id, new WheelProfile { ItmDeviceIdRaw = id }.ItmDeviceId);
         }
+
+        [Fact]
+        public void GetRestartReason_ItmDeviceChange_RequiresRestart()
+        {
+            var dev3 = new WheelCapabilities(new WheelProfile { Display = "itm", ItmDeviceIdRaw = 3 });
+            var dev4 = new WheelCapabilities(new WheelProfile { Display = "itm", ItmDeviceIdRaw = 4 });
+
+            Assert.NotNull(dev4.GetRestartReason(dev3));   // ITM display device changed → restart
+            Assert.Null(dev4.GetRestartReason(dev4));       // identical caps → no restart
+        }
     }
 }

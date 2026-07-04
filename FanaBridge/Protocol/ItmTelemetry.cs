@@ -92,9 +92,9 @@ namespace FanaBridge.Protocol
     /// This is pure wire — no SimHub <c>GameData</c>. The SimHub telemetry → value/suffix
     /// mapping lives in <c>ItmTelemetryMapper</c> (Adapters), which knows both sides.
     ///
-    /// The catalog is the firmware's page structure. Today only the Base/BME layout is
-    /// modelled (via <see cref="ItmPage"/>); per-device profiles (Bentley/GTSWX/Base) are a
-    /// follow-up — this is the single place the layouts are declared.
+    /// This declares each page's parameter list (<see cref="ParamsFor"/>) and display name
+    /// (<see cref="NameOf"/>), keyed by the <see cref="ItmPage"/> content identity. Which pages a
+    /// given display exposes — and their on-wire numbering is declared in <see cref="ItmDeviceCatalog"/>.
     /// </summary>
     public static class ItmTelemetry
     {
@@ -181,11 +181,12 @@ namespace FanaBridge.Protocol
             if (start < 0) return result;
 
             // Entries: [deviceId][fwHandle][idLo][idHi][dataType], 5 bytes each. Byte 0 is the
-            // display-device id. Each driver targets one display, so stop at the first entry for
-            // any other device (a report can, in principle, interleave devices).
+            // display-device id. Each driver targets one display, so skip entries for any other
+            // device rather than stopping — a report can interleave devices, and a later matching
+            // entry must still be collected. (Zero-padding never matches a real device id.)
             for (int i = start; i + 5 <= len; i += 5)
             {
-                if (report[i] != deviceId) break;   // entries for the display this driver targets
+                if (report[i] != deviceId) continue;   // entry for a different display — skip it
                 byte fwHandle = report[i + 1];
                 ushort pid = (ushort)(report[i + 2] | (report[i + 3] << 8));
                 result.Add(new ItmSubscription(fwHandle, pid));
