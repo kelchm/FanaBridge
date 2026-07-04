@@ -7,26 +7,6 @@ using FanaBridge.Transport;
 namespace FanaBridge.Protocol
 {
     /// <summary>
-    /// Target display device for an ITM page change (col03 <c>FF 05 04</c>, byte[3]).
-    /// Multiple ITM-capable surfaces can be present at once, each addressed by its
-    /// own device ID. See the protocol reference, "ITM Supported Devices".
-    /// </summary>
-    public enum ItmDevice : byte
-    {
-        /// <summary>The wheelbase's own display (PDD1/PDD1-PS4/PDD2).</summary>
-        Base = 1,
-
-        /// <summary>
-        /// The PBME's large OLED or the GTSWX's built-in display. These share device
-        /// ID 3 on the wire and are mutually exclusive — a setup has one or the other.
-        /// </summary>
-        BmeOrGtswx = 3,
-
-        /// <summary>The Bentley GT3 wheel's built-in display.</summary>
-        Bentley = 4,
-    }
-
-    /// <summary>
     /// A single telemetry value for an ITM ValueUpdate entry (col03 <c>FF 05 01</c>).
     /// The <see cref="Raw"/> bits are emitted little-endian, <see cref="Size"/> bytes
     /// wide. Use the typed factory helpers (<see cref="UInt8"/>, <see cref="Int16"/>,
@@ -174,14 +154,14 @@ namespace FanaBridge.Protocol
         private const byte SUBCMD_PAGESET = 0x04;    // PageSet: byte[3]=display-device id, byte[4]=page
 
         // First byte of every ValueUpdate/ParamDefs entry is the display-device id — which
-        // display the entry targets (see ItmDevice), not a marker. Callers pass the id for the
-        // display they drive; DefaultDeviceId (PBME/GTSWX, device 3) is used when omitted.
+        // display the entry targets, not a marker. Callers pass the id for the display they
+        // drive; DefaultDeviceId (the wheel OLED, device 3) is used when omitted.
 
         /// <summary>
-        /// Default display-device id when a caller doesn't specify one: the PBME/GTSWX
-        /// (device 3). A caller driving another display (base=1, Bentley=4) passes its own.
+        /// Default ITM display-device wire id when a caller doesn't specify one: <b>3</b> — the
+        /// wheel's OLED (PBME, GTSWX, Formula V3, …). Other displays: base = 1, Bentley = 4.
         /// </summary>
-        public const byte DefaultDeviceId = (byte)ItmDevice.BmeOrGtswx;
+        public const byte DefaultDeviceId = 3;
 
         // Fixed-size prefixes of a single entry, before the variable tail. The leading
         // byte is the display-device id, not a marker.
@@ -243,13 +223,10 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Selects the active ITM page on a specific display device. Page changes
-        /// should be spaced at least 100&#160;ms apart (firmware reconfiguration time) —
-        /// the caller is responsible for that spacing.
+        /// Selects the active ITM page on a display device (byte[3] = wire device id,
+        /// byte[4] = page). Page changes should be spaced at least 100&#160;ms apart (firmware
+        /// reconfiguration time) — the caller is responsible for that spacing.
         /// </summary>
-        public bool SetPage(ItmDevice device, byte page) => SetPage((byte)device, page);
-
-        /// <summary>Raw overload of <see cref="SetPage(ItmDevice, byte)"/> for an arbitrary device ID.</summary>
         public bool SetPage(byte deviceId, byte page)
         {
             Array.Clear(_reportBuf, 0, REPORT_LENGTH);

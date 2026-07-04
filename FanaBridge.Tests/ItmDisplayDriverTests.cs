@@ -143,7 +143,7 @@ namespace FanaBridge.Tests
         {
             var t = new RecordingTransport();
             var clock = new Clock();
-            var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, deviceId: (byte)ItmDevice.Bentley);
+            var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, deviceId: 4);   // Bentley
 
             driver.Start();
             driver.Update(EmptyData());   // Enabling -> Running
@@ -157,7 +157,7 @@ namespace FanaBridge.Tests
         {
             var t = new RecordingTransport();
             var clock = new Clock();
-            var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, deviceId: (byte)ItmDevice.Bentley);
+            var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, deviceId: 4);   // Bentley
             driver.Start();
             driver.Update(EmptyData());   // bring-up + Lap Info seed
 

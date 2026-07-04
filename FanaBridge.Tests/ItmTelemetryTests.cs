@@ -338,7 +338,7 @@ namespace FanaBridge.Tests
             Assert.Empty(ItmTelemetry.ParseSubscriptionReport(report, report.Length));
 
             // Asking for device 4 accepts it.
-            var subs = ItmTelemetry.ParseSubscriptionReport(report, report.Length, (byte)ItmDevice.Bentley);
+            var subs = ItmTelemetry.ParseSubscriptionReport(report, report.Length, (byte)4);
             Assert.Single(subs);
             Assert.Equal(ItmParam.Speed, subs[0].ParamId);
             Assert.Equal(0, subs[0].Handle);

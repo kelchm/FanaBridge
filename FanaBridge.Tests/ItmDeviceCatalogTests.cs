@@ -10,7 +10,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void Standard_HasSixPagesInOrder()
         {
-            var pages = ItmDeviceCatalog.PagesFor((byte)ItmDevice.BmeOrGtswx);
+            var pages = ItmDeviceCatalog.PagesFor((byte)3);
 
             Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6 }, pages.Select(p => p.Number).ToArray());
             Assert.Equal("Lap Info", pages[0].Name);
@@ -21,14 +21,14 @@ namespace FanaBridge.Tests
         [Fact]
         public void BaseAndWheelOled_ShareTheStandardSet()
         {
-            Assert.Same(ItmDeviceCatalog.PagesFor((byte)ItmDevice.BmeOrGtswx),
-                        ItmDeviceCatalog.PagesFor((byte)ItmDevice.Base));
+            Assert.Same(ItmDeviceCatalog.PagesFor((byte)3),
+                        ItmDeviceCatalog.PagesFor((byte)1));
         }
 
         [Fact]
         public void Bentley_HasFivePages_NoCarSettings_Renumbered()
         {
-            var pages = ItmDeviceCatalog.PagesFor((byte)ItmDevice.Bentley);
+            var pages = ItmDeviceCatalog.PagesFor((byte)4);
 
             Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, pages.Select(p => p.Number).ToArray());
             Assert.DoesNotContain(pages, p => p.Name == "Car Settings");
@@ -39,7 +39,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void UnknownDeviceId_FallsBackToStandard()
         {
-            Assert.Same(ItmDeviceCatalog.PagesFor((byte)ItmDevice.BmeOrGtswx),
+            Assert.Same(ItmDeviceCatalog.PagesFor((byte)3),
                         ItmDeviceCatalog.PagesFor(99));
         }
 
@@ -48,7 +48,7 @@ namespace FanaBridge.Tests
         {
             // Every param any device can show must be encodable (generalizes the Phase-1 guard
             // across all device page sets). All device sets are subsets of BME's, so this holds.
-            byte[] devices = { (byte)ItmDevice.Base, (byte)ItmDevice.BmeOrGtswx, (byte)ItmDevice.Bentley };
+            byte[] devices = { (byte)1, (byte)3, (byte)4 };
             foreach (var dev in devices)
                 foreach (var page in ItmDeviceCatalog.PagesFor(dev))
                     foreach (var id in page.Params)

@@ -29,23 +29,19 @@ namespace FanaBridge.Protocol
     }
 
     /// <summary>
-    /// The ITM page set each display device offers — keyed by wire device id. This is what a UI
-    /// reads to know which pages are valid/available (e.g. to populate a "default page" picker),
-    /// and it is the single place the per-device layouts are declared.
+    /// The pages each ITM display offers, keyed by wire device id — what a UI reads to populate a
+    /// "default page" picker and what the driver seeds from on bring-up. A device's page set is a
+    /// property of its firmware; today only device 4 (the Bentley GT3) differs from the standard
+    /// six-page set. Page <b>content</b> reuses the shared param lists (<see cref="ItmTelemetry.ParamsFor"/>).
     ///
-    /// The page <b>content</b> reuses the Base/BME param lists (<see cref="ItmTelemetry.ParamsFor"/>);
-    /// devices differ only in which pages they expose and their numbering:
-    /// <list type="bullet">
-    /// <item>Base display (1) and wheel OLED / PBME / GTSWX (3) share the standard six pages.</item>
-    /// <item>Bentley (4) has no Car Settings page and renumbers the rest to a contiguous 1–5.</item>
-    /// </list>
-    /// (GTSWX shares wire id 3 with the PBME; its only real difference — a compact Lap Times page —
-    /// is a parameter-level detail the firmware-driven path handles on its own, so it needs no
-    /// separate page set here.)
+    /// The page set currently tracks the device id 1:1. If two wheels ever share a device id but
+    /// lay their pages out differently, that is the seam to add a per-wheel discriminator (a profile
+    /// field) — until then, deriving the pages from the device id is the simplest honest model.
     /// </summary>
     public static class ItmDeviceCatalog
     {
-        // Standard six-page set: base display, wheel OLED (PBME / GTSWX).
+        // Standard six-page set — base display (1), the wheel OLED (3), and any device without a
+        // dedicated set below.
         private static readonly IReadOnlyList<ItmPageInfo> Standard = new[]
         {
             new ItmPageInfo(1, "Lap Info",         ItmTelemetry.ParamsFor(ItmPage.LapInfo)),
@@ -56,7 +52,7 @@ namespace FanaBridge.Protocol
             new ItmPageInfo(6, "Legacy",           ItmTelemetry.ParamsFor(ItmPage.Legacy)),
         };
 
-        // Bentley: no Car Settings; the remaining pages renumber to a contiguous 1–5.
+        // Bentley GT3 (device 4): no Car Settings; the remaining pages renumber to a contiguous 1–5.
         private static readonly IReadOnlyList<ItmPageInfo> Bentley = new[]
         {
             new ItmPageInfo(1, "Lap Info",         ItmTelemetry.ParamsFor(ItmPage.LapInfo)),
@@ -67,19 +63,15 @@ namespace FanaBridge.Protocol
         };
 
         /// <summary>
-        /// The pages a display device offers, in order, for the given wire
-        /// <paramref name="deviceId"/> (see <see cref="ItmDevice"/>). Unknown ids fall back to the
-        /// standard set. The list is shared/immutable — do not mutate.
+        /// The pages the given wire <paramref name="deviceId"/> offers, in order. Unknown ids fall
+        /// back to the standard set. The list is shared/immutable — do not mutate.
         /// </summary>
         public static IReadOnlyList<ItmPageInfo> PagesFor(byte deviceId)
         {
             switch (deviceId)
             {
-                case (byte)ItmDevice.Bentley: return Bentley;
-                case (byte)ItmDevice.Base:            // base display
-                case (byte)ItmDevice.BmeOrGtswx:      // wheel OLED (PBME / GTSWX)
-                default:
-                    return Standard;
+                case 4:  return Bentley;   // Bentley GT3
+                default: return Standard;
             }
         }
     }
