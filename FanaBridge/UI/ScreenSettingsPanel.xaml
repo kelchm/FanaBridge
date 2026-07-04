@@ -22,7 +22,7 @@
 
                     <!-- Default page (choices populated per display device) -->
                     <StackPanel x:Name="panelDefaultPage" Margin="0,0,0,12">
-                        <TextBlock Text="Default page" FontWeight="SemiBold" Margin="0,0,0,4" />
+                        <TextBlock Text="Default Page" FontWeight="SemiBold" Margin="0,0,0,4" />
                         <ComboBox x:Name="cmbDefaultPage"
                                   SelectionChanged="CmbDefaultPage_SelectionChanged"
                                   Width="220" HorizontalAlignment="Left" />
