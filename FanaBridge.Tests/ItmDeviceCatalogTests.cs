@@ -13,8 +13,8 @@ namespace FanaBridge.Tests
             var pages = ItmDeviceCatalog.PagesFor((byte)3);
 
             Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6 }, pages.Select(p => p.Number).ToArray());
-            Assert.Equal("Lap Info", pages[0].Name);
-            Assert.Equal("Car Settings", pages[2].Name);
+            Assert.Equal(ItmPage.LapInfo, pages[0].Page);
+            Assert.Equal(ItmPage.CarSettings, pages[2].Page);
             Assert.True(pages[5].IsLegacy);   // page 6 = Legacy, no params
         }
 
@@ -31,8 +31,8 @@ namespace FanaBridge.Tests
             var pages = ItmDeviceCatalog.PagesFor((byte)4);
 
             Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, pages.Select(p => p.Number).ToArray());
-            Assert.DoesNotContain(pages, p => p.Name == "Car Settings");
-            Assert.Equal("Lap Times", pages[2].Name);   // page 3 is Lap Times, not Car Settings
+            Assert.DoesNotContain(pages, p => p.Page == ItmPage.CarSettings);
+            Assert.Equal(ItmPage.LapTimes, pages[2].Page);   // page 3 is Lap Times, not Car Settings
             Assert.True(pages[4].IsLegacy);              // page 5 = Legacy
         }
 
@@ -53,7 +53,7 @@ namespace FanaBridge.Tests
                 foreach (var page in ItmDeviceCatalog.PagesFor(dev))
                     foreach (var id in page.Params)
                         Assert.True(ItmTelemetryMapper.HasEncoder(id),
-                            $"paramId {id} on device {dev} page {page.Number} ({page.Name}) has no mapper encoder");
+                            $"paramId {id} on device {dev} page {page.Number} ({page.Page}) has no mapper encoder");
         }
     }
 }

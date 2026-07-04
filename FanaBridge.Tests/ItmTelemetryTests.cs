@@ -71,6 +71,17 @@ namespace FanaBridge.Tests
             Assert.Empty(ParamsArray(ItmPage.Legacy));
         }
 
+        // ── NameOf ───────────────────────────────────────────────────────
+
+        [Fact]
+        public void NameOf_GivesEveryPageANonEmptyDisplayName()
+        {
+            Assert.Equal("Lap Info", ItmTelemetry.NameOf(ItmPage.LapInfo));
+            Assert.Equal("Car Settings", ItmTelemetry.NameOf(ItmPage.CarSettings));
+            foreach (ItmPage page in System.Enum.GetValues(typeof(ItmPage)))
+                Assert.False(string.IsNullOrEmpty(ItmTelemetry.NameOf(page)));
+        }
+
         private static ushort[] ParamsArray(ItmPage page)
         {
             var list = ItmTelemetry.ParamsFor(page);

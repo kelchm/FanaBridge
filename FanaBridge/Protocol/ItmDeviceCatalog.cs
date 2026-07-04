@@ -3,28 +3,33 @@ using System.Collections.Generic;
 namespace FanaBridge.Protocol
 {
     /// <summary>
-    /// One page in an ITM device's page set: its on-wire page number, a human-readable name
-    /// (for UI page pickers), and the parameters it carries. Pure wire/reference data — no SimHub.
+    /// One slot in an ITM device's page set: the on-wire page number, which page content
+    /// (<see cref="ItmPage"/>) sits there, and that page's params and display name. Reference
+    /// data — no SimHub. The name and params are derived from the identity, defined once.
     /// </summary>
     public sealed class ItmPageInfo
     {
-        /// <summary>On-wire page number (the value sent in a <c>FF 05 04</c> PageSet).</summary>
+        /// <summary>On-wire page number on this device (the value sent in a <c>FF 05 04</c> PageSet).</summary>
         public byte Number { get; }
 
-        /// <summary>Human-readable page name, e.g. "Lap Info" / "Tyre Temps".</summary>
+        /// <summary>Which page content sits at this slot — the identity, not the wire number.</summary>
+        public ItmPage Page { get; }
+
+        /// <summary>The page's display name (reference data, from <see cref="ItmTelemetry.NameOf"/>).</summary>
         public string Name { get; }
 
         /// <summary>Parameter IDs this page carries, in order (empty for the legacy page).</summary>
         public IReadOnlyList<ushort> Params { get; }
 
         /// <summary>True for the legacy/fallback page — no telemetry parameters.</summary>
-        public bool IsLegacy => Params.Count == 0;
+        public bool IsLegacy => Page == ItmPage.Legacy;
 
-        public ItmPageInfo(byte number, string name, IReadOnlyList<ushort> parameters)
+        public ItmPageInfo(byte number, ItmPage page)
         {
             Number = number;
-            Name = name;
-            Params = parameters;
+            Page = page;
+            Name = ItmTelemetry.NameOf(page);
+            Params = ItmTelemetry.ParamsFor(page);
         }
     }
 
@@ -41,25 +46,25 @@ namespace FanaBridge.Protocol
     public static class ItmDeviceCatalog
     {
         // Standard six-page set — base display (1), the wheel OLED (3), and any device without a
-        // dedicated set below.
+        // dedicated set below. Each slot is (wire page number, page content).
         private static readonly IReadOnlyList<ItmPageInfo> Standard = new[]
         {
-            new ItmPageInfo(1, "Lap Info",         ItmTelemetry.ParamsFor(ItmPage.LapInfo)),
-            new ItmPageInfo(2, "Fuel / ERS / DRS", ItmTelemetry.ParamsFor(ItmPage.FuelErsDrs)),
-            new ItmPageInfo(3, "Car Settings",     ItmTelemetry.ParamsFor(ItmPage.CarSettings)),
-            new ItmPageInfo(4, "Lap Times",        ItmTelemetry.ParamsFor(ItmPage.LapTimes)),
-            new ItmPageInfo(5, "Tyre Temps",       ItmTelemetry.ParamsFor(ItmPage.TyreTemps)),
-            new ItmPageInfo(6, "Legacy",           ItmTelemetry.ParamsFor(ItmPage.Legacy)),
+            new ItmPageInfo(1, ItmPage.LapInfo),
+            new ItmPageInfo(2, ItmPage.FuelErsDrs),
+            new ItmPageInfo(3, ItmPage.CarSettings),
+            new ItmPageInfo(4, ItmPage.LapTimes),
+            new ItmPageInfo(5, ItmPage.TyreTemps),
+            new ItmPageInfo(6, ItmPage.Legacy),
         };
 
         // Bentley GT3 (device 4): no Car Settings; the remaining pages renumber to a contiguous 1–5.
         private static readonly IReadOnlyList<ItmPageInfo> Bentley = new[]
         {
-            new ItmPageInfo(1, "Lap Info",         ItmTelemetry.ParamsFor(ItmPage.LapInfo)),
-            new ItmPageInfo(2, "Fuel / ERS / DRS", ItmTelemetry.ParamsFor(ItmPage.FuelErsDrs)),
-            new ItmPageInfo(3, "Lap Times",        ItmTelemetry.ParamsFor(ItmPage.LapTimes)),
-            new ItmPageInfo(4, "Tyre Temps",       ItmTelemetry.ParamsFor(ItmPage.TyreTemps)),
-            new ItmPageInfo(5, "Legacy",           ItmTelemetry.ParamsFor(ItmPage.Legacy)),
+            new ItmPageInfo(1, ItmPage.LapInfo),
+            new ItmPageInfo(2, ItmPage.FuelErsDrs),
+            new ItmPageInfo(3, ItmPage.LapTimes),
+            new ItmPageInfo(4, ItmPage.TyreTemps),
+            new ItmPageInfo(5, ItmPage.Legacy),
         };
 
         /// <summary>

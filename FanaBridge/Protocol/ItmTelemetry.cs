@@ -4,21 +4,21 @@ using System.Collections.Generic;
 namespace FanaBridge.Protocol
 {
     /// <summary>
-    /// ITM telemetry page. Each page is a fixed parameter layout the firmware
-    /// renders; SPEED and GEAR appear on every page as persistent headers. Values
-    /// match the Base/BME page numbering in the protocol reference, "ITM Page Layouts".
-    /// The numbering is Base/BME-specific — a Bentley display has no Car Settings page
-    /// and a different legacy page (5, not 6), so this enum does not map to a Bentley.
+    /// A page's <b>content identity</b> — the fixed parameter layout the firmware renders (SPEED
+    /// and GEAR appear on every page as persistent headers). This is <b>not</b> a wire page number:
+    /// the on-wire number is assigned per device by <see cref="ItmDeviceCatalog"/> (Car Settings is
+    /// wire page 3 on a standard display but absent on a Bentley, which renumbers the rest). Use it
+    /// only to look up a page's parameters via <see cref="ParamsFor"/>.
     /// </summary>
-    public enum ItmPage : byte
+    public enum ItmPage
     {
-        LapInfo = 1,
-        FuelErsDrs = 2,
-        CarSettings = 3,
-        LapTimes = 4,
-        TyreTemps = 5,
+        LapInfo,
+        FuelErsDrs,
+        CarSettings,
+        LapTimes,
+        TyreTemps,
         /// <summary>Legacy / default fallback — carries no telemetry parameters.</summary>
-        Legacy = 6,
+        Legacy,
     }
 
     /// <summary>
@@ -134,6 +134,24 @@ namespace FanaBridge.Protocol
                 case ItmPage.LapTimes: return LapTimesParams;
                 case ItmPage.TyreTemps: return TyreTempsParams;
                 default: return NoParams;   // Legacy / unknown: no parameters
+            }
+        }
+
+        /// <summary>
+        /// The page's canonical display name (reference data, e.g. "Lap Info") — the same across
+        /// every device that shows the page. Used by UI page pickers.
+        /// </summary>
+        public static string NameOf(ItmPage page)
+        {
+            switch (page)
+            {
+                case ItmPage.LapInfo: return "Lap Info";
+                case ItmPage.FuelErsDrs: return "Fuel / ERS / DRS";
+                case ItmPage.CarSettings: return "Car Settings";
+                case ItmPage.LapTimes: return "Lap Times";
+                case ItmPage.TyreTemps: return "Tyre Temps";
+                case ItmPage.Legacy: return "Legacy";
+                default: return page.ToString();
             }
         }
 
