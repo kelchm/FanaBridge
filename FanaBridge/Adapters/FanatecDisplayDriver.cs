@@ -33,6 +33,13 @@ namespace FanaBridge.Adapters
         // GearUpshiftBrackets: bracket state
         private bool _lastBracketsShown;
 
+        // True while a game is feeding telemetry (we own the display's content);
+        // on the transition out, the display is blanked — retried until the write
+        // is accepted — instead of holding the last value forever. SimHub keeps
+        // the last telemetry values around after a game exits, so staleness can't
+        // be inferred from the data itself.
+        private bool _needExitBlank;
+
         public FanatecDisplayDriver(DisplayEncoder display, DisplaySettings settings)
         {
             _display = display;
@@ -64,7 +71,17 @@ namespace FanaBridge.Adapters
         /// </summary>
         public void Update(GameData data)
         {
-            if (data.NewData == null) return;
+            bool telemetryLive = data != null && data.GameRunning && data.NewData != null;
+            if (!telemetryLive)
+            {
+                // Game exited (or never started): blank once on the way out, then
+                // write nothing while idle — the firmware may be using the display
+                // itself (e.g. the tuning menu).
+                if (_needExitBlank)
+                    _needExitBlank = !Clear();
+                return;
+            }
+            _needExitBlank = true;
 
             string mode = DisplayMode;
 
