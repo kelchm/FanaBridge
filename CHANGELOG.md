@@ -4,6 +4,10 @@
 
 ### Fixed
 - **SRM Conversion Kit wheels are detected again.** A Fanatec wheel/hub run through an SRM Conversion Kit no longer sits at "Connecting…" — FanaBridge recovers the wheel's identity from the conversion kit when the base doesn't emit the usual Fanatec system report (regressed in v0.4.0). The genuine-hardware detection path is unchanged. ([#47](https://github.com/kelchm/FanaBridge/pull/47), fixes [#52](https://github.com/kelchm/FanaBridge/issues/52))
+- **Changing the active game in SimHub no longer kills all LED and display output.** SimHub restarts its plugin manager in-process on every game change; FanaBridge now survives that restart with its hardware connection intact instead of being torn down and rebuilt while SimHub's device instances kept writing into the disposed connection — previously everything went dark (while still showing *Connected*) until SimHub itself was restarted ([#51](https://github.com/kelchm/FanaBridge/issues/51))
+- Device instances now rebind to the live hardware core if the plugin is ever replaced in-process (e.g. disabled and re-enabled), instead of silently driving a dead transport
+- The 7-segment display no longer marks a gear/speed as shown when the write never reached the wheel, so a briefly unavailable transport can't freeze the display on a stale value
+- A device's LED module no longer stays permanently unbuilt if SimHub asked for it before FanaBridge finished initializing
 
 ## v0.4.0 - 2026-07-01
 

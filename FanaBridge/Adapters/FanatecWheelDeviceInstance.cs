@@ -39,6 +39,14 @@ namespace FanaBridge.Adapters
 
         private bool _ledModuleInitialized;
 
+        // LED settings/defaults that arrived while the module didn't exist yet
+        // (SimHub can deliver SetSettings/LoadDefaultSettings before FanatecPlugin
+        // finishes Init). Applied by EnsureLedModuleInitialized right after the
+        // module is built, so an early payload is deferred instead of dropped.
+        private JObject _pendingLedSettings;
+        private bool _pendingLedSettingsIsDefault;
+        private bool _pendingLedDefaults;
+
         // Display manager — null when the wheel has no display.
         private FanatecDisplayDriver _displayManager;
         private DisplaySettings _displaySettings = new DisplaySettings();
@@ -59,6 +67,14 @@ namespace FanaBridge.Adapters
         // depend on construction-vs-plugin-Init ordering.
         private bool _registeredWithPlugin;
 
+        // The plugin generation the cached drivers were built against. SimHub
+        // keeps DeviceInstances alive across in-process plugin manager restarts,
+        // but FanatecPlugin can still be replaced (e.g. disabled then re-enabled)
+        // — after which the drivers above hold encoders bound to a disposed
+        // transport (issue #37). When Instance no longer matches, the drivers
+        // are dropped/rebuilt against the current generation.
+        private FanatecPlugin _boundPlugin;
+
         public FanatecWheelDeviceInstance(DeviceConfig config)
         {
             _config = config;
@@ -75,11 +91,16 @@ namespace FanaBridge.Adapters
         {
             if (_ledModuleInitialized)
                 return;
-            _ledModuleInitialized = true;
 
-            // Without the shared encoders we can't build a module at all.
+            // Without the shared encoders we can't build a module at all. Leave
+            // the initialized flag unset so the next call retries — latching it
+            // here would permanently kill this instance's LED module just
+            // because it raced ahead of plugin Init.
             var plugin = FanatecPlugin.Instance;
             if (plugin == null) return;
+
+            _ledModuleInitialized = true;
+            _boundPlugin = plugin;
 
             // Resolve the caps for THIS descriptor (live caps only when the
             // connected wheel matches us; otherwise our registration caps).
@@ -112,6 +133,74 @@ namespace FanaBridge.Adapters
                 "revRgb=" + caps.RevRgbCount + ", flagRgb=" + caps.FlagRgbCount +
                 ", buttonRgb=" + caps.ButtonRgbCount + ", buttonAuxIntensity=" + caps.ButtonAuxIntensityCount +
                 ", total=" + allLeds + ")");
+
+            // Apply anything SimHub delivered before the module existed.
+            if (_pendingLedSettings != null)
+            {
+                ApplyLedSettings(_pendingLedSettings, _pendingLedSettingsIsDefault);
+                _pendingLedSettings = null;
+            }
+            else if (_pendingLedDefaults)
+            {
+                _ledModule.LoadDefaults();
+            }
+            _pendingLedDefaults = false;
+        }
+
+        /// <summary>
+        /// Applies a saved settings payload to the LED module (module-level
+        /// state such as brightness first, then per-channel profile data).
+        /// </summary>
+        private void ApplyLedSettings(JObject obj, bool isDefault)
+        {
+            try
+            {
+                // Restore module-level state (brightness, IndividualLEDsMode, etc.)
+                // before passing channel profiles, matching LedModuleDevice.SetSettings.
+                var moduleToken = obj["ledModuleSettings"];
+                if (moduleToken != null)
+                    Newtonsoft.Json.JsonConvert.PopulateObject(moduleToken.ToString(), _ledModule);
+
+                // Per-channel profile data (leds, buttons, raw, …)
+                var dict = new Dictionary<string, JToken>();
+                foreach (var prop in obj.Properties())
+                    dict[prop.Name] = prop.Value;
+                _ledModule.SetSettings(dict, isDefault);
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn(
+                    "FanatecWheelDeviceInstance: SetSettings(LED) failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Drops every driver bound to a previous plugin generation so it is
+        /// rebuilt against the current one. The LED module itself survives
+        /// (its settings and UI bindings must persist); only its driver is
+        /// closed, which makes the base class re-request one via
+        /// <c>FanatecLedManager.GetDriver()</c> — that path resolves the live
+        /// encoders from <see cref="FanatecPlugin.Instance"/>.
+        /// </summary>
+        private void RebindToCurrentGeneration()
+        {
+            SimHub.Logging.Current.Info(
+                "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                "]: Plugin generation changed — rebinding drivers to the current hardware core");
+
+            _manager?.Close();
+
+            // Display/ITM drivers hold their encoder for life — recreate them
+            // lazily (DataUpdate builds them on demand from the live plugin).
+            _displayManager = null;
+            _itmDisplay = null;
+            _itmWasRunning = false;
+            _itmErrorLogged = false;
+            _legacyBlanked = false;
+
+            // Re-register with the new plugin's instance list (used by the
+            // Control Mapper integration to read display names).
+            _registeredWithPlugin = false;
         }
 
         // ── DeviceInstance overrides ─────────────────────────────────────
@@ -136,7 +225,16 @@ namespace FanaBridge.Adapters
             _displaySettings = new DisplaySettings();
 
             if (_ledModule != null)
+            {
                 _ledModule.LoadDefaults();
+            }
+            else
+            {
+                // Module not buildable yet — remember that defaults were requested
+                // so EnsureLedModuleInitialized applies them on creation.
+                _pendingLedDefaults = true;
+                _pendingLedSettings = null;
+            }
         }
 
         public override DeviceState GetDeviceState()
@@ -225,25 +323,17 @@ namespace FanaBridge.Adapters
 
             if (_ledModule != null)
             {
-                try
-                {
-                    // Restore module-level state (brightness, IndividualLEDsMode, etc.)
-                    // before passing channel profiles, matching LedModuleDevice.SetSettings.
-                    var moduleToken = obj["ledModuleSettings"];
-                    if (moduleToken != null)
-                        Newtonsoft.Json.JsonConvert.PopulateObject(moduleToken.ToString(), _ledModule);
-
-                    // Per-channel profile data (leds, buttons, raw, …)
-                    var dict = new Dictionary<string, JToken>();
-                    foreach (var prop in obj.Properties())
-                        dict[prop.Name] = prop.Value;
-                    _ledModule.SetSettings(dict, isDefault);
-                }
-                catch (Exception ex)
-                {
-                    SimHub.Logging.Current.Warn(
-                        "FanatecWheelDeviceInstance: SetSettings(LED) failed: " + ex.Message);
-                }
+                ApplyLedSettings(obj, isDefault);
+                _pendingLedSettings = null;
+                _pendingLedDefaults = false;
+            }
+            else
+            {
+                // Module not buildable yet (plugin still initializing) — keep the
+                // payload so EnsureLedModuleInitialized can apply it on creation.
+                _pendingLedSettings = (JObject)obj.DeepClone();
+                _pendingLedSettingsIsDefault = isDefault;
+                _pendingLedDefaults = false;
             }
 
             _displaySettings = new DisplaySettings
@@ -260,9 +350,21 @@ namespace FanaBridge.Adapters
 
         public override void DataUpdate(PluginManager pluginManager, ref GameData data)
         {
-            if (!_registeredWithPlugin && FanatecPlugin.Instance != null)
+            // Generation guard: if the plugin was replaced since our drivers were
+            // built, drop them so they rebuild against the current hardware core
+            // (see _boundPlugin). Must run before anything below touches them.
+            var currentPlugin = FanatecPlugin.Instance;
+            if (currentPlugin != null && _boundPlugin != null
+                && !ReferenceEquals(_boundPlugin, currentPlugin))
             {
-                FanatecPlugin.Instance.RegisterDeviceInstance(this);
+                RebindToCurrentGeneration();
+            }
+            if (currentPlugin != null)
+                _boundPlugin = currentPlugin;
+
+            if (!_registeredWithPlugin && currentPlugin != null)
+            {
+                currentPlugin.RegisterDeviceInstance(this);
                 _registeredWithPlugin = true;
             }
 
@@ -354,8 +456,11 @@ namespace FanaBridge.Adapters
                     }
                     else if (_displayManager != null && !_legacyBlanked)
                     {
-                        _displayManager.Clear();   // switched to None — blank the legacy page once
-                        _legacyBlanked = true;
+                        // Switched to None — blank the legacy page once. Only latch
+                        // when the blanking write was accepted, so a transient
+                        // transport failure gets retried instead of leaving the
+                        // page frozen on its last value.
+                        _legacyBlanked = _displayManager.Clear();
                     }
                 }
                 catch (Exception ex)
