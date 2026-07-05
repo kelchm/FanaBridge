@@ -51,6 +51,7 @@ Fanatec wheelbases communicate with the host PC over USB HID (Human Interface De
     - [0x02 — ITM Mode (Enable Gate)](#0x02--itm-mode-enable-gate)
     - [0x03 — ParamDefs](#0x03--paramdefs)
     - [0x04 — PageSet](#0x04--pageset)
+    - [0x05 — DisplayReset](#0x05--displayreset)
     - [Control Model](#control-model)
     - [Firmware Subscription Pushes (Device → Host)](#firmware-subscription-pushes-device--host)
     - [Timing & Rate Limiting](#timing--rate-limiting)
@@ -871,6 +872,22 @@ What makes this genuinely hard to detect is that there is an **expected** case t
 Practical guidance for host-driven paging: track the page you believe is current, and treat a missing push as a *possible* failure only when you targeted a *different* page — then retry. Even so, whether such a miss is a firmware drop or a page switch that wasn't re-announced is still open, and needs a display-vs-push cross-check to resolve.
 
 **The legacy "keepalive" is just a PageSet.** `FF 05 04 02 0B` decodes as `PageSet(device 2, page 11)` — addressed to a display not present on the tested hardware, so it does nothing visible, and it appears in zero live captures. No periodic frame is needed to keep the display fed by [ValueUpdate](#0x01--valueupdate)s: the display has **no idle timeout** (see [Control Model](#control-model)), and FanaBridge sends no keepalive.
+
+#### 0x05 — DisplayReset
+
+Resets every rendered ITM field to its per-field placeholder — laps show `--- / -`, times show `--:--.-`, and so on. The frame is fixed; it takes no device id and no page (**interface-global** — it resets the ITM display state as a whole, not one display device):
+
+```
+FF 05 05 01 [00 x60]
+```
+
+What it does and doesn't touch (hardware-verified):
+
+- **Cleared:** every field value previously written by [ValueUpdate](#0x01--valueupdate), on every ITM page.
+- **Untouched:** the ITM Mode gate, the session enable, the active page, and the firmware's current subscriptions — no subscription push is emitted, and value flow resumes at the existing handles. (The reset elicits nothing on the input endpoint; it is a command, not a query.)
+- **Untouched:** the legacy page (6) — its 7-segment-style content is rendered from [col01 display writes](#0x02--7-segment-display-data) and is cleared through that path instead.
+
+This is the **only known way to clear already-written field values**: gating ITM off and back on does *not* clear them — the firmware retains every field's value across the off→on cycle and shows it again on re-enable (hardware-verified). The official software issues a reset during its own ITM initialization. Because subscriptions survive the reset, subsequent [ValueUpdate](#0x01--valueupdate)s repaint the same handles with no re-bring-up.
 
 #### Control Model
 

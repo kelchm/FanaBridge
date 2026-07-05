@@ -33,6 +33,13 @@ namespace FanaBridge.Adapters
         // GearUpshiftBrackets: bracket state
         private bool _lastBracketsShown;
 
+        // True while a game is feeding telemetry (we own the display's content);
+        // on the transition out, the display is blanked — retried until the write
+        // is accepted — instead of holding the last value forever. SimHub keeps
+        // the last telemetry values around after a game exits, so staleness can't
+        // be inferred from the data itself.
+        private bool _needExitBlank;
+
         public FanatecDisplayDriver(DisplayEncoder display, DisplaySettings settings)
         {
             _display = display;
@@ -64,7 +71,17 @@ namespace FanaBridge.Adapters
         /// </summary>
         public void Update(GameData data)
         {
-            if (data.NewData == null) return;
+            bool telemetryLive = data != null && data.GameRunning && data.NewData != null;
+            if (!telemetryLive)
+            {
+                // Game exited (or never started): blank once on the way out, then
+                // write nothing while idle — the firmware may be using the display
+                // itself (e.g. the tuning menu).
+                if (_needExitBlank)
+                    _needExitBlank = !Clear();
+                return;
+            }
+            _needExitBlank = true;
 
             string mode = DisplayMode;
 
@@ -90,11 +107,16 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// Blanks the display and resets cached state.
+        /// Blanks the display and resets cached state. Returns whether the
+        /// blanking write reached the transport, so callers that latch a
+        /// "cleared" state (e.g. the legacy-page blank) can retry a declined
+        /// write instead of remembering a blank that never happened. The value
+        /// latches are reset either way — the next successful write should
+        /// never be suppressed by pre-clear state.
         /// </summary>
-        public void Clear()
+        public bool Clear()
         {
-            _display.ClearDisplay();
+            bool sent = _display.ClearDisplay();
             _currentText = "";
             _currentGear = "";
             _lastSentGear = int.MinValue;
@@ -102,6 +124,7 @@ namespace FanaBridge.Adapters
             _lastKnownGear = int.MinValue;
             _gearOverlayUntil = DateTime.MinValue;
             _lastBracketsShown = false;
+            return sent;
         }
 
         // =====================================================================
@@ -165,7 +188,9 @@ namespace FanaBridge.Adapters
             if (gear == _lastSentGear && showBrackets == _lastBracketsShown && _lastDisplayMode == "GearUpshiftBrackets")
                 return;
 
-            _display.DisplayGear(gear, showBrackets);
+            if (!_display.DisplayGear(gear, showBrackets))
+                return;
+
             _lastSentGear      = gear;
             _lastBracketsShown = showBrackets;
             _lastDisplayMode   = "GearUpshiftBrackets";
@@ -195,7 +220,12 @@ namespace FanaBridge.Adapters
         /// </summary>
         private void ShowGear(int gear, string mode)
         {
-            _display.DisplayGear(gear);
+            // Only latch the rate-limiter state when the write actually reached
+            // the transport — a declined send must be retried next frame, not
+            // remembered as "already shown".
+            if (!_display.DisplayGear(gear))
+                return;
+
             _lastSentGear = gear;
             _lastDisplayMode = mode;
             _currentGear = GearToString(gear);
@@ -208,7 +238,9 @@ namespace FanaBridge.Adapters
         /// </summary>
         private void ShowSpeed(int speed, string mode)
         {
-            _display.DisplaySpeed(speed);
+            if (!_display.DisplaySpeed(speed))
+                return;
+
             _lastSentSpeed = speed;
             _lastDisplayMode = mode;
             _currentText = speed.ToString();

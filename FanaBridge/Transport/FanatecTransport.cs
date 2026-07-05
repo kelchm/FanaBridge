@@ -260,6 +260,13 @@ namespace FanaBridge.Transport
         private static int SafeMaxOutput(HidDevice d) { try { return d.GetMaxOutputReportLength(); } catch { return 0; } }
         private static int SafeMaxInput(HidDevice d) { try { return d.GetMaxInputReportLength(); } catch { return 0; } }
 
+        // Failed writes are retried at frame rate by the LED/display drivers, so
+        // a persistently failing stream would otherwise emit one Warn per frame.
+        // Each path logs a failure message once and stays quiet while the same
+        // message repeats; a successful write re-arms the logging.
+        private string _lastLedWriteWarn;
+        private string _lastDisplayWriteWarn;
+
         /// <summary>
         /// Sends a 64-byte report on the LED interface (col03).
         /// </summary>
@@ -270,11 +277,17 @@ namespace FanaBridge.Transport
             try
             {
                 _ledStream.Write(data);
+                _lastLedWriteWarn = null;
                 return true;
             }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Warn("FanatecTransport: LED write error: " + ex.Message);
+                if (ex.Message != _lastLedWriteWarn)
+                {
+                    _lastLedWriteWarn = ex.Message;
+                    SimHub.Logging.Current.Warn(
+                        "FanatecTransport: LED write error: " + ex.Message + " (suppressing repeats)");
+                }
                 return false;
             }
         }
@@ -292,11 +305,17 @@ namespace FanaBridge.Transport
                 try
                 {
                     _displayStream.Write(data);
+                    _lastDisplayWriteWarn = null;
                     return true;
                 }
                 catch (Exception ex)
                 {
-                    SimHub.Logging.Current.Warn("FanatecTransport: Display stream write failed: " + ex.Message);
+                    if (ex.Message != _lastDisplayWriteWarn)
+                    {
+                        _lastDisplayWriteWarn = ex.Message;
+                        SimHub.Logging.Current.Warn(
+                            "FanatecTransport: Display stream write failed: " + ex.Message + " (suppressing repeats)");
+                    }
                 }
             }
 
@@ -453,6 +472,12 @@ namespace FanaBridge.Transport
                 _displayDevice = null;
                 _connectedProductId = 0;
                 ProductName = null;
+
+                // Re-arm the write-warning dedup: it suppresses repeats within one
+                // connection session only — a new connection's first failure must
+                // log even if its message matches the previous session's last one.
+                _lastLedWriteWarn = null;
+                _lastDisplayWriteWarn = null;
             }
         }
 

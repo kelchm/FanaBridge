@@ -15,16 +15,29 @@ namespace FanaBridge
     [PluginDescription("Fanatec wheel LED and display control via HID")]
     [PluginAuthor("kelchm")]
     [PluginName("FanaBridge")]
-    public class FanatecPlugin : IPlugin, IDataPlugin, IWPFSettingsV2
+    public class FanatecPlugin : IPlugin, IDataPlugin, IWPFSettingsV2, IReusable
     {
         /// <summary>
         /// Singleton reference so DeviceInstance wrappers can access the shared
         /// hardware without owning their own HID connections.
-        /// Set during Init(), cleared during End().
+        /// Set during Init(), cleared during FinalizePlugin().
         /// </summary>
         public static FanatecPlugin Instance { get; private set; }
 
         public FanatecPluginSettings Settings { get; set; }
+
+        /// <summary>
+        /// True once the hardware core (wheelbase, encoders, connection monitor)
+        /// has been built. SimHub restarts its plugin manager IN-PROCESS on every
+        /// game change; because this plugin implements <see cref="IReusable"/>,
+        /// SimHub adopts this same instance into the new manager and calls
+        /// <see cref="Init"/> again. The core must be built exactly once and
+        /// survive those restarts — SimHub's DevicesPlugin keeps our
+        /// DeviceInstances alive across them, and they drive output through this
+        /// instance's encoders (issue #37). Per-manager registrations
+        /// (AttachDelegate/AddEvent) still re-run on every Init.
+        /// </summary>
+        private bool _coreInitialized;
 
         private FanatecWheelbase _wheelbase;
         private ConnectionMonitor _connectionMonitor;
@@ -212,8 +225,66 @@ namespace FanaBridge
 
         public void Init(PluginManager pluginManager)
         {
-            SimHub.Logging.Current.Info("FanaBridge: Init starting");
+            SimHub.Logging.Current.Info(_coreInitialized
+                ? "FanaBridge: Init starting (plugin manager restart — reusing hardware core)"
+                : "FanaBridge: Init starting");
 
+            if (!_coreInitialized)
+            {
+                InitializeCore();
+                _coreInitialized = true;
+            }
+
+            // Everything below registers with the CURRENT plugin manager, which
+            // is a fresh object on every in-process restart — so it re-runs on
+            // every Init, against the stable core built above.
+
+            // --- Properties ---
+            this.AttachDelegate("FanaBridge.Connected", () => _connectionMonitor.IsConnected);
+            this.AttachDelegate("FanaBridge.DeviceName", () => _wheelbase.ProductName ?? "Not connected");
+            this.AttachDelegate("FanaBridge.BaseName", () =>
+                _wheelbase.IsConnected ? (_wheelbase.BaseCode ?? "Unknown") : "Not connected");
+            this.AttachDelegate("FanaBridge.WheelName", () => _wheelbase.DisplayName);
+            this.AttachDelegate("FanaBridge.ModuleName", () => _wheelbase.ModuleCode ?? "None");
+            this.AttachDelegate("FanaBridge.DisplayName", () => _wheelbase.DisplayName);
+            this.AttachDelegate("FanaBridge.IsHub", () => _wheelbase.IsHub);
+            this.AttachDelegate("FanaBridge.WheelDetected", () => _wheelbase.WheelDetected);
+            this.AttachDelegate("FanaBridge.WheelCode", () => _wheelbase.WheelCode ?? "");
+            this.AttachDelegate("FanaBridge.WheelWireCode", () => (int)_wheelbase.WheelWireCode);
+            this.AttachDelegate("FanaBridge.ModuleType", () => _wheelbase.ModuleCode ?? "");
+            this.AttachDelegate("FanaBridge.Capabilities.ButtonLedCount", () => _wheelbase.CurrentCapabilities.ButtonLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.ButtonRgbCount", () => _wheelbase.CurrentCapabilities.ButtonRgbCount);
+            this.AttachDelegate("FanaBridge.Capabilities.ButtonAuxIntensityCount", () => _wheelbase.CurrentCapabilities.ButtonAuxIntensityCount);
+            this.AttachDelegate("FanaBridge.Capabilities.TotalLedCount", () => _wheelbase.CurrentCapabilities.AllLedCount);
+            this.AttachDelegate("FanaBridge.Capabilities.DisplayType", () => _wheelbase.CurrentCapabilities.Display.ToString());
+
+            // The friendly per-rim name FanaBridge applies as the Control Mapper
+            // controller's CustomName (e.g. "Podium Hub + Button Module Rally"); empty
+            // when no wheel is detected. Lets a user watch per-rim identity live on a
+            // dashboard while testing the experimental Control Mapper integration.
+            // Cheap (no reflection) — it only reads live wheel state.
+            this.AttachDelegate("FanaBridge.ControlMapperVariant",
+                () => Adapters.FanaBridgeVariantProvider.ComputeFriendlyName() ?? "");
+
+            // --- Events ---
+            this.AddEvent("DeviceConnected");
+            this.AddEvent("DeviceDisconnected");
+            this.AddEvent("WheelChanged");
+
+            SimHub.Logging.Current.Info(
+                $"FanaBridge: Init complete, connected={_connectionMonitor.IsConnected}");
+        }
+
+        /// <summary>
+        /// One-time construction of the hardware core: wheelbase + transport,
+        /// encoders, tuning controller, connection monitor, and the event
+        /// subscriptions between them. Runs on the first <see cref="Init"/> only;
+        /// in-process plugin manager restarts (game changes) reuse all of it.
+        /// The handlers subscribed here resolve the plugin manager at fire time
+        /// (via <c>this.TriggerEvent</c>), so they stay correct across restarts.
+        /// </summary>
+        private void InitializeCore()
+        {
             Settings = this.ReadCommonSettings<FanatecPluginSettings>(
                 "FanaBridgeSettings",
                 () => new FanatecPluginSettings());
@@ -260,47 +331,6 @@ namespace FanaBridge
                 StateChanged?.Invoke();
             };
 
-            // Publish the singleton only now that every shared field is
-            // constructed. DeviceInstance wrappers reach back through
-            // Instance.Wheelbase / Instance.Transport, so exposing it earlier
-            // would let them observe a half-built plugin (null Wheelbase).
-            Instance = this;
-
-            // Attempt initial connection
-            _connectionMonitor.TryInitialConnect();
-
-            // --- Properties ---
-            this.AttachDelegate("FanaBridge.Connected", () => _connectionMonitor.IsConnected);
-            this.AttachDelegate("FanaBridge.DeviceName", () => _wheelbase.ProductName ?? "Not connected");
-            this.AttachDelegate("FanaBridge.BaseName", () =>
-                _wheelbase.IsConnected ? (_wheelbase.BaseCode ?? "Unknown") : "Not connected");
-            this.AttachDelegate("FanaBridge.WheelName", () => _wheelbase.DisplayName);
-            this.AttachDelegate("FanaBridge.ModuleName", () => _wheelbase.ModuleCode ?? "None");
-            this.AttachDelegate("FanaBridge.DisplayName", () => _wheelbase.DisplayName);
-            this.AttachDelegate("FanaBridge.IsHub", () => _wheelbase.IsHub);
-            this.AttachDelegate("FanaBridge.WheelDetected", () => _wheelbase.WheelDetected);
-            this.AttachDelegate("FanaBridge.WheelCode", () => _wheelbase.WheelCode ?? "");
-            this.AttachDelegate("FanaBridge.WheelWireCode", () => (int)_wheelbase.WheelWireCode);
-            this.AttachDelegate("FanaBridge.ModuleType", () => _wheelbase.ModuleCode ?? "");
-            this.AttachDelegate("FanaBridge.Capabilities.ButtonLedCount", () => _wheelbase.CurrentCapabilities.ButtonLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.ButtonRgbCount", () => _wheelbase.CurrentCapabilities.ButtonRgbCount);
-            this.AttachDelegate("FanaBridge.Capabilities.ButtonAuxIntensityCount", () => _wheelbase.CurrentCapabilities.ButtonAuxIntensityCount);
-            this.AttachDelegate("FanaBridge.Capabilities.TotalLedCount", () => _wheelbase.CurrentCapabilities.AllLedCount);
-            this.AttachDelegate("FanaBridge.Capabilities.DisplayType", () => _wheelbase.CurrentCapabilities.Display.ToString());
-
-            // The friendly per-rim name FanaBridge applies as the Control Mapper
-            // controller's CustomName (e.g. "Podium Hub + Button Module Rally"); empty
-            // when no wheel is detected. Lets a user watch per-rim identity live on a
-            // dashboard while testing the experimental Control Mapper integration.
-            // Cheap (no reflection) — it only reads live wheel state.
-            this.AttachDelegate("FanaBridge.ControlMapperVariant",
-                () => Adapters.FanaBridgeVariantProvider.ComputeFriendlyName() ?? "");
-
-            // --- Events ---
-            this.AddEvent("DeviceConnected");
-            this.AddEvent("DeviceDisconnected");
-            this.AddEvent("WheelChanged");
-
             _wheelbase.WheelChanged += (manager) =>
             {
                 SimHub.Logging.Current.Info("FanaBridge: Wheel changed to " + manager.DisplayName);
@@ -320,8 +350,14 @@ namespace FanaBridge
                 _controlMapperBridge?.RequestReEnumerate();
             };
 
-            SimHub.Logging.Current.Info(
-                $"FanaBridge: Init complete, connected={_connectionMonitor.IsConnected}");
+            // Publish the singleton only now that every shared field is
+            // constructed. DeviceInstance wrappers reach back through
+            // Instance.Wheelbase / Instance.Transport, so exposing it earlier
+            // would let them observe a half-built plugin (null Wheelbase).
+            Instance = this;
+
+            // Attempt initial connection
+            _connectionMonitor.TryInitialConnect();
         }
 
         public void DataUpdate(PluginManager pluginManager, ref GameData data)
@@ -379,17 +415,55 @@ namespace FanaBridge
 
         public void End(PluginManager pluginManager)
         {
-            SimHub.Logging.Current.Info("FanaBridge: End");
+            // Called on EVERY plugin manager stop — including the IN-PROCESS
+            // restart SimHub performs on each game change — not just app exit.
+            // SimHub's DevicesPlugin keeps our DeviceInstances alive across
+            // those restarts and they keep driving output through this
+            // instance's encoders, so the hardware core must stay up here
+            // (issue #37: disposing it left every surviving DeviceInstance
+            // writing into a dead transport until SimHub was restarted).
+            // Real teardown lives in FinalizePlugin(), which SimHub calls only
+            // at application exit or when the plugin leaves the active set.
+            SimHub.Logging.Current.Info("FanaBridge: End (plugin manager stopping; hardware core stays up)");
 
-            // Remove our Control Mapper variant provider before tearing down so a
-            // plugin reload (without a SimHub restart) doesn't leave a dead
-            // provider in Control Mapper's list.
+            // The Control Mapper provider registration stays put: Control Mapper's
+            // plugin is IReusable too, so both sides survive the manager restart
+            // and unregistering here would only churn CM's controller list (and
+            // briefly resolve FanaBridge-only wheels to no variant). Final removal
+            // happens in FinalizePlugin(); the per-frame reconcile handles the
+            // settings toggle.
+
+            // Guarded because the host wraps End() and FinalizePlugin() in one
+            // try/catch — a settings-persistence failure here must not cancel
+            // the hardware teardown at application exit.
+            try
+            {
+                this.SaveCommonSettings("FanaBridgeSettings", Settings);
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanaBridge: Failed to save settings on End: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Final teardown — SimHub calls this (after <see cref="End"/>) at
+        /// application exit, or when the plugin is dropped from the active set
+        /// (e.g. disabled by the user). Only here is it safe to dispose the
+        /// hardware core: no further plugin manager will adopt this instance.
+        /// </summary>
+        public void FinalizePlugin()
+        {
+            SimHub.Logging.Current.Info("FanaBridge: FinalizePlugin (final teardown)");
+
+            // Unpublish FIRST: device DataUpdate frames can still be in flight
+            // (the host doesn't join them on a manager restart), and they must
+            // observe a null Instance — not a core mid-disposal.
+            if (ReferenceEquals(Instance, this))
+                Instance = null;
+
             try { _controlMapperBridge?.Unregister(); }
-            catch (Exception ex) { SimHub.Logging.Current.Debug("FanaBridge: CM unregister on End: " + ex.Message); }
-
-            Instance = null;
-
-            this.SaveCommonSettings("FanaBridgeSettings", Settings);
+            catch (Exception ex) { SimHub.Logging.Current.Debug("FanaBridge: CM unregister on finalize: " + ex.Message); }
 
             if (_connectionMonitor?.IsConnected == true)
             {

@@ -28,8 +28,14 @@ namespace FanaBridge.Adapters
     public class FanatecLedManager : LedsGenericManager<FanatecLedDriver>
     {
         private readonly DeviceConfig _config;
-        private readonly LedEncoder _leds;
-        private readonly LegacyLedEncoder _legacyLeds;
+
+        // Last-known encoders — refreshed from FanatecPlugin.Instance on every
+        // driver build so a rebuilt driver always targets the live hardware
+        // core, even if the plugin was replaced since construction (issue #37).
+        // The constructor values only seed the fallback for the (unexpected)
+        // case where Instance is null at build time.
+        private LedEncoder _leds;
+        private LegacyLedEncoder _legacyLeds;
 
         // Track which profile the current driver was built from,
         // so HotSwapIfNeeded can detect changes.
@@ -69,7 +75,16 @@ namespace FanaBridge.Adapters
         /// </summary>
         public override FanatecLedDriver GetDriver()
         {
-            var caps = FanatecPlugin.Instance?.ResolveCapsFor(_config) ?? WheelCapabilities.None;
+            var plugin = FanatecPlugin.Instance;
+            if (plugin != null)
+            {
+                // Re-resolve the encoders so a rebuilt driver binds to the live
+                // hardware core rather than whichever generation constructed us.
+                _leds = plugin.Leds ?? _leds;
+                _legacyLeds = plugin.LegacyLeds ?? _legacyLeds;
+            }
+
+            var caps = plugin?.ResolveCapsFor(_config) ?? WheelCapabilities.None;
             _lastDriverProfile = caps.Profile;
 
             var driver = new FanatecLedDriver(caps, _leds, _legacyLeds);

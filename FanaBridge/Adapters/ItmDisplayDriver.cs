@@ -108,11 +108,30 @@ namespace FanaBridge.Adapters
         public void Stop()
         {
             _phase = Phase.Idle;
+            ResetSession();
+        }
+
+        /// <summary>Drops all per-session state (subscriptions, dirty tracking, one-shot logs).</summary>
+        private void ResetSession()
+        {
             _subs.Clear();
             _lastValues = null;
             _loggedFirstValues = false;
             _lastSlotDefsSig = "";
+            _wasTelemetryLive = false;
+            _pendingExitReset = false;
         }
+
+        // Game-exit tracking: values must never be painted from SimHub's stale
+        // post-exit telemetry, and the fields already on the display would hold
+        // their last values forever (no idle timeout). On the live→not-live
+        // transition a DisplayReset reverts every field to its placeholder
+        // (e.g. "--- / -", "--:--.-") — session, page, and subscriptions stay
+        // put. The reset is retried across ticks until the transport accepts
+        // it. (The Legacy ITM page is unaffected by the reset; its content is
+        // cleared separately by the col01 display driver's exit blank.)
+        private bool _wasTelemetryLive;
+        private bool _pendingExitReset;
 
         /// <summary>
         /// Applies a firmware ITM subscription report (col03-IN, pushed on a wheel-button
@@ -201,18 +220,18 @@ namespace FanaBridge.Adapters
         /// <summary>Drives the state machine one tick. Call once per frame while connected.</summary>
         public void Update(GameData data)
         {
-            // User turned ITM off: send the firmware "ITM off" command once, then stay
+            // User turned ITM off: send the firmware "ITM off" command, then stay
             // dormant (no values) so the display stays off, as the Fanatec software does.
-            // Re-enabling drops back into bring-up below.
+            // Only latch Disabled once the off command was actually accepted — a
+            // declined write is retried next tick. Re-enabling drops back into
+            // bring-up below.
             if (!Enabled)
             {
                 if (_phase != Phase.Disabled)
                 {
-                    _encoder.SetItmMode(false);   // FF 05 02 00
-                    _subs.Clear();
-                    _lastValues = null;
-                    _loggedFirstValues = false;
-                    _lastSlotDefsSig = "";
+                    if (!_encoder.SetItmMode(false))   // FF 05 02 00
+                        return;
+                    ResetSession();
                     _phase = Phase.Disabled;
                     _log("ITM: disabled by user — sent ITM off");
                 }
@@ -227,6 +246,7 @@ namespace FanaBridge.Adapters
                 return;
 
             long now = _now();
+            bool telemetryLive = data != null && data.GameRunning && data.NewData != null;
 
             if (_phase == Phase.Enabling)
             {
@@ -241,12 +261,37 @@ namespace FanaBridge.Adapters
                 SeedInitialSubscriptions();             // the default page's params
                 _log("ITM: enabled — seeded " + _subs.Count + " params, following firmware subscriptions");
                 _phase = Phase.Running;
+                // Record liveness on this tick too — a game exiting right after a
+                // single live frame must still trigger the exit reset below.
+                _wasTelemetryLive = telemetryLive;
                 return;
             }
 
             // Running
+
+            // Game just exited (or an earlier exit reset is still pending): DisplayReset
+            // reverts every field to its placeholder rendering so the last telemetry
+            // frame doesn't sit on the display forever. The session, page, and firmware
+            // subscriptions stay put — values simply flow again when the next game
+            // starts. An ITM off→on cycle does NOT clear fields (hardware-verified:
+            // the firmware retains their values), so this reset is the one command
+            // that does. Retried until the transport accepts it.
+            if (_pendingExitReset || (_wasTelemetryLive && !telemetryLive))
+            {
+                _pendingExitReset = true;
+                if (!_encoder.ResetDisplay())      // declined — retry next tick
+                    return;
+                _pendingExitReset = false;
+                _wasTelemetryLive = false;
+                _lastValues = null;                // repaint everything when telemetry returns
+                _log("ITM: game exited — display reset (fields back to placeholders)");
+                return;
+            }
+            _wasTelemetryLive = telemetryLive;
+
             // If the user changed the default page in settings, switch the display to it live
-            // (edge-triggered, so we don't fight the wheel button between changes).
+            // (edge-triggered, so we don't fight the wheel button between changes). Runs in
+            // idle too — this is the settings panel's live preview.
             if (DefaultPage != _lastPageApplied)
             {
                 _encoder.SetPage(_deviceId, DefaultPage);
@@ -258,6 +303,13 @@ namespace FanaBridge.Adapters
                 // with nothing to correct it. The existing subs stay valid for whatever is displayed.
                 _log("ITM: default page changed — forcing page " + DefaultPage);
             }
+
+            // Values only flow while a game is feeding telemetry: SimHub keeps the last
+            // telemetry values around after a game exits, so painting from stale data
+            // would resurrect exactly the frozen frame the exit reset just cleared.
+            if (!telemetryLive)
+                return;
+
             UpdateSlotDefs(data);   // refresh unit/total suffixes when they change
             if (now - _lastValuesMs >= ValueIntervalMs)
             {

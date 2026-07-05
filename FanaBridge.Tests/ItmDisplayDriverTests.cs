@@ -57,8 +57,18 @@ namespace FanaBridge.Tests
         private static object NewStatus() => FormatterServices.GetUninitializedObject(StatusDataType);
         private static void Set(object s, string p, object v) =>
             s.GetType().GetProperty(p).GetSetMethod(true).Invoke(s, new[] { v });
-        private static GameData Data(object status) => new GameData { NewData = (StatusDataBase)status };
+
+        // The driver only runs while a game is feeding telemetry, so test frames are
+        // game-running by default (GameRunning has an internal setter — reflection).
+        private static GameData Data(object status, bool gameRunning = true)
+        {
+            var d = new GameData { NewData = (StatusDataBase)status };
+            typeof(GameData).GetProperty("GameRunning").GetSetMethod(true)
+                .Invoke(d, new object[] { gameRunning });
+            return d;
+        }
         private static GameData EmptyData() => Data(NewStatus());
+        private static GameData NotRunningData() => Data(NewStatus(), gameRunning: false);
 
         // A firmware subscription report (col03-IN). Tyre page: SPEED@0, GEAR@1,
         // FL(42)@0x82, RL(48)@0x83.
@@ -582,6 +592,145 @@ namespace FanaBridge.Tests
             driver.Update(Data(s));
 
             Assert.Contains(t.Sent, IsValueUpdate);
+        }
+
+        // ── Game gating (issue #54) ──────────────────────────────────────
+
+        [Fact]
+        public void BringUp_RunsWithoutLiveTelemetry()
+        {
+            // ITM is always-on: bring-up runs at connect so the default page (and its
+            // live settings preview) works in idle, before any game has run.
+            var driver = MakeDriver(out var t, out _);
+            driver.Start();
+            driver.Update(NotRunningData());
+
+            Assert.Contains(t.Sent, IsEnable);
+            Assert.True(driver.IsRunning);
+        }
+
+        [Fact]
+        public void Idle_SendsNoValues_EvenWithStaleTelemetry()
+        {
+            // SimHub keeps the last telemetry values after a game exits — they must
+            // never be painted while no game is running.
+            var driver = MakeDriver(out var t, out var clock);
+            driver.Start();
+            driver.Update(NotRunningData());   // bring-up in idle
+            driver.OnSubscriptionReport(TyreSubReport);
+            t.Sent.Clear();
+
+            var stale = NewStatus();
+            Set(stale, "TyreTemperatureFrontLeft", 88.0);
+            clock.T += 100;
+            driver.Update(Data(stale, gameRunning: false));
+
+            Assert.DoesNotContain(t.Sent, IsValueUpdate);
+        }
+
+        // DisplayReset (FF 05 05 01): every ITM field reverts to its per-field placeholder
+        // ("--- / -", "--:--.-", …); session/page/subs untouched. No effect on the Legacy ITM page.
+        private static bool IsDisplayReset(byte[] r) => r[1] == 0x05 && r[2] == 0x05 && r[3] == 0x01;
+
+        [Fact]
+        public void GameExit_ResetsFields_SessionStaysUp()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);             // live game, running (6 Lap Info subs)
+            t.Sent.Clear();
+
+            driver.Update(NotRunningData());   // game exited — fields revert to placeholders
+
+            Assert.Contains(t.Sent, IsDisplayReset);
+            Assert.DoesNotContain(t.Sent, IsItmModeOff);   // session NOT torn down
+            Assert.True(driver.IsRunning);
+            Assert.Equal(6, driver.SubscriptionCount);     // subscriptions kept
+
+            // Idle afterwards: no repeat resets, no values from stale telemetry.
+            t.Sent.Clear();
+            clock.T += 500;
+            driver.Update(NotRunningData());
+            Assert.Empty(t.Sent);
+        }
+
+        [Fact]
+        public void GameExit_Reset_RetriedUntilAccepted()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);
+
+            t.SendReturns = false;             // transport declines the reset
+            driver.Update(NotRunningData());
+            t.Sent.Clear();
+
+            t.SendReturns = true;
+            driver.Update(NotRunningData());   // retried and accepted
+            Assert.Contains(t.Sent, IsDisplayReset);
+
+            t.Sent.Clear();
+            driver.Update(NotRunningData());   // no repeat after success
+            Assert.Empty(t.Sent);
+        }
+
+        [Fact]
+        public void GameRestart_AfterExit_RepaintsUnchangedValues()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            var s = NewStatus();
+            Set(s, "CurrentLap", 5);
+
+            driver.Start();
+            driver.Update(Data(s));            // bring-up (seeds Lap Info)
+            clock.T += 40;
+            driver.Update(Data(s));            // values painted
+            driver.Update(Data(s, gameRunning: false));   // exit — fields reset to placeholders
+            t.Sent.Clear();
+
+            clock.T += 40;
+            driver.Update(Data(s));            // game returns with IDENTICAL telemetry
+
+            // The reset cleared the dirty tracking, so even unchanged values are
+            // repainted — otherwise the display would sit on placeholders until a
+            // value actually changed.
+            Assert.Contains(t.Sent, IsValueUpdate);
+        }
+
+        [Fact]
+        public void DefaultPageChange_PreviewsLive_WhileIdle()
+        {
+            // The settings panel's default-page preview: with no game running, changing
+            // the setting still switches the display immediately.
+            var driver = MakeDriver(out var t, out var clock);
+            driver.Start();
+            driver.Update(NotRunningData());   // bring-up in idle
+            t.Sent.Clear();
+
+            driver.DefaultPage = 3;
+            clock.T += 100;
+            driver.Update(NotRunningData());
+
+            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[4] == 0x03);
+        }
+
+        [Fact]
+        public void UserDisable_ItmOff_RetriedUntilAccepted()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);
+            driver.Enabled = false;
+
+            t.SendReturns = false;             // off command declined — must not latch Disabled
+            driver.Update(EmptyData());
+            t.Sent.Clear();
+
+            t.SendReturns = true;
+            driver.Update(EmptyData());        // retried and accepted
+            Assert.Contains(t.Sent, IsItmModeOff);
+
+            t.Sent.Clear();
+            clock.T += 500;
+            driver.Update(EmptyData());        // dormant after success
+            Assert.Empty(t.Sent);
         }
 
         // ── Stop / restart ───────────────────────────────────────────────

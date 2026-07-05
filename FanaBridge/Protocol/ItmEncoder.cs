@@ -152,6 +152,7 @@ namespace FanaBridge.Protocol
         private const byte SUBCMD_ITM_MODE = 0x02;   // under FF 05: firmware ITM on/off gate
         private const byte SUBCMD_PARAM_DEFS = 0x03;
         private const byte SUBCMD_PAGESET = 0x04;    // PageSet: byte[3]=display-device id, byte[4]=page
+        private const byte SUBCMD_DISPLAY_RESET = 0x05;  // DisplayReset: fields revert to per-field placeholders
 
         // First byte of every ValueUpdate/ParamDefs entry is the display-device id — which
         // display the entry targets, not a marker. Callers pass the id for the display they
@@ -219,6 +220,26 @@ namespace FanaBridge.Protocol
             _reportBuf[1] = CMD_ITM_ENABLE;
             _reportBuf[2] = SUBCMD_ENABLE;
             _reportBuf[3] = 0x00;   // not a page
+            return _transport.SendCol03(_reportBuf);
+        }
+
+        /// <summary>
+        /// Sends the DisplayReset frame (<c>FF 05 05 01</c>): every field on the ITM
+        /// telemetry pages reverts to its per-field placeholder rendering (e.g.
+        /// <c>--- / -</c> for laps, <c>--:--.-</c> for times), while the ITM session,
+        /// active page, and firmware subscriptions stay untouched. It has NO effect
+        /// on the Legacy ITM page — that content is written (and cleared) separately
+        /// over col01. Hardware-verified; this is the only known command that clears
+        /// already-written field values (an ITM off→on cycle does NOT — the firmware
+        /// retains them across the cycle).
+        /// </summary>
+        public bool ResetDisplay()
+        {
+            Array.Clear(_reportBuf, 0, REPORT_LENGTH);
+            _reportBuf[0] = REPORT_PREFIX;
+            _reportBuf[1] = CMD_ITM_DISPLAY;
+            _reportBuf[2] = SUBCMD_DISPLAY_RESET;
+            _reportBuf[3] = 0x01;
             return _transport.SendCol03(_reportBuf);
         }
 

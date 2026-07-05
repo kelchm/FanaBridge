@@ -23,12 +23,15 @@ namespace FanaBridge.Tests
 
             public List<byte[]> SentCol01Reports { get; } = new List<byte[]>();
 
+            // Simulate a transport-level send failure (SendCol01 returns false).
+            public bool SendReturns { get; set; } = true;
+
             public bool SendCol01(byte[] data)
             {
                 var copy = new byte[data.Length];
                 Array.Copy(data, copy, data.Length);
                 SentCol01Reports.Add(copy);
-                return true;
+                return SendReturns;
             }
 
             public bool SendCol03(byte[] data) => true;
@@ -93,7 +96,22 @@ namespace FanaBridge.Tests
             Set(status, "Rpms", rpms);
             Set(status, "CarSettings_RPMRedLineReached", redLineReached);
 
-            return new GameData { NewData = (StatusDataBase)status };
+            // The driver only renders while a game is feeding telemetry, so test
+            // frames are game-running (GameRunning has an internal setter).
+            var d = new GameData { NewData = (StatusDataBase)status };
+            typeof(GameData).GetProperty("GameRunning").GetSetMethod(true)
+                .Invoke(d, new object[] { true });
+            return d;
+        }
+
+        /// <summary>A frame after game exit: GameRunning false, but NewData still
+        /// holding the last values — SimHub keeps them around after a game ends.</summary>
+        private static GameData NotRunningData(string gear = "3")
+        {
+            var d = MakeData(gear: gear);
+            typeof(GameData).GetProperty("GameRunning").GetSetMethod(true)
+                .Invoke(d, new object[] { false });
+            return d;
         }
 
         // ── DisplayMode / construction ───────────────────────────────────
@@ -333,6 +351,106 @@ namespace FanaBridge.Tests
             driver.Update(MakeData(gear: "3", rpms: 8100, redLineReached: 1));
 
             Assert.Single(transport.SentCol01Reports);
+        }
+
+        // ── Game gating (issue #54) ──────────────────────────────────────
+
+        [Fact]
+        public void Idle_BeforeAnyGame_WritesNothing()
+        {
+            var transport = new RecordingTransport();
+            var driver = MakeDriver(transport, "Gear");
+
+            driver.Update(NotRunningData());
+            driver.Update(NotRunningData());
+
+            // The firmware may be using the display itself (e.g. the tuning
+            // menu) — nothing may be written before a game ever ran.
+            Assert.Empty(transport.SentCol01Reports);
+        }
+
+        [Fact]
+        public void GameExit_BlanksDisplayOnce()
+        {
+            var transport = new RecordingTransport();
+            var driver = MakeDriver(transport, "Gear");
+
+            driver.Update(MakeData(gear: "3"));
+            transport.SentCol01Reports.Clear();
+
+            // Game exits; SimHub still reports the stale gear in NewData.
+            driver.Update(NotRunningData(gear: "3"));
+            Assert.Single(transport.SentCol01Reports);
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
+                transport.LastSegments);
+
+            transport.SentCol01Reports.Clear();
+            driver.Update(NotRunningData(gear: "3"));   // no repeated writes while idle
+            Assert.Empty(transport.SentCol01Reports);
+        }
+
+        [Fact]
+        public void GameExit_BlankRetriedUntilAccepted()
+        {
+            var transport = new RecordingTransport();
+            var driver = MakeDriver(transport, "Gear");
+
+            driver.Update(MakeData(gear: "3"));
+
+            transport.SendReturns = false;              // blanking write declined
+            driver.Update(NotRunningData());
+            transport.SentCol01Reports.Clear();
+
+            transport.SendReturns = true;
+            driver.Update(NotRunningData());            // retried and accepted
+            Assert.Single(transport.SentCol01Reports);
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
+                transport.LastSegments);
+
+            transport.SentCol01Reports.Clear();
+            driver.Update(NotRunningData());            // silent after success
+            Assert.Empty(transport.SentCol01Reports);
+        }
+
+        [Fact]
+        public void GameRestart_AfterExit_ShowsSameGearAgain()
+        {
+            var transport = new RecordingTransport();
+            var driver = MakeDriver(transport, "Gear");
+
+            driver.Update(MakeData(gear: "3"));
+            driver.Update(NotRunningData());            // exit — blanked
+            transport.SentCol01Reports.Clear();
+
+            driver.Update(MakeData(gear: "3"));         // same gear as before the exit
+
+            Assert.Single(transport.SentCol01Reports);
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Digit3, SevenSegment.Blank),
+                transport.LastSegments);
+        }
+
+        // ── Failed-send retry (rate limiter must not latch on failure) ───
+
+        [Fact]
+        public void FailedGearWrite_RetriedNextFrame()
+        {
+            var transport = new RecordingTransport();
+            var driver = MakeDriver(transport, "Gear");
+
+            transport.SendReturns = false;
+            driver.Update(MakeData(gear: "3"));         // write fails — must not latch
+            transport.SentCol01Reports.Clear();
+
+            transport.SendReturns = true;
+            driver.Update(MakeData(gear: "3"));         // unchanged gear is retried
+
+            Assert.Single(transport.SentCol01Reports);
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Digit3, SevenSegment.Blank),
+                transport.LastSegments);
         }
 
         // ── Clear ────────────────────────────────────────────────────────
