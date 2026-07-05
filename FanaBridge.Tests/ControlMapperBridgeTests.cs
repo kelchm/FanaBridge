@@ -163,6 +163,52 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void EnsureRegistered_ReEnumeratesOutsideLock_ReentrantCallDoesNotDeadlock()
+        {
+            var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
+
+            // SimHub's real UpdateControllerList does a synchronous Dispatcher.Invoke to the
+            // UI thread, which re-enters the bridge (IsRecognizeIndividualWheelsOn takes _sync).
+            // Model that re-entry as a call from another thread: if EnsureRegistered still holds
+            // _sync while re-enumerating, the re-entrant call blocks forever (the deadlock).
+            bool reentrantCompleted = false;
+            worker.OnUpdate = () =>
+            {
+                var t = System.Threading.Tasks.Task.Run(() => bridge.IsRecognizeIndividualWheelsOn(pm));
+                reentrantCompleted = t.Wait(System.TimeSpan.FromSeconds(5));
+            };
+
+            bool ok = bridge.EnsureRegistered(pm);
+
+            Assert.True(ok);
+            Assert.Equal(1, worker.UpdateControllerListCalls); // re-enumerate did run
+            Assert.True(reentrantCompleted,
+                "re-enumerate must run outside _sync; a UI-thread re-entry deadlocks if the lock is held");
+        }
+
+        [Fact]
+        public void RequestReEnumerate_RunsOutsideLock_ReentrantCallDoesNotDeadlock()
+        {
+            // The WheelChanged path (fires on every wheel/hub swap, converter or genuine).
+            var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
+            Assert.True(bridge.EnsureRegistered(pm));  // register first; the registration re-enumerate has OnUpdate=null
+            worker.UpdateControllerListCalls = 0;
+
+            bool reentrantCompleted = false;
+            worker.OnUpdate = () =>
+            {
+                var t = System.Threading.Tasks.Task.Run(() => bridge.IsRecognizeIndividualWheelsOn(pm));
+                reentrantCompleted = t.Wait(System.TimeSpan.FromSeconds(5));
+            };
+
+            bridge.RequestReEnumerate();
+
+            Assert.Equal(1, worker.UpdateControllerListCalls);
+            Assert.True(reentrantCompleted,
+                "RequestReEnumerate (WheelChanged) must re-enumerate outside _sync");
+        }
+
+        [Fact]
         public void EnsureRegistered_PluginNotLoaded_QuietRetry()
         {
             var pm = new FakePluginManager(null); // GetPlugin<T>() returns null
@@ -302,9 +348,14 @@ namespace FanaBridge.Tests.CmFakes
         /// <summary>When set, UpdateControllerList throws — drives the bridge's
         /// defensive catch in EnsureRegistered (a SimHub internal misbehaving mid-call).</summary>
         public bool ThrowOnUpdate;
+        /// <summary>Invoked inside UpdateControllerList to model SimHub's synchronous
+        /// Dispatcher.Invoke to the UI thread — used to assert the bridge isn't holding
+        /// <c>_sync</c> while it re-enumerates (see the deadlock regression tests).</summary>
+        public System.Action OnUpdate;
         internal void UpdateControllerList()
         {
             UpdateControllerListCalls++;
+            OnUpdate?.Invoke();
             if (ThrowOnUpdate)
                 throw new System.InvalidOperationException("simulated SimHub failure");
         }
