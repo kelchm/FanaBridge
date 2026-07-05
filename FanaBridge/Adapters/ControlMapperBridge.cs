@@ -109,6 +109,7 @@ namespace FanaBridge.Adapters
         public bool EnsureRegistered(object pm)
         {
             if (pm == null) return false;
+            object rwToReEnum = null; // set when a re-enumerate is needed; dispatched AFTER releasing _sync
             lock (_sync)
             {
                 if (_giveUpLogged) return false;
@@ -183,9 +184,8 @@ namespace FanaBridge.Adapters
                             SimHub.Logging.Current.Info(
                                 "FanaBridge: Control Mapper variant provider re-registered after eviction");
                         }
-                        InvokeUpdateControllerList(rw); // re-key a rim already attached at toggle time
+                        rwToReEnum = rw; // defer the re-enumerate to outside _sync (see ReEnumerateOutsideLock)
                     }
-                    return true;
                 }
                 catch (Exception ex)
                 {
@@ -194,6 +194,10 @@ namespace FanaBridge.Adapters
                     return false;
                 }
             }
+            // A newly-registered provider needs the live controller list re-keyed —
+            // dispatch OUTSIDE _sync (see ReEnumerateOutsideLock) to avoid the deadlock.
+            ReEnumerateOutsideLock(rwToReEnum);
+            return true;
         }
 
         /// <summary>
@@ -203,6 +207,7 @@ namespace FanaBridge.Adapters
         /// </summary>
         public void RequestReEnumerate()
         {
+            object rw = null;
             lock (_sync)
             {
                 if (!_registered || _updListMethod == null || _getPluginCM == null || _pm == null)
@@ -210,15 +215,17 @@ namespace FanaBridge.Adapters
                 try
                 {
                     object cm = LiveControlMapper();
-                    object rw = cm != null ? _rwField.GetValue(cm) : null;
-                    if (rw != null) InvokeUpdateControllerList(rw);
+                    rw = cm != null ? _rwField.GetValue(cm) : null;
                 }
                 catch (Exception ex)
                 {
                     SimHub.Logging.Current.Debug(
-                        "FanaBridge: Control Mapper re-enumerate failed: " + ex.Message);
+                        "FanaBridge: Control Mapper re-enumerate lookup failed: " + ex.Message);
+                    return;
                 }
             }
+            // Dispatch OUTSIDE _sync — see ReEnumerateOutsideLock.
+            ReEnumerateOutsideLock(rw);
         }
 
         /// <summary>
@@ -536,6 +543,16 @@ namespace FanaBridge.Adapters
                 LogGiveUp("GetPlugin<ControlMapperPlugin> threw: " + ex.GetBaseException().Message);
                 return null;
             }
+        }
+
+        // Invoke SimHub's UpdateControllerList OUTSIDE _sync. UpdateControllerList does a
+        // synchronous Dispatcher.Invoke to the UI thread, which re-enters this bridge
+        // (e.g. IsRecognizeIndividualWheelsOn takes _sync); holding _sync across it
+        // deadlocks the plugin thread against the UI thread (WatchDog "Abnormal Inactivity").
+        private void ReEnumerateOutsideLock(object rw)
+        {
+            if (rw == null) return;
+            InvokeUpdateControllerList(rw);
         }
 
         private void InvokeUpdateControllerList(object rw)
