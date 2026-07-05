@@ -367,6 +367,42 @@ namespace FanaBridge.Transport
             }
         }
 
+        int IDeviceTransport.ReadCol01(byte[] buffer, int timeoutMs)
+        {
+            lock (_writeLock)
+            {
+                // Capture under the lock, mirroring ReadCol03: Disconnect() nulls/disposes
+                // the stream under the same lock, so a non-null local stays valid here.
+                var stream = _displayStream;
+                if (stream == null) return -1;
+
+                int saved = stream.ReadTimeout;
+                try
+                {
+                    stream.ReadTimeout = timeoutMs;
+                    return stream.Read(buffer, 0, buffer.Length);
+                }
+                catch
+                {
+                    return -1;
+                }
+                finally
+                {
+                    try { stream.ReadTimeout = saved; } catch { }
+                }
+            }
+        }
+
+        int IDeviceTransport.Col01MaxInputReportLength
+        {
+            get
+            {
+                if (_displayDevice == null) return 34;
+                int len = SafeMaxInput(_displayDevice);
+                return len > 0 ? len : 34;
+            }
+        }
+
         IDisposable IDeviceTransport.BeginBatch()
         {
             Monitor.Enter(_writeLock);

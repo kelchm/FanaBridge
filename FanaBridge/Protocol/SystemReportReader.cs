@@ -11,6 +11,8 @@ namespace FanaBridge.Protocol
     /// After a single <see cref="Enable"/> the base PUSHES this report on every
     /// attachment change and is otherwise silent, so steady-state reads are a
     /// non-blocking drain — no triggering.
+    ///
+    /// TODO: migrate to a general purpose Col03 input pump that consistently dispatches by signature
     /// </summary>
     internal sealed class SystemReportReader
     {
@@ -75,12 +77,12 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Non-blocking drain of pushed reports. Every FF 08 identity report is passed
-        /// to <paramref name="onReading"/>; if <paramref name="onItmReport"/> is provided,
-        /// every FF 05 ITM report (the firmware's subscription pushes) is passed to it as
-        /// a private copy. Returns the number of identity readings delivered.
+        /// Non-blocking drain of pushed col03 reports, dispatched by signature: FF 08 -> onReading,
+        /// SRM <c>0xDD</c> -> onSrmReport, FF 05 ITM -> onItmReport (each as a private copy). One read
+        /// loop routes all three, so nothing is stolen. Returns the number of FF 08 readings delivered.
         /// </summary>
-        public int DrainPushes(IDeviceTransport io, Action<Reading> onReading, Action<byte[]> onItmReport = null)
+        public int DrainPushes(IDeviceTransport io, Action<Reading> onReading,
+            Action<byte[]> onItmReport = null, Action<byte[]> onSrmReport = null)
         {
             int count = 0;
             using (io.BeginBatch())
@@ -96,6 +98,14 @@ namespace FanaBridge.Protocol
                     {
                         onReading(Decode(buf, sig, n));
                         count++;
+                        continue;
+                    }
+
+                    if (onSrmReport != null && IsSrmReport(buf, n))
+                    {
+                        var copy = new byte[n];
+                        Array.Copy(buf, copy, n);
+                        onSrmReport(copy);
                         continue;
                     }
 
@@ -117,6 +127,16 @@ namespace FanaBridge.Protocol
             for (int i = 0; i <= 2 && i + 1 < len; i++)
                 if (buf[i] == 0xFF && buf[i + 1] == 0x05)
                     return true;
+            return false;
+        }
+
+        // True if the report is an SRM DE FA 0xDD identity reply: 0xDD at offset 0 (raw) or 1 (behind
+        // a report-id) — NOT deeper, so an FF 08 / FF 05 frame is never mistaken for one.
+        private static bool IsSrmReport(byte[] buf, int len)
+        {
+            for (int i = 0; i <= 1 && i < len; i++)
+                if (buf[i] == 0xDD)
+                    return len >= i + 6;
             return false;
         }
 

@@ -12,16 +12,18 @@ namespace FanaBridge.Protocol
     /// live transport FanaBridge already holds open (so there is no need to close
     /// SimHub or run an external tool).
     ///
-    /// Read-only: it re-enumerates the HID bus, decodes the last FF 08 system report
+    /// Mostly read-only: it re-enumerates the HID bus, decodes the last FF 08 system report
     /// FanaBridge already drained (identity + firmware versions), flags the col03 control
     /// interface the same way the transport selects it (the &amp;col03 path token, else a
-    /// 64-byte OUTPUT report), and takes one best-effort, motion-gated col01 input
-    /// snapshot. It never writes to the device.
+    /// 64-byte OUTPUT report), and takes a col01 input snapshot. It also runs one ACTIVE
+    /// "converter identity probe" — the engage handshake plus the SRM <c>DE FA AD</c> query —
+    /// then dumps what the device volunteers on both surfaces and the SRM <c>0xDD</c> channel.
+    /// The only writes are identity handshakes, never tuning/config.
     ///
     /// The output is a fenced Markdown block ready to paste into a GitHub issue,
     /// emitting the same wire bytes (raw FF 08 hex + the 0x02/0x18/0x1F key bytes)
-    /// as every existing RE capture, so an unrecognized wheel/hub/module is
-    /// byte-comparable and directly reportable.
+    /// as a raw USB capture, so an unrecognized wheel/hub/module is byte-comparable
+    /// and directly reportable.
     /// </summary>
     public static class DiagnosticsReport
     {
@@ -33,7 +35,8 @@ namespace FanaBridge.Protocol
 
             sb.AppendLine("### FanaBridge detection report");
             sb.AppendLine();
-            sb.AppendLine("> Describe what's physically attached (wheelbase, wheel/hub, button module).");
+            sb.AppendLine("> Describe what's physically attached: wheelbase **or SRM converter** (model + firmware),");
+            sb.AppendLine("> the wheel/hub (+ button module), and — for a converter — what the SRM software shows.");
             sb.AppendLine();
             sb.AppendLine("```");
             sb.AppendLine(string.Format("{0,-13}{1}", "FanaBridge:", string.IsNullOrEmpty(buildInfo) ? "unknown" : buildInfo));
@@ -47,6 +50,8 @@ namespace FanaBridge.Protocol
             AppendInterfaceInventory(sb);
             sb.AppendLine();
             AppendSystemReport(sb, wheelbase, connected, statusDetail);
+            sb.AppendLine();
+            AppendConverterProbe(sb, wheelbase, connected);
             sb.AppendLine();
             AppendInputProbe(sb);
             sb.AppendLine();
@@ -66,6 +71,42 @@ namespace FanaBridge.Protocol
 
             sb.AppendLine("```");
             return sb.ToString();
+        }
+
+        // ── Converter identity probe (active engage) ─────────────────────
+        // The passive FF 08 section above is the device's resting state. This actively runs the engage
+        // handshake and dumps what the device volunteers on both surfaces (col01 records + the col03
+        // FF 08 report) plus the SRM DE FA AD -> 0xDD channel, so a single report from an SRM Conversion
+        // Kit user carries everything needed to identify it. Read-only; a genuine base answers no 0xDD.
+        private static void AppendConverterProbe(StringBuilder sb, FanatecWheelbase wb, bool connected)
+        {
+            sb.AppendLine("Converter identity probe (active engage — read-only):");
+            if (!connected || wb?.Transport == null || !wb.Transport.IsConnected)
+            {
+                sb.AppendLine("  (not connected — connect the device and re-capture)");
+                return;
+            }
+
+            ConverterCaptureProbe.Result r;
+            try { r = new ConverterCaptureProbe().Run(wb.Transport); }
+            catch (Exception ex) { sb.AppendLine("  (probe failed: " + ex.Message + ")"); return; }
+
+            sb.AppendLine(Kv("Engage", r.Engage ?? "(none)"));
+
+            sb.AppendLine(Kv("col01 records", r.Col01Records.Count + " distinct in " + r.Col01FramesRead + " frame(s):"));
+            if (r.Col01Records.Count == 0)
+                sb.AppendLine("      (no col01 input reports arrived)");
+            else
+                foreach (var rec in r.Col01Records)
+                    sb.AppendLine("      " + rec);
+
+            sb.AppendLine(Kv("col03 FF 08", r.Ff08Line ?? "(no FF 08 report — SRM converter or under-engaged)"));
+            if (r.Ff08Raw != null)
+                sb.AppendLine("      raw: " + r.Ff08Raw);
+
+            sb.AppendLine(Kv("SRM DE FA AD", r.DeFaLine ?? "(no reply)"));
+            if (r.DeFaRaw != null)
+                sb.AppendLine("      raw: " + r.DeFaRaw);
         }
 
         // ── HID interface inventory ──────────────────────────────────────
@@ -368,6 +409,23 @@ namespace FanaBridge.Protocol
             byte[] raw = wb?.LastRawReport;
             if (!connected || wb == null || raw == null || raw.Length == 0)
             {
+                // A committed SRM converter identity has no FF 08 frame (it came from the DE FA
+                // channel) — surface it so the report doesn't read as "unidentified".
+                if (wb != null && wb.IsSrmConverter)
+                {
+                    sb.AppendLine(Kv("Identity source", "SRM Conversion Kit (DE FA channel — no FF 08)"));
+                    sb.AppendLine(Kv("Steering wheel", wb.WheelDetected
+                        ? (wb.WheelCode ?? string.Format("Unknown (id 0x{0:X2})", wb.WheelWireCode))
+                            + (wb.IsHub ? " [hub]" : "")
+                        : "(nothing attached)"));
+                    if (wb.IsHub)
+                        sb.AppendLine(Kv("Button module", (wb.ModuleCode
+                            ?? (wb.ModuleWireCode != 0 ? string.Format("Unknown (0x{0:X2})", wb.ModuleWireCode) : "(none)"))
+                            + (wb.ModuleWireCode != 0 ? "   [converter-module decode UNVALIDATED — please report]" : "")));
+                    sb.AppendLine(Kv("Kit firmware", wb.SrmKitFirmware ?? "?"));
+                    return;
+                }
+
                 sb.AppendLine("  (no FF 08 captured — not connected, no col03 interface, or no wheel");
                 sb.AppendLine("   attached. If a wheel IS attached, a full USB capture may be needed —");
                 sb.AppendLine("   see the Fanatec-RE capture-fanatec-usb.ps1 workflow.)");

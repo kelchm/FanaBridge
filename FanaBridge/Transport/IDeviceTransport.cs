@@ -41,6 +41,18 @@ namespace FanaBridge.Transport
         bool SendCol01(byte[] data);
 
         /// <summary>
+        /// Reads a report from the display/input interface (col01). Returns the number
+        /// of bytes read, or -1 on failure/timeout. The <paramref name="timeoutMs"/>
+        /// applies to this call only. Used to read the col01 input report that carries
+        /// the native rim identity (byte <c>[len-4]</c>) when the col03 FF 08 report is
+        /// unavailable.
+        /// </summary>
+        int ReadCol01(byte[] buffer, int timeoutMs);
+
+        /// <summary>Maximum input report length for the col01 interface.</summary>
+        int Col01MaxInputReportLength { get; }
+
+        /// <summary>
         /// Acquires exclusive access to the transport for multi-report
         /// atomic sequences (e.g. staged LED commit, tuning read-modify-write).
         /// Dispose the returned token to release.

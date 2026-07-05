@@ -32,6 +32,8 @@ namespace FanaBridge.Tests
 
             public bool SendCol01(byte[] data) => true;
             public int ReadCol03(byte[] buffer, int timeoutMs) => -1;
+            public int ReadCol01(byte[] buffer, int timeoutMs) => -1;
+            public int Col01MaxInputReportLength => 34;
             public IDisposable BeginBatch() => new NoOp();
             private sealed class NoOp : IDisposable { public void Dispose() { } }
         }
