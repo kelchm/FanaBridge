@@ -472,6 +472,12 @@ namespace FanaBridge.Transport
                 _displayDevice = null;
                 _connectedProductId = 0;
                 ProductName = null;
+
+                // Re-arm the write-warning dedup: it suppresses repeats within one
+                // connection session only — a new connection's first failure must
+                // log even if its message matches the previous session's last one.
+                _lastLedWriteWarn = null;
+                _lastDisplayWriteWarn = null;
             }
         }
 
