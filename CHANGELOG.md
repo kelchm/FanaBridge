@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.0 - Unreleased
+
+### Fixed
+- **SRM Conversion Kit wheels are detected again.** A Fanatec wheel/hub run through an SRM Conversion Kit no longer sits at "Connecting…" — FanaBridge recovers the wheel's identity from the conversion kit when the base doesn't emit the usual Fanatec system report (regressed in v0.4.0). The genuine-hardware detection path is unchanged. ([#47](https://github.com/kelchm/FanaBridge/pull/47), fixes [#52](https://github.com/kelchm/FanaBridge/issues/52))
+
 ## v0.4.0 - 2026-07-01
 
 ### Changed
