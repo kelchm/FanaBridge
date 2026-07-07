@@ -29,25 +29,55 @@ namespace FanaBridge.Transport
         private HidStream _displayStream;
 
         // ── col03 input path ───────────────────────────────────────────────
-        // A dedicated thread parks in a blocking HID read and feeds this queue;
-        // ReadCol03 serves consumers from the queue without touching the HID
-        // handle. Polling the handle directly with a 0 ms timeout (the per-frame
-        // drain) made HidSharp throw a caught TimeoutException every frame, and
-        // SimHub's first-chance handler logs each throw as a full ERROR stack
-        // trace — a debug log grew ~8 MB/minute while everything worked.
-        private HidReportQueue _col03Queue;
+        // A dedicated thread parks in a blocking HID read and routes every frame
+        // by wire signature into per-family queues (identity / ITM / SRM /
+        // tuning); consumers read their own family stream and never touch the
+        // HID handle. Polling the handle directly with a 0 ms timeout (the old
+        // per-frame drain) made HidSharp throw a caught TimeoutException every
+        // frame, and SimHub's first-chance handler logs each throw as a full
+        // ERROR stack trace — a debug log grew ~8 MB/minute while everything
+        // worked.
+        // volatile: published by Connect and read lock-free by FamilyStream
+        // consumers on other threads (release/acquire on the reference).
+        private volatile Col03QueueSet _col03Queues;   // one per connection session
         private Thread _col03Reader;
+
+        // Set by Disconnect BEFORE disposing the stream so the reader thread can
+        // tell intentional teardown from a device failure; reset by the next
+        // StartCol03Reader.
+        private volatile bool _col03Stopping;
+
+        // Set when the reader thread gives up after persistent read errors while
+        // the device still looks present. IsConnected reports false so the
+        // ConnectionMonitor tears down and reconnects (fresh stream + reader) —
+        // without this, input would be dead while writes still succeed.
+        private volatile bool _col03ReaderFaulted;
+
+        // A transient read error (USB suspend blip, driver hiccup) must not kill
+        // the input path — retry a few times before declaring the reader dead.
+        private const int COL03_READ_RETRY_MAX = 5;
+        private const int COL03_READ_RETRY_DELAY_MS = 50;
+
+        // Stable facades over the current session's queues, so consumers can
+        // cache IReportStream references across reconnects.
+        private readonly FamilyStream _identityReports;
+        private readonly FamilyStream _itmReports;
+        private readonly FamilyStream _srmReports;
+        private readonly FamilyStream _tuningReports;
+
+        public FanatecTransport()
+        {
+            _identityReports = new FamilyStream(this, Col03Family.Identity);
+            _itmReports = new FamilyStream(this, Col03Family.Itm);
+            _srmReports = new FamilyStream(this, Col03Family.Srm);
+            _tuningReports = new FamilyStream(this, Col03Family.Tuning);
+        }
 
         // Effectively "wait for data": int.MaxValue ms (~24 days) avoids the
         // (uint)-1 / Timeout.Infinite ambiguity inside HidSharp's overlapped
         // wait. A blocked read is woken by Disconnect() disposing the stream
         // (HidSharp signals its close event → ObjectDisposedException).
         private const int COL03_READER_TIMEOUT_MS = int.MaxValue;
-
-        // Reports to retain when nothing drains (e.g. while the plugin manager
-        // restarts on game change and the hardware core idles). Oldest dropped
-        // first — a late consumer wants the freshest device state.
-        private const int COL03_QUEUE_CAPACITY = 256;
 
         // Windows API fallback for col01 writes
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -100,14 +130,19 @@ namespace FanaBridge.Transport
             UnexpectedError,
         }
 
-        /// <summary>True if the HID streams appear to be open.</summary>
+        /// <summary>
+        /// True if the HID streams appear to be open AND the col03 reader thread
+        /// is alive. A faulted reader means input is dead even though writes
+        /// still work — reporting false here is what makes the ConnectionMonitor
+        /// reconnect out of that state.
+        /// </summary>
         public bool IsConnected
         {
             get
             {
                 try
                 {
-                    return _ledStream != null && _ledStream.CanWrite;
+                    return _ledStream != null && _ledStream.CanWrite && !_col03ReaderFaulted;
                 }
                 catch
                 {
@@ -363,30 +398,62 @@ namespace FanaBridge.Transport
             }
         }
 
-        int IDeviceTransport.ReadCol03(byte[] buffer, int timeoutMs)
+        IReportStream IDeviceTransport.IdentityReports => _identityReports;
+        IReportStream IDeviceTransport.ItmReports => _itmReports;
+        IReportStream IDeviceTransport.SrmReports => _srmReports;
+        IReportStream IDeviceTransport.TuningReports => _tuningReports;
+
+        // Stable per-family facade: delegates to the current session's queue,
+        // or behaves as an empty closed stream while disconnected. Reads are
+        // lock-free — single ownership per family is the concurrency model
+        // (see IDeviceTransport docs).
+        private sealed class FamilyStream : IReportStream
         {
-            // Served from the reader-thread queue, never from the HID handle —
-            // an idle timeout-0 poll is a lock-check, not a thrown-and-caught
-            // HidSharp TimeoutException. Callers keep the same contract:
-            // report length, or -1 when nothing arrived within the timeout.
-            // No _writeLock: elicit→response sequences already serialize via
-            // BeginBatch, and the queue is thread-safe on its own.
-            var queue = _col03Queue;
-            if (queue == null) return -1;
-            return queue.TryRead(buffer, timeoutMs);
+            private readonly FanatecTransport _owner;
+            private readonly Col03Family _family;
+
+            public FamilyStream(FanatecTransport owner, Col03Family family)
+            {
+                _owner = owner;
+                _family = family;
+            }
+
+            public int TryRead(byte[] destination, int timeoutMs)
+            {
+                var queues = _owner._col03Queues;
+                return queues == null ? -1 : queues.Get(_family).TryRead(destination, timeoutMs);
+            }
+
+            public void Flush()
+            {
+                _owner._col03Queues?.Get(_family).Flush();
+            }
+
+            public IDisposable Tap(Action<byte[]> observer)
+            {
+                var queues = _owner._col03Queues;
+                return queues == null ? (IDisposable)new NoopToken() : queues.Get(_family).Tap(observer);
+            }
+
+            private sealed class NoopToken : IDisposable
+            {
+                public void Dispose() { }
+            }
         }
 
         // ── col03 reader thread ────────────────────────────────────────────
 
         private void StartCol03Reader()
         {
-            _col03Queue = new HidReportQueue(COL03_QUEUE_CAPACITY);
+            _col03Stopping = false;
+            _col03ReaderFaulted = false;
+            _col03Queues = new Col03QueueSet();
 
             var stream = _ledStream;
-            var queue = _col03Queue;
+            var queues = _col03Queues;
             int bufLen = ((IDeviceTransport)this).Col03MaxInputReportLength;
 
-            _col03Reader = new Thread(() => Col03ReadLoop(stream, queue, bufLen))
+            _col03Reader = new Thread(() => Col03ReadLoop(stream, queues, bufLen))
             {
                 IsBackground = true,
                 Name = "FanaBridge col03 reader",
@@ -394,34 +461,57 @@ namespace FanaBridge.Transport
             _col03Reader.Start();
         }
 
-        private static void Col03ReadLoop(HidStream stream, HidReportQueue queue, int bufLen)
+        private void Col03ReadLoop(HidStream stream, Col03QueueSet queues, int bufLen)
         {
             var buf = new byte[bufLen];
             try { stream.ReadTimeout = COL03_READER_TIMEOUT_MS; } catch { }
 
+            int consecutiveErrors = 0;
             while (true)
             {
                 int n;
                 try
                 {
                     n = stream.Read(buf, 0, buf.Length);
+                    consecutiveErrors = 0;
                 }
                 catch (TimeoutException)
                 {
                     continue; // ~24 days idle; just park again
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Stream closed (Disconnect) or device gone. Exit quietly:
-                    // ConnectionMonitor owns detection and reconnect, and a
-                    // reconnect starts a fresh reader on the new stream.
+                    // Intentional teardown: Disconnect sets the flag before
+                    // disposing the stream (the dispose is what wakes us).
+                    if (_col03Stopping) break;
+
+                    // Transient read error with the device possibly still fine —
+                    // retry before giving up, so one hiccup can't kill input for
+                    // the whole session (the old per-call read self-healed).
+                    if (++consecutiveErrors < COL03_READ_RETRY_MAX)
+                    {
+                        Thread.Sleep(COL03_READ_RETRY_DELAY_MS);
+                        continue;
+                    }
+
+                    // Persistent failure. Mark the transport faulted so the
+                    // ConnectionMonitor reconnects — but only if this thread is
+                    // still the CURRENT session's reader (a stale thread from a
+                    // torn-down session must not poison the new one).
+                    if (ReferenceEquals(_col03Queues, queues))
+                    {
+                        _col03ReaderFaulted = true;
+                        SimHub.Logging.Current.Warn(
+                            "FanatecTransport: col03 reader stopped after repeated read errors ("
+                            + ex.GetType().Name + ": " + ex.Message + ") — flagging for reconnect");
+                    }
                     break;
                 }
 
-                if (n > 0) queue.Enqueue(buf, n);
+                if (n > 0) queues.Route(buf, n);
             }
 
-            queue.Close();
+            queues.Close();
         }
 
         int IDeviceTransport.Col03MaxInputReportLength
@@ -446,8 +536,10 @@ namespace FanaBridge.Transport
         {
             lock (_writeLock)
             {
-                // Capture under the lock, mirroring ReadCol03: Disconnect() nulls/disposes
-                // the stream under the same lock, so a non-null local stays valid here.
+                // col01 keeps the direct locked read (diagnostics-only today; a
+                // pump would consume the gamepad axis stream for nothing).
+                // Capture under the lock: Disconnect() nulls/disposes the stream
+                // under the same lock, so a non-null local stays valid here.
                 var stream = _displayStream;
                 if (stream == null) return -1;
 
@@ -514,12 +606,15 @@ namespace FanaBridge.Transport
         /// </summary>
         public void Disconnect()
         {
+            // Wake any consumer blocked in an elicited stream read BEFORE taking
+            // the write lock: an elicit holds the batch (= this lock) while it
+            // waits, so closing the queues first is the only order that works —
+            // the woken elicit returns -1, releases the batch, and we proceed.
+            _col03Stopping = true;
+            try { _col03Queues?.Close(); } catch { }
+
             lock (_writeLock)
             {
-                // Wake any consumer blocked in an elicited ReadCol03 first,
-                // then dispose the stream to wake the reader thread itself.
-                try { _col03Queue?.Close(); } catch { }
-
                 try { _displayStream?.Close(); } catch { }
                 try { _displayStream?.Dispose(); } catch { }
                 try { _ledStream?.Close(); } catch { }
@@ -532,7 +627,7 @@ namespace FanaBridge.Transport
                 // hang teardown.
                 try { _col03Reader?.Join(1000); } catch { }
                 _col03Reader = null;
-                _col03Queue = null;
+                _col03Queues = null;
 
                 _displayStream = null;
                 _ledStream = null;

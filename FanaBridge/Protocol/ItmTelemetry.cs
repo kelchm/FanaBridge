@@ -170,15 +170,12 @@ namespace FanaBridge.Protocol
             if (report == null) return result;
             if (len <= 0 || len > report.Length) len = report.Length;
 
-            // Find the FF 05 01 header (tolerate a leading report-ID in the first bytes).
-            int start = -1;
-            for (int i = 0; i <= 2 && i + 3 <= len; i++)
-                if (report[i] == 0xFF && report[i + 1] == 0x05 && report[i + 2] == 0x01)
-                {
-                    start = i + 3;
-                    break;
-                }
-            if (start < 0) return result;
+            // Find the FF 05 header via the shared family scan (same report-id
+            // tolerance the transport router applies), then require the 0x01
+            // subscription subcommand — the family alone also covers pages/acks.
+            int sig = Col03FrameClassifier.FindItmSignature(report, len);
+            if (sig < 0 || sig + 3 > len || report[sig + 2] != 0x01) return result;
+            int start = sig + 3;
 
             // Entries: [deviceId][fwHandle][idLo][idHi][dataType], 5 bytes each. Byte 0 is the
             // display-device id. Each driver targets one display, so skip entries for any other

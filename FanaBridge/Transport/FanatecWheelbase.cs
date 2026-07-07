@@ -62,7 +62,7 @@ namespace FanaBridge.Transport
         private readonly SystemReportReader _reportReader = new SystemReportReader();
         private readonly SrmConverterIdentity _srmReader = new SrmConverterIdentity();
         // Converter identity: while unidentified we ping the SRM DE FA channel (harmless — a genuine
-        // base does not answer). Its 0xDD reply arrives via the shared col03 drain into _ingestSrm.
+        // base does not answer). Its 0xDD reply arrives on the transport's SRM stream into _ingestSrm.
         private const int SrmQueryMs = 1000;              // re-ping cadence while unidentified
         private long _lastSrmQueryMs;
         private SrmConverterIdentity.Result? _pendingSrm;  // a 0xDD reply seen in the drain, committed after it
@@ -355,9 +355,9 @@ namespace FanaBridge.Transport
                 // If FF 08 was silent this might be an SRM kit (or a slow genuine base). No probe here:
                 // UpdateIdentity keeps reading FF 08 and pings DE FA while unidentified; whichever wins.
 
-                // Confirm the per-frame drain is non-blocking on this hardware — a
-                // blocking ReadCol03(buf, 0) would stall the frame thread. Done once
-                // now that the input is quiet; leaves a permanent regression guard.
+                // Confirm the per-frame drain is non-blocking — a blocking idle
+                // stream poll would stall the frame thread. Done once now that the
+                // input is quiet; leaves a permanent regression guard.
                 double drainMs = _reportReader.ProbeDrainLatencyMs(_transport, 5);
                 if (drainMs > 1.0)
                     SimHub.Logging.Current.Warn(string.Format(
@@ -461,12 +461,16 @@ namespace FanaBridge.Transport
                 catch { /* transient; the next tick retries */ }
             }
 
-            // One col03 read loop, dispatched by signature: FF 08 -> _ingest, 0xDD -> _ingestSrm, FF 05 -> ITM.
+            // Drain this device's three input streams (the transport's reader thread
+            // routes frames by signature). Lock-free: the wheelbase is the single
+            // owner of all three, and reads never touch the write lock.
             _drainNow = now;
-            _reportReader.DrainPushes(_transport, _ingest, _bufferItm, _ingestSrm);
+            _reportReader.DrainIdentity(_transport, _ingest);
+            DrainFamily(Transport.ItmReports, _bufferItm);
+            DrainFamily(Transport.SrmReports, _ingestSrm);
 
-            // Commit a converter identity the drain routed to us — after the batch, so WheelChanged
-            // isn't raised under the transport write lock.
+            // Commit a converter identity the drain routed to us — outside the drain,
+            // so WheelChanged isn't raised mid-drain.
             if (_pendingSrm.HasValue)
             {
                 var srm = _pendingSrm.Value;
@@ -491,14 +495,41 @@ namespace FanaBridge.Transport
             return changed;
         }
 
+        // Bounded, non-blocking drain of one raw-frame stream (ITM / SRM). Each
+        // frame is copied before the handler runs — handlers retain the bytes.
+        private const int FamilyDrainMaxReports = 16;
+        private byte[] _familyDrainBuf;
+
+        private void DrainFamily(IReportStream stream, Action<byte[]> handler)
+        {
+            int bufLen = Transport.Col03MaxInputReportLength;
+            if (bufLen < 64) bufLen = 64;
+            if (_familyDrainBuf == null || _familyDrainBuf.Length < bufLen)
+                _familyDrainBuf = new byte[bufLen];
+
+            for (int i = 0; i < FamilyDrainMaxReports; i++)
+            {
+                int n = stream.TryRead(_familyDrainBuf, 0);
+                if (n <= 0) break;
+
+                var copy = new byte[n];
+                Array.Copy(_familyDrainBuf, copy, n);
+                handler(copy);
+            }
+        }
+
         // Drain callback: record the reading and offer it to the settler. _drainNow
         // carries the current clock so the cached delegate needs no per-frame closure.
         private void OnDrainReading(SystemReportReader.Reading r) => IngestReading(r, _drainNow);
 
-        // Drain callback for a 0xDD frame: decode + stash; UpdateIdentity commits it after the batch.
+        // Drain callback for a 0xDD frame: decode + stash; UpdateIdentity commits it after the drain.
+        // The WheelDetected guard keeps "FF 08 wins if it answered" true even for 0xDD replies we
+        // didn't elicit — the diagnostics probe sends DE FA on demand, and its reply must not
+        // overwrite an identity the FF 08 path already committed (a read-only diagnostics run
+        // must never mutate runtime identity).
         private void OnDrainSrm(byte[] frame)
         {
-            if (IsSrmConverter || _pendingSrm.HasValue) return;
+            if (WheelDetected || IsSrmConverter || _pendingSrm.HasValue) return;
             if (SrmConverterIdentity.TryDecodeFrame(frame, frame.Length, out var srm))
                 _pendingSrm = srm;
         }

@@ -21,6 +21,9 @@ namespace FanaBridge.Transport
         private int _frameCounter;
         private int _reconnectCooldown;
 
+        // Set by ForceReconnect (any thread), consumed by Update (frame thread).
+        private volatile bool _forceReconnectPending;
+
         // ── Heartbeat intervals (in frames) ────────────────────────────
         private const int HID_BUS_CHECK_INTERVAL = 120;
         private const int STREAM_CHECK_INTERVAL = 60;
@@ -88,6 +91,22 @@ namespace FanaBridge.Transport
         public bool Update()
         {
             _frameCounter++;
+
+            // Apply a pending ForceReconnect HERE, on the frame thread, so all
+            // connect/adopt/identity I/O stays single-threaded — running it on
+            // the requester's (UI) thread would race this method's own identity
+            // drain on the same buffers and streams.
+            if (_forceReconnectPending)
+            {
+                _forceReconnectPending = false;
+                if (_connected)
+                {
+                    _wheelbase.Disconnect();
+                    _connected = false;
+                    Disconnected?.Invoke();
+                }
+                _reconnectCooldown = 0;
+            }
 
             if (!_connected)
             {
@@ -161,30 +180,15 @@ namespace FanaBridge.Transport
         }
 
         /// <summary>
-        /// Forces a disconnect and immediate reconnect attempt.
+        /// Requests a disconnect + immediate reconnect. Safe from any thread
+        /// (e.g. the settings UI): the actual work runs on the next frame's
+        /// <see cref="Update"/>, keeping all device I/O on the frame thread.
+        /// Connected/Disconnected fire from Update as the reconnect proceeds.
         /// </summary>
         public void ForceReconnect()
         {
             _logInfo("FanaBridge: ForceReconnect requested");
-
-            if (_connected)
-            {
-                _wheelbase.Disconnect();
-                _connected = false;
-            }
-
-            _reconnectCooldown = 0;
-            _connected = _tryConnect();
-
-            if (_connected)
-            {
-                LastDisconnectReason = null;
-                Connected?.Invoke();
-            }
-            else
-            {
-                Disconnected?.Invoke();
-            }
+            _forceReconnectPending = true;
         }
     }
 }

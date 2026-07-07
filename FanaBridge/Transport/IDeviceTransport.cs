@@ -7,8 +7,14 @@ namespace FanaBridge.Transport
     /// (LEDs, display, tuning, etc.). Implemented by <see cref="FanatecTransport"/>.
     ///
     /// Individual sends are thread-safe — callers do not need to hold any lock
-    /// for single-report operations. For multi-report atomic sequences, use
-    /// <see cref="BeginBatch"/> to acquire exclusive access.
+    /// for single-report operations. For multi-report atomic WRITE sequences,
+    /// use <see cref="BeginBatch"/> to acquire exclusive access.
+    ///
+    /// Inbound col03 traffic is demultiplexed by the transport's reader thread
+    /// into per-family <see cref="IReportStream"/>s. Reads are lock-free: each
+    /// stream has exactly one owning consumer (Identity/Itm/Srm → the wheelbase's
+    /// frame-thread drains; Tuning → the tuning controller), so no reader can
+    /// steal another family's frames and no read ever holds the write lock.
     /// </summary>
     public interface IDeviceTransport
     {
@@ -21,13 +27,17 @@ namespace FanaBridge.Transport
         /// </summary>
         bool SendCol03(byte[] data);
 
-        /// <summary>
-        /// Reads a report from the LED/config interface (col03).
-        /// Returns the number of bytes read, or -1 on failure/timeout.
-        /// The <paramref name="timeoutMs"/> applies to this call only and
-        /// does not affect other callers.
-        /// </summary>
-        int ReadCol03(byte[] buffer, int timeoutMs);
+        /// <summary>col03 FF 08 system reports (identity pushes). Owner: the wheelbase.</summary>
+        IReportStream IdentityReports { get; }
+
+        /// <summary>col03 FF 05 ITM subscription/page pushes. Owner: the wheelbase (buffered for the ITM driver).</summary>
+        IReportStream ItmReports { get; }
+
+        /// <summary>col03 0xDD SRM DE FA identity replies. Owner: the wheelbase.</summary>
+        IReportStream SrmReports { get; }
+
+        /// <summary>col03 FF 03 tuning responses. Owner: the tuning controller.</summary>
+        IReportStream TuningReports { get; }
 
         /// <summary>
         /// Gets the maximum input report length for the col03 interface.
@@ -53,9 +63,10 @@ namespace FanaBridge.Transport
         int Col01MaxInputReportLength { get; }
 
         /// <summary>
-        /// Acquires exclusive access to the transport for multi-report
+        /// Acquires exclusive WRITE access to the transport for multi-report
         /// atomic sequences (e.g. staged LED commit, tuning read-modify-write).
-        /// Dispose the returned token to release.
+        /// Dispose the returned token to release. Reads never take this lock —
+        /// the per-family streams are single-owner by design.
         /// Re-entrant: sends made inside a batch on the same thread re-acquire
         /// the lock recursively, so they never block or deadlock.
         /// </summary>

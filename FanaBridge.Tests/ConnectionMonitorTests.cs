@@ -230,9 +230,12 @@ namespace FanaBridge.Tests
         }
 
         // ── ForceReconnect ───────────────────────────────────────────────
+        // ForceReconnect only REQUESTS the reconnect (it may be called from the
+        // UI thread); the work happens on the next frame's Update so all device
+        // I/O stays on the frame thread.
 
         [Fact]
-        public void ForceReconnect_WhenConnected_DisconnectsAndReconnects()
+        public void ForceReconnect_WhenConnected_DisconnectsAndReconnectsOnNextUpdate()
         {
             var wheelbase = new StubWheelbase();
             bool connectedFired = false;
@@ -242,6 +245,9 @@ namespace FanaBridge.Tests
             monitor.TryInitialConnect();
 
             monitor.ForceReconnect();
+            Assert.Equal(0, wheelbase.DisconnectCalls); // deferred — nothing yet
+
+            monitor.Update();
 
             Assert.True(monitor.IsConnected);
             Assert.True(connectedFired);
@@ -249,18 +255,20 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void ForceReconnect_WhenDisconnected_SkipsDisconnect()
+        public void ForceReconnect_WhenDisconnected_SkipsDisconnectAndBypassesCooldown()
         {
             var wheelbase = new StubWheelbase();
             int connectAttempts = 0;
 
-            var monitor = Create(wheelbase, () => ++connectAttempts >= 2);
+            var monitor = Create(wheelbase, () => ++connectAttempts >= 3);
             monitor.TryInitialConnect(); // fails (attempt 1)
+            monitor.Update();            // fails (attempt 2) → long cooldown armed
 
             Assert.False(monitor.IsConnected);
             Assert.Equal(0, wheelbase.DisconnectCalls);
 
-            monitor.ForceReconnect(); // attempt 2 → succeeds
+            monitor.ForceReconnect();
+            monitor.Update(); // attempt 3, immediately (cooldown bypassed) → succeeds
 
             Assert.True(monitor.IsConnected);
             Assert.Equal(0, wheelbase.DisconnectCalls); // wasn't connected, so no disconnect
@@ -277,7 +285,8 @@ namespace FanaBridge.Tests
             monitor.Disconnected += () => disconnectedFired = true;
             monitor.TryInitialConnect(); // attempt 1 → succeeds
 
-            monitor.ForceReconnect(); // attempt 2 → fails
+            monitor.ForceReconnect();
+            monitor.Update(); // disconnects, then attempt 2 → fails
 
             Assert.False(monitor.IsConnected);
             Assert.True(disconnectedFired);

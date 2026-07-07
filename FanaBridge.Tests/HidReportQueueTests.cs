@@ -189,5 +189,76 @@ namespace FanaBridge.Tests
             // A closed queue must not block even with a timeout.
             Assert.Equal(-1, queue.TryRead(new byte[64], 250));
         }
+
+        // ── Flush ─────────────────────────────────────────────────────────
+
+        [Fact]
+        public void Flush_DropsPendingWithoutClosing()
+        {
+            var queue = new HidReportQueue(16);
+            queue.Enqueue(Report(1), 1);
+            queue.Flush();
+
+            Assert.Equal(-1, queue.TryRead(new byte[64], 0));
+
+            // Still open: new frames flow.
+            queue.Enqueue(Report(2), 1);
+            var dest = new byte[64];
+            Assert.Equal(1, queue.TryRead(dest, 0));
+            Assert.Equal(2, dest[0]);
+        }
+
+        // ── Taps (non-consuming observers) ────────────────────────────────
+
+        [Fact]
+        public void Tap_ObserverGetsCopy_ConsumerStillGetsFrame()
+        {
+            var queue = new HidReportQueue(16);
+            byte[] observed = null;
+            using (queue.Tap(f => observed = f))
+            {
+                queue.Enqueue(Report(0xAB, 0xCD), 2);
+            }
+
+            Assert.NotNull(observed);
+            Assert.Equal(new byte[] { 0xAB, 0xCD }, observed);
+
+            // The tap did NOT consume: the owner still reads the frame.
+            var dest = new byte[64];
+            Assert.Equal(2, queue.TryRead(dest, 0));
+            Assert.Equal(0xAB, dest[0]);
+
+            // The observer's copy is private — mutating it can't corrupt the
+            // frame the consumer received.
+            observed[0] = 0x00;
+            Assert.Equal(0xAB, dest[0]);
+        }
+
+        [Fact]
+        public void Tap_Disposed_StopsObserving()
+        {
+            var queue = new HidReportQueue(16);
+            int seen = 0;
+            var token = queue.Tap(_ => seen++);
+            queue.Enqueue(Report(1), 1);
+            token.Dispose();
+            queue.Enqueue(Report(2), 1);
+
+            Assert.Equal(1, seen);
+        }
+
+        [Fact]
+        public void Tap_ThrowingObserver_DoesNotBreakEnqueue()
+        {
+            var queue = new HidReportQueue(16);
+            using (queue.Tap(_ => throw new InvalidOperationException("observer bug")))
+            {
+                queue.Enqueue(Report(7), 1);
+            }
+
+            var dest = new byte[64];
+            Assert.Equal(1, queue.TryRead(dest, 0));
+            Assert.Equal(7, dest[0]);
+        }
     }
 }
