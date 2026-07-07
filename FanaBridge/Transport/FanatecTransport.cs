@@ -28,6 +28,27 @@ namespace FanaBridge.Transport
         private HidDevice _displayDevice;   // col01: 8-byte display/config
         private HidStream _displayStream;
 
+        // ── col03 input path ───────────────────────────────────────────────
+        // A dedicated thread parks in a blocking HID read and feeds this queue;
+        // ReadCol03 serves consumers from the queue without touching the HID
+        // handle. Polling the handle directly with a 0 ms timeout (the per-frame
+        // drain) made HidSharp throw a caught TimeoutException every frame, and
+        // SimHub's first-chance handler logs each throw as a full ERROR stack
+        // trace — a debug log grew ~8 MB/minute while everything worked.
+        private HidReportQueue _col03Queue;
+        private Thread _col03Reader;
+
+        // Effectively "wait for data": int.MaxValue ms (~24 days) avoids the
+        // (uint)-1 / Timeout.Infinite ambiguity inside HidSharp's overlapped
+        // wait. A blocked read is woken by Disconnect() disposing the stream
+        // (HidSharp signals its close event → ObjectDisposedException).
+        private const int COL03_READER_TIMEOUT_MS = int.MaxValue;
+
+        // Reports to retain when nothing drains (e.g. while the plugin manager
+        // restarts on game change and the hardware core idles). Oldest dropped
+        // first — a late consumer wants the freshest device state.
+        private const int COL03_QUEUE_CAPACITY = 256;
+
         // Windows API fallback for col01 writes
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool WriteFile(
@@ -230,6 +251,7 @@ namespace FanaBridge.Transport
 
                 _connectedProductId = productId;
                 LastConnectStatus = TransportConnectStatus.Connected;
+                StartCol03Reader();
                 SimHub.Logging.Current.Info("FanatecTransport: Connected to " + ProductName);
                 return true;
             }
@@ -343,29 +365,63 @@ namespace FanaBridge.Transport
 
         int IDeviceTransport.ReadCol03(byte[] buffer, int timeoutMs)
         {
-            lock (_writeLock)
-            {
-                // Capture under the lock: Disconnect() nulls/disposes the stream
-                // under the same lock, so a non-null local here stays valid for
-                // the duration of the read.
-                var stream = _ledStream;
-                if (stream == null) return -1;
+            // Served from the reader-thread queue, never from the HID handle —
+            // an idle timeout-0 poll is a lock-check, not a thrown-and-caught
+            // HidSharp TimeoutException. Callers keep the same contract:
+            // report length, or -1 when nothing arrived within the timeout.
+            // No _writeLock: elicit→response sequences already serialize via
+            // BeginBatch, and the queue is thread-safe on its own.
+            var queue = _col03Queue;
+            if (queue == null) return -1;
+            return queue.TryRead(buffer, timeoutMs);
+        }
 
-                int saved = stream.ReadTimeout;
+        // ── col03 reader thread ────────────────────────────────────────────
+
+        private void StartCol03Reader()
+        {
+            _col03Queue = new HidReportQueue(COL03_QUEUE_CAPACITY);
+
+            var stream = _ledStream;
+            var queue = _col03Queue;
+            int bufLen = ((IDeviceTransport)this).Col03MaxInputReportLength;
+
+            _col03Reader = new Thread(() => Col03ReadLoop(stream, queue, bufLen))
+            {
+                IsBackground = true,
+                Name = "FanaBridge col03 reader",
+            };
+            _col03Reader.Start();
+        }
+
+        private static void Col03ReadLoop(HidStream stream, HidReportQueue queue, int bufLen)
+        {
+            var buf = new byte[bufLen];
+            try { stream.ReadTimeout = COL03_READER_TIMEOUT_MS; } catch { }
+
+            while (true)
+            {
+                int n;
                 try
                 {
-                    stream.ReadTimeout = timeoutMs;
-                    return stream.Read(buffer, 0, buffer.Length);
+                    n = stream.Read(buf, 0, buf.Length);
+                }
+                catch (TimeoutException)
+                {
+                    continue; // ~24 days idle; just park again
                 }
                 catch
                 {
-                    return -1;
+                    // Stream closed (Disconnect) or device gone. Exit quietly:
+                    // ConnectionMonitor owns detection and reconnect, and a
+                    // reconnect starts a fresh reader on the new stream.
+                    break;
                 }
-                finally
-                {
-                    try { stream.ReadTimeout = saved; } catch { }
-                }
+
+                if (n > 0) queue.Enqueue(buf, n);
             }
+
+            queue.Close();
         }
 
         int IDeviceTransport.Col03MaxInputReportLength
@@ -451,19 +507,32 @@ namespace FanaBridge.Transport
 
         /// <summary>
         /// Closes all HID handles. Holds the write lock so teardown can't race
-        /// an in-flight send/read (which capture their stream under the same
-        /// lock), avoiding use-after-dispose on the HID streams.
+        /// an in-flight send (which captures its stream under the same lock).
+        /// The col03 reader thread reads outside the lock by design: disposing
+        /// the stream is HidSharp's sanctioned way to abort its blocked read
+        /// (the close event wakes it with ObjectDisposedException).
         /// </summary>
         public void Disconnect()
         {
             lock (_writeLock)
             {
+                // Wake any consumer blocked in an elicited ReadCol03 first,
+                // then dispose the stream to wake the reader thread itself.
+                try { _col03Queue?.Close(); } catch { }
+
                 try { _displayStream?.Close(); } catch { }
                 try { _displayStream?.Dispose(); } catch { }
                 try { _ledStream?.Close(); } catch { }
                 try { _ledStream?.Dispose(); } catch { }
                 try { _displayHandle?.Close(); } catch { }
                 try { _displayHandle?.Dispose(); } catch { }
+
+                // Reader never takes _writeLock, so joining here can't deadlock.
+                // Bounded wait: it's a background thread, a stuck join must not
+                // hang teardown.
+                try { _col03Reader?.Join(1000); } catch { }
+                _col03Reader = null;
+                _col03Queue = null;
 
                 _displayStream = null;
                 _ledStream = null;
