@@ -12,10 +12,12 @@ These profiles have been verified on hardware.
 |--------|:---:|:---:|:---:|:---:|
 | ClubSport BMW M3 GT2 V2 | On/Off | — | — | 3-digit |
 | ClubSport Formula V2.5 | Full color | Full color | — | 3-digit |
-| GT Extreme | Full color | Full color | Full color | 3-digit (ITM planned) |
+| GT Extreme | Full color | Full color | Full color | ITM |
 | Podium BMW M4 GT3 | — | — | Full color | 3-digit |
-| Podium Hub + Button Module Endurance | Full color | Full color | — | 3-digit (ITM planned) |
+| Podium Hub + Button Module Endurance | Full color | Full color | — | ITM |
 | Podium Hub + Button Module Rally | — | — | Full color | 3-digit |
+
+> **ITM displays** (experimental): devices marked *ITM* show live telemetry pages on their graphical display, plus a legacy page with the classic gear/speed modes. Fully tested on the Podium Hub + Button Module Endurance; the GT Extreme and ClubSport Formula V3 have had limited testing; the Podium Bentley GT3's page layout is inferred and not yet tested on hardware.
 
 ## Unverified
 
@@ -26,7 +28,7 @@ These profiles are based on SDK data and should work, but have not been tested o
 | ClubSport BMW M3 GT2 | On/Off | — | — | 3-digit |
 | ClubSport F1 Esports V2 | Full color | Full color | — | 3-digit |
 | ClubSport Formula Carbon | On/Off | — | — | 3-digit |
-| ClubSport Formula V3 | Full color | Full color | — | 3-digit |
+| ClubSport Formula V3 | Full color | Full color | — | ITM |
 | ClubSport Porsche 918 RSR | On/Off | — | — | 3-digit |
 | ClubSport RS | On/Off | — | — | 3-digit |
 | CSL Elite McLaren GT3 V1.0 | — | — | — | 3-digit |
@@ -37,6 +39,6 @@ These profiles are based on SDK data and should work, but have not been tested o
 | CSL Elite WRC | 512 colors (RevStripe) | — | — | 3-digit |
 | CSL GT3 | — | — | — | 3-digit |
 | GT PRO | 8 colors | — | — | 3-digit |
-| Podium Bentley GT3 | Full color | Full color | — | 3-digit (ITM planned) |
+| Podium Bentley GT3 | Full color | Full color | — | ITM |
 
 > **Other hubs:** The ClubSport Universal Hub, CSL Universal Hub, and ClubSport Universal Hub V2 are recognized by FanaBridge but do not yet have built-in profiles. Use the Wheel Profile Wizard to create one.

@@ -10,7 +10,7 @@
                     Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
                     CornerRadius="4" Padding="10,8" Margin="0,0,0,12">
                 <TextBlock Foreground="#AADDFF" FontSize="12" TextWrapping="Wrap">
-                    &#x2139;  This wheel has an ITM telemetry display — FanaBridge shows live SimHub telemetry on its pages (speed, gear, lap times, tyre temps, and more). Pick the page it starts on below, and use the wheel's display button to switch pages while driving. Its legacy page shows the simple gear/speed display picked under Legacy Display Mode; choose "None" to leave that off.
+                    &#x2139;  This wheel has an ITM telemetry display — FanaBridge shows live SimHub telemetry on its pages (speed, gear, lap times, tire temps, and more). Pick the page it starts on below, and use the wheel's display button to switch pages while driving. Its legacy page shows the simple gear/speed display picked under Legacy Display Mode; choose "None" to leave that off.
                 </TextBlock>
             </Border>
 

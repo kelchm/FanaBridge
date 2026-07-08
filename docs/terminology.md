@@ -127,7 +127,7 @@ The tuning menu supports 5 setup slots (index 0–4). Each slot stores a complet
 ## ITM (Intelligent Telemetry Mode)
 
 ### ITM
-The telemetry display system that shows multi-page dashboards on compatible displays — live speed, gear, lap times, fuel, tyre temps, and so on. See [ITM Display Protocol](reference/protocol.md#0x05--itm-display).
+The telemetry display system that shows multi-page dashboards on compatible displays — live speed, gear, lap times, fuel, tire temps, and so on. See [ITM Display Protocol](reference/protocol.md#0x05--itm-display).
 
 ### ITM Device ID
 A numeric identifier routing ITM commands to the correct physical display. Values: 1 = wheelbase display, 2 = steering wheel / SmallOLED (disabled in current firmware), 3 = button module or compatible wheel display (shared, mutually exclusive), 4 = dedicated wheel display. See [ITM Display — Supported Devices](reference/protocol.md#itm-supported-devices) for the specific device mapping.
