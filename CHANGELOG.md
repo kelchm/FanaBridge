@@ -2,6 +2,9 @@
 
 ## v0.5.0 - Unreleased
 
+### Added
+- **One-click device add from the settings page.** A detected wheel or hub still has to be added as a SimHub device before any LED or display output works — a step that's easy to miss after installing. The Device Status section now shows a prompt whenever the attached wheel/hub isn't in SimHub's device list yet, with an **Add to SimHub** button that adds it on the spot ([#49](https://github.com/kelchm/FanaBridge/pull/49))
+
 ### Fixed
 - **SRM Conversion Kit wheels are detected again.** A Fanatec wheel/hub run through an SRM Conversion Kit no longer sits at "Connecting…" — FanaBridge recovers the wheel's identity from the conversion kit when the base doesn't emit the usual Fanatec system report (regressed in v0.4.0). The genuine-hardware detection path is unchanged. ([#47](https://github.com/kelchm/FanaBridge/pull/47), fixes [#52](https://github.com/kelchm/FanaBridge/issues/52))
 - **Changing the active game in SimHub no longer kills all LED and display output.** SimHub restarts its plugin manager in-process on every game change; FanaBridge now survives that restart with its hardware connection intact instead of being torn down and rebuilt while SimHub's device instances kept writing into the disposed connection — previously everything went dark (while still showing *Connected*) until SimHub itself was restarted ([#51](https://github.com/kelchm/FanaBridge/issues/51))
