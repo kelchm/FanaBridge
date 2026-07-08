@@ -400,26 +400,11 @@ namespace FanaBridge.UI
 
             string name = config.Capabilities?.ShortName ?? config.Capabilities?.Name ?? "This device";
 
-            var blocking = SimHubDevicesGateway.FindBlockingDevice(
-                devices, config.DeviceTypeId, config.ParentDeviceTypeId);
-            if (blocking != null)
-            {
-                // SimHub would answer the add with its instance-cap error dialog,
-                // so explain the conflict instead of offering the button.
-                txtAddDeviceTitle.Text = name + " can't be added yet";
-                txtAddDeviceDetail.Text = "SimHub allows only one of these devices at a time "
-                    + "— remove \"" + blocking.MainDisplayName + "\" on SimHub's Devices page first.";
-                btnAddDevice.Visibility = Visibility.Collapsed;
-            }
-            else
-            {
-                txtAddDeviceTitle.Text = name + " isn't added to SimHub yet";
-                txtAddDeviceDetail.Text = "LED and display output stays off until it's added "
-                    + "as a SimHub device.";
-                btnAddDevice.Visibility = Visibility.Visible;
-                btnAddDevice.IsEnabled = true;
-                _promptDeviceTypeId = config.DeviceTypeId;
-            }
+            txtAddDeviceTitle.Text = name + " isn't added to SimHub yet";
+            txtAddDeviceDetail.Text = "SimHub can't drive it until it's added. LEDs also need "
+                + "an LED profile afterwards — via the LED editor or a profile plugin.";
+            btnAddDevice.IsEnabled = true;
+            _promptDeviceTypeId = config.DeviceTypeId;
 
             borderAddDeviceAlert.Visibility = Visibility.Visible;
         }

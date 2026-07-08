@@ -40,7 +40,11 @@ namespace FanaBridge.Adapters
 
         /// <summary>
         /// Whether the user has added a device with this DeviceTypeID.
-        /// Flattens composite devices the same way SimHub's own device list does.
+        /// Flattens composite devices the same way SimHub's own device list
+        /// does. Note this is an exact-id check: SimHub additionally caps
+        /// instances across a descriptor family (shared ParentDeviceTypeID),
+        /// and answers such an add with its own explanatory dialog — that
+        /// rare edge is left to SimHub rather than pre-checked here.
         /// </summary>
         public static bool IsDeviceAdded(DevicesPlugin devices, string deviceTypeId)
         {
@@ -49,53 +53,6 @@ namespace FanaBridge.Adapters
 
             return devices.GetDevices().Any(d =>
                 string.Equals(d?.DeviceDescriptor?.DeviceTypeID, deviceTypeId, StringComparison.Ordinal));
-        }
-
-        /// <summary>
-        /// The already-added device that would make SimHub refuse to add
-        /// <paramref name="deviceTypeId"/>, or null when the add can proceed.
-        /// SimHub enforces MaximumInstances (1 for all FanaBridge descriptors)
-        /// across a descriptor FAMILY, not just the exact id: an existing
-        /// device blocks a candidate when their ids match or they are related
-        /// through ParentDeviceTypeID — for FanaBridge that means two
-        /// hub+module combos sharing the same module. Attempting the add
-        /// anyway ends in SimHub's "You can only add 1 instances of …" dialog,
-        /// so the prompt explains the conflict instead of offering the button.
-        /// </summary>
-        public static DeviceInstance FindBlockingDevice(
-            DevicesPlugin devices, string deviceTypeId, string parentDeviceTypeId)
-        {
-            var added = devices?.DevicesPluginSettings?.Devices;
-            if (added == null || deviceTypeId == null)
-                return null;
-
-            // Root devices only — SimHub's instance cap counts the same set.
-            return added.ToList().FirstOrDefault(d =>
-                d?.DeviceDescriptor != null
-                && IsSimilarDescriptor(
-                    d.DeviceDescriptor.DeviceTypeID, d.DeviceDescriptor.ParentDeviceTypeID,
-                    deviceTypeId, parentDeviceTypeId));
-        }
-
-        /// <summary>
-        /// Mirrors how SimHub decides which existing devices count against a
-        /// candidate descriptor's MaximumInstances: same DeviceTypeID, or —
-        /// when the existing device has a parent — a shared parent, or a
-        /// parent/child relation in either direction.
-        /// </summary>
-        internal static bool IsSimilarDescriptor(
-            string existingId, string existingParentId,
-            string candidateId, string candidateParentId)
-        {
-            if (string.Equals(existingId, candidateId, StringComparison.Ordinal))
-                return true;
-
-            if (existingParentId == null)
-                return false;
-
-            return string.Equals(existingParentId, candidateParentId, StringComparison.Ordinal)
-                || string.Equals(existingParentId, candidateId, StringComparison.Ordinal)
-                || string.Equals(existingId, candidateParentId, StringComparison.Ordinal);
         }
     }
 }
