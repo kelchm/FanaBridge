@@ -39,6 +39,10 @@ namespace FanaBridge.Protocol
         private ushort _lastRevStripeColor = 0xFFFF;
         private uint _lastRev3BitPacked = 0xFFFFFFFF; // Sentinel for per-LED 3-bit rev
         private uint _lastFlag3BitPacked = 0xFFFFFFFF; // Sentinel for per-LED 3-bit flag
+        // Set by ForceDirty (any thread), consumed at the top of each send path on
+        // the sender's own thread — a ForceDirty landing mid-send must not be
+        // overwritten by that send's re-latch of the old state.
+        private volatile bool _forceDirty;
 
         // ── State tracking for enable sequences ────────────────────────────
         private bool _globalEnabled;
@@ -62,6 +66,8 @@ namespace FanaBridge.Protocol
         public bool SetLegacyRevOnOff(bool[] onOff)
         {
             if (onOff == null || onOff.Length == 0 || onOff.Length > 9) return false;
+
+            ConsumePendingForceDirty();
 
             // Pack the 9-LED bitmask in the wire's RGB333 bit order:
             //   byte[4] = LED0 (bit 0)
@@ -106,6 +112,8 @@ namespace FanaBridge.Protocol
         /// </summary>
         public bool SetRevStripeColor(ushort rgb333)
         {
+            ConsumePendingForceDirty();
+
             // Dirty check
             if (rgb333 == _lastRevStripeColor)
                 return true;
@@ -142,6 +150,8 @@ namespace FanaBridge.Protocol
         public bool SetLegacyRev3Bit(byte[] rgbBools)
         {
             if (rgbBools == null || rgbBools.Length == 0 || rgbBools.Length > 27) return false;
+
+            ConsumePendingForceDirty();
 
             // Pack 27 booleans into 4 bytes, LSB-first
             uint packed = 0;
@@ -187,6 +197,8 @@ namespace FanaBridge.Protocol
         public bool SetLegacyFlag3Bit(byte[] rgbBools)
         {
             if (rgbBools == null || rgbBools.Length == 0 || rgbBools.Length > 18) return false;
+
+            ConsumePendingForceDirty();
 
             // Pack 18 booleans into 4 bytes, LSB-first
             uint packed = 0;
@@ -244,10 +256,21 @@ namespace FanaBridge.Protocol
 
         /// <summary>
         /// Marks state as dirty so the next send always writes to hardware.
-        /// Call when the physical wheel changes.
+        /// Call when the physical wheel changes. Safe from any thread: sets a
+        /// flag consumed on the sender's own thread.
         /// </summary>
         public void ForceDirty()
         {
+            _forceDirty = true;
+        }
+
+        // Applies a pending ForceDirty on the sender's thread, before the dirty
+        // check. If ForceDirty lands mid-send, the flag stays set for the next
+        // send — a forced resend is never lost.
+        private void ConsumePendingForceDirty()
+        {
+            if (!_forceDirty) return;
+            _forceDirty = false;
             _lastBitmask = 0xFFFF;
             _lastRevStripeColor = 0xFFFF;
             _lastRev3BitPacked = 0xFFFFFFFF;

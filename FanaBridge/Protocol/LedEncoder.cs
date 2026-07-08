@@ -39,9 +39,16 @@ namespace FanaBridge.Protocol
 
         // ── Dirty tracking — skip redundant HID writes ───────────────────
         // Color tracking keyed by subcmd; missing entry = dirty (forces send).
+        // Only ever touched from send paths: ForceDirty is called cross-thread
+        // (WheelChanged can fire from the settings UI while a driver send task is
+        // in flight), so it must not mutate this dictionary directly — a concurrent
+        // Clear against TryGetValue/insert corrupts it on net48.
         private readonly Dictionary<byte, ushort[]> _lastColors = new Dictionary<byte, ushort[]>();
         // Button intensity tracking (separate: unique staging protocol, byte[] payload)
         private byte[] _lastIntensities;
+        // Set by ForceDirty (any thread), consumed at the top of each send path
+        // (sender thread) — see ForceDirty.
+        private volatile bool _forceDirty;
 
         // ── Pooled report buffer — avoid per-frame heap allocations ──────
         private readonly byte[] _reportBuf = new byte[REPORT_LENGTH];
@@ -70,6 +77,8 @@ namespace FanaBridge.Protocol
 
             using (_transport.BeginBatch())
             {
+                ConsumePendingForceDirty();
+
                 bool hasColors = colors != null && colors.Length > 0;
                 int ledCount = hasColors ? colors.Length : 0;
 
@@ -163,9 +172,21 @@ namespace FanaBridge.Protocol
         /// Marks LED state as dirty so the next send always writes to hardware.
         /// Call when the physical wheel changes — firmware resets LED state
         /// but our tracking arrays still hold the previous instance's output.
+        /// Safe from any thread: sets a flag consumed on the sender's own thread,
+        /// so the tracking state is never mutated concurrently with a send.
         /// </summary>
         public void ForceDirty()
         {
+            _forceDirty = true;
+        }
+
+        // Applies a pending ForceDirty on the sender's thread, before the dirty
+        // check. If ForceDirty lands mid-send, the flag simply stays set for the
+        // next send — a forced resend is never lost.
+        private void ConsumePendingForceDirty()
+        {
+            if (!_forceDirty) return;
+            _forceDirty = false;
             _lastColors.Clear();
             _lastIntensities = null;
         }
@@ -182,6 +203,8 @@ namespace FanaBridge.Protocol
         {
             int count = colors.Length;
             if (count == 0 || count > MAX_RGB565_PER_REPORT) return false;
+
+            ConsumePendingForceDirty();
 
             // Dirty check: missing entry or size mismatch forces a send
             ushort[] last;
