@@ -45,6 +45,7 @@ namespace FanaBridge.UI
         private volatile CancellationTokenSource _probeCts;
         private volatile CancellationTokenSource _blinkCts;
         private readonly ManualResetEventSlim _blinkDone = new ManualResetEventSlim(true);
+        private readonly ManualResetEventSlim _probeBlinkDone = new ManualResetEventSlim(true);
         private bool _listeningForInput;
         private Action<string> _inputHandler;
         private DispatcherTimer _classifyTimer;
@@ -342,6 +343,7 @@ namespace FanaBridge.UI
                 intensities[i] = 7;
             SetAllLeds(buttonIntensities: intensities);
 
+            _probeBlinkDone.Reset();
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
@@ -366,6 +368,10 @@ namespace FanaBridge.UI
                     }
                 }
                 catch { /* device disconnect */ }
+                finally
+                {
+                    _probeBlinkDone.Set();
+                }
             });
         }
 
@@ -377,6 +383,10 @@ namespace FanaBridge.UI
                 cts.Cancel();
                 _probeCts = null;
             }
+            // Wait for the blink worker to finish so a write that slipped past the
+            // token check can't land a full-intensity frame after the next section's
+            // probe has already painted — the exact join CancelBlink already does.
+            _probeBlinkDone.Wait(500);
         }
 
         // ── Color-format sub-test ────────────────────────────────────────
