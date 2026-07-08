@@ -28,12 +28,22 @@ jobs:
 
       - id: decide
         shell: bash
+        env:
+          # Passed via env, not template expansion, so the value can't break out
+          # of the script's quoting.
+          VERSION_INPUT: ${{ inputs.version }}
         run: |
           set -euo pipefail
           current=$(tr -d '[:space:]' < .simhub-version)
-          candidate='${{ inputs.version }}'
+          candidate="$VERSION_INPUT"
           if [ -z "$candidate" ]; then
             candidate=$(gh api repos/SHWotever/SimHub/releases/latest --jq .tag_name)
+          fi
+          # Downstream jobs expand the candidate into shell scripts; only a plain
+          # version string may pass.
+          if ! printf '%s' "$candidate" | grep -Eqx '[0-9]+(\.[0-9]+)+'; then
+            echo "::error::Candidate version '$candidate' is not a plain version string."
+            exit 1
           fi
           {
             echo "current=$current"

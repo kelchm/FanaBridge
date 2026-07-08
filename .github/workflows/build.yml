@@ -40,8 +40,12 @@ jobs:
 
       - name: Resolve SimHub version
         shell: pwsh
+        env:
+          # Passed via env, not template expansion, so the value can't break out
+          # of the script's quoting.
+          SIMHUB_VERSION_INPUT: ${{ inputs.simhub-version }}
         run: |
-          $Version = '${{ inputs.simhub-version }}'.Trim()
+          $Version = "$env:SIMHUB_VERSION_INPUT".Trim()
           if (-not $Version) { $Version = (Get-Content .simhub-version -Raw).Trim() }
           if ($Version -notmatch '^\d+(\.\d+)+$') {
             Write-Error "Invalid SimHub version '$Version'."
