@@ -289,6 +289,44 @@ namespace FanaBridge.Tests
             Assert.Equal((byte)0, AsU8(v[5]));
         }
 
+        // ── Value rounding (dodge the firmware's per-digit carry bug) ─────
+        // The ITM firmware renders a decimal field as whole.round(frac*10^N) with NO
+        // carry into the integer part, so an unrounded value just below a round-up
+        // boundary misrenders (16.9692 -> "16.10"). The official app pre-rounds each
+        // float to its display precision; we match it. Fuel = 1 decimal; delta and the
+        // car-gap fields = 2 decimals. Time fields truncate in firmware, so they are
+        // deliberately left unrounded.
+
+        [Fact]
+        public void Fuel_IsRoundedToOneDecimal()
+        {
+            var s = NewStatus();
+            Set(s, "Fuel", 16.9692);
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.Fuel, 8, Wrap(s), out var v));
+            Assert.Equal(17.0f, AsF32(v), 3);   // 16.9692 -> 17.0, not the raw boundary value
+        }
+
+        [Fact]
+        public void DeltaOwnBest_IsRoundedToTwoDecimals()
+        {
+            var s = NewStatus();
+            Set(s, "DeltaToSessionBest", (double?)1.997);
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.DeltaOwnBest, 12, Wrap(s), out var v));
+            Assert.Equal(2.0f, AsF32(v), 3);
+        }
+
+        [Fact]
+        public void CarGaps_AreRoundedToTwoDecimals()
+        {
+            var s = NewStatus();
+            Set(s, "OpponentsAheadOnTrack", OpponentList(1.997));    // -> 2.00, negated (you're behind them)
+            Set(s, "OpponentsBehindOnTrack", OpponentList(1.992));   // -> 1.99
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.CarAhead, 10, Wrap(s), out var ahead));
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.CarBehind, 11, Wrap(s), out var behind));
+            Assert.Equal(-2.0f, AsF32(ahead), 3);
+            Assert.Equal(1.99f, AsF32(behind), 3);
+        }
+
         // ── TyreTemps encoding ───────────────────────────────────────────
 
         // ── Subscription report parsing (firmware-driven path) ───────────
