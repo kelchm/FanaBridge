@@ -377,6 +377,50 @@ namespace FanaBridge.Tests
             Assert.Equal((byte)'C', pd[8]);            // Celsius
         }
 
+        // A game-exit DisplayReset clears the firmware's suffix; on resume the suffix set is
+        // unchanged, so the sig-latch would suppress the re-send and the suffix would never
+        // come back (value renders, suffix doesn't). The exit reset must clear the sig so the
+        // def re-decorates when telemetry returns.
+        [Fact]
+        public void GameExitThenResume_ReDecoratesSuffix()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);
+            driver.OnSubscriptionReport(TyreSubReport);   // 'C' suffix on the tyre page
+            clock.T += 1000;
+            driver.Update(EmptyData());                   // telemetry live -> def sent
+            Assert.Contains(t.Sent, IsParamDefs);
+
+            driver.Update(NotRunningData());              // game exit -> DisplayReset
+            t.Sent.Clear();
+
+            clock.T += 1000;
+            driver.Update(EmptyData());                   // resume, same suffix set -> MUST re-send
+            Assert.Contains(t.Sent, IsParamDefs);
+        }
+
+        // ParamDefs is fire-and-forget (no ack): a single send is occasionally dropped by the
+        // firmware, so every def is sent as a tight double-tap (~50 ms), matching the official
+        // app's priming. Exactly one extra send, then silence until the suffix set changes.
+        [Fact]
+        public void ParamDefs_AreTightDoubleTapped()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);
+            driver.OnSubscriptionReport(TyreSubReport);
+            clock.T += 1000;
+            driver.Update(EmptyData());                    // first def (tap 1)
+            Assert.Equal(1, t.Sent.Count(IsParamDefs));
+
+            clock.T += driver.DefDoubleTapMs;              // ~50 ms later
+            driver.Update(EmptyData());                    // the tight second tap
+            Assert.Equal(2, t.Sent.Count(IsParamDefs));
+
+            clock.T += 5000;                               // suffix unchanged -> no further sends
+            driver.Update(EmptyData());
+            Assert.Equal(2, t.Sent.Count(IsParamDefs));
+        }
+
         [Fact]
         public void LapAndPosition_SendParamDefsTotalSuffix()
         {

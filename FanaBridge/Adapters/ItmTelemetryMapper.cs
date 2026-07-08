@@ -57,11 +57,16 @@ namespace FanaBridge.Adapters
                 [ItmParam.LastLapTime] = F32(ItmParam.LastLapTime, d => Seconds(d.LastLapTime)),
 
                 // Fuel / ERS / DRS
-                [ItmParam.Fuel] = F32(ItmParam.Fuel, d => (float)d.Fuel),
+                // Round each displayed float to its field's precision on the host: the firmware
+                // renders a decimal field as whole.round(frac*10^N) with NO carry, so an
+                // unrounded value just below a boundary misrenders (16.9692 -> "16.10"). The
+                // official app pre-rounds the same way. Fuel = 1 dp; delta/gaps = 2 dp; time
+                // fields truncate in firmware and are left unrounded.
+                [ItmParam.Fuel] = F32(ItmParam.Fuel, d => (float)Math.Round(d.Fuel, 1)),
                 [ItmParam.ErsLevel] = I32(ItmParam.ErsLevel, d => SafeRound(d.ERSPercent)),
                 [ItmParam.DrsZone] = U8(ItmParam.DrsZone, d => (byte)(d.DRSAvailable != 0 ? 1 : 0)),
                 [ItmParam.DrsActive] = U8(ItmParam.DrsActive, d => (byte)(d.DRSEnabled != 0 ? 1 : 0)),
-                [ItmParam.DeltaOwnBest] = F32(ItmParam.DeltaOwnBest, d => (float)(d.DeltaToSessionBest ?? 0.0)),
+                [ItmParam.DeltaOwnBest] = F32(ItmParam.DeltaOwnBest, d => (float)Math.Round(d.DeltaToSessionBest ?? 0.0, 2)),
 
                 // Car Settings
                 [ItmParam.TcSetting] = U8(ItmParam.TcSetting, d => ClampByte(d.TCLevel)),
@@ -76,8 +81,8 @@ namespace FanaBridge.Adapters
                 // Lap Times
                 [ItmParam.BestLapTime] = F32(ItmParam.BestLapTime, d => Seconds(d.BestLapTime)),
                 // Car ahead is shown as a negative gap (you're behind them); car behind positive.
-                [ItmParam.CarAhead] = F32(ItmParam.CarAhead, d => -NearestGap(d.OpponentsAheadOnTrack)),
-                [ItmParam.CarBehind] = F32(ItmParam.CarBehind, d => NearestGap(d.OpponentsBehindOnTrack)),
+                [ItmParam.CarAhead] = F32(ItmParam.CarAhead, d => -(float)Math.Round(NearestGap(d.OpponentsAheadOnTrack), 2)),
+                [ItmParam.CarBehind] = F32(ItmParam.CarBehind, d => (float)Math.Round(NearestGap(d.OpponentsBehindOnTrack), 2)),
 
                 // Tyre Temps
                 [ItmParam.TyreFlTemp] = U8(ItmParam.TyreFlTemp, d => ClampByte(d.TyreTemperatureFrontLeft)),
