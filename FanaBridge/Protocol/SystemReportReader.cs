@@ -4,15 +4,16 @@ using FanaBridge.Transport;
 namespace FanaBridge.Protocol
 {
     /// <summary>
-    /// Reads the col03 <c>FF 08</c> system report — the wire-level side of identity.
-    /// Owns the enable/trigger byte patterns, the report offsets, and the signature
-    /// scan, leaving <see cref="FanatecWheelbase"/> to own identity STATE.
+    /// The col03 <c>FF 08</c> system-report codec — the wire-level side of identity.
+    /// Owns the enable/trigger byte patterns and the report decode, leaving
+    /// <see cref="FanatecWheelbase"/> to own identity STATE. Frame routing lives
+    /// in <see cref="Col03FrameClassifier"/>: the transport's reader thread feeds
+    /// <see cref="IDeviceTransport.IdentityReports"/> with FF 08 frames only, so
+    /// the helpers here just drain/elicit that one stream.
     ///
     /// After a single <see cref="Enable"/> the base PUSHES this report on every
     /// attachment change and is otherwise silent, so steady-state reads are a
     /// non-blocking drain — no triggering.
-    ///
-    /// TODO: migrate to a general purpose Col03 input pump that consistently dispatches by signature
     /// </summary>
     internal sealed class SystemReportReader
     {
@@ -32,8 +33,11 @@ namespace FanaBridge.Protocol
         }
 
         private const int ReportLength = 64;
-        private const int InitialReadTimeoutMs = 60;
-        private const int InitialMaxReadAttempts = 8; // axis reports interleave; skip past them
+        // Matches the old worst-case connect window (8 attempts × 60 ms while
+        // interleaved frames kept arriving). The identity stream is classifier-
+        // filtered, so one deadline covers it — and the elicit returns the
+        // moment the reply lands, so a fast base still connects in ~one read.
+        private const int InitialReadTimeoutMs = 480;
         private const int DrainTimeoutMs = 0;         // non-blocking
         private const int DrainMaxReports = 16;       // bound per drain
 
@@ -51,118 +55,55 @@ namespace FanaBridge.Protocol
         /// </summary>
         public bool ReadInitial(IDeviceTransport io, out Reading reading)
         {
-            reading = default;
-
-            // Hold the transport for the enable→trigger→read sequence so an
-            // interleaved LED write can't land between trigger and read.
-            using (io.BeginBatch())
-            {
-                io.SendCol03(BuildEnable());
-                io.SendCol03(BuildTrigger());
-
-                byte[] buf = Buffer(io);
-                for (int attempt = 0; attempt < InitialMaxReadAttempts; attempt++)
-                {
-                    int n = io.ReadCol03(buf, InitialReadTimeoutMs);
-                    if (n <= 0) break;
-
-                    int sig = FindSignature(buf, n);
-                    if (sig < 0) continue; // axis/other report — read again
-
-                    reading = Decode(buf, sig, n);
-                    return true;
-                }
-            }
-            return false;
+            Reading decoded = default;
+            byte[] buf = Buffer(io);
+            int n = ReportElicit.Elicit(
+                io, io.IdentityReports,
+                new[] { BuildEnable(), BuildTrigger() },
+                (frame, len) => TryDecode(frame, len, out decoded),
+                InitialReadTimeoutMs, buf);
+            reading = decoded;
+            return n > 0;
         }
 
         /// <summary>
-        /// Non-blocking drain of pushed col03 reports, dispatched by signature: FF 08 -> onReading,
-        /// SRM <c>0xDD</c> -> onSrmReport, FF 05 ITM -> onItmReport (each as a private copy). One read
-        /// loop routes all three, so nothing is stolen. Returns the number of FF 08 readings delivered.
+        /// Non-blocking drain of pushed FF 08 system reports; each decoded reading
+        /// goes to <paramref name="onReading"/>. Lock-free: the identity stream has
+        /// this reader as its single owner. Returns the number of readings delivered.
         /// </summary>
-        public int DrainPushes(IDeviceTransport io, Action<Reading> onReading,
-            Action<byte[]> onItmReport = null, Action<byte[]> onSrmReport = null)
+        public int DrainIdentity(IDeviceTransport io, Action<Reading> onReading)
         {
             int count = 0;
-            using (io.BeginBatch())
+            var stream = io.IdentityReports;
+            byte[] buf = Buffer(io);
+            for (int i = 0; i < DrainMaxReports; i++)
             {
-                byte[] buf = Buffer(io);
-                for (int i = 0; i < DrainMaxReports; i++)
+                int n = stream.TryRead(buf, DrainTimeoutMs);
+                if (n <= 0) break;
+
+                if (TryDecode(buf, n, out var reading))
                 {
-                    int n = io.ReadCol03(buf, DrainTimeoutMs);
-                    if (n <= 0) break;
-
-                    int sig = FindSignature(buf, n);
-                    if (sig >= 0)
-                    {
-                        onReading(Decode(buf, sig, n));
-                        count++;
-                        continue;
-                    }
-
-                    if (onSrmReport != null && IsSrmReport(buf, n))
-                    {
-                        var copy = new byte[n];
-                        Array.Copy(buf, copy, n);
-                        onSrmReport(copy);
-                        continue;
-                    }
-
-                    if (onItmReport != null && IsItmReport(buf, n))
-                    {
-                        var copy = new byte[n];
-                        Array.Copy(buf, copy, n);
-                        onItmReport(copy);
-                    }
+                    onReading(reading);
+                    count++;
                 }
             }
             return count;
         }
 
-        // True if the report carries the col03 ITM signature (FF 05), tolerating a
-        // leading report-ID byte. The firmware pushes these on ITM page changes.
-        private static bool IsItmReport(byte[] buf, int len)
-        {
-            for (int i = 0; i <= 2 && i + 1 < len; i++)
-                if (buf[i] == 0xFF && buf[i + 1] == 0x05)
-                    return true;
-            return false;
-        }
-
-        // True if the report is an SRM DE FA 0xDD identity reply: 0xDD at offset 0 (raw) or 1 (behind
-        // a report-id) — NOT deeper, so an FF 08 / FF 05 frame is never mistaken for one.
-        private static bool IsSrmReport(byte[] buf, int len)
-        {
-            for (int i = 0; i <= 1 && i < len; i++)
-                if (buf[i] == 0xDD)
-                    return len >= i + 6;
-            return false;
-        }
-
         /// <summary>
-        /// Times a few empty (idle) drains to confirm <c>ReadCol03(buf, 0)</c> is
-        /// non-blocking — the per-frame drain depends on it; a blocking read would
-        /// stall the frame thread. Returns the slowest sample in milliseconds.
-        /// Call once after the initial read (when the input is quiet).
+        /// Decodes a frame as an FF 08 system report (signature scan + length
+        /// check via <see cref="Col03FrameClassifier"/>). False for anything else.
         /// </summary>
-        public double ProbeDrainLatencyMs(IDeviceTransport io, int samples)
+        public static bool TryDecode(byte[] buf, int len, out Reading reading)
         {
-            double worst = 0;
-            var sw = new System.Diagnostics.Stopwatch();
-            using (io.BeginBatch())
+            int sig = Col03FrameClassifier.FindIdentitySignature(buf, len);
+            if (sig < 0)
             {
-                byte[] buf = Buffer(io);
-                for (int i = 0; i < samples; i++)
-                {
-                    sw.Restart();
-                    io.ReadCol03(buf, DrainTimeoutMs); // expected empty → must return immediately
-                    sw.Stop();
-                    double ms = sw.Elapsed.TotalMilliseconds;
-                    if (ms > worst) worst = ms;
-                }
+                reading = default;
+                return false;
             }
-            return worst;
+            reading = Decode(buf, sig, len);
+            return true;
         }
 
         // Reusable read buffer, sized to the col03 input report length. Safe to
@@ -191,17 +132,6 @@ namespace FanaBridge.Protocol
                 ModRaw   = buf[sig + FanatecIdentity.OffModule],
                 Raw      = raw,
             };
-        }
-
-        // Locate the "FF 08" signature; tolerates a leading report-ID byte by
-        // scanning the first few positions.
-        private static int FindSignature(byte[] buf, int len)
-        {
-            int limit = len - (FanatecIdentity.OffModule + 1);
-            for (int i = 0; i <= limit && i <= 2; i++)
-                if (buf[i] == 0xFF && buf[i + 1] == 0x08)
-                    return i;
-            return -1;
         }
 
         private static byte[] BuildEnable()

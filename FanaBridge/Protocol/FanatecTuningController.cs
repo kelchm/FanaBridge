@@ -21,7 +21,10 @@ namespace FanaBridge.Protocol
         internal const byte SUBCMD_READ = 0x02;
         internal const byte DEVICE_ID_BMR = 0x02;
         internal const int READ_TIMEOUT_MS = 1000;
-        internal const int DRAIN_TIMEOUT_MS = 50;
+        // Quiet-window drain before each read: absorbs a LATE response still in
+        // flight from a previous timed-out read, which would otherwise be
+        // matched as the new request's reply (responses carry no correlation id).
+        internal const int STALE_GRACE_MS = 50;
 
         internal const int READ_ENCODER_MODE_OFFSET = 18;
         internal const int WRITE_ENCODER_MODE_OFFSET = 19;
@@ -161,9 +164,11 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Reads the current tuning state from the device.
-        /// Sends a READ request on col03 and waits for the matching response.
-        /// Must be called inside a batch.
+        /// Reads the current tuning state from the device: an elicit on the
+        /// tuning response stream (this controller is its single owner, so the
+        /// stale-frame flush can't discard identity/ITM pushes and the response
+        /// can't be consumed by anyone else). Safe inside an outer batch
+        /// (the elicit's own batch is re-entrant).
         /// </summary>
         private byte[] ReadTuningState(byte deviceId)
         {
@@ -180,31 +185,30 @@ namespace FanaBridge.Protocol
                 if (maxInputLen <= 0) maxInputLen = REPORT_LENGTH;
                 var buf = new byte[maxInputLen];
 
-                // Drain any stale input reports (short timeout)
-                while (_transport.ReadCol03(buf, DRAIN_TIMEOUT_MS) >= 0) { }
-
-                // Send the read request on col03
-                _transport.SendCol03(request);
-
-                // Read responses until we get the matching tuning state
-                var deadline = DateTime.UtcNow.AddMilliseconds(READ_TIMEOUT_MS);
-
-                while (DateTime.UtcNow < deadline)
-                {
-                    int bytesRead = _transport.ReadCol03(buf, READ_TIMEOUT_MS);
-                    if (bytesRead >= 3 &&
-                        buf[0] == 0xFF &&
-                        buf[1] == CMD_CLASS &&
-                        buf[2] == deviceId)
+                // Match with the same report-id tolerance the router applies —
+                // a response the router queued must never be unmatchable here.
+                int n = ReportElicit.Elicit(
+                    _transport, _transport.TuningReports,
+                    new[] { request },
+                    (frame, len) =>
                     {
-                        var result = new byte[REPORT_LENGTH];
-                        Array.Copy(buf, result, Math.Min(bytesRead, REPORT_LENGTH));
-                        return result;
-                    }
+                        int s = Col03FrameClassifier.FindTuningSignature(frame, len);
+                        return s >= 0 && len > s + 2 && frame[s + 2] == deviceId;
+                    },
+                    READ_TIMEOUT_MS, buf, STALE_GRACE_MS);
+
+                if (n < 0)
+                {
+                    _logWarn("FanatecTuning: Read — no matching response within timeout");
+                    return null;
                 }
 
-                _logWarn("FanatecTuning: Read — no matching response within timeout");
-                return null;
+                // Normalize to signature-at-offset-0 so payload offsets (e.g. the
+                // encoder-mode byte) are stable regardless of a report-id prefix.
+                int sig = Col03FrameClassifier.FindTuningSignature(buf, n);
+                var result = new byte[REPORT_LENGTH];
+                Array.Copy(buf, sig, result, 0, Math.Min(n - sig, REPORT_LENGTH));
+                return result;
             }
             catch (Exception ex)
             {

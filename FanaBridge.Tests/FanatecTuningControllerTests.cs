@@ -21,40 +21,38 @@ namespace FanaBridge.Tests
             public List<byte[]> SentCol03Reports { get; } = new List<byte[]>();
             public List<byte[]> SentCol01Reports { get; } = new List<byte[]>();
 
-            /// <summary>Queue of reports that ReadCol03 will return.</summary>
+            /// <summary>
+            /// Scripted tuning responses. Each is delivered to the tuning stream
+            /// when a READ request is SENT — mirroring the device answering after
+            /// the request, so the elicit's stale-frame flush (which runs before
+            /// the send) can't clear a pre-scripted reply.
+            /// </summary>
             public Queue<byte[]> ReadQueue { get; } = new Queue<byte[]>();
 
-            /// <summary>
-            /// When true, the first ReadCol03 call returns -1 (simulates
-            /// drain completion), then subsequent calls use the queue.
-            /// </summary>
-            public bool DrainReturnsNegative { get; set; } = true;
+            public FakeReportStream Tuning { get; } = new FakeReportStream();
+            public FakeReportStream Identity { get; } = new FakeReportStream();
+            public FakeReportStream Itm { get; } = new FakeReportStream();
 
-            private bool _drained;
+            public IReportStream IdentityReports => Identity;
+            public IReportStream ItmReports => Itm;
+            public IReportStream SrmReports => FakeReportStream.Empty;
+            public IReportStream TuningReports => Tuning;
 
             public bool SendCol03(byte[] data)
             {
                 var copy = new byte[data.Length];
                 Array.Copy(data, copy, data.Length);
                 SentCol03Reports.Add(copy);
-                return true;
-            }
 
-            public int ReadCol03(byte[] buffer, int timeoutMs)
-            {
-                // Simulate drain phase: first call returns -1 (no data)
-                if (DrainReturnsNegative && !_drained)
+                if (data.Length > 2 &&
+                    data[0] == 0xFF &&
+                    data[1] == FanatecTuningController.CMD_CLASS &&
+                    data[2] == FanatecTuningController.SUBCMD_READ &&
+                    ReadQueue.Count > 0)
                 {
-                    _drained = true;
-                    return -1;
+                    Tuning.Enqueue(ReadQueue.Dequeue());
                 }
-
-                if (ReadQueue.Count == 0)
-                    return -1;
-
-                var report = ReadQueue.Dequeue();
-                Array.Copy(report, buffer, Math.Min(report.Length, buffer.Length));
-                return report.Length;
+                return true;
             }
 
             public bool SendCol01(byte[] data)
@@ -267,6 +265,52 @@ namespace FanaBridge.Tests
             Assert.Equal(FanatecTuningController.COL01_TUNING_ACK, offPacket[4]);
             Assert.Equal(0x00, offPacket[5]);
             Assert.Equal(0x00, offPacket[6]);
+        }
+
+        // ── Family isolation (the old shared-stream steal scenarios) ─────
+
+        [Fact]
+        public void ReadTuningStateRaw_NeverTouchesOtherFamilies()
+        {
+            var transport = new StubTransport();
+            transport.ReadQueue.Enqueue(FakeReadResponse(0x01));
+
+            // Pending pushes on the streams the tuning controller does NOT own.
+            var identityPush = new byte[64];
+            identityPush[0] = 0xFF; identityPush[1] = 0x08;
+            transport.Identity.Enqueue(identityPush);
+            var itmPush = new byte[64];
+            itmPush[0] = 0xFF; itmPush[1] = 0x05;
+            transport.Itm.Enqueue(itmPush);
+
+            var controller = new FanatecTuningController(transport);
+            var raw = controller.ReadTuningStateRaw();
+
+            Assert.NotNull(raw);
+            // The old code's 50 ms pre-drain swallowed ANY pending frame; the
+            // elicit touches only the tuning stream — the pushes survive, unread.
+            Assert.Equal(1, transport.Identity.PendingCount);
+            Assert.Equal(1, transport.Itm.PendingCount);
+            Assert.Equal(0, transport.Identity.ReadCount);
+            Assert.Equal(0, transport.Itm.ReadCount);
+        }
+
+        [Fact]
+        public void ReadTuningStateRaw_FlushesStaleTuningResponse()
+        {
+            var transport = new StubTransport();
+
+            // A stale response sitting in the tuning stream (e.g. from an
+            // earlier aborted read) must not be returned for a new request.
+            transport.Tuning.Enqueue(FakeReadResponse(0x77));
+            transport.ReadQueue.Enqueue(FakeReadResponse(0x01));
+
+            var controller = new FanatecTuningController(transport);
+            var raw = controller.ReadTuningStateRaw();
+
+            Assert.NotNull(raw);
+            Assert.Equal(1, transport.Tuning.FlushCount);
+            Assert.Equal(0x01, raw[FanatecTuningController.READ_ENCODER_MODE_OFFSET]);
         }
 
         // ── Constructor ──────────────────────────────────────────────────

@@ -26,9 +26,9 @@ namespace FanaBridge.Protocol
         private const int Col03Len = 64;
 
         /// <summary>
-        /// Sends the <c>DE FA AD</c> query on col03 (report-id 0xFF, then 0x00). Send-only: the reply is
-        /// picked up by the shared col03 read dispatch, so it can never consume a genuine FF 08 frame.
-        /// Harmless to a genuine base (which does not answer).
+        /// Sends the <c>DE FA AD</c> query on col03 (report-id 0xFF, then 0x00). Send-only: the reply
+        /// arrives on the transport's SRM stream (<see cref="IDeviceTransport.SrmReports"/>), so it can
+        /// never consume a genuine FF 08 frame. Harmless to a genuine base (which does not answer).
         /// </summary>
         public void SendQuery(IDeviceTransport io)
         {
@@ -44,15 +44,15 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Decode a col03 frame if it is a <c>0xDD</c> reply. The signature sits at offset 0 or 1 only,
-        /// so an FF 08 / FF 05 frame can never be mistaken for a converter reply.
+        /// Decode a col03 frame if it is a <c>0xDD</c> reply. The signature rule lives in
+        /// <see cref="Col03FrameClassifier.IsSrm"/> (offset 0 or 1 only, so an FF 08 / FF 05
+        /// frame can never be mistaken for a converter reply).
         /// </summary>
         public static bool TryDecodeFrame(byte[] buf, int n, out Result result)
         {
             result = default;
             if (buf == null) return false;
-            int sig = FindByte(buf, n, 0xDD, 2);
-            if (sig < 0 || n < sig + 6) return false;
+            if (!Col03FrameClassifier.IsSrm(buf, n, out int sig)) return false;
             result = Decode(buf, sig, n);
             return true;
         }
@@ -84,12 +84,5 @@ namespace FanaBridge.Protocol
             => wheelId == 0x00 ? null
              : wheelId == 0x17 ? "CSLESWWRC"
              : FanatecIdentity.DecodeCode(wheelId);
-
-        private static int FindByte(byte[] buf, int n, byte val, int within)
-        {
-            for (int i = 0; i < within && i < n; i++)
-                if (buf[i] == val) return i;
-            return -1;
-        }
     }
 }

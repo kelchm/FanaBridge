@@ -30,8 +30,8 @@ namespace FanaBridge.Protocol
         private const int PulseWindowMs = 110;      // per-SubId col01 read window (~ native Sleep(100) pulse gap)
         private const int FinalDrainMs = 160;       // trailing drain for anything still streaming
         private const int Col01ReadTimeoutMs = 20;
-        private const int Col03MaxReads = 12;
-        private const int Col03ReadTimeoutMs = 40;
+        private const int Ff08ExtraWaitMs = 200;    // grace after the pulses if the FF 08 tap is still empty
+        private const int DeFaWaitMs = 150;         // per-report-id wait for the 0xDD reply
 
         /// <summary>The captured surfaces. Any field may be null when that surface stayed silent.</summary>
         public sealed class Result
@@ -58,7 +58,14 @@ namespace FanaBridge.Protocol
             var engage = new List<string>();
             var sw = new Stopwatch();
 
-            // Hold the transport for the whole capture so the runtime's frames don't interleave ours.
+            // The FF 08 reply belongs to the identity stream, whose single owner is
+            // the wheelbase's frame drain — so the probe OBSERVES via a tap instead
+            // of consuming. The tap spans the whole run: the reply usually lands
+            // during the col01 pulse phase. The batch protects our WRITE sequence
+            // from interleaving; the runtime's reads are unaffected (lock-free).
+            var ff08 = new FirstFrame(f => Col03FrameClassifier.FindIdentitySignature(f, f.Length) >= 0);
+
+            using (io.IdentityReports.Tap(ff08.Offer))
             using (io.BeginBatch())
             {
                 // col03 FF 08 enable + trigger.
@@ -76,10 +83,51 @@ namespace FanaBridge.Protocol
                 DrainCol01(io, FinalDrainMs, seen, r, sw);
                 r.Engage = "engage[" + string.Join("  ", engage) + "]";
 
-                CaptureFf08(io, r);
+                FinishFf08(ff08, r);
                 CaptureDeFa(io, r);
             }
             return r;
+        }
+
+        // First frame accepted by a predicate, offered from a tap (reader thread)
+        // and awaited by the probe (UI thread). A Monitor latch, not a poll:
+        // Await wakes the moment Offer accepts, keeping the probe's batch-held
+        // wait as short as the device's actual response latency.
+        private sealed class FirstFrame
+        {
+            private readonly object _sync = new object();
+            private readonly Func<byte[], bool> _accept;
+            private byte[] _frame;
+
+            public FirstFrame(Func<byte[], bool> accept) { _accept = accept; }
+
+            public void Offer(byte[] frame)
+            {
+                lock (_sync)
+                {
+                    if (_frame == null && _accept(frame))
+                    {
+                        _frame = frame;
+                        System.Threading.Monitor.PulseAll(_sync);
+                    }
+                }
+            }
+
+            /// <summary>Waits up to <paramref name="windowMs"/> for an accepted frame.</summary>
+            public byte[] Await(int windowMs)
+            {
+                lock (_sync)
+                {
+                    int start = Environment.TickCount;
+                    int remaining = windowMs;
+                    while (_frame == null && remaining > 0)
+                    {
+                        System.Threading.Monitor.Wait(_sync, remaining);
+                        remaining = windowMs - (Environment.TickCount - start);
+                    }
+                    return _frame;
+                }
+            }
         }
 
         private static void Pulse(IDeviceTransport io, byte subId, string label,
@@ -134,60 +182,52 @@ namespace FanaBridge.Protocol
             return string.Format("rim 0x{0:X2} {1}", wire, FanatecIdentity.DecodeCode(wire) ?? "unrecognized");
         }
 
-        // Read col03 for an FF 08 system report (the engage already enabled+triggered it).
-        private static void CaptureFf08(IDeviceTransport io, Result r)
+        // Decode the FF 08 system report the identity tap collected (the engage
+        // enabled+triggered it; the reply lands during the pulse phase). A short
+        // grace wait covers a slow responder.
+        private static void FinishFf08(FirstFrame ff08, Result r)
         {
-            int len = io.Col03MaxInputReportLength;
-            if (len < 64) len = 64;
-            var buf = new byte[len];
+            var frame = ff08.Await(Ff08ExtraWaitMs);
+            if (frame == null) return;
 
-            for (int i = 0; i < Col03MaxReads; i++)
-            {
-                int n = io.ReadCol03(buf, Col03ReadTimeoutMs);
-                if (n <= 0) break;
+            int n = frame.Length;
+            int sig = Col03FrameClassifier.FindIdentitySignature(frame, n);
+            if (sig < 0) return;
 
-                int sig = FindPair(buf, n, 0xFF, 0x08);
-                if (sig < 0 || n < sig + 0x20) continue;
-
-                r.Ff08Raw = Hex(buf, n);
-                byte baseType = buf[sig + 0x02], wire = buf[sig + 0x18], mod = buf[sig + 0x1F];
-                r.Ff08Line = string.Format(
-                    "base [0x02]=0x{0:X2} {1}   rim [0x18]=0x{2:X2} {3}   module [0x1F]=0x{4:X2} {5}",
-                    baseType, FanatecIdentity.DecodeBaseCode(baseType) ?? "unrecognized",
-                    wire, FanatecIdentity.DecodeCode(wire) ?? "unrecognized",
-                    mod, FanatecIdentity.DecodeModule(mod) ?? "none");
-                return;
-            }
+            r.Ff08Raw = Hex(frame, n);
+            byte baseType = frame[sig + 0x02], wire = frame[sig + 0x18], mod = frame[sig + 0x1F];
+            r.Ff08Line = string.Format(
+                "base [0x02]=0x{0:X2} {1}   rim [0x18]=0x{2:X2} {3}   module [0x1F]=0x{4:X2} {5}",
+                baseType, FanatecIdentity.DecodeBaseCode(baseType) ?? "unrecognized",
+                wire, FanatecIdentity.DecodeCode(wire) ?? "unrecognized",
+                mod, FanatecIdentity.DecodeModule(mod) ?? "none");
         }
 
-        // Query the SRM Conversion Kit's DE FA AD -> 0xDD channel on col03. Tries both report-ids
-        // (0xFF and 0x00); a genuine base answers neither. OUT data = 00 DE FA AD;
+        // Query the SRM Conversion Kit's DE FA AD -> 0xDD channel on col03, observing the reply
+        // via an SRM-stream tap (the wheelbase owns that stream — and may legitimately consume
+        // the same reply; the tap sees every frame regardless). Tries both report-ids (0xFF and
+        // 0x00); a genuine base answers neither. OUT data = 00 DE FA AD;
         // IN = DD [kitMaj] [kitMin] [wheelId] [wheelFw] [module].
         private static void CaptureDeFa(IDeviceTransport io, Result r)
         {
             foreach (byte reportId in new byte[] { 0xFF, 0x00 })
             {
-                var outRep = new byte[64];
-                outRep[0] = reportId;                       // report-id
-                outRep[1] = 0x00;                           // data[0] = channel/sub byte
-                outRep[2] = 0xDE; outRep[3] = 0xFA; outRep[4] = 0xAD; // magic + cmd AD (get-wheel)
-                try { if (!io.SendCol03(outRep)) continue; }
-                catch { continue; }
-
-                int len = io.Col03MaxInputReportLength;
-                if (len < 64) len = 64;
-                var buf = new byte[len];
-
-                for (int i = 0; i < Col03MaxReads; i++)
+                var dd = new FirstFrame(f => Col03FrameClassifier.IsSrm(f, f.Length, out _));
+                using (io.SrmReports.Tap(dd.Offer))
                 {
-                    int n = io.ReadCol03(buf, Col03ReadTimeoutMs);
-                    if (n <= 0) break;
+                    var outRep = new byte[64];
+                    outRep[0] = reportId;                       // report-id
+                    outRep[1] = 0x00;                           // data[0] = channel/sub byte
+                    outRep[2] = 0xDE; outRep[3] = 0xFA; outRep[4] = 0xAD; // magic + cmd AD (get-wheel)
+                    try { if (!io.SendCol03(outRep)) continue; }
+                    catch { continue; }
 
-                    int sig = FindByte(buf, n, 0xDD, 3); // scan first 3 bytes for the 0xDD signature
-                    if (sig < 0 || n < sig + 6) continue;
+                    var frame = dd.Await(DeFaWaitMs);
+                    if (frame == null) continue;
+                    if (!Col03FrameClassifier.IsSrm(frame, frame.Length, out int sig)) continue;
 
-                    r.DeFaRaw = Hex(buf, n);
-                    r.DeFaLine = DescribeDeFa(buf, sig, reportId);
+                    r.DeFaRaw = Hex(frame, frame.Length);
+                    r.DeFaLine = DescribeDeFa(frame, sig, reportId);
                     return;
                 }
             }
@@ -217,21 +257,6 @@ namespace FanaBridge.Protocol
             var b = new byte[64];
             b[0] = 0xFF; b[1] = 0x08; b[2] = b2; b[3] = b3;
             return b;
-        }
-
-        // FF 08-style signature scan (tolerates a leading report-id byte).
-        private static int FindPair(byte[] buf, int n, byte a, byte b)
-        {
-            for (int i = 0; i <= 2 && i + 1 < n; i++)
-                if (buf[i] == a && buf[i + 1] == b) return i;
-            return -1;
-        }
-
-        private static int FindByte(byte[] buf, int n, byte val, int within)
-        {
-            for (int i = 0; i < within && i < n; i++)
-                if (buf[i] == val) return i;
-            return -1;
         }
 
         private static string Hex(byte[] buf, int n)
