@@ -1,0 +1,147 @@
+name: SimHub Update Check
+
+on:
+  schedule:
+    - cron: '23 10 * * 1'   # Mondays 10:23 UTC
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Check/validate this SimHub release tag instead of the latest (testing aid)'
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      current:       ${{ steps.decide.outputs.current }}
+      candidate:     ${{ steps.decide.outputs.candidate }}
+      update-needed: ${{ steps.decide.outputs.update-needed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: decide
+        shell: bash
+        env:
+          # Passed via env, not template expansion, so the value can't break out
+          # of the script's quoting.
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          current=$(tr -d '[:space:]' < .simhub-version)
+          candidate="$VERSION_INPUT"
+          if [ -z "$candidate" ]; then
+            candidate=$(gh api repos/SHWotever/SimHub/releases/latest --jq .tag_name)
+          fi
+          # Downstream jobs expand the candidate into shell scripts; only a plain
+          # version string may pass.
+          if ! printf '%s' "$candidate" | grep -Eqx '[0-9]+(\.[0-9]+)+'; then
+            echo "::error::Candidate version '$candidate' is not a plain version string."
+            exit 1
+          fi
+          {
+            echo "current=$current"
+            echo "candidate=$candidate"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$candidate" = "$current" ]; then
+            echo "Already pinned to $candidate."
+            echo "update-needed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # The build downloads SimHub.<ver>.zip — confirm the asset exists before proposing.
+          if ! gh api "repos/SHWotever/SimHub/releases/tags/$candidate" --jq '.assets[].name' \
+               | grep -qx "SimHub.$candidate.zip"; then
+            echo "::warning::Release $candidate has no SimHub.$candidate.zip asset; skipping."
+            echo "update-needed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Idempotency: if a PR (open, merged, or closed/rejected) ever existed for
+          # this version's branch, don't propose it again.
+          if [ "$(gh pr list --state all --head "ci/simhub-$candidate" --json number --jq length)" != "0" ]; then
+            echo "A PR for ci/simhub-$candidate already exists; skipping."
+            echo "update-needed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "update-needed=true" >> "$GITHUB_OUTPUT"
+
+  # PRs opened with GITHUB_TOKEN don't trigger pull_request workflows, so the
+  # candidate version is validated here, before the PR is created.
+  validate:
+    needs: check
+    if: needs.check.outputs.update-needed == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      configuration: Release
+      version-suffix: preview
+      artifact-label: simhub-${{ needs.check.outputs.candidate }}
+      simhub-version: ${{ needs.check.outputs.candidate }}
+
+  # Runs on validation failure too: a failing build (e.g. the enum snapshot
+  # test) is exactly the drift signal worth surfacing as a PR.
+  propose:
+    needs: [check, validate]
+    if: ${{ !cancelled() && needs.check.outputs.update-needed == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push bump branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate='${{ needs.check.outputs.candidate }}'
+          branch="ci/simhub-$candidate"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          printf '%s\n' "$candidate" > .simhub-version
+          git commit -am "ci: bump SimHub build dependency to $candidate"
+          git push -u origin "$branch"
+
+      - name: Open pull request
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate='${{ needs.check.outputs.candidate }}'
+          current='${{ needs.check.outputs.current }}'
+          result='${{ needs.validate.result }}'
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          body="$RUNNER_TEMP/body.md"
+          {
+            echo "Bumps the pinned SimHub build dependency **$current -> $candidate**."
+            echo
+            echo "- Release notes: https://github.com/SHWotever/SimHub/releases/tag/$candidate"
+            if [ "$result" = "success" ]; then
+              echo "- Pre-merge validation (build + tests on main against SimHub $candidate): **passed** — $run_url"
+            else
+              echo "- Pre-merge validation: **$result** — $run_url"
+              echo "  - If \`SimHubEnumSnapshotTests\` failed, SimHub's public Fanatec wheel enums changed."
+              echo "    Regenerate with \`.\\update-simhub-enum-snapshot.ps1\` against $candidate, review"
+              echo "    \`FanaBridgeVariantProvider.StockWheelSuffixOverrides\` and \`FanatecDeviceTables\`"
+              echo "    for new wheel ids, and push the result to this branch."
+            fi
+            echo
+            echo "> Note: PRs opened by GITHUB_TOKEN don't trigger CI; validation above ran pre-merge"
+            echo "> against main. Close and reopen this PR (or push to it) to run normal CI checks."
+          } > "$body"
+          gh pr create \
+            --head "ci/simhub-$candidate" \
+            --title "ci: bump SimHub build dependency to $candidate" \
+            --body-file "$body"
+
+      - name: Close superseded bump PRs
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate='${{ needs.check.outputs.candidate }}'
+          gh pr list --state open --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("ci/simhub-")) | select(.headRefName != "ci/simhub-'"$candidate"'") | .number' \
+          | while read -r n; do
+              gh pr close "$n" --delete-branch \
+                --comment "Superseded by the SimHub $candidate bump PR."
+            done
