@@ -96,6 +96,8 @@ dotnet build FanaBridge\FanaBridge.csproj -p:InstallToSimHub=true
 
 The `SimHubDir` property defaults to `C:\Program Files (x86)\SimHub\`. Override it in `Directory.Build.props.user` if your install is elsewhere.
 
+CI builds against the SimHub release pinned in [`.simhub-version`](.simhub-version); a weekly workflow opens a bump PR when SimHub publishes a new release. `SimHubEnumSnapshotTests` guards the public Fanatec enum metadata that FanaBridge's Control Mapper variant ids stay name-compatible with — after a SimHub update changes it, regenerate the snapshot with `.\update-simhub-enum-snapshot.ps1`.
+
 ## Documentation
 
 Project documentation lives in [docs/](docs/):
