@@ -12,6 +12,10 @@ Directory.Build.props.user
 # Local personal files
 TODO.txt
 .claude/settings.local.json
+.claude/worktrees/
+
+# USB packet captures belong in the fanatec-re project, not here
+usbcap/
 
 # User-specific files
 *.rsuser
