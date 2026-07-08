@@ -401,8 +401,7 @@ namespace FanaBridge.UI
             string name = config.Capabilities?.ShortName ?? config.Capabilities?.Name ?? "This device";
 
             txtAddDeviceTitle.Text = name + " isn't added to SimHub yet";
-            txtAddDeviceDetail.Text = "SimHub can't drive it until it's added. LEDs also need "
-                + "an LED profile afterwards — via the LED editor or a profile plugin.";
+            txtAddDeviceDetail.Text = "SimHub only sends output to devices in its device list.";
             btnAddDevice.IsEnabled = true;
             _promptDeviceTypeId = config.DeviceTypeId;
 
