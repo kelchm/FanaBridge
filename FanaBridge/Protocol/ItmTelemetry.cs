@@ -149,7 +149,7 @@ namespace FanaBridge.Protocol
                 case ItmPage.FuelErsDrs: return "Fuel / ERS / DRS";
                 case ItmPage.CarSettings: return "Car Settings";
                 case ItmPage.LapTimes: return "Lap Times";
-                case ItmPage.TyreTemps: return "Tyre Temps";
+                case ItmPage.TyreTemps: return "Tire Temps";
                 case ItmPage.Legacy: return "Legacy";
                 default: return page.ToString();
             }
