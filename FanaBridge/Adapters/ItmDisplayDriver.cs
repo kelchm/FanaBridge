@@ -66,6 +66,11 @@ namespace FanaBridge.Adapters
         private long _lastValuesMs;
         private byte _lastPageApplied;   // last page we forced via SetPage — edge-detects a settings change
 
+        // Bring-up progress: each command is latched only once the transport accepts it,
+        // so a declined write is retried next tick instead of leaving the driver in
+        // Running against a display that never got its enable/page-set.
+        private bool _bringUpModeSent, _bringUpEnableSent, _bringUpPageSent;
+
         // Firmware-driven subscription map: host handle -> parameter ID. Kept sorted by
         // handle so the dirty-tracking comparison sees a stable order.
         private readonly SortedDictionary<byte, ushort> _subs = new SortedDictionary<byte, ushort>();
@@ -131,6 +136,9 @@ namespace FanaBridge.Adapters
             _defTap2Defs = null;
             _wasTelemetryLive = false;
             _pendingExitReset = false;
+            _bringUpModeSent = false;
+            _bringUpEnableSent = false;
+            _bringUpPageSent = false;
         }
 
         // Game-exit tracking: values must never be painted from SimHub's stale
@@ -179,11 +187,11 @@ namespace FanaBridge.Adapters
             // Tight double-tap: re-send the just-sent defs once, ~DefDoubleTapMs later.
             // ParamDefs is unacked and a single send is occasionally dropped by the firmware;
             // the tight second tap (matching the official app's ~49 ms) makes it stick.
+            // A declined tap keeps its due time so it retries next tick.
             if (_defTap2DueMs != 0 && now >= _defTap2DueMs)
             {
-                _defTap2DueMs = 0;
-                if (_defTap2Defs != null)
-                    _encoder.SetParamDefs(_defTap2Defs, _deviceId);
+                if (_defTap2Defs == null || _encoder.SetParamDefs(_defTap2Defs, _deviceId))
+                    _defTap2DueMs = 0;
             }
 
             List<ItmParamDef> defs = null;
@@ -221,15 +229,22 @@ namespace FanaBridge.Adapters
             string s = sig.ToString();
             if (s == _lastSlotDefsSig)
                 return;   // unchanged — nothing to send
-            _lastSlotDefsSig = s;
 
-            if (defs != null)
+            if (defs == null)
             {
-                _encoder.SetParamDefs(defs, _deviceId);
-                _defTap2Defs = defs;                  // schedule the tight second tap
-                _defTap2DueMs = now + DefDoubleTapMs;
-                _log("ITM: ParamDefs sent — suffixes: " + s);
+                _lastSlotDefsSig = s;   // nothing on the wire for this set — just record it
+                return;
             }
+
+            // Latch the signature only when the transport accepts the write — otherwise a
+            // declined ParamDefs send would never be retried until the suffix set happens
+            // to change again, leaving the display undecorated (blank/wrong suffixes).
+            if (!_encoder.SetParamDefs(defs, _deviceId))
+                return;
+            _lastSlotDefsSig = s;
+            _defTap2Defs = defs;                  // schedule the tight second tap
+            _defTap2DueMs = now + DefDoubleTapMs;
+            _log("ITM: ParamDefs sent — suffixes: " + s);
         }
 
         private bool ShowTotalFor(ushort paramId)
@@ -277,9 +292,28 @@ namespace FanaBridge.Adapters
                 // the configured default page (FF 05 04 <dev> <page>) so the display matches our
                 // seed and shows correct values right away. The wheel button navigates from there;
                 // detecting the wheel's current page on cold start instead is deferred — see #43.
-                _encoder.SetItmMode(true);              // FF 05 02 01 — firmware ITM gate on
-                _encoder.EnableItm();                   // FF 02 02 00 — start the display session
-                _encoder.SetPage(_deviceId, DefaultPage);  // force the configured default page
+                // Each command advances only once the transport accepts it — bring-up fires right
+                // as the rim settles, exactly when a transient write failure is most likely, and a
+                // dropped Enable/PageSet would otherwise leave the driver streaming values at a
+                // display that never started a session.
+                if (!_bringUpModeSent)
+                {
+                    if (!_encoder.SetItmMode(true))     // FF 05 02 01 — firmware ITM gate on
+                        return;
+                    _bringUpModeSent = true;
+                }
+                if (!_bringUpEnableSent)
+                {
+                    if (!_encoder.EnableItm())          // FF 02 02 00 — start the display session
+                        return;
+                    _bringUpEnableSent = true;
+                }
+                if (!_bringUpPageSent)
+                {
+                    if (!_encoder.SetPage(_deviceId, DefaultPage))  // force the configured default page
+                        return;
+                    _bringUpPageSent = true;
+                }
                 _lastPageApplied = DefaultPage;
                 SeedInitialSubscriptions();             // the default page's params
                 _log("ITM: enabled — seeded " + _subs.Count + " params, following firmware subscriptions");
@@ -320,14 +354,18 @@ namespace FanaBridge.Adapters
             // idle too — this is the settings panel's live preview.
             if (DefaultPage != _lastPageApplied)
             {
-                _encoder.SetPage(_deviceId, DefaultPage);
-                _lastPageApplied = DefaultPage;
-                // Deliberately DON'T reseed here — keep the current subscriptions until the firmware
-                // pushes the new page's set. Unlike bring-up (which has no prior state), a live switch
-                // has valid subs to lose: if the PageSet flakes, or targets the page already shown (no
-                // push comes back), a speculative reseed would strand the display on wrong-page handles
-                // with nothing to correct it. The existing subs stay valid for whatever is displayed.
-                _log("ITM: default page changed — forcing page " + DefaultPage);
+                // Latch only on an accepted write — a declined PageSet retries next tick
+                // (the edge condition stays true until it lands).
+                if (_encoder.SetPage(_deviceId, DefaultPage))
+                {
+                    _lastPageApplied = DefaultPage;
+                    // Deliberately DON'T reseed here — keep the current subscriptions until the firmware
+                    // pushes the new page's set. Unlike bring-up (which has no prior state), a live switch
+                    // has valid subs to lose: if the PageSet flakes, or targets the page already shown (no
+                    // push comes back), a speculative reseed would strand the display on wrong-page handles
+                    // with nothing to correct it. The existing subs stay valid for whatever is displayed.
+                    _log("ITM: default page changed — forcing page " + DefaultPage);
+                }
             }
 
             // Values only flow while a game is feeding telemetry: SimHub keeps the last

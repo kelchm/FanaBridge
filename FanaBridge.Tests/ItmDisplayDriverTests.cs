@@ -21,13 +21,15 @@ namespace FanaBridge.Tests
             public List<byte[]> Sent { get; } = new List<byte[]>();
             // Simulate a transport-level send failure (SendCol03 returns false).
             public bool SendReturns { get; set; } = true;
+            // Optional per-frame accept/decline decision (null = use SendReturns).
+            public Func<byte[], bool> Decide { get; set; }
 
             public bool SendCol03(byte[] data)
             {
                 var copy = new byte[data.Length];
                 Array.Copy(data, copy, data.Length);
                 Sent.Add(copy);
-                return SendReturns;
+                return Decide?.Invoke(copy) ?? SendReturns;
             }
 
             public bool SendCol01(byte[] data) => true;
@@ -778,6 +780,108 @@ namespace FanaBridge.Tests
             clock.T += 500;
             driver.Update(EmptyData());        // dormant after success
             Assert.Empty(t.Sent);
+        }
+
+        // ── Bring-up / ParamDefs transport-acceptance retries ────────────
+
+        [Fact]
+        public void BringUp_DeclinedWrites_RetriedUntilAccepted_NotRunningUntilComplete()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            driver.Start();
+
+            t.SendReturns = false;             // whole bring-up declined
+            driver.Update(EmptyData());
+            Assert.False(driver.IsRunning);    // must NOT latch Running on declined writes
+            t.Sent.Clear();
+
+            t.SendReturns = true;
+            driver.Update(EmptyData());        // retried and accepted → Running
+            Assert.True(driver.IsRunning);
+            Assert.Contains(t.Sent, IsItmModeOn);
+            Assert.Contains(t.Sent, IsEnable);
+            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04);
+        }
+
+        [Fact]
+        public void BringUp_AcceptedSteps_NotResent_OnRetry()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            driver.Start();
+
+            // Gate + Enable accepted, PageSet declined: bring-up stalls before Running.
+            t.Decide = r => !(r[1] == 0x05 && r[2] == 0x04);
+            driver.Update(EmptyData());
+            Assert.False(driver.IsRunning);
+            t.Sent.Clear();
+
+            t.Decide = null;
+            driver.Update(EmptyData());        // only the missing step is retried
+            Assert.True(driver.IsRunning);
+            Assert.DoesNotContain(t.Sent, IsItmModeOn);   // already accepted last tick
+            Assert.DoesNotContain(t.Sent, IsEnable);      // already accepted last tick
+            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04);
+        }
+
+        [Fact]
+        public void ParamDefs_DeclinedSend_RetriedUntilAccepted()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);
+            driver.OnSubscriptionReport(TyreSubReport);
+
+            // ParamDefs declined: the suffix signature must NOT latch, or the
+            // decoration would never be retried until the suffix set changes.
+            t.Decide = r => !IsParamDefs(r);
+            clock.T += 40;
+            driver.Update(EmptyData());
+            Assert.Contains(t.Sent, IsParamDefs);   // attempted
+            t.Sent.Clear();
+
+            t.Decide = null;
+            clock.T += 40;
+            driver.Update(EmptyData());             // unchanged suffix set — still retried
+            Assert.Contains(t.Sent, IsParamDefs);
+        }
+
+        [Fact]
+        public void ParamDefs_DoubleTap_Declined_RetriedNextTick()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);
+            driver.OnSubscriptionReport(TyreSubReport);
+
+            clock.T += 40;
+            driver.Update(EmptyData());             // first ParamDefs accepted, tap scheduled
+            t.Sent.Clear();
+
+            t.Decide = r => !IsParamDefs(r);        // the tight second tap is declined
+            clock.T += 60;
+            driver.Update(EmptyData());
+            t.Sent.Clear();
+
+            t.Decide = null;
+            clock.T += 10;
+            driver.Update(EmptyData());             // tap retried once accepted
+            Assert.Contains(t.Sent, IsParamDefs);
+        }
+
+        [Fact]
+        public void DefaultPageChange_DeclinedPageSet_RetriedUntilAccepted()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            driver.Start();
+            driver.Update(NotRunningData());
+            t.Sent.Clear();
+
+            driver.DefaultPage = 3;
+            t.SendReturns = false;                  // live page switch declined
+            driver.Update(NotRunningData());
+            t.Sent.Clear();
+
+            t.SendReturns = true;
+            driver.Update(NotRunningData());        // edge still pending — retried
+            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[4] == 0x03);
         }
 
         // ── Stop / restart ───────────────────────────────────────────────
