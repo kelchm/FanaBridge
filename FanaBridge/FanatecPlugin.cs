@@ -76,9 +76,29 @@ namespace FanaBridge
         /// <summary>
         /// When true, device instances skip all LED and display output so the
         /// profile wizard can send probe signals without being overwritten by
-        /// SimHub's frame-by-frame updates.  Set by the wizard dialog.
+        /// SimHub's frame-by-frame updates.  Set by the wizard dialog (UI
+        /// thread), read by the device data loop — hence volatile.
         /// </summary>
-        public bool WizardActive { get; set; }
+        public bool WizardActive
+        {
+            get { return _wizardActive; }
+            set { _wizardActive = value; }
+        }
+        private volatile bool _wizardActive;
+
+        /// <summary>
+        /// When true, device instances skip driving the legacy 7-segment display
+        /// so the settings page's display test owns it (LEDs and the col03 ITM
+        /// display are unaffected). Set by the settings page (UI thread) on any
+        /// test send, released on Clear / Stop / page unload; read by the device
+        /// data loop — hence volatile.
+        /// </summary>
+        public bool DisplayTestActive
+        {
+            get { return _displayTestActive; }
+            set { _displayTestActive = value; }
+        }
+        private volatile bool _displayTestActive;
 
         /// <summary>Whether the Fanatec device is currently connected (for UI binding).</summary>
         public bool IsDeviceConnected => _connectionMonitor?.IsConnected == true;

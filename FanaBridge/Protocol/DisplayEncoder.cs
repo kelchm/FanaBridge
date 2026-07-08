@@ -14,6 +14,11 @@ namespace FanaBridge.Protocol
         private readonly IDeviceTransport _transport;
 
         // ── Pooled buffers — avoid per-frame heap allocations ────────────
+        // Guarded by _sync: this encoder is shared between the frame thread
+        // (display driver) and UI-side callers (settings display test, finalize
+        // clear), and the transport lock only serializes the send — two callers
+        // interleaving buffer fills would put a torn frame on the wire.
+        private readonly object _sync = new object();
         private readonly byte[] _reportBuf = new byte[REPORT_LENGTH];
         private readonly byte[] _textSegs = new byte[3];
 
@@ -28,16 +33,19 @@ namespace FanaBridge.Protocol
         /// </summary>
         public bool SetDisplay(byte seg1, byte seg2, byte seg3)
         {
-            _reportBuf[0] = 0x01;  // Report ID
-            _reportBuf[1] = 0xF8;
-            _reportBuf[2] = 0x09;
-            _reportBuf[3] = 0x01;
-            _reportBuf[4] = 0x02;
-            _reportBuf[5] = seg1;
-            _reportBuf[6] = seg2;
-            _reportBuf[7] = seg3;
+            lock (_sync)
+            {
+                _reportBuf[0] = 0x01;  // Report ID
+                _reportBuf[1] = 0xF8;
+                _reportBuf[2] = 0x09;
+                _reportBuf[3] = 0x01;
+                _reportBuf[4] = 0x02;
+                _reportBuf[5] = seg1;
+                _reportBuf[6] = seg2;
+                _reportBuf[7] = seg3;
 
-            return _transport.SendCol01(_reportBuf);
+                return _transport.SendCol01(_reportBuf);
+            }
         }
 
         /// <summary>
@@ -101,27 +109,30 @@ namespace FanaBridge.Protocol
             if (string.IsNullOrEmpty(text))
                 return ClearDisplay();
 
-            int segCount = 0;
-            _textSegs[0] = SevenSegment.Blank;
-            _textSegs[1] = SevenSegment.Blank;
-            _textSegs[2] = SevenSegment.Blank;
-
-            foreach (char ch in text)
+            lock (_sync)
             {
-                if ((ch == '.' || ch == ',') && segCount > 0)
+                int segCount = 0;
+                _textSegs[0] = SevenSegment.Blank;
+                _textSegs[1] = SevenSegment.Blank;
+                _textSegs[2] = SevenSegment.Blank;
+
+                foreach (char ch in text)
                 {
-                    _textSegs[segCount - 1] |= SevenSegment.Dot;
-                }
-                else
-                {
-                    _textSegs[segCount] = SevenSegment.CharToSegment(ch);
-                    segCount++;
+                    if ((ch == '.' || ch == ',') && segCount > 0)
+                    {
+                        _textSegs[segCount - 1] |= SevenSegment.Dot;
+                    }
+                    else
+                    {
+                        _textSegs[segCount] = SevenSegment.CharToSegment(ch);
+                        segCount++;
+                    }
+
+                    if (segCount >= 3) break;
                 }
 
-                if (segCount >= 3) break;
+                return SetDisplay(_textSegs[0], _textSegs[1], _textSegs[2]);
             }
-
-            return SetDisplay(_textSegs[0], _textSegs[1], _textSegs[2]);
         }
     }
 }
