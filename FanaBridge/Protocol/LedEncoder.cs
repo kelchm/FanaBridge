@@ -32,8 +32,12 @@ namespace FanaBridge.Protocol
         /// Total bytes in the subcmd 0x03 intensity payload.
         /// Includes per-button intensity slots plus additional slots whose
         /// meaning varies by wheel (e.g. encoder indicator LEDs).
+        /// Derived from the commit offset: the payload occupies report offsets
+        /// 3..17 and the commit flag sits at offset 18, immediately after it —
+        /// a 16th slot would be overwritten by the commit byte on every send,
+        /// so the two constants must never drift apart.
         /// </summary>
-        public const int INTENSITY_PAYLOAD_SIZE = 16;
+        public const int INTENSITY_PAYLOAD_SIZE = BUTTON_INTENSITY_COMMIT_OFFSET - HEADER_SIZE;  // 15
 
         private readonly IDeviceTransport _transport;
 
