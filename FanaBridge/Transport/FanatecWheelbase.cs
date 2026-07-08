@@ -354,17 +354,6 @@ namespace FanaBridge.Transport
                     IngestReading(reading, connectNow);
                 // If FF 08 was silent this might be an SRM kit (or a slow genuine base). No probe here:
                 // UpdateIdentity keeps reading FF 08 and pings DE FA while unidentified; whichever wins.
-
-                // Confirm the per-frame drain is non-blocking — a blocking idle
-                // stream poll would stall the frame thread. Done once now that the
-                // input is quiet; leaves a permanent regression guard.
-                double drainMs = _reportReader.ProbeDrainLatencyMs(_transport, 5);
-                if (drainMs > 1.0)
-                    SimHub.Logging.Current.Warn(string.Format(
-                        "FanatecWheelbase: idle identity drain took {0:F2} ms — expected non-blocking (<1 ms); per-frame identity polling may stutter.", drainMs));
-                else
-                    SimHub.Logging.Current.Info(string.Format(
-                        "FanatecWheelbase: identity drain is non-blocking ({0:F2} ms idle)", drainMs));
             }
             catch (Exception ex)
             {

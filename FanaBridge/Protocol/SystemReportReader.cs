@@ -91,29 +91,6 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Times a few empty (idle) drains to confirm an identity-stream poll is
-        /// non-blocking — the per-frame drain depends on it; a blocking read would
-        /// stall the frame thread. Returns the slowest sample in milliseconds.
-        /// Call once after the initial read (when the input is quiet).
-        /// </summary>
-        public double ProbeDrainLatencyMs(IDeviceTransport io, int samples)
-        {
-            double worst = 0;
-            var sw = new System.Diagnostics.Stopwatch();
-            var stream = io.IdentityReports;
-            byte[] buf = Buffer(io);
-            for (int i = 0; i < samples; i++)
-            {
-                sw.Restart();
-                stream.TryRead(buf, DrainTimeoutMs); // expected empty → must return immediately
-                sw.Stop();
-                double ms = sw.Elapsed.TotalMilliseconds;
-                if (ms > worst) worst = ms;
-            }
-            return worst;
-        }
-
-        /// <summary>
         /// Decodes a frame as an FF 08 system report (signature scan + length
         /// check via <see cref="Col03FrameClassifier"/>). False for anything else.
         /// </summary>
