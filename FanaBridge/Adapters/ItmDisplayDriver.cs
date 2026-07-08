@@ -33,6 +33,13 @@ namespace FanaBridge.Adapters
         /// <summary>Minimum spacing between value-update sends (caps the rate).</summary>
         public int ValueIntervalMs { get; set; } = 40;
 
+        /// <summary>
+        /// Gap before the tight second ParamDefs send (double-tap). ParamDefs is unacked
+        /// and a single send is occasionally dropped by the firmware; the official app
+        /// double-taps ~49ms apart to prime the decoration so it sticks.
+        /// </summary>
+        public int DefDoubleTapMs { get; set; } = 50;
+
         /// <summary>Whether to show the "/total laps" suffix on the lap field.</summary>
         public bool ShowLapTotal { get; set; } = true;
 
@@ -65,6 +72,8 @@ namespace FanaBridge.Adapters
         private ItmValue[] _lastValues;
         private bool _loggedFirstValues;
         private string _lastSlotDefsSig = "";   // last ParamDefs suffix set, to skip redundant writes
+        private long _defTap2DueMs;               // when to fire the tight second def tap (0 = none)
+        private List<ItmParamDef> _defTap2Defs;   // the defs to re-send as that second tap
         // Reused per-tick send buffer (avoids a per-frame allocation).
         private readonly List<ItmValue> _valueBuf = new List<ItmValue>();
         // Subscribed paramIds we've already warned have no encoder — log each once.
@@ -118,6 +127,8 @@ namespace FanaBridge.Adapters
             _lastValues = null;
             _loggedFirstValues = false;
             _lastSlotDefsSig = "";
+            _defTap2DueMs = 0;
+            _defTap2Defs = null;
             _wasTelemetryLive = false;
             _pendingExitReset = false;
         }
@@ -163,8 +174,18 @@ namespace FanaBridge.Adapters
         // the value renders from ValueUpdate regardless. Slot ID = 0x80 | handle, per
         // the capture. Only writes when the suffix set actually changes (subscription
         // change or a moving total), so it does not flood the bus.
-        private void UpdateSlotDefs(GameData data)
+        private void UpdateSlotDefs(GameData data, long now)
         {
+            // Tight double-tap: re-send the just-sent defs once, ~DefDoubleTapMs later.
+            // ParamDefs is unacked and a single send is occasionally dropped by the firmware;
+            // the tight second tap (matching the official app's ~49 ms) makes it stick.
+            if (_defTap2DueMs != 0 && now >= _defTap2DueMs)
+            {
+                _defTap2DueMs = 0;
+                if (_defTap2Defs != null)
+                    _encoder.SetParamDefs(_defTap2Defs, _deviceId);
+            }
+
             List<ItmParamDef> defs = null;
             var sig = new System.Text.StringBuilder();
 
@@ -205,6 +226,8 @@ namespace FanaBridge.Adapters
             if (defs != null)
             {
                 _encoder.SetParamDefs(defs, _deviceId);
+                _defTap2Defs = defs;                  // schedule the tight second tap
+                _defTap2DueMs = now + DefDoubleTapMs;
                 _log("ITM: ParamDefs sent — suffixes: " + s);
             }
         }
@@ -284,6 +307,9 @@ namespace FanaBridge.Adapters
                 _pendingExitReset = false;
                 _wasTelemetryLive = false;
                 _lastValues = null;                // repaint everything when telemetry returns
+                _lastSlotDefsSig = "";             // the reset cleared the firmware suffix — force a
+                                                   // re-decorate on resume (same page/suffix set won't
+                                                   // otherwise trip the sig change, so it'd stay blank)
                 _log("ITM: game exited — display reset (fields back to placeholders)");
                 return;
             }
@@ -310,7 +336,7 @@ namespace FanaBridge.Adapters
             if (!telemetryLive)
                 return;
 
-            UpdateSlotDefs(data);   // refresh unit/total suffixes when they change
+            UpdateSlotDefs(data, now);   // refresh unit/total suffixes; tight double-tap so they stick
             if (now - _lastValuesMs >= ValueIntervalMs)
             {
                 SendSubscribedValues(data);
