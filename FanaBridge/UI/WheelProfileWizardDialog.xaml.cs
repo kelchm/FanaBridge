@@ -626,30 +626,10 @@ namespace FanaBridge.UI
         {
             var mapping = _state.Mapping;
 
-            // Only build the LED list once (re-entering from Back keeps it)
-            if (mapping.Leds.Count == 0)
-            {
-                for (int i = 0; i < _state.Color.Count; i++)
-                {
-                    mapping.Leds.Add(new InputMappingEntry
-                    {
-                        Channel = LedChannel.ButtonRgb,
-                        HwIndex = i,
-                        Label = "Color LED " + (i + 1),
-                    });
-                }
-
-                int monoStart = _state.Color.Count;
-                for (int i = 0; i < _state.Mono.Count; i++)
-                {
-                    mapping.Leds.Add(new InputMappingEntry
-                    {
-                        Channel = LedChannel.ButtonAuxIntensity,
-                        HwIndex = monoStart + i,
-                        Label = "Mono LED " + (i + 1),
-                    });
-                }
-            }
+            // Build the LED list — or rebuild it if the color/mono counts changed
+            // via Back-navigation (stale HwIndex values would mis-bind mappings);
+            // an unchanged-count re-entry keeps the list and its captures.
+            mapping.EnsureLeds(_state.Color.Count, _state.Mono.Count);
 
             if (mapping.Leds.Count == 0)
             {

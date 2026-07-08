@@ -135,6 +135,75 @@ namespace FanaBridge.UI
 
         public bool IsComplete => CurrentIndex >= Leds.Count;
         public int MappedCount => Leds.Count(m => m.HasAny);
+
+        // The counts the Leds list was built from; -1 = never built. Back-navigation
+        // can change either count, and stale entries carry HwIndex values derived
+        // from the old color count — the profile-build join would then bind inputs
+        // to the wrong LEDs, silently drop mappings, and leave newly added LEDs
+        // unmappable.
+        private int _builtColorCount = -1;
+        private int _builtMonoCount = -1;
+
+        /// <summary>
+        /// Builds the LED list for the given counts, or rebuilds it when the counts
+        /// changed since the last build (Back-navigation into a discovery section).
+        /// An unchanged-count re-entry keeps the list — and its captured mappings —
+        /// untouched. On rebuild, captures carry over by channel + ordinal (mono
+        /// HwIndex values shift with the color count), so shrinking or growing one
+        /// section preserves every mapping that still has a matching LED.
+        /// </summary>
+        public void EnsureLeds(int colorCount, int monoCount)
+        {
+            if (_builtColorCount == colorCount && _builtMonoCount == monoCount)
+                return;
+
+            // Carry existing captures over by (channel, ordinal-within-channel).
+            var oldColor = Leds.Where(m => m.Channel == LedChannel.ButtonRgb).ToList();
+            var oldMono = Leds.Where(m => m.Channel == LedChannel.ButtonAuxIntensity).ToList();
+
+            Leds.Clear();
+            for (int i = 0; i < colorCount; i++)
+            {
+                var entry = new InputMappingEntry
+                {
+                    Channel = LedChannel.ButtonRgb,
+                    HwIndex = i,
+                    Label = "Color LED " + (i + 1),
+                };
+                if (i < oldColor.Count) CopyCapture(oldColor[i], entry);
+                Leds.Add(entry);
+            }
+            for (int i = 0; i < monoCount; i++)
+            {
+                var entry = new InputMappingEntry
+                {
+                    Channel = LedChannel.ButtonAuxIntensity,
+                    HwIndex = colorCount + i,
+                    Label = "Mono LED " + (i + 1),
+                };
+                if (i < oldMono.Count) CopyCapture(oldMono[i], entry);
+                Leds.Add(entry);
+            }
+
+            _builtColorCount = colorCount;
+            _builtMonoCount = monoCount;
+
+            // Reset the mini state machine: resume at the first unmapped LED (or
+            // the end when everything carried over) — never a stale index/phase.
+            Phase = MappingPhase.WaitingForInput;
+            ClassifyInputs.Clear();
+            int firstUnmapped = Leds.FindIndex(m => !m.HasAny);
+            CurrentIndex = firstUnmapped >= 0 ? firstUnmapped : Leds.Count;
+        }
+
+        private static void CopyCapture(InputMappingEntry from, InputMappingEntry to)
+        {
+            to.IsEncoder = from.IsEncoder;
+            to.ButtonInputId = from.ButtonInputId;
+            to.RelativeCW = from.RelativeCW;
+            to.RelativeCCW = from.RelativeCCW;
+            to.AbsoluteInputs = from.AbsoluteInputs;
+        }
     }
 
     // ── Main wizard state ────────────────────────────────────────────────
