@@ -102,14 +102,12 @@ namespace FanaBridge.Profiles
             if (other == null)
                 return null;
 
+            // Only LED-layout changes still need a restart: SimHub sizes the LED
+            // editor's module from the registration-time counts. Display type and
+            // the ITM device id switch live — the device instance resolves them
+            // override-aware each frame and hot-swaps the ITM driver on change.
             if (RevFlagCount != other.RevFlagCount || ButtonLedCount != other.ButtonLedCount)
                 return "LED count changed (" + other.AllLedCount + " → " + AllLedCount + ")";
-
-            if (Display != other.Display)
-                return "Display type changed (" + other.Display + " → " + Display + ")";
-
-            if (Display == DisplayType.Itm && ItmDeviceId != other.ItmDeviceId)
-                return "ITM display device changed (" + other.ItmDeviceId + " → " + ItmDeviceId + ")";
 
             return null;
         }

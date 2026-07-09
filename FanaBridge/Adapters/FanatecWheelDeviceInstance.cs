@@ -53,6 +53,9 @@ namespace FanaBridge.Adapters
 
         // ITM display driver — null until a wheel with an ITM display is driven.
         private ItmDisplayDriver _itmDisplay;
+        // The display id the ITM driver was built against; an override changing
+        // it hot-swaps the driver (deviceId is a ctor-fixed value).
+        private byte _itmDeviceId;
         private bool _itmWasRunning;
         private bool _itmErrorLogged;
         // True once the legacy page has been blanked after switching to mode "None",
@@ -427,14 +430,43 @@ namespace FanaBridge.Adapters
                 _displayManager?.Clear();
             _displayTestWasActive = displayTest;
 
-            var displayType = _config.Capabilities.Display;
+            // Resolve THIS descriptor's caps override-aware — the same rule the
+            // LED pipeline already follows via ResolveCapsFor (the single guard).
+            // Registration caps froze the built-in profile's display type and ITM
+            // device id, so a user override changing either was honored by LEDs
+            // but silently ignored by the display drivers — restart or not,
+            // because the registry's dedupe keeps the built-in for registration.
+            var displayCaps = plugin.ResolveCapsFor(_config);
+            var displayType = displayCaps.Display;
+
+            // Switched away from ITM (e.g. override to a basic-display profile):
+            // stop the session so the next Itm selection re-runs bring-up.
+            if (displayType != DisplayType.Itm && _itmDisplay != null)
+            {
+                _itmDisplay.Stop();
+                _itmDisplay = null;
+                _itmWasRunning = false;
+            }
+
             if (displayType == DisplayType.Itm)
             {
+                // Override retargeted the ITM display id — the driver's deviceId
+                // is ctor-fixed, so hot-swap it like the LED pipeline does.
+                if (_itmDisplay != null && _itmDeviceId != displayCaps.ItmDeviceId)
+                {
+                    _itmDisplay.Stop();
+                    _itmDisplay = null;
+                    SimHub.Logging.Current.Info(
+                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                        "]: ITM display id changed (" + _itmDeviceId + " → " +
+                        displayCaps.ItmDeviceId + ") — rebuilding ITM driver");
+                }
                 if (_itmDisplay == null)
                 {
+                    _itmDeviceId = displayCaps.ItmDeviceId;
                     _itmDisplay = new ItmDisplayDriver(plugin.Itm,
                         log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
-                        deviceId: _config.Capabilities.ItmDeviceId);
+                        deviceId: _itmDeviceId);
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created ITM display driver");
                 }
