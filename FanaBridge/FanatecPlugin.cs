@@ -149,6 +149,14 @@ namespace FanaBridge
             return config.Capabilities ?? WheelCapabilities.None;
         }
 
+        /// <summary>
+        /// Test hook: installs a wheelbase as this plugin's hardware core so
+        /// DeviceInstance state/generation logic can run against an injected
+        /// identity without a SimHub host. Production cores are built only by
+        /// InitializeCore.
+        /// </summary>
+        internal void InstallWheelbaseForTest(FanatecWheelbase wheelbase) => _wheelbase = wheelbase;
+
         /// <summary>Called by each <see cref="Adapters.FanatecWheelDeviceInstance"/> so the
         /// plugin can read the connected wheel's SimHub device name for the Control Mapper
         /// integration. Idempotent.</summary>
