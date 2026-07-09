@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **FanaBridge now ships as two DLLs.** The device stack (HID transport, Fanatec protocol, wheel profiles) moved into `FanaBridge.Core.dll`, which installs next to `FanaBridge.dll` in the SimHub root. **When updating manually, always replace both files together** — mixing an old plugin with a new core (or vice versa) fails to load. Release archives contain both.
+
 ## v0.5.0 - 2026-07-07
 
 ### Added

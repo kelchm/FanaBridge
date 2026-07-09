@@ -223,7 +223,7 @@ jobs:
           $LineRate = [math]::Round([double]$Xml.coverage.'line-rate' * 100, 1)
           $BranchRate = [math]::Round([double]$Xml.coverage.'branch-rate' * 100, 1)
           @(
-            '### Test coverage (FanaBridge.dll)',
+            '### Test coverage',
             '',
             "| Lines | Branches |",
             "|-------|----------|",
@@ -257,6 +257,7 @@ jobs:
           New-Item "$Dist\DevicesLogos"           -ItemType Directory -Force | Out-Null
 
           Copy-Item "$BinDir\FanaBridge.dll" $Dist
+          Copy-Item "$BinDir\FanaBridge.Core.dll" $Dist
 
           $ProcessedLogos = 'src\FanaBridge\Resources\DeviceLogos\processed'
           if (Test-Path $ProcessedLogos) {

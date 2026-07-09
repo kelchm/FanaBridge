@@ -273,7 +273,7 @@ namespace FanaBridge.Transport
         /// <summary>
         /// Optional callback that returns a profile override ID for a given
         /// wheel match key (e.g. "PHUB_PBMR").  Set by the plugin to integrate
-        /// with <see cref="FanatecPluginSettings.ProfileOverrides"/>.
+        /// with <c>FanatecPluginSettings.ProfileOverrides</c> (plugin assembly).
         /// Return null or empty to use default auto-resolution.
         /// </summary>
         public Func<string, string> ProfileOverrideResolver { get; set; }

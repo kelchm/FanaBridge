@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Constructs a zip file containing:
-      - FanaBridge.dll (and .pdb if present)
+      - FanaBridge.dll + FanaBridge.Core.dll (debug symbols are embedded)
       - Processed device logo images from Resources/DeviceLogos/processed/
 
     The archive can be extracted directly into the SimHub installation directory.
@@ -46,8 +46,10 @@ if (Test-Path $Staging) { Remove-Item $Staging -Recurse -Force }
 New-Item $Staging -ItemType Directory -Force | Out-Null
 New-Item (Join-Path $Staging 'DevicesLogos') -ItemType Directory -Force | Out-Null
 
-# Plugin DLL (debug symbols are embedded)
+# Plugin + core DLLs (debug symbols are embedded). Both must ship together —
+# a stale mix of old plugin + new core (or vice versa) fails at type load.
 Copy-Item (Join-Path $BuildOutput 'FanaBridge.dll') $Staging
+Copy-Item (Join-Path $BuildOutput 'FanaBridge.Core.dll') $Staging
 
 # ── Device logo images ────────────────────────────────────────────────────────
 # Copy pre-processed images from Resources/DeviceLogos/processed/.

@@ -10,6 +10,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FanaBridge\FanaBridge.csproj" />
+    <!-- Explicit (though transitive via the plugin): most of the suite tests
+         Core types directly and uses its internals via InternalsVisibleTo. -->
+    <ProjectReference Include="..\..\src\FanaBridge.Core\FanaBridge.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

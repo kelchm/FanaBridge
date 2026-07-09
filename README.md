@@ -50,7 +50,7 @@ If your wheel isn't listed, use the **Wheel Profile Wizard** (see [Usage](#usage
 1. Download the latest release `.zip` from the [Releases](../../releases) page
 2. Close SimHub if it's running
 3. Extract the archive directly into your SimHub installation directory (e.g., `C:\Program Files (x86)\SimHub\`)
-   - `FanaBridge.dll` goes in the SimHub root
+   - `FanaBridge.dll` and `FanaBridge.Core.dll` go in the SimHub root (always replace both together)
    - `DevicesLogos\` files go into the `DevicesLogos\` subdirectory
 4. Start SimHub and enable the FanaBridge plugin
 

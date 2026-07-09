@@ -14,7 +14,16 @@
     <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
     <UseWPF>true</UseWPF>
     <DebugType>embedded</DebugType>
+    <!-- Enables the shared CopyToSimHub install target (Directory.Build.targets). -->
+    <IsSimHubPlugin>true</IsSimHubPlugin>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The SimHub-free device stack (HID transport, protocol, profiles).
+         Private=true (default) so FanaBridge.Core.dll lands in this project's
+         bin — packaging and the install target ship it next to the plugin. -->
+    <ProjectReference Include="..\FanaBridge.Core\FanaBridge.Core.csproj" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Provides .NET Framework 4.8 reference assemblies for builds without VS -->
@@ -55,6 +64,8 @@
       <HintPath>$(SimHubDir)Newtonsoft.Json.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- HidSharp + SharpDX are used solely by Diagnostics/DiagnosticsReport.cs
+         (HID inventory + DirectInput capture in the debug report). -->
     <Reference Include="HidSharp">
       <HintPath>$(SimHubDir)HidSharp.dll</HintPath>
       <Private>false</Private>
@@ -75,13 +86,6 @@
 
   <ItemGroup>
     <Resource Include="Resources\Images\plugin-icon.png" />
-  </ItemGroup>
-
-  <!-- ── Wheel profile JSON files ──────────────────────────────────────
-       Embedded in the DLL as assembly resources.  Immutable at runtime.
-       User-created profiles are loaded from a separate directory. -->
-  <ItemGroup>
-    <EmbeddedResource Include="Resources\Profiles\*.json" />
   </ItemGroup>
 
   <!-- ── Device logo processing ──────────────────────────────────────
@@ -106,9 +110,10 @@
           SkipUnchangedFiles="true" Condition="'$(MagickExitCode)' != '0'" />
   </Target>
 
-  <!-- ── Local dev install ─────────────────────────────────────────────
-       Copies the plugin DLL, PDB, and device logos into the local SimHub
-       installation. Only runs when InstallToSimHub=true:
+  <!-- ── Local dev install (device logos) ──────────────────────────────
+       Copies the processed device logos into the local SimHub install.
+       The plugin + core DLLs are copied by the shared CopyToSimHub target
+       in Directory.Build.targets. Only runs when InstallToSimHub=true:
 
          dotnet build -p:InstallToSimHub=true
 
@@ -119,10 +124,6 @@
       <DeviceLogoFiles Include="Resources\DeviceLogos\processed\*.png" />
     </ItemGroup>
     <Copy SourceFiles="@(DeviceLogoFiles)" DestinationFolder="$(SimHubDir)DevicesLogos" SkipUnchangedFiles="true" />
-  </Target>
-
-  <Target Name="CopyToSimHub" AfterTargets="Build" Condition="'$(InstallToSimHub)' == 'true'">
-    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(SimHubDir)" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>

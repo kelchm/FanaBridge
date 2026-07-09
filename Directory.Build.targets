@@ -1,0 +1,21 @@
+<Project>
+
+  <!-- ── Local dev install ─────────────────────────────────────────────
+       Copies the plugin DLL and its FanaBridge.* satellite assemblies
+       (FanaBridge.Core) into the local SimHub install. Opt-in:
+
+         dotnet build -p:InstallToSimHub=true
+
+       Only projects that ship as SimHub plugins set IsSimHubPlugin=true,
+       so library/test builds never trigger a copy. -->
+  <Target Name="CopyToSimHub" AfterTargets="Build"
+          Condition="'$(IsSimHubPlugin)' == 'true' and '$(InstallToSimHub)' == 'true'">
+    <ItemGroup>
+      <_SimHubInstallFiles Include="$(TargetPath)" />
+      <_SimHubInstallFiles Include="$(TargetDir)FanaBridge.*.dll" Exclude="$(TargetPath)" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SimHubInstallFiles)" DestinationFolder="$(SimHubDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Installed @(_SimHubInstallFiles->'%(Filename)%(Extension)', ', ') → $(SimHubDir)" />
+  </Target>
+
+</Project>
