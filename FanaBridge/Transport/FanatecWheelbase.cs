@@ -473,8 +473,13 @@ namespace FanaBridge.Transport
                 CommitIdentity();
 
             // Still unidentified and idle? Ping the DE FA channel (harmless to a genuine base). Any 0xDD
-            // reply is picked up by the next drain. Once FF 08 identifies a base, we never get here.
-            if (!WheelDetected && _identityStable && !IsSrmConverter && now - _lastSrmQueryMs >= SrmQueryMs)
+            // reply is picked up by the next drain. Gated on the CONNECTION being unidentified
+            // (!HasIdentity), not on the wheel: once FF 08 has answered, the base has proven it is
+            // not a converter kit for the life of this connection — a later rim pull makes
+            // WheelDetected false again, but must NOT re-arm the ping loop. (Besides being
+            // pointless, the query's report-id-0x00 frame is rejected by some bases' HID driver,
+            // so re-armed pings logged a write warning every second until a wheel came back.)
+            if (!WheelDetected && !HasIdentity && _identityStable && now - _lastSrmQueryMs >= SrmQueryMs)
             {
                 _lastSrmQueryMs = now;
                 try { _srmReader.SendQuery(_transport); }
@@ -512,13 +517,15 @@ namespace FanaBridge.Transport
         private void OnDrainReading(SystemReportReader.Reading r) => IngestReading(r, _drainNow);
 
         // Drain callback for a 0xDD frame: decode + stash; UpdateIdentity commits it after the drain.
-        // The WheelDetected guard keeps "FF 08 wins if it answered" true even for 0xDD replies we
-        // didn't elicit — the diagnostics probe sends DE FA on demand, and its reply must not
+        // The guards keep "FF 08 wins if it answered" true even for 0xDD replies we didn't
+        // elicit — the diagnostics probe sends DE FA on demand, and its reply must not
         // overwrite an identity the FF 08 path already committed (a read-only diagnostics run
-        // must never mutate runtime identity).
+        // must never mutate runtime identity). HasIdentity (not just WheelDetected) closes the
+        // rim-pulled window: an identified base with no wheel attached is still a genuine base,
+        // and a diagnostics run in that state must not convert it into an SRM kit.
         private void OnDrainSrm(byte[] frame)
         {
-            if (WheelDetected || IsSrmConverter || _pendingSrm.HasValue) return;
+            if (WheelDetected || HasIdentity || _pendingSrm.HasValue) return;
             if (SrmConverterIdentity.TryDecodeFrame(frame, frame.Length, out var srm))
                 _pendingSrm = srm;
         }
