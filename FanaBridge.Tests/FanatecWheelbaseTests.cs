@@ -536,7 +536,7 @@ namespace FanaBridge.Tests
             bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
             Assert.True(wb.AutoConnect());
 
-            string requestedKey = null;
+            string? requestedKey = null;
             wb.ProfileOverrideResolver = key => { requestedKey = key; return "PHUB"; };
 
             CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));

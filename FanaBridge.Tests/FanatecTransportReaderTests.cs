@@ -27,7 +27,7 @@ namespace FanaBridge.Tests
                 return this;
             }
 
-            public ScriptedSource Error(Action beforeThrow = null)
+            public ScriptedSource Error(Action? beforeThrow = null)
             {
                 _steps.Enqueue(_ =>
                 {

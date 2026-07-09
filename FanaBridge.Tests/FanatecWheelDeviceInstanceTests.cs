@@ -71,7 +71,7 @@ namespace FanaBridge.Tests
 
         // A plugin generation whose core is a wheelbase with a committed,
         // settled identity for the given wheel code (or none when null).
-        private static FanatecPlugin PluginWithWheel(string wheelCode, out FanatecWheelbase wheelbase)
+        private static FanatecPlugin PluginWithWheel(string? wheelCode, out FanatecWheelbase wheelbase)
         {
             var t = new FakeTransport();
             var clock = new Clock();
