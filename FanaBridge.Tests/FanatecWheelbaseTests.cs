@@ -366,6 +366,56 @@ namespace FanaBridge.Tests
             Assert.Equal("CSSWFORMV2", wb.WheelCode);
         }
 
+        [Fact]
+        public void Srm_NeverPingsAgain_AfterRimPull()
+        {
+            // Regression: pulling the wheel mid-operation made WheelDetected false
+            // again, which re-armed the DE FA ping loop on a base FF 08 had
+            // already identified — and since the query's report-id-0x00 frame is
+            // rejected by some bases' HID driver, the transport logged a write
+            // warning every second until a wheel came back. Once ANY identity has
+            // committed, the connection must never ping again.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+
+            CommitIdentity(wb, t, clock, Ff08(0x0C, 0x00));   // rim pulled
+            Assert.False(wb.WheelDetected);
+            Assert.True(wb.HasIdentity);                      // base still identified
+            t.Sent.Clear();
+
+            for (int i = 0; i < 10; i++)
+            {
+                clock.T += 1_100;                             // well past the ping cadence
+                wb.UpdateIdentity();
+            }
+
+            Assert.DoesNotContain(t.Sent, ContainsDeFa);
+        }
+
+        [Fact]
+        public void Srm_ElicitedReply_WithRimPulled_DoesNotConvertTheBase()
+        {
+            // A diagnostics run sends DE FA on demand; with the rim pulled the
+            // WheelDetected guard alone no longer protects the committed base
+            // identity — the 0xDD reply must still be ignored, or a read-only
+            // diagnostics capture would turn a genuine base into an SRM kit.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+            CommitIdentity(wb, t, clock, Ff08(0x0C, 0x00));   // rim pulled
+
+            t.Srm.Enqueue(SrmReply());
+            clock.T += 10;
+            wb.UpdateIdentity();
+
+            Assert.False(wb.IsSrmConverter);
+            Assert.Equal(0x0C, wb.BaseType);                  // base identity intact
+            Assert.Null(wb.SrmKitFirmware);
+        }
+
         // ── Disconnect: the full state reset ─────────────────────────────
 
         [Fact]
