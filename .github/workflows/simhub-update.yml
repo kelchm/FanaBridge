@@ -121,7 +121,7 @@ jobs:
             else
               echo "- Pre-merge validation: **$result** — $run_url"
               echo "  - If \`SimHubEnumSnapshotTests\` failed, SimHub's public Fanatec wheel enums changed."
-              echo "    Regenerate with \`.\\update-simhub-enum-snapshot.ps1\` against $candidate, review"
+              echo "    Regenerate with \`.\\scripts\\update-simhub-enum-snapshot.ps1\` against $candidate, review"
               echo "    \`FanaBridgeVariantProvider.StockWheelSuffixOverrides\` and \`FanatecDeviceTables\`"
               echo "    for new wheel ids, and push the result to this branch."
             fi

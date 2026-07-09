@@ -24,7 +24,7 @@
 [CmdletBinding()]
 param(
     [string]$SimHubDir = 'C:\Program Files (x86)\SimHub\',
-    [string]$OutFile = (Join-Path $PSScriptRoot 'FanaBridge.Tests\Snapshots\SimHub.FanatecManaged.enums.txt')
+    [string]$OutFile = (Join-Path (Split-Path $PSScriptRoot -Parent) 'tests\FanaBridge.Tests\Snapshots\SimHub.FanatecManaged.enums.txt')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,5 +84,5 @@ $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($OutFile))
 [IO.File]::WriteAllText($OutFile, $sb.ToString(), [Text.UTF8Encoding]::new($false))
 Write-Host "Wrote $($enums.Count) enum(s) from $dllPath"
 Write-Host "  -> $OutFile"
-Write-Host 'If members changed, review FanaBridge\Adapters\FanaBridgeVariantProvider.cs (StockWheelSuffixOverrides)'
-Write-Host 'and FanaBridge\Protocol\FanatecDeviceTables.cs for new or renamed wheel ids.'
+Write-Host 'If members changed, review src\FanaBridge\Adapters\FanaBridgeVariantProvider.cs (StockWheelSuffixOverrides)'
+Write-Host 'and src\FanaBridge\Protocol\FanatecDeviceTables.cs for new or renamed wheel ids.'

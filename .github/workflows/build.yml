@@ -190,9 +190,14 @@ jobs:
           & $Exe @Args
 
       - name: Test
+        shell: pwsh
+        env:
+          # Via env, not template expansion, so the value can't break out of
+          # the script's quoting (same rule as SIMHUB_VERSION_INPUT above).
+          CONFIGURATION: ${{ inputs.configuration }}
         run: >-
-          dotnet test FanaBridge.Tests\FanaBridge.Tests.csproj --no-build
-          -c ${{ inputs.configuration }} --verbosity normal
+          dotnet test tests\FanaBridge.Tests\FanaBridge.Tests.csproj --no-build
+          -c $env:CONFIGURATION --verbosity normal
           --logger "trx;LogFileName=test-results.trx"
           --collect "XPlat Code Coverage"
           --results-directory TestResults
@@ -235,7 +240,7 @@ jobs:
         shell: pwsh
         run: |
           $ArtifactLabel = '${{ inputs.artifact-label }}'
-          $BinDir        = "FanaBridge\bin\${{ inputs.configuration }}"
+          $BinDir        = "src\FanaBridge\bin\${{ inputs.configuration }}"
           $Dist          = 'dist'
           $ShortSha      = (git rev-parse --short HEAD)
 
@@ -244,7 +249,7 @@ jobs:
 
           Copy-Item "$BinDir\FanaBridge.dll" $Dist
 
-          $ProcessedLogos = 'FanaBridge\Resources\DeviceLogos\processed'
+          $ProcessedLogos = 'src\FanaBridge\Resources\DeviceLogos\processed'
           if (Test-Path $ProcessedLogos) {
             Get-ChildItem "$ProcessedLogos\*.png" -ErrorAction SilentlyContinue | ForEach-Object {
               Copy-Item $_.FullName "$Dist\DevicesLogos\$($_.Name)"

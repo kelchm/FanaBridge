@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\FanaBridge\FanaBridge.csproj" />
+    <ProjectReference Include="..\..\src\FanaBridge\FanaBridge.csproj" />
   </ItemGroup>
 
   <ItemGroup>

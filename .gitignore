@@ -497,5 +497,5 @@ $RECYCLE.BIN/
 # Project-specific
 tmp/
 dist/
-FanaBridge/Resources/DeviceLogos/processed/
+src/FanaBridge/Resources/DeviceLogos/processed/
 scratch/

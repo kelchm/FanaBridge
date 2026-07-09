@@ -24,11 +24,12 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
 
-    [string]$OutputPath = (Join-Path $PSScriptRoot 'dist')
+    [string]$OutputPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'dist')
 )
 
 $ErrorActionPreference = 'Stop'
-$ProjectDir = Join-Path $PSScriptRoot 'FanaBridge'
+$RepoRoot = Split-Path $PSScriptRoot -Parent
+$ProjectDir = Join-Path $RepoRoot 'src\FanaBridge'
 $BuildOutput = Join-Path $ProjectDir "bin\$Configuration"
 
 # ── 1. Build ──────────────────────────────────────────────────────────────────
