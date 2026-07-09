@@ -45,6 +45,7 @@ namespace FanaBridge.UI
         private volatile CancellationTokenSource _probeCts;
         private volatile CancellationTokenSource _blinkCts;
         private readonly ManualResetEventSlim _blinkDone = new ManualResetEventSlim(true);
+        private readonly ManualResetEventSlim _probeBlinkDone = new ManualResetEventSlim(true);
         private bool _listeningForInput;
         private Action<string> _inputHandler;
         private DispatcherTimer _classifyTimer;
@@ -342,6 +343,7 @@ namespace FanaBridge.UI
                 intensities[i] = 7;
             SetAllLeds(buttonIntensities: intensities);
 
+            _probeBlinkDone.Reset();
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
@@ -366,6 +368,10 @@ namespace FanaBridge.UI
                     }
                 }
                 catch { /* device disconnect */ }
+                finally
+                {
+                    _probeBlinkDone.Set();
+                }
             });
         }
 
@@ -377,6 +383,10 @@ namespace FanaBridge.UI
                 cts.Cancel();
                 _probeCts = null;
             }
+            // Wait for the blink worker to finish so a write that slipped past the
+            // token check can't land a full-intensity frame after the next section's
+            // probe has already painted — the exact join CancelBlink already does.
+            _probeBlinkDone.Wait(500);
         }
 
         // ── Color-format sub-test ────────────────────────────────────────
@@ -626,30 +636,24 @@ namespace FanaBridge.UI
         {
             var mapping = _state.Mapping;
 
-            // Only build the LED list once (re-entering from Back keeps it)
-            if (mapping.Leds.Count == 0)
+            // Build the LED list — or rebuild it if the color/mono counts changed
+            // via Back-navigation (stale HwIndex values would mis-bind mappings);
+            // an unchanged-count re-entry keeps the list and its captures.
+            // Clamp mono to the intensity payload capacity with the same rule
+            // BuildProfile applies, so the mapping step never walks the user
+            // through LEDs that can't light and won't survive into the profile.
+            int colorCount = _state.Color.Count;
+            int monoCount = _state.Mono.Count;
+            int maxMono = Math.Max(0, LedEncoder.INTENSITY_PAYLOAD_SIZE - colorCount);
+            if (monoCount > maxMono)
             {
-                for (int i = 0; i < _state.Color.Count; i++)
-                {
-                    mapping.Leds.Add(new InputMappingEntry
-                    {
-                        Channel = LedChannel.ButtonRgb,
-                        HwIndex = i,
-                        Label = "Color LED " + (i + 1),
-                    });
-                }
-
-                int monoStart = _state.Color.Count;
-                for (int i = 0; i < _state.Mono.Count; i++)
-                {
-                    mapping.Leds.Add(new InputMappingEntry
-                    {
-                        Channel = LedChannel.ButtonAuxIntensity,
-                        HwIndex = monoStart + i,
-                        Label = "Mono LED " + (i + 1),
-                    });
-                }
+                SimHub.Logging.Current.Warn(
+                    string.Format("WheelProfileWizard: Clamping mono LED count from {0} to {1} for mapping " +
+                                  "(colorCount={2} + monoCount must not exceed INTENSITY_PAYLOAD_SIZE={3})",
+                                  monoCount, maxMono, colorCount, LedEncoder.INTENSITY_PAYLOAD_SIZE));
+                monoCount = maxMono;
             }
+            mapping.EnsureLeds(colorCount, monoCount);
 
             if (mapping.Leds.Count == 0)
             {

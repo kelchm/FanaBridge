@@ -1037,6 +1037,13 @@ namespace FanaBridge.UI
 
             StopScroll();
 
+            // Take ownership of the 7-segment display: with a game running, the
+            // per-frame gear/speed drive would otherwise overwrite the test text
+            // (and its buffer fills would race ours). StopScroll is the single
+            // release point (Clear / Stop Scroll / unload / disconnect all funnel
+            // through it) — the game driver then blanks and repaints live.
+            Plugin.DisplayTestActive = true;
+
             string text = txtDisplayTest.Text;
             if (string.IsNullOrEmpty(text)) text = "---";
 
@@ -1140,6 +1147,13 @@ namespace FanaBridge.UI
 
         private void StopScroll()
         {
+            // Single release point for display-test ownership: every way a test
+            // ends (Clear, Stop Scroll, a new Send, page unload, disconnect
+            // auto-stop) funnels through here. The device instance blanks and
+            // repaints the live gear/speed on the released edge.
+            if (Plugin != null)
+                Plugin.DisplayTestActive = false;
+
             if (_scrollTimer != null)
             {
                 _scrollTimer.Stop();

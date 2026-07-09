@@ -58,6 +58,9 @@ namespace FanaBridge.Adapters
         // True once the legacy page has been blanked after switching to mode "None",
         // so it is cleared once on the transition rather than every frame.
         private bool _legacyBlanked;
+        // Tracks the settings page's display test so the handback edge (test just
+        // ended) can blank the residue and reset the driver's value latches.
+        private bool _displayTestWasActive;
 
         // Track connection state transitions for cleanup on disconnect.
         private bool _wasConnected;
@@ -404,6 +407,17 @@ namespace FanaBridge.Adapters
                 return;
 
             // ── Display ──────────────────────────────────────────────────
+            // While the settings page's display test owns the 7-segment display,
+            // skip the legacy col01 drive so the test text isn't overwritten each
+            // frame (LEDs and the col03 ITM display are unaffected). On handback,
+            // Clear() blanks the test residue AND resets the driver's value
+            // latches, so the live gear/speed repaints immediately instead of
+            // waiting for the next value change.
+            bool displayTest = plugin.DisplayTestActive;
+            if (!displayTest && _displayTestWasActive)
+                _displayManager?.Clear();
+            _displayTestWasActive = displayTest;
+
             var displayType = _config.Capabilities.Display;
             if (displayType == DisplayType.Itm)
             {
@@ -451,10 +465,11 @@ namespace FanaBridge.Adapters
                     {
                         if (_displayManager == null)
                             _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
-                        _displayManager.Update(data);
+                        if (!displayTest)
+                            _displayManager.Update(data);
                         _legacyBlanked = false;
                     }
-                    else if (_displayManager != null && !_legacyBlanked)
+                    else if (_displayManager != null && !_legacyBlanked && !displayTest)
                     {
                         // Switched to None — blank the legacy page once. Only latch
                         // when the blanking write was accepted, so a transient
@@ -483,7 +498,8 @@ namespace FanaBridge.Adapters
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
                 }
 
-                _displayManager.Update(data);
+                if (!displayTest)
+                    _displayManager.Update(data);
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
