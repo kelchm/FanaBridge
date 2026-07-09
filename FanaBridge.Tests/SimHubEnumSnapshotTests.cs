@@ -27,7 +27,7 @@ namespace FanaBridge.Tests
         {
             string simHubDir = Assembly.GetExecutingAssembly()
                 .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "SimHubDir")?.Value;
+                .FirstOrDefault(a => a.Key == "SimHubDir")?.Value ?? "";
             Assert.False(string.IsNullOrWhiteSpace(simHubDir), "SimHubDir assembly metadata missing from test assembly.");
 
             string dllPath = Path.Combine(simHubDir, DllName);

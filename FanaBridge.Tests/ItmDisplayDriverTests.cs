@@ -22,7 +22,7 @@ namespace FanaBridge.Tests
             // Simulate a transport-level send failure (SendCol03 returns false).
             public bool SendReturns { get; set; } = true;
             // Optional per-frame accept/decline decision (null = use SendReturns).
-            public Func<byte[], bool> Decide { get; set; }
+            public Func<byte[], bool>? Decide { get; set; }
 
             public bool SendCol03(byte[] data)
             {
@@ -112,7 +112,7 @@ namespace FanaBridge.Tests
             Enable(driver, clock);
 
             Assert.True(driver.IsRunning);
-            Assert.Single(t.Sent.Where(IsEnable));
+            Assert.Single(t.Sent, IsEnable);
         }
 
         [Fact]

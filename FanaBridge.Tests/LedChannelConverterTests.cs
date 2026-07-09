@@ -9,7 +9,7 @@ namespace FanaBridge.Tests
         private static LedChannel Deserialize(string channelName)
         {
             string json = "{\"channel\":\"" + channelName + "\",\"hwIndex\":0,\"role\":\"rev\",\"label\":\"test\"}";
-            return JsonConvert.DeserializeObject<LedDefinition>(json).Channel;
+            return JsonConvert.DeserializeObject<LedDefinition>(json)!.Channel;
         }
 
         // ── V2 names (standard enum parse) ────────────────────────────

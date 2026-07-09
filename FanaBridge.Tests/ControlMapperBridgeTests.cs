@@ -22,7 +22,7 @@ namespace FanaBridge.Tests
     public class ControlMapperBridgeTests
     {
         private static (ControlMapperBridge bridge, FakePluginManager pm, FakeVariantHelper helper, FakeRemapperWorker worker)
-            NewSetup(bool listInitialized = true, IVariantProvider stock = null)
+            NewSetup(bool listInitialized = true, IVariantProvider? stock = null)
         {
             IFakeControlMapper cm = CmFake.NewPlugin();
             if (listInitialized)
@@ -238,7 +238,7 @@ namespace FanaBridge.Tests
             var (bridge, pm, helper, worker) = NewSetup(stock: stock);
             Assert.True(bridge.EnsureRegistered(pm));
 
-            var cm = (IFakeControlMapper)pm.Plugin;
+            var cm = (IFakeControlMapper)pm.Plugin!;
             // A configured Fanatec source (what the user added in Control Mapper).
             cm.Settings.ControllerMappings.Add(new FakeControllerSourceMapping
             {
@@ -271,7 +271,7 @@ namespace FanaBridge.Tests
         public void IsRecognizeIndividualWheelsOn_ReflectsTheSetting()
         {
             var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
-            var cm = (IFakeControlMapper)pm.Plugin;
+            var cm = (IFakeControlMapper)pm.Plugin!;
 
             cm.Settings.RecognizeIndiviualWheels = true;
             Assert.True(bridge.IsRecognizeIndividualWheelsOn(pm));
@@ -351,7 +351,7 @@ namespace FanaBridge.Tests.CmFakes
         /// <summary>Invoked inside UpdateControllerList to model SimHub's synchronous
         /// Dispatcher.Invoke to the UI thread — used to assert the bridge isn't holding
         /// <c>_sync</c> while it re-enumerates (see the deadlock regression tests).</summary>
-        public System.Action OnUpdate;
+        public System.Action? OnUpdate;
         internal void UpdateControllerList()
         {
             UpdateControllerListCalls++;
@@ -365,11 +365,11 @@ namespace FanaBridge.Tests.CmFakes
     /// private <c>VariantProviders</c> list the bridge swaps.</summary>
     public class FakeVariantHelper
     {
-        private List<IVariantProvider> VariantProviders;
+        private List<IVariantProvider>? VariantProviders;
 
         public void InitList() => VariantProviders = new List<IVariantProvider>();
         public void NullList() => VariantProviders = null;
-        public List<IVariantProvider> Snapshot() => VariantProviders;
+        public List<IVariantProvider> Snapshot() => VariantProviders!;
         public void ResetToStockOnly(IVariantProvider stock)
             => VariantProviders = new List<IVariantProvider> { stock };
     }
@@ -388,11 +388,11 @@ namespace FanaBridge.Tests.CmFakes
     /// <c>GetPlugin&lt;T&gt;()</c> the bridge invokes by reflection.</summary>
     public class FakePluginManager
     {
-        private readonly object _plugin;
-        public FakePluginManager(object plugin) { _plugin = plugin; }
-        public T GetPlugin<T>() => (T)_plugin;
+        private readonly object? _plugin;
+        public FakePluginManager(object? plugin) { _plugin = plugin; }
+        public T GetPlugin<T>() => (T)_plugin!;
         /// <summary>Test-only accessor to the wrapped fake plugin.</summary>
-        public object Plugin => _plugin;
+        public object? Plugin => _plugin;
     }
 
     /// <summary>A PluginManager that lacks GetPlugin&lt;T&gt;(), to drive the
@@ -407,14 +407,14 @@ namespace FanaBridge.Tests.CmFakes
     {
         public int VendorID { get; set; }
         public int ProductId { get; set; }
-        public string ControllerName { get; set; }
-        public string Variant { get; set; }
+        public string? ControllerName { get; set; }
+        public string? Variant { get; set; }
     }
 
     /// <summary>Test double for ControllerSourceMapping (owns one description).</summary>
     public class FakeControllerSourceMapping
     {
-        public FakeControllerDescription ControllerDescription { get; set; }
+        public FakeControllerDescription? ControllerDescription { get; set; }
     }
 
     /// <summary>Mirrors the shape DescribeResolution reflects into:

@@ -300,7 +300,7 @@ namespace FanaBridge.Tests
 
         [Theory]
         [InlineData(null)]
-        public void SendValues_NullList_ReturnsFalse(IReadOnlyList<ItmValue> values)
+        public void SendValues_NullList_ReturnsFalse(IReadOnlyList<ItmValue>? values)
         {
             var encoder = MakeEncoder(out var t);
             Assert.False(encoder.SendValues(values));

@@ -1,0 +1,57 @@
+# Top-most EditorConfig file for FanaBridge.
+# Deliberately conservative: encodes the style the codebase already uses so
+# IDEs and CI agree going forward, without forcing churn on existing files.
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml,json}]
+indent_size = 2
+
+[*.{csproj,props,targets,xaml}]
+indent_size = 2
+
+[*.md]
+# Trailing spaces are meaningful (hard line breaks).
+trim_trailing_whitespace = false
+
+[*.cs]
+# ── New-line / brace style (Allman, as used throughout) ──────────────
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+
+# ── Namespaces / usings ──────────────────────────────────────────────
+# The codebase uses block-scoped namespaces; keep new files consistent.
+csharp_style_namespace_declarations = block_scoped:suggestion
+dotnet_sort_system_directives_first = true
+
+# ── this. / var ──────────────────────────────────────────────────────
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:silent
+
+# ── Naming: private fields are _camelCase, constants ALL_CAPS-tolerant ──
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel
+dotnet_naming_rule.private_fields_underscore.severity = suggestion
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_symbols.private_fields.required_modifiers =
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+dotnet_naming_style.underscore_camel.required_prefix = _
+
+# ── Modifier / expression preferences (match existing idiom) ─────────
+dotnet_style_readonly_field = true:suggestion
+csharp_prefer_braces = when_multiline:silent
+csharp_style_expression_bodied_methods = when_on_single_line:silent
+csharp_style_expression_bodied_properties = when_on_single_line:silent

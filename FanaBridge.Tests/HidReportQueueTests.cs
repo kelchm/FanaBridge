@@ -214,7 +214,7 @@ namespace FanaBridge.Tests
         public void Tap_ObserverGetsCopy_ConsumerStillGetsFrame()
         {
             var queue = new HidReportQueue(16);
-            byte[] observed = null;
+            byte[]? observed = null;
             using (queue.Tap(f => observed = f))
             {
                 queue.Enqueue(Report(0xAB, 0xCD), 2);

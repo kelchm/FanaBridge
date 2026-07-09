@@ -3,6 +3,9 @@
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <IsPackable>false</IsPackable>
+    <!-- Nullable annotations start here (our own code, no unannotated SimHub
+         API pressure); production files opt in per-file as they are touched. -->
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,6 +36,7 @@
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" PrivateAssets="all" />
     <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

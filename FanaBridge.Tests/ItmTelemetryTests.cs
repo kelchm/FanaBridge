@@ -460,7 +460,7 @@ namespace FanaBridge.Tests
             foreach (var g in relGaps)
             {
                 var opp = FormatterServices.GetUninitializedObject(OpponentType);
-                setter.Invoke(opp, new object[] { g });
+                setter.Invoke(opp, new object?[] { g });
                 list.Add(opp);
             }
             return list;
