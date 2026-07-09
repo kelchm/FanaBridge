@@ -37,6 +37,12 @@ namespace FanaBridge.Tests
                 return this;
             }
 
+            public ScriptedSource Timeout()
+            {
+                _steps.Enqueue(_ => throw new TimeoutException("scripted idle timeout"));
+                return this;
+            }
+
             public int Read(byte[] buffer, int offset, int count)
             {
                 // Script exhausted: treat as a persistent device failure so the
@@ -143,6 +149,26 @@ namespace FanaBridge.Tests
             // blocked elicit during teardown instead of deadlocking it.
             var dest = new byte[64];
             Assert.Equal(-1, q.Get(Col03Family.Tuning).TryRead(dest, 5_000));
+        }
+
+        [Fact]
+        public void IdleTimeouts_ParkAgain_WithoutFaultingOrCountingAsErrors()
+        {
+            // A timeout is the reader's normal idle state (~24 days at the
+            // configured window) — it must neither fault the reader nor spend
+            // the transient-error retry budget.
+            var (t, q) = NewSession();
+            var source = new ScriptedSource()
+                .Timeout().Timeout().Timeout().Timeout().Timeout().Timeout()
+                .Frame(IdentityFrame())
+                .Error(t.SignalStoppingForTest);
+
+            var identityFrames = new List<byte[]>();
+            using (q.Get(Col03Family.Identity).Tap(identityFrames.Add))
+                t.Col03ReadLoop(source, q, 64);
+
+            Assert.Single(identityFrames);       // still reading after 6 timeouts
+            Assert.False(t.ReaderFaultedForTest);
         }
 
         [Fact]

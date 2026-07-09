@@ -47,9 +47,17 @@ namespace FanaBridge.Tests
                 Connected ? FanatecTransport.TransportConnectStatus.Connected
                           : FanatecTransport.TransportConnectStatus.NoDeviceForPid;
 
+            // When set, each sent frame's replies are enqueued onto the Identity
+            // stream — models the device responding to the connect-time
+            // enable/trigger elicit (ReadInitial flushes the stream first, so
+            // pre-seeding cannot reach that path).
+            public Queue<byte[]> RespondOnSend { get; } = new Queue<byte[]>();
+
             public bool SendCol03(byte[] data)
             {
                 Sent.Add((byte[])data.Clone());
+                while (RespondOnSend.Count > 0)
+                    Identity.Enqueue(RespondOnSend.Dequeue());
                 return true;
             }
 
@@ -392,6 +400,221 @@ namespace FanaBridge.Tests
             Assert.Same(WheelCapabilities.None, wb.CurrentCapabilities);
             Assert.Null(wb.LastRawReport);
             Assert.Equal("No wheel attached", wb.DisplayName);
+        }
+
+        // ── Rim swap ───────────────────────────────────────────────────────
+
+        [Fact]
+        public void RimSwap_CommitsTheNewWheel_AndFiresWheelChangedAgain()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+
+            int wheelChanged = 0;
+            wb.WheelChanged += _ => wheelChanged++;
+
+            string other = FanatecDeviceTables.Wheels.Values.First(v => v != "PSWBMW");
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire(other)));
+
+            Assert.Equal(other, wb.WheelCode);
+            Assert.Equal(1, wheelChanged);
+        }
+
+        [Fact]
+        public void RimSwapFlap_RevertingWithinTheSettleWindow_CommitsNothing()
+        {
+            // The firmware's transient reconnect flap: A → B → A inside the settle
+            // window must ride out silently — no commit, no WheelChanged, and the
+            // identity must still read as A once stable again.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+
+            int wheelChanged = 0;
+            wb.WheelChanged += _ => wheelChanged++;
+
+            string other = FanatecDeviceTables.Wheels.Values.First(v => v != "PSWBMW");
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire(other)));      // flap out...
+            clock.T += 50;
+            wb.UpdateIdentity();
+            Assert.False(wb.IdentityStable);
+
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));   // ...and back
+            clock.T += 50;
+            wb.UpdateIdentity();
+
+            clock.T += 250;                                        // quiet again
+            wb.UpdateIdentity();
+
+            Assert.True(wb.IdentityStable);
+            Assert.Equal("PSWBMW", wb.WheelCode);
+            Assert.Equal(0, wheelChanged);
+        }
+
+        // ── Unrecognized hardware / diagnostics contract ──────────────────
+
+        [Fact]
+        public void UnrecognizedWire_DetectedButNotIdentified_WithReportableName()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            byte unknown = (byte)Enumerable.Range(1, 254)
+                .First(i => !FanatecDeviceTables.Wheels.ContainsKey((byte)i)
+                         && !FanatecDeviceTables.Hubs.ContainsKey((byte)i)
+                         && i != 0xFF);
+            CommitIdentity(wb, t, clock, Ff08(0x0C, unknown));
+
+            Assert.True(wb.WheelDetected);       // something IS attached...
+            Assert.False(wb.WheelIdentified);    // ...but we can't name it
+            Assert.Null(wb.WheelCode);
+            Assert.Equal(unknown, wb.WheelWireCode);
+            Assert.Contains("Unknown (0x" + unknown.ToString("X2"), wb.DisplayName);
+            Assert.Same(WheelCapabilities.None, wb.CurrentCapabilities);
+        }
+
+        [Fact]
+        public void ExtInfoWire_0xFF_GetsTheDedicatedReportMarker()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            CommitIdentity(wb, t, clock, Ff08(0x0C, 0xFF));
+
+            Assert.Contains("EXT_INFO", wb.DisplayName);
+        }
+
+        [Fact]
+        public void LastRawReport_UpdatesPerReading_EvenBeforeAnyCommit()
+        {
+            // Diagnostics contract: a capture taken on a sitting-still
+            // unrecognized wheel must reflect the live frame — retention happens
+            // on every drained reading, not only on settled commits.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            Assert.Null(wb.LastRawReport);
+
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+            clock.T += 10;
+            wb.UpdateIdentity();                 // offered — NOT yet committed
+
+            Assert.False(wb.WheelDetected);
+            Assert.NotNull(wb.LastRawReport);
+            Assert.Equal(0xFF, wb.LastRawReport[0]);
+        }
+
+        // ── Connect-time initial read ──────────────────────────────────────
+
+        [Fact]
+        public void ConnectTimeInitialRead_SeedsIdentity_FromTheEnableTriggerReply()
+        {
+            // ReadInitial elicits with enable+trigger and flushes stale frames
+            // first, so the reply arrives via respond-on-send, as from hardware.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            t.RespondOnSend.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+
+            Assert.True(wb.AutoConnect());       // reply consumed at connect
+
+            clock.T += 250;                      // settle the connect-time reading
+            Assert.True(wb.UpdateIdentity());
+            Assert.Equal("PSWBMW", wb.WheelCode);
+        }
+
+        // ── Capability resolution hooks ────────────────────────────────────
+
+        [Fact]
+        public void ProfileOverrideResolver_RedirectsCapabilityResolution()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            string requestedKey = null;
+            wb.ProfileOverrideResolver = key => { requestedKey = key; return "PHUB"; };
+
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+
+            Assert.Equal("PSWBMW", requestedKey);            // asked with the match key
+            Assert.Equal("PHUB", wb.CurrentCapabilities.Profile?.Id);   // override won
+        }
+
+        [Fact]
+        public void CommittedIdentity_ResolvesTheMatchingProfileCapabilities()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+
+            Assert.Equal("PSWBMW", wb.CurrentCapabilities.Profile?.Id);
+            Assert.Equal(wb.CurrentCapabilities.Name, wb.DisplayName);
+        }
+
+        // ── ITM subscription buffering ─────────────────────────────────────
+
+        [Fact]
+        public void ItmReports_BufferedDuringDrain_HandedOffOnce()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, 0x11 });
+            t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, 0x22 });
+            clock.T += 10;
+            wb.UpdateIdentity();
+
+            var drained = new List<byte[]>();
+            wb.DrainItmReports(drained.Add);
+            Assert.Equal(2, drained.Count);
+            Assert.Equal(0x11, drained[0][3]);
+            Assert.Equal(0x22, drained[1][3]);
+
+            wb.DrainItmReports(drained.Add);     // buffer cleared by the hand-off
+            Assert.Equal(2, drained.Count);
+        }
+
+        [Fact]
+        public void ItmReports_BufferBounded_DropsOldestWhenFull()
+        {
+            // Cap is 32; a stalled consumer (e.g. during the wizard) must cost the
+            // OLDEST reports — only the latest subscription state matters.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            // The per-tick drain is bounded, so feed across several ticks.
+            for (int i = 0; i < 40; i++)
+            {
+                t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, (byte)i });
+                clock.T += 10;
+                wb.UpdateIdentity();
+            }
+
+            var drained = new List<byte[]>();
+            wb.DrainItmReports(drained.Add);
+
+            Assert.Equal(32, drained.Count);
+            Assert.Equal(39, drained[drained.Count - 1][3]);   // newest kept
+            Assert.Equal(8, drained[0][3]);                    // oldest 8 dropped
+        }
+
+        // ── Guard rails ────────────────────────────────────────────────────
+
+        [Fact]
+        public void UpdateIdentity_WhileDisconnected_IsANoOp()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            Assert.False(wb.UpdateIdentity());
+            Assert.Empty(t.Sent);
         }
 
         [Fact]
