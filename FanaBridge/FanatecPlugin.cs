@@ -219,6 +219,15 @@ namespace FanaBridge
             catch { return null; }
         }
 
+        /// <summary>
+        /// Whether the Control Mapper integration has permanently disabled itself
+        /// for this session (SimHub internals no longer match what the bridge
+        /// reflects into). Surfaced in the settings UI so enabled-but-dead is
+        /// distinguishable from "Control Mapper not installed".
+        /// </summary>
+        public bool IsControlMapperIntegrationGivenUp =>
+            _controlMapperBridge?.IsGivenUp == true;
+
         /// <summary>The connected wheelbase — used by DeviceInstance wrappers to query wheel identity.</summary>
         // ARCHITECTURE: single-device assumption. When multi-device support lands
         // (pedals/shifter/SRM), this becomes a DeviceManager owning a collection;

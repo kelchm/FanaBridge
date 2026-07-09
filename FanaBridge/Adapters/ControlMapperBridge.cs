@@ -534,13 +534,33 @@ namespace FanaBridge.Adapters
             }
         }
 
+        // A throwing GetPlugin<T> during startup usually means the plugin
+        // collection is still in flux — a transient, not a shape change. Shape
+        // changes (the LogGiveUp calls in ResolveHandles) fail deterministically
+        // on every call, so a persistent-failure threshold still catches them
+        // here without letting one bad tick at startup kill the integration for
+        // the whole session. Internal so tests pin the exact threshold.
+        internal const int LIVE_RESOLVE_FAILURES_BEFORE_GIVE_UP = 10;
+        private int _liveResolveFailures;
+
         /// <summary>Resolve the live ControlMapperPlugin instance (null if not loaded).</summary>
         private object LiveControlMapper()
         {
-            try { return _getPluginCM.Invoke(_pm, null); }
+            try
+            {
+                object cm = _getPluginCM.Invoke(_pm, null);
+                _liveResolveFailures = 0;   // any non-throwing call proves the path works
+                return cm;
+            }
             catch (Exception ex)
             {
-                LogGiveUp("GetPlugin<ControlMapperPlugin> threw: " + ex.GetBaseException().Message);
+                if (++_liveResolveFailures >= LIVE_RESOLVE_FAILURES_BEFORE_GIVE_UP)
+                    LogGiveUp("GetPlugin<ControlMapperPlugin> failing persistently ("
+                        + _liveResolveFailures + " consecutive): " + ex.GetBaseException().Message);
+                else
+                    SimHub.Logging.Current.Debug(
+                        "FanaBridge: GetPlugin<ControlMapperPlugin> threw (attempt "
+                        + _liveResolveFailures + ", will retry): " + ex.GetBaseException().Message);
                 return null;
             }
         }
