@@ -3,6 +3,9 @@
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <IsPackable>false</IsPackable>
+    <!-- Nullable annotations start here (our own code, no unannotated SimHub
+         API pressure); production files opt in per-file as they are touched. -->
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>

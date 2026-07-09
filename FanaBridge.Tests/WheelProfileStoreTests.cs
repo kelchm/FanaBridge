@@ -34,7 +34,7 @@ namespace FanaBridge.Tests
         [InlineData(null)]
         [InlineData("")]
         [InlineData("SOME_FUTURE_WHEEL")]
-        public void NormalizeWheelType_PassesThrough_UnknownValues(string wheelType)
+        public void NormalizeWheelType_PassesThrough_UnknownValues(string? wheelType)
         {
             Assert.Equal(wheelType, WheelProfileStore.NormalizeWheelType(wheelType));
         }
@@ -49,7 +49,7 @@ namespace FanaBridge.Tests
         [Theory]
         [InlineData(null)]
         [InlineData("")]
-        public void FindByWheelType_ReturnsNull_ForNullOrEmptyWheel(string wheelType)
+        public void FindByWheelType_ReturnsNull_ForNullOrEmptyWheel(string? wheelType)
         {
             Assert.Null(WheelProfileStore.FindByWheelType(wheelType));
         }

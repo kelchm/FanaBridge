@@ -50,7 +50,7 @@ namespace FanaBridge.Tests
 
             private sealed class Scope : IDisposable
             {
-                private StubTransport _t;
+                private StubTransport? _t;
                 public Scope(StubTransport t) { _t = t; }
                 public void Dispose() { if (_t != null) { _t._batchDepth--; _t = null; } }
             }

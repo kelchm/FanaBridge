@@ -23,7 +23,7 @@ namespace FanaBridge.Tests
         [InlineData("PHUB", "PBME", "FS_WHEEL_SWTYPE_PHUB_PBME")]
         [InlineData("PHUB", "PBMR", "FS_WHEEL_SWTYPE_PHUB_PBMR")]
         [InlineData("CSSWFORMV3", null, "FS_WHEEL_SWTYPE_CSSWFORMV3")] // newer wheel stock never knew, emitted as-is
-        public void FormatStockVariant_BuildsStockCompatibleId(string wheel, string module, string expected)
+        public void FormatStockVariant_BuildsStockCompatibleId(string wheel, string? module, string expected)
             => Assert.Equal(expected, FanaBridgeVariantProvider.FormatStockVariant(wheel, module));
 
         [Fact]
@@ -34,7 +34,7 @@ namespace FanaBridge.Tests
         [Theory]
         [InlineData(null, null)]
         [InlineData("", "PBMR")]
-        public void FormatStockVariant_NoWheelCode_ReturnsNull(string wheel, string module)
+        public void FormatStockVariant_NoWheelCode_ReturnsNull(string? wheel, string? module)
             => Assert.Null(FanaBridgeVariantProvider.FormatStockVariant(wheel, module));
 
         // ── friendly display name (applied as CustomName) ────────────────
@@ -42,13 +42,13 @@ namespace FanaBridge.Tests
         [InlineData("PHUB", "PBMR", "Podium Hub + Button Module Rally")]
         [InlineData("PHUB", "PBME", "Podium Hub + Button Module Endurance")]
         [InlineData("PSWBMW", null, "Podium BMW M4 GT3")]
-        public void FormatFriendlyName_UsesTableNames(string wheel, string module, string expected)
+        public void FormatFriendlyName_UsesTableNames(string wheel, string? module, string expected)
             => Assert.Equal(expected, FanaBridgeVariantProvider.FormatFriendlyName(wheel, module));
 
         [Theory]
         [InlineData("ZZWHEEL", null, "ZZWHEEL")]
         [InlineData("ZZWHEEL", "ZZMOD", "ZZWHEEL + ZZMOD")]
-        public void FormatFriendlyName_UnknownCodes_FallBackToRawCode(string wheel, string module, string expected)
+        public void FormatFriendlyName_UnknownCodes_FallBackToRawCode(string wheel, string? module, string expected)
             => Assert.Equal(expected, FanaBridgeVariantProvider.FormatFriendlyName(wheel, module));
 
         [Fact]

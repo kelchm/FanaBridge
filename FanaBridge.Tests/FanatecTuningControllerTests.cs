@@ -166,7 +166,7 @@ namespace FanaBridge.Tests
             var transport = new StubTransport();
             transport.ReadQueue.Enqueue(FakeReadResponse(0xFE)); // not a valid EncoderMode
 
-            string lastWarn = null;
+            string? lastWarn = null;
             var controller = new FanatecTuningController(transport, logWarn: msg => lastWarn = msg);
             var result = controller.ReadEncoderMode();
 
