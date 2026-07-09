@@ -306,7 +306,7 @@ namespace FanaBridge.Transport
             }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Error("FanatecWheelbase: AutoConnect error: " + ex.Message);
+                Log.Error("FanatecWheelbase: AutoConnect error: " + ex.Message);
                 LastConnectError = "AutoConnect error: " + ex.Message;
                 return false;
             }
@@ -327,7 +327,7 @@ namespace FanaBridge.Transport
             }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Error("FanatecWheelbase: Connect error: " + ex.Message);
+                Log.Error("FanatecWheelbase: Connect error: " + ex.Message);
                 LastConnectError = "Connect error: " + ex.Message;
                 return false;
             }
@@ -346,7 +346,7 @@ namespace FanaBridge.Transport
             LastConnectError = null;          // connected successfully
             _lastLoggedConnectError = null;   // re-arm failure logging for the next drop
 
-            SimHub.Logging.Current.Info(string.Format(
+            Log.Info(string.Format(
                 "FanatecWheelbase: {0} (PID 0x{1:X4})", ProductName, productId));
 
             // Enable the system report (turns on the firmware's push-on-change) and
@@ -365,7 +365,7 @@ namespace FanaBridge.Transport
             }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Warn("FanatecWheelbase: Initial identity read failed: " + ex.Message);
+                Log.Warn("FanatecWheelbase: Initial identity read failed: " + ex.Message);
             }
             return true;
         }
@@ -394,7 +394,7 @@ namespace FanaBridge.Transport
             LastConnectError = message;
             if (!string.Equals(message, _lastLoggedConnectError, StringComparison.Ordinal))
             {
-                SimHub.Logging.Current.Warn("FanatecWheelbase: " + message);
+                Log.Warn("FanatecWheelbase: " + message);
                 _lastLoggedConnectError = message;
             }
             return false;
@@ -545,7 +545,7 @@ namespace FanaBridge.Transport
                     if (!_itmDropWarned)
                     {
                         _itmDropWarned = true;
-                        SimHub.Logging.Current.Warn(
+                        Log.Warn(
                             "FanatecWheelbase: ITM subscription buffer full (" + ItmReportBufferCap +
                             ") — dropping oldest reports; is the ITM driver draining?");
                     }
@@ -622,7 +622,7 @@ namespace FanaBridge.Transport
 
             ResolveCapabilities("SRM converter identified");
             WheelChanged?.Invoke(this);
-            SimHub.Logging.Current.Info(string.Format(
+            Log.Info(string.Format(
                 "FanatecWheelbase: SRM Conversion Kit — Wheel={0} (id 0x{1:X2}), Module={2}, KitFw={3}",
                 WheelCode ?? "unknown", wire, ModuleCode ?? "(none)", SrmKitFirmware ?? "?"));
         }
@@ -675,7 +675,7 @@ namespace FanaBridge.Transport
                 ? new WheelCapabilities(profile)
                 : WheelCapabilities.None;
 
-            SimHub.Logging.Current.Info(string.Format(
+            Log.Info(string.Format(
                 "FanatecWheelbase: {0} — Base={1} (0x{2:X2}), Detected={3}, Wheel={4} (wire 0x{5:X2}), Module={6} (0x{7:X2}), Override={8}, Caps={9}",
                 logContext,
                 BaseCode ?? "(unknown)",
