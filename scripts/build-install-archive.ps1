@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Builds a distributable install archive for FanaBridge.
 

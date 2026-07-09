@@ -21,7 +21,8 @@
   <ItemGroup>
     <!-- The SimHub-free device stack (HID transport, protocol, profiles).
          Private=true (default) so FanaBridge.Core.dll lands in this project's
-         bin — packaging and the install target ship it next to the plugin. -->
+         bin, where MergePlugin folds it into the single merged FanaBridge.dll
+         that packaging and the install target ship. -->
     <ProjectReference Include="..\FanaBridge.Core\FanaBridge.Core.csproj" />
   </ItemGroup>
 
@@ -128,7 +129,7 @@
 
   <!-- ── Local dev install (device logos) ──────────────────────────────
        Copies the processed device logos into the local SimHub install.
-       The plugin + core DLLs are copied by the shared CopyToSimHub target
+       The merged plugin DLL is installed by the shared CopyToSimHub target
        in Directory.Build.targets. Only runs when InstallToSimHub=true:
 
          dotnet build -p:InstallToSimHub=true
