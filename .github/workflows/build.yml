@@ -182,7 +182,10 @@ jobs:
             'FanaBridge.sln',
             '-c',
             "$env:CONFIGURATION",
-            '--no-restore'
+            '--no-restore',
+            # Produce the single-DLL artifact (bin\<cfg>\merged\FanaBridge.dll)
+            # alongside the normal two-assembly outputs the tests consume.
+            '-p:MergePlugin=true'
           )
 
           if (-not [string]::IsNullOrWhiteSpace($VersionSuffix)) {
@@ -256,8 +259,9 @@ jobs:
           New-Item $Dist                         -ItemType Directory -Force | Out-Null
           New-Item "$Dist\DevicesLogos"           -ItemType Directory -Force | Out-Null
 
-          Copy-Item "$BinDir\FanaBridge.dll" $Dist
-          Copy-Item "$BinDir\FanaBridge.Core.dll" $Dist
+          # The merged single-DLL artifact (FanaBridge.Core folded in) — end
+          # users install exactly one DLL, same as before the Core split.
+          Copy-Item "$BinDir\merged\FanaBridge.dll" $Dist
 
           $ProcessedLogos = 'src\FanaBridge\Resources\DeviceLogos\processed'
           if (Test-Path $ProcessedLogos) {

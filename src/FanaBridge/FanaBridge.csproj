@@ -28,6 +28,9 @@
   <ItemGroup>
     <!-- Provides .NET Framework 4.8 reference assemblies for builds without VS -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- Package-time merge tool (see the MergePlugin target): end users get a
+         single FanaBridge.dll; the two-assembly split exists for development. -->
+    <PackageReference Include="ILRepack" Version="2.0.45" PrivateAssets="all" GeneratePathProperty="true" />
   </ItemGroup>
 
   <ItemGroup>
@@ -96,18 +99,31 @@
     <SourceDeviceLogos Include="Resources\DeviceLogos\*.png" />
   </ItemGroup>
 
-  <Target Name="ProcessDeviceLogos" BeforeTargets="CopyDeviceLogos;Build"
-          Inputs="@(SourceDeviceLogos)"
-          Outputs="@(SourceDeviceLogos->'Resources\DeviceLogos\processed\%(Filename)%(Extension)')">
+  <Target Name="ProcessDeviceLogos" BeforeTargets="CopyDeviceLogos;Build" Inputs="@(SourceDeviceLogos)" Outputs="@(SourceDeviceLogos->'Resources\DeviceLogos\processed\%(Filename)%(Extension)')">
     <Exec Command="magick --version" IgnoreExitCode="true" StandardOutputImportance="low">
       <Output TaskParameter="ExitCode" PropertyName="MagickExitCode" />
     </Exec>
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)..\..\scripts\process-device-logos.ps1&quot;"
-          Condition="'$(MagickExitCode)' == '0'" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)..\..\scripts\process-device-logos.ps1&quot;" Condition="'$(MagickExitCode)' == '0'" />
     <!-- Fallback: if no ImageMagick, just copy source images to processed/ -->
     <MakeDir Directories="Resources\DeviceLogos\processed" Condition="'$(MagickExitCode)' != '0'" />
-    <Copy SourceFiles="@(SourceDeviceLogos)" DestinationFolder="Resources\DeviceLogos\processed"
-          SkipUnchangedFiles="true" Condition="'$(MagickExitCode)' != '0'" />
+    <Copy SourceFiles="@(SourceDeviceLogos)" DestinationFolder="Resources\DeviceLogos\processed" SkipUnchangedFiles="true" Condition="'$(MagickExitCode)' != '0'" />
+  </Target>
+
+  <!-- ── Single-DLL packaging ──────────────────────────────────────────
+       End users install exactly one FanaBridge.dll, as before the Core
+       split — the two assemblies exist for development (compiler-enforced
+       layering), and ILRepack folds FanaBridge.Core into the plugin at
+       package/install time. Output goes to bin\<cfg>\merged\ so the normal
+       two-assembly build outputs (which the test project consumes) are
+       never touched. Runs when packaging (-p:MergePlugin=true) or
+       installing (-p:InstallToSimHub=true). -->
+  <Target Name="MergePlugin" AfterTargets="Build"
+          Condition="'$(MergePlugin)' == 'true' or '$(InstallToSimHub)' == 'true'"
+          Inputs="$(TargetPath);$(TargetDir)FanaBridge.Core.dll"
+          Outputs="$(TargetDir)merged\$(TargetFileName)">
+    <MakeDir Directories="$(TargetDir)merged" />
+    <Exec Command="&quot;$(PkgILRepack)\tools\ILRepack.exe&quot; /out:&quot;$(TargetDir)merged\$(TargetFileName)&quot; /lib:&quot;$(SimHubDir)\&quot; /targetplatform:v4 &quot;$(TargetPath)&quot; &quot;$(TargetDir)FanaBridge.Core.dll&quot;" />
+    <Message Importance="high" Text="Merged FanaBridge.Core into $(TargetDir)merged\$(TargetFileName)" />
   </Target>
 
   <!-- ── Local dev install (device logos) ──────────────────────────────
@@ -118,8 +134,7 @@
          dotnet build -p:InstallToSimHub=true
 
        Default builds just compile — no file locking issues. -->
-  <Target Name="CopyDeviceLogos" AfterTargets="Build" Condition="'$(InstallToSimHub)' == 'true'"
-          DependsOnTargets="ProcessDeviceLogos">
+  <Target Name="CopyDeviceLogos" AfterTargets="Build" Condition="'$(InstallToSimHub)' == 'true'" DependsOnTargets="ProcessDeviceLogos">
     <ItemGroup>
       <DeviceLogoFiles Include="Resources\DeviceLogos\processed\*.png" />
     </ItemGroup>

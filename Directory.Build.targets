@@ -1,21 +1,23 @@
 <Project>
 
   <!-- ── Local dev install ─────────────────────────────────────────────
-       Copies the plugin DLL and its FanaBridge.* satellite assemblies
-       (FanaBridge.Core) into the local SimHub install. Opt-in:
+       Installs the single merged plugin DLL (see the MergePlugin target in
+       the plugin csproj — FanaBridge.Core is folded in at install/package
+       time, so end users and dev installs alike see one FanaBridge.dll).
+       Opt-in:
 
          dotnet build -p:InstallToSimHub=true
 
        Only projects that ship as SimHub plugins set IsSimHubPlugin=true,
        so library/test builds never trigger a copy. -->
-  <Target Name="CopyToSimHub" AfterTargets="Build"
+  <Target Name="CopyToSimHub" AfterTargets="Build" DependsOnTargets="MergePlugin"
           Condition="'$(IsSimHubPlugin)' == 'true' and '$(InstallToSimHub)' == 'true'">
-    <ItemGroup>
-      <_SimHubInstallFiles Include="$(TargetPath)" />
-      <_SimHubInstallFiles Include="$(TargetDir)FanaBridge.*.dll" Exclude="$(TargetPath)" />
-    </ItemGroup>
-    <Copy SourceFiles="@(_SimHubInstallFiles)" DestinationFolder="$(SimHubDir)" SkipUnchangedFiles="true" />
-    <Message Importance="high" Text="Installed @(_SimHubInstallFiles->'%(Filename)%(Extension)', ', ') → $(SimHubDir)" />
+    <Copy SourceFiles="$(TargetDir)merged\$(TargetFileName)" DestinationFolder="$(SimHubDir)" SkipUnchangedFiles="true" />
+    <!-- Clean up a satellite left by an earlier two-DLL dev install; the
+         merged plugin no longer references it, so a stale copy is inert but
+         confusing. -->
+    <Delete Files="$(SimHubDir)FanaBridge.Core.dll" ContinueOnError="true" />
+    <Message Importance="high" Text="Installed $(TargetFileName) (merged) → $(SimHubDir)" />
   </Target>
 
 </Project>
