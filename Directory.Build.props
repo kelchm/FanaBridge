@@ -1,5 +1,12 @@
 <Project>
   <PropertyGroup>
+    <!-- One compiler dialect for every project (the plugin previously pinned 8.0
+         while the test project silently defaulted to 7.3). net48 is a runtime
+         target — modern C# compiles fine against it except for features that
+         need runtime support (default interface members; records/init need the
+         IsExternalInit shim). -->
+    <LangVersion>latest</LangVersion>
+
     <!-- Single source of truth for product versioning. -->
     <VersionPrefix>0.5.0</VersionPrefix>
     <Version Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)</Version>
