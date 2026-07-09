@@ -54,6 +54,7 @@ namespace FanaBridge.Tests
             var encoded = SevenSegment.EncodeWithDots(".5");
 
             Assert.Equal(2, encoded.Count);
+            Assert.Equal(SevenSegment.CharToSegment('.'), encoded[0]);
             Assert.Equal(SevenSegment.Digit5, encoded[1]);
         }
 

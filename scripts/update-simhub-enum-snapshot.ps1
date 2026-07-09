@@ -4,12 +4,12 @@
 
 .DESCRIPTION
     Reads the public enum metadata of the shipped SimHub.FanatecManaged.dll via
-    reflection and writes it to FanaBridge.Tests\Snapshots\SimHub.FanatecManaged.enums.txt.
+    reflection and writes it to tests\FanaBridge.Tests\Snapshots\SimHub.FanatecManaged.enums.txt.
     SimHubEnumSnapshotTests compares the DLL against this snapshot so a SimHub
     update that adds or renames wheel ids fails loudly instead of slipping by.
 
     The output format must stay identical to the C# generator in
-    FanaBridge.Tests\SimHubEnumSnapshotTests.cs; the test itself catches drift
+    tests\FanaBridge.Tests\SimHubEnumSnapshotTests.cs; the test itself catches drift
     between the two implementations.
 
 .PARAMETER SimHubDir
