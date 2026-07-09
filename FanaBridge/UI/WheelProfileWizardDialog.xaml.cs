@@ -639,7 +639,21 @@ namespace FanaBridge.UI
             // Build the LED list — or rebuild it if the color/mono counts changed
             // via Back-navigation (stale HwIndex values would mis-bind mappings);
             // an unchanged-count re-entry keeps the list and its captures.
-            mapping.EnsureLeds(_state.Color.Count, _state.Mono.Count);
+            // Clamp mono to the intensity payload capacity with the same rule
+            // BuildProfile applies, so the mapping step never walks the user
+            // through LEDs that can't light and won't survive into the profile.
+            int colorCount = _state.Color.Count;
+            int monoCount = _state.Mono.Count;
+            int maxMono = Math.Max(0, LedEncoder.INTENSITY_PAYLOAD_SIZE - colorCount);
+            if (monoCount > maxMono)
+            {
+                SimHub.Logging.Current.Warn(
+                    string.Format("WheelProfileWizard: Clamping mono LED count from {0} to {1} for mapping " +
+                                  "(colorCount={2} + monoCount must not exceed INTENSITY_PAYLOAD_SIZE={3})",
+                                  monoCount, maxMono, colorCount, LedEncoder.INTENSITY_PAYLOAD_SIZE));
+                monoCount = maxMono;
+            }
+            mapping.EnsureLeds(colorCount, monoCount);
 
             if (mapping.Leds.Count == 0)
             {
