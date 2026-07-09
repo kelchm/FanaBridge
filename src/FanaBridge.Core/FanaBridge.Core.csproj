@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <!-- Keeps namespaces AND embedded-resource names
+         ("FanaBridge.Resources.Profiles.*.json", loaded reflectively by
+         WheelProfileStore) identical to the pre-split single assembly.
+         Do not change. -->
+    <RootNamespace>FanaBridge</RootNamespace>
+    <AssemblyName>FanaBridge.Core</AssemblyName>
+    <Description>FanaBridge device stack (SimHub-free): HID transport, Fanatec protocol, wheel profiles</Description>
+    <Product>FanaBridge</Product>
+    <Copyright>Copyright (c) 2026</Copyright>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Provides .NET Framework 4.8 reference assemblies for builds without VS -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Resolved from the SimHub install so runtime assembly identities match
+         the ones SimHub loads; never copied (SimHub ships them). These are the
+         core's ONLY external references — no SimHub.* assemblies here, by
+         design. Logging flows through the Log seam (Logging/Log.cs). -->
+    <Reference Include="HidSharp">
+      <HintPath>$(SimHubDir)HidSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(SimHubDir)Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- ── Wheel profile JSON files ──────────────────────────────────────
+       Embedded in the DLL as assembly resources.  Immutable at runtime.
+       User-created profiles are loaded from a separate directory. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Profiles\*.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- FanaBridge: ConverterCaptureProbe (plugin-side Diagnostics/) uses the
+         internal Col03FrameClassifier — the only cross-assembly internal use.
+         FanaBridge.Tests: internal ctors, interfaces, and test hooks across
+         Transport/Protocol/Profiles. -->
+    <InternalsVisibleTo Include="FanaBridge" />
+    <InternalsVisibleTo Include="FanaBridge.Tests" />
+  </ItemGroup>
+
+</Project>

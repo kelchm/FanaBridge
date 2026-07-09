@@ -193,7 +193,7 @@ namespace FanaBridge.Transport
                 if (devices.Count == 0)
                 {
                     LastConnectStatus = TransportConnectStatus.NoDeviceForPid;
-                    SimHub.Logging.Current.Info("FanatecTransport: No devices found for PID 0x" + productId.ToString("X4"));
+                    Log.Info("FanatecTransport: No devices found for PID 0x" + productId.ToString("X4"));
                     return false;
                 }
 
@@ -220,7 +220,7 @@ namespace FanaBridge.Transport
                     // Debug, not Warn: the wheelbase logs a single de-duped Warn for this;
                     // logging here every retry/poll would spam the log.
                     LastConnectStatus = TransportConnectStatus.NoCol03Interface;
-                    SimHub.Logging.Current.Debug(
+                    Log.Debug(
                         "FanatecTransport: No col03 (64-byte) control interface found for PID 0x"
                         + productId.ToString("X4") + " after " + COL03_FIND_ATTEMPTS + " attempt(s)");
                     return false;
@@ -235,12 +235,12 @@ namespace FanaBridge.Transport
                     // The col03 collection exists but we could not open it — this is
                     // the only failure that is genuine exclusive-access contention.
                     LastConnectStatus = TransportConnectStatus.Col03OpenFailed;
-                    SimHub.Logging.Current.Warn(
+                    Log.Warn(
                         "FanatecTransport: col03 interface open failed (held by another process?): " + ex.Message);
                     return false;
                 }
 
-                SimHub.Logging.Current.Info(string.Format(
+                Log.Info(string.Format(
                     "FanatecTransport: LED interface opened (MaxOutput={0})", SafeMaxOutput(_ledDevice)));
 
                 // Open col01 via HidStream (interrupt OUT — confirmed working in PoC)
@@ -249,11 +249,11 @@ namespace FanaBridge.Transport
                     try
                     {
                         _displayStream = _displayDevice.Open();
-                        SimHub.Logging.Current.Info("FanatecTransport: Display interface (col01) opened via HidStream");
+                        Log.Info("FanatecTransport: Display interface (col01) opened via HidStream");
                     }
                     catch (Exception ex)
                     {
-                        SimHub.Logging.Current.Warn("FanatecTransport: col01 HidStream failed: " + ex.Message);
+                        Log.Warn("FanatecTransport: col01 HidStream failed: " + ex.Message);
                     }
 
                     // Also open raw handle as fallback
@@ -272,7 +272,7 @@ namespace FanaBridge.Transport
                     }
                     catch (Exception ex)
                     {
-                        SimHub.Logging.Current.Warn("FanatecTransport: col01 WriteFile handle failed: " + ex.Message);
+                        Log.Warn("FanatecTransport: col01 WriteFile handle failed: " + ex.Message);
                     }
                 }
 
@@ -288,13 +288,13 @@ namespace FanaBridge.Transport
                 _connectedProductId = productId;
                 LastConnectStatus = TransportConnectStatus.Connected;
                 StartCol03Reader();
-                SimHub.Logging.Current.Info("FanatecTransport: Connected to " + ProductName);
+                Log.Info("FanatecTransport: Connected to " + ProductName);
                 return true;
             }
             catch (Exception ex)
             {
                 LastConnectStatus = TransportConnectStatus.UnexpectedError;
-                SimHub.Logging.Current.Error("FanatecTransport: Connection error: " + ex.Message);
+                Log.Error("FanatecTransport: Connection error: " + ex.Message);
                 return false;
             }
         }
@@ -343,7 +343,7 @@ namespace FanaBridge.Transport
                 if (ex.Message != _lastLedWriteWarn)
                 {
                     _lastLedWriteWarn = ex.Message;
-                    SimHub.Logging.Current.Warn(
+                    Log.Warn(
                         "FanatecTransport: LED write error: " + ex.Message + " (suppressing repeats)");
                 }
                 return false;
@@ -371,7 +371,7 @@ namespace FanaBridge.Transport
                     if (ex.Message != _lastDisplayWriteWarn)
                     {
                         _lastDisplayWriteWarn = ex.Message;
-                        SimHub.Logging.Current.Warn(
+                        Log.Warn(
                             "FanatecTransport: Display stream write failed: " + ex.Message + " (suppressing repeats)");
                     }
                 }
@@ -540,7 +540,7 @@ namespace FanaBridge.Transport
                     if (ReferenceEquals(_col03Queues, queues))
                     {
                         _col03ReaderFaulted = true;
-                        SimHub.Logging.Current.Warn(
+                        Log.Warn(
                             "FanatecTransport: col03 reader stopped after repeated read errors ("
                             + ex.GetType().Name + ": " + ex.Message + ") — flagging for reconnect");
                     }

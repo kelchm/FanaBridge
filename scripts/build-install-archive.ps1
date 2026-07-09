@@ -1,10 +1,10 @@
-<#
+﻿<#
 .SYNOPSIS
     Builds a distributable install archive for FanaBridge.
 
 .DESCRIPTION
     Constructs a zip file containing:
-      - FanaBridge.dll (and .pdb if present)
+      - FanaBridge.dll (single merged assembly — FanaBridge.Core is folded in)
       - Processed device logo images from Resources/DeviceLogos/processed/
 
     The archive can be extracted directly into the SimHub installation directory.
@@ -34,7 +34,7 @@ $BuildOutput = Join-Path $ProjectDir "bin\$Configuration"
 
 # ── 1. Build ──────────────────────────────────────────────────────────────────
 Write-Host "Building $Configuration..." -ForegroundColor Cyan
-dotnet build "$ProjectDir\FanaBridge.csproj" -c $Configuration --no-restore
+dotnet build "$ProjectDir\FanaBridge.csproj" -c $Configuration --no-restore -p:MergePlugin=true
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Build failed."
     exit 1
@@ -46,8 +46,8 @@ if (Test-Path $Staging) { Remove-Item $Staging -Recurse -Force }
 New-Item $Staging -ItemType Directory -Force | Out-Null
 New-Item (Join-Path $Staging 'DevicesLogos') -ItemType Directory -Force | Out-Null
 
-# Plugin DLL (debug symbols are embedded)
-Copy-Item (Join-Path $BuildOutput 'FanaBridge.dll') $Staging
+# The merged single-DLL artifact (FanaBridge.Core folded in at build time).
+Copy-Item (Join-Path $BuildOutput 'merged\FanaBridge.dll') $Staging
 
 # ── Device logo images ────────────────────────────────────────────────────────
 # Copy pre-processed images from Resources/DeviceLogos/processed/.

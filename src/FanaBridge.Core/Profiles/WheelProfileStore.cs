@@ -87,7 +87,7 @@ namespace FanaBridge.Profiles
 
             Interlocked.Exchange(ref _snapshot, new ProfileSnapshot(all, byId));
 
-            SimHub.Logging.Current.Info(
+            Log.Info(
                 "WheelProfileStore: Loaded " + all.Count + " profile(s) (" + byId.Count + " unique IDs)");
         }
 
@@ -108,7 +108,7 @@ namespace FanaBridge.Profiles
             }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Warn(
+                Log.Warn(
                     "WheelProfileStore: Could not create user profile directory: " + ex.Message);
                 return null;
             }
@@ -147,7 +147,7 @@ namespace FanaBridge.Profiles
 
                             if (profile?.Id == null)
                             {
-                                SimHub.Logging.Current.Warn(
+                                Log.Warn(
                                     "WheelProfileStore: Skipping embedded resource with no 'id': " + resourceName);
                                 continue;
                             }
@@ -156,7 +156,7 @@ namespace FanaBridge.Profiles
                             all.Add(profile);
                             profile.Source = ProfileSource.BuiltIn;
                             profile.SourcePath = resourceName;
-                            SimHub.Logging.Current.Info(
+                            Log.Info(
                                 "WheelProfileStore: Loaded built-in profile '" + profile.Id +
                                 "' (" + profile.Name + ")");
                         }
@@ -164,7 +164,7 @@ namespace FanaBridge.Profiles
                 }
                 catch (Exception ex)
                 {
-                    SimHub.Logging.Current.Warn(
+                    Log.Warn(
                         "WheelProfileStore: Failed to load embedded resource " + resourceName + ": " + ex.Message);
                 }
             }
@@ -189,7 +189,7 @@ namespace FanaBridge.Profiles
 
                     if (profile?.Id == null)
                     {
-                        SimHub.Logging.Current.Warn(
+                        Log.Warn(
                             "WheelProfileStore: Skipping file with no 'id': " + file);
                         continue;
                     }
@@ -199,7 +199,7 @@ namespace FanaBridge.Profiles
 
                     if (profile.SchemaVersion < WheelProfile.CurrentSchemaVersion)
                     {
-                        SimHub.Logging.Current.Warn(
+                        Log.Warn(
                             "WheelProfileStore: User profile '" + profile.Id +
                             "' uses schema version " + profile.SchemaVersion +
                             " (current is " + WheelProfile.CurrentSchemaVersion +
@@ -208,7 +208,7 @@ namespace FanaBridge.Profiles
                     }
                     else if (profile.SchemaVersion > WheelProfile.CurrentSchemaVersion)
                     {
-                        SimHub.Logging.Current.Warn(
+                        Log.Warn(
                             "WheelProfileStore: User profile '" + profile.Id +
                             "' uses newer schema version " + profile.SchemaVersion +
                             " (current is " + WheelProfile.CurrentSchemaVersion +
@@ -227,24 +227,24 @@ namespace FanaBridge.Profiles
 
                     if (wasUser)
                     {
-                        SimHub.Logging.Current.Warn(
+                        Log.Warn(
                             "WheelProfileStore: Duplicate user profile '" + profile.Id +
                             "' — " + Path.GetFileName(file) + " overrides earlier file");
                     }
                     else if (wasBuiltIn)
                     {
-                        SimHub.Logging.Current.Info(
+                        Log.Info(
                             "WheelProfileStore: User profile '" + profile.Id +
                             "' overrides built-in profile");
                     }
 
-                    SimHub.Logging.Current.Info(
+                    Log.Info(
                         "WheelProfileStore: Loaded user profile '" + profile.Id +
                         "' (" + profile.Name + ") from " + Path.GetFileName(file));
                 }
                 catch (Exception ex)
                 {
-                    SimHub.Logging.Current.Warn(
+                    Log.Warn(
                         "WheelProfileStore: Failed to load " + file + ": " + ex.Message);
                 }
             }
@@ -433,7 +433,7 @@ namespace FanaBridge.Profiles
 
             if (userProfile == null)
             {
-                SimHub.Logging.Current.Warn(
+                Log.Warn(
                     "WheelProfileStore: No user profile found with ID '" + profileId + "'");
                 return false;
             }
@@ -457,13 +457,13 @@ namespace FanaBridge.Profiles
 
                 Interlocked.Exchange(ref _snapshot, new ProfileSnapshot(newAll, newById));
 
-                SimHub.Logging.Current.Info(
+                Log.Info(
                     "WheelProfileStore: Deleted user profile '" + profileId + "'");
                 return true;
             }
             catch (Exception ex)
             {
-                SimHub.Logging.Current.Warn(
+                Log.Warn(
                     "WheelProfileStore: Failed to delete profile '" + profileId + "': " + ex.Message);
                 return false;
             }

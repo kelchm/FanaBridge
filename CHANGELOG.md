@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Internal: the device stack (HID transport, Fanatec protocol, wheel profiles) now lives in a separate `FanaBridge.Core` project, merged into the shipped `FanaBridge.dll` at package time — installation is unchanged (still a single DLL).
+
 ## v0.5.0 - 2026-07-07
 
 ### Added

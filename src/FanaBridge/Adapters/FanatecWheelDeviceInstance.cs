@@ -5,7 +5,6 @@ using FanaBridge;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
-using FanaBridge.UI;
 using GameReaderCommon;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
@@ -592,22 +591,28 @@ namespace FanaBridge.Adapters
                     true);
             }
 
+            // Screen/Tuning tabs are built through the plugin's panel factory so
+            // this Adapters class never references FanaBridge.UI. No current
+            // plugin generation → tabs omitted, consistent with the LED tab's
+            // degradation via EnsureLedModuleInitialized.
+            var panels = PluginResolver()?.PanelFactory;
+
             // Screen settings tab (only for wheels with a display)
-            if (_config.Capabilities.Display != DisplayType.None)
+            if (panels != null && _config.Capabilities.Display != DisplayType.None)
             {
-                var screenPanel = new ScreenSettingsPanel();
-                screenPanel.Bind(_displaySettings, _config.Capabilities.Display, _config.Capabilities.ItmDeviceId);
-                screenPanel.SettingsChanged += () =>
-                {
-                    // Sync back to JObject for persistence.
-                    _customSettings["displayMode"] = _displaySettings.DisplayMode;
-                    _customSettings["itmEnabled"] = _displaySettings.ItmEnabled;
-                    _customSettings["itmShowLapTotal"] = _displaySettings.ItmShowLapTotal;
-                    _customSettings["itmShowPositionTotal"] = _displaySettings.ItmShowPositionTotal;
-                    _customSettings["itmDefaultPage"] = _displaySettings.ItmDefaultPage;
-                    _displayManager?.UpdateSettings(_displaySettings);
-                    // ITM driver reads _displaySettings live each frame.
-                };
+                var screenPanel = panels.CreateScreenPanel(
+                    _displaySettings, _config.Capabilities.Display, _config.Capabilities.ItmDeviceId,
+                    settingsChanged: () =>
+                    {
+                        // Sync back to JObject for persistence.
+                        _customSettings["displayMode"] = _displaySettings.DisplayMode;
+                        _customSettings["itmEnabled"] = _displaySettings.ItmEnabled;
+                        _customSettings["itmShowLapTotal"] = _displaySettings.ItmShowLapTotal;
+                        _customSettings["itmShowPositionTotal"] = _displaySettings.ItmShowPositionTotal;
+                        _customSettings["itmDefaultPage"] = _displaySettings.ItmDefaultPage;
+                        _displayManager?.UpdateSettings(_displaySettings);
+                        // ITM driver reads _displaySettings live each frame.
+                    });
 
                 yield return new DeviceSettingControl(
                     screenPanel,
@@ -618,17 +623,10 @@ namespace FanaBridge.Adapters
             }
 
             // Tuning settings tab (only for wheels with encoders)
-            if (_config.Capabilities.HasEncoders)
+            if (panels != null && _config.Capabilities.HasEncoders)
             {
-                var tuningPanel = new TuningSettingsPanel();
-                tuningPanel.Bind(_customSettings);
-                tuningPanel.SettingsChanged += () =>
-                {
-                    // Persist settings on change (handled by SimHub)
-                };
-
                 yield return new DeviceSettingControl(
-                    tuningPanel,
+                    panels.CreateTuningPanel(_customSettings),
                     2,
                     "Tuning",
                     DeviceSettingControlKind.None,
