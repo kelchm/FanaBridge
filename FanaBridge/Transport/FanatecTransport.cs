@@ -13,7 +13,7 @@ namespace FanaBridge.Transport
     /// <see cref="IDeviceTransport"/> interface used by protocol encoders
     /// (LEDs, display, tuning).
     /// </summary>
-    public class FanatecTransport : IDisposable, IDeviceTransport
+    public class FanatecTransport : IDisposable, IDeviceTransport, IConnectableTransport
     {
         private const int DISPLAY_REPORT_LENGTH = 8;
 
@@ -55,8 +55,9 @@ namespace FanaBridge.Transport
 
         // A transient read error (USB suspend blip, driver hiccup) must not kill
         // the input path — retry a few times before declaring the reader dead.
-        private const int COL03_READ_RETRY_MAX = 5;
-        private const int COL03_READ_RETRY_DELAY_MS = 50;
+        // Internal so the reader-loop invariant tests pin the exact thresholds.
+        internal const int COL03_READ_RETRY_MAX = 5;
+        internal const int COL03_READ_RETRY_DELAY_MS = 50;
 
         // Stable facades over the current session's queues, so consumers can
         // cache IReportStream references across reconnects.
@@ -453,7 +454,7 @@ namespace FanaBridge.Transport
             var queues = _col03Queues;
             int bufLen = ((IDeviceTransport)this).Col03MaxInputReportLength;
 
-            _col03Reader = new Thread(() => Col03ReadLoop(stream, queues, bufLen))
+            _col03Reader = new Thread(() => Col03ReadLoop(new HidStreamSource(stream), queues, bufLen))
             {
                 IsBackground = true,
                 Name = "FanaBridge col03 reader",
@@ -461,7 +462,45 @@ namespace FanaBridge.Transport
             _col03Reader.Start();
         }
 
-        private void Col03ReadLoop(HidStream stream, Col03QueueSet queues, int bufLen)
+        /// <summary>
+        /// The minimal read surface the col03 reader loop needs from the HID
+        /// stream — seamed so the loop's retry/fault/teardown invariants (which
+        /// otherwise exist only as comments) are unit-testable without hardware.
+        /// </summary>
+        internal interface ICol03Source
+        {
+            int Read(byte[] buffer, int offset, int count);
+            int ReadTimeout { set; }
+        }
+
+        private sealed class HidStreamSource : ICol03Source
+        {
+            private readonly HidStream _stream;
+            public HidStreamSource(HidStream stream) { _stream = stream; }
+            public int Read(byte[] buffer, int offset, int count) => _stream.Read(buffer, offset, count);
+            public int ReadTimeout { set { _stream.ReadTimeout = value; } }
+        }
+
+        // ── Reader-loop test hooks ─────────────────────────────────────────
+        // The loop's invariants depend on instance state (_col03Stopping,
+        // _col03ReaderFaulted, the _col03Queues session identity); these hooks
+        // let tests arrange that state and run the loop synchronously.
+
+        /// <summary>Test hook: installs a queue set as the current reader session.</summary>
+        internal void BeginReaderSessionForTest(Col03QueueSet queues)
+        {
+            _col03Stopping = false;
+            _col03ReaderFaulted = false;
+            _col03Queues = queues;
+        }
+
+        /// <summary>Test hook: marks teardown in progress, as Disconnect does before disposing streams.</summary>
+        internal void SignalStoppingForTest() => _col03Stopping = true;
+
+        /// <summary>Test hook: whether the reader declared itself dead (drives IsConnected=false).</summary>
+        internal bool ReaderFaultedForTest => _col03ReaderFaulted;
+
+        internal void Col03ReadLoop(ICol03Source stream, Col03QueueSet queues, int bufLen)
         {
             var buf = new byte[bufLen];
             try { stream.ReadTimeout = COL03_READER_TIMEOUT_MS; } catch { }
