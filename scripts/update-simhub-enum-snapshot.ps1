@@ -84,5 +84,5 @@ $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($OutFile))
 [IO.File]::WriteAllText($OutFile, $sb.ToString(), [Text.UTF8Encoding]::new($false))
 Write-Host "Wrote $($enums.Count) enum(s) from $dllPath"
 Write-Host "  -> $OutFile"
-Write-Host 'If members changed, review src\FanaBridge\Adapters\FanaBridgeVariantProvider.cs (StockWheelSuffixOverrides)'
-Write-Host 'and src\FanaBridge\Protocol\FanatecDeviceTables.cs for new or renamed wheel ids.'
+Write-Host 'If members changed, review FanaBridgeVariantProvider.cs (StockWheelSuffixOverrides)'
+Write-Host 'and FanatecDeviceTables.cs for new or renamed wheel ids.'

@@ -169,14 +169,19 @@ jobs:
 
       - name: Build
         shell: pwsh
+        env:
+          # Via env, not template expansion, so the values can't break out of
+          # the script's quoting (same rule as SIMHUB_VERSION_INPUT above).
+          CONFIGURATION: ${{ inputs.configuration }}
+          VERSION_SUFFIX: ${{ inputs.version-suffix }}
         run: |
-          $VersionSuffix = '${{ inputs.version-suffix }}'
+          $VersionSuffix = "$env:VERSION_SUFFIX"
           $Cmd = @(
             'dotnet',
             'build',
             'FanaBridge.sln',
             '-c',
-            '${{ inputs.configuration }}',
+            "$env:CONFIGURATION",
             '--no-restore'
           )
 
@@ -238,9 +243,13 @@ jobs:
       - name: Package artifact
         id: package
         shell: pwsh
+        env:
+          # Via env, not template expansion — see the Build step.
+          CONFIGURATION: ${{ inputs.configuration }}
+          ARTIFACT_LABEL: ${{ inputs.artifact-label }}
         run: |
-          $ArtifactLabel = '${{ inputs.artifact-label }}'
-          $BinDir        = "src\FanaBridge\bin\${{ inputs.configuration }}"
+          $ArtifactLabel = "$env:ARTIFACT_LABEL"
+          $BinDir        = "src\FanaBridge\bin\$env:CONFIGURATION"
           $Dist          = 'dist'
           $ShortSha      = (git rev-parse --short HEAD)
 
