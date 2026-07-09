@@ -291,6 +291,71 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void TransientGetPluginFailure_QuietlyRetries_ThenRecovers()
+        {
+            // The plugin collection can be in flux during startup — a throwing
+            // GetPlugin<T> is a transient there, and one bad tick must not kill
+            // the integration for the whole session (it previously latched
+            // give-up on the first throw).
+            IFakeControlMapper cm = CmFake.NewPlugin();
+            cm.Worker.Helper.InitList();
+            cm.Settings.RecognizeIndiviualWheels = true;
+            var pm = new FakePluginManagerFlaky(cm, throwsRemaining: 3);
+            var bridge = new ControlMapperBridge();
+
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.Null(bridge.IsRecognizeIndividualWheelsOn(pm));  // failed this tick...
+                Assert.False(bridge.IsGivenUp);                         // ...but not dead
+            }
+
+            Assert.True(bridge.IsRecognizeIndividualWheelsOn(pm));      // recovered
+            Assert.False(bridge.IsGivenUp);
+        }
+
+        [Fact]
+        public void PersistentGetPluginFailure_EscalatesToGiveUp()
+        {
+            // A genuine shape change fails deterministically on every call, so
+            // the persistent-failure threshold still reaches give-up — the
+            // escalation exists so transients don't, not so shape changes never do.
+            IFakeControlMapper cm = CmFake.NewPlugin();
+            cm.Worker.Helper.InitList();
+            var pm = new FakePluginManagerFlaky(cm, throwsRemaining: int.MaxValue);
+            var bridge = new ControlMapperBridge();
+
+            for (int i = 0; i < ControlMapperBridge.LIVE_RESOLVE_FAILURES_BEFORE_GIVE_UP; i++)
+            {
+                Assert.False(bridge.IsGivenUp);
+                bridge.IsRecognizeIndividualWheelsOn(pm);
+            }
+
+            Assert.True(bridge.IsGivenUp);
+        }
+
+        [Fact]
+        public void SuccessBetweenFailures_ResetsTheEscalationCounter()
+        {
+            IFakeControlMapper cm = CmFake.NewPlugin();
+            cm.Worker.Helper.InitList();
+            var bridge = new ControlMapperBridge();
+
+            // Almost reach the threshold, recover once, then fail again just as
+            // long — the counter must have reset, so give-up is never latched.
+            int almost = ControlMapperBridge.LIVE_RESOLVE_FAILURES_BEFORE_GIVE_UP - 1;
+            var pm = new FakePluginManagerFlaky(cm, throwsRemaining: almost);
+            for (int i = 0; i < almost; i++)
+                bridge.IsRecognizeIndividualWheelsOn(pm);
+            bridge.IsRecognizeIndividualWheelsOn(pm);      // succeeds — resets
+
+            pm.ThrowsRemaining = almost;
+            for (int i = 0; i < almost; i++)
+                bridge.IsRecognizeIndividualWheelsOn(pm);
+
+            Assert.False(bridge.IsGivenUp);
+        }
+
+        [Fact]
         public void DescribeResolution_ControlMapperNotLoaded_DoesNotThrow()
         {
             var pm = new FakePluginManager(null); // GetPlugin<T>() returns null
@@ -399,6 +464,31 @@ namespace FanaBridge.Tests.CmFakes
     /// bridge's graceful give-up path.</summary>
     public class FakePluginManagerNoGetPlugin
     {
+    }
+
+    /// <summary>A PluginManager whose GetPlugin&lt;T&gt;() throws for the first N
+    /// calls (startup plugin-collection flux), then answers normally — drives the
+    /// bridge's transient-vs-persistent escalation.</summary>
+    public class FakePluginManagerFlaky
+    {
+        private readonly object _plugin;
+        public int ThrowsRemaining;
+
+        public FakePluginManagerFlaky(object plugin, int throwsRemaining)
+        {
+            _plugin = plugin;
+            ThrowsRemaining = throwsRemaining;
+        }
+
+        public T GetPlugin<T>()
+        {
+            if (ThrowsRemaining > 0)
+            {
+                ThrowsRemaining--;
+                throw new System.InvalidOperationException("plugin collection in flux");
+            }
+            return (T)_plugin;
+        }
     }
 
     /// <summary>Test double for SimHub's ControllerDescription — the public

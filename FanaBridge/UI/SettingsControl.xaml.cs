@@ -126,6 +126,7 @@ namespace FanaBridge.UI
         private static readonly Brush DotConnected = MakeBrush(0x4C, 0xAF, 0x50);  // green
         private static readonly Brush DotConnecting = MakeBrush(0xE0, 0xA8, 0x00); // amber
         private static readonly Brush DotIdle = MakeBrush(0x99, 0x99, 0x99);       // gray
+        private static readonly Brush DotError = MakeBrush(0xE0, 0x5A, 0x50);      // red — broken, needs the log
 
         private static Brush MakeBrush(byte r, byte g, byte b)
         {
@@ -214,6 +215,21 @@ namespace FanaBridge.UI
             if (!Plugin.Settings.EnableControlMapperIntegration)
             {
                 txtControlMapperStatus.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            // Given-up beats everything: the checkbox is on but the integration is
+            // dead (a SimHub update changed the internals the bridge reflects
+            // into). Without this branch that state renders exactly like "Control
+            // Mapper not installed" — invisible — and the first symptom users see
+            // is per-rim mappings silently not following the rim.
+            if (Plugin.IsControlMapperIntegrationGivenUp)
+            {
+                txtControlMapperStatus.Text =
+                    "Control Mapper integration unavailable — SimHub internals changed "
+                    + "(see the SimHub log). Mappings still work, but won't follow rim changes.";
+                txtControlMapperStatus.Foreground = DotError;
+                txtControlMapperStatus.Visibility = Visibility.Visible;
                 return;
             }
 
