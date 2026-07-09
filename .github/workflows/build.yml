@@ -190,7 +190,45 @@ jobs:
           & $Exe @Args
 
       - name: Test
-        run: dotnet test FanaBridge.Tests\FanaBridge.Tests.csproj --no-build -c ${{ inputs.configuration }} --verbosity normal
+        run: >-
+          dotnet test FanaBridge.Tests\FanaBridge.Tests.csproj --no-build
+          -c ${{ inputs.configuration }} --verbosity normal
+          --logger "trx;LogFileName=test-results.trx"
+          --collect "XPlat Code Coverage"
+          --results-directory TestResults
+
+      - name: Coverage summary
+        if: always()
+        shell: pwsh
+        run: |
+          # Surface line/branch coverage in the job summary without any
+          # external service. Cobertura XML is produced by coverlet.collector.
+          $Report = Get-ChildItem TestResults -Recurse -Filter 'coverage.cobertura.xml' |
+            Select-Object -First 1
+          if (-not $Report) {
+            Write-Host 'No coverage report found.'
+            exit 0
+          }
+          [xml]$Xml = Get-Content $Report.FullName
+          $LineRate = [math]::Round([double]$Xml.coverage.'line-rate' * 100, 1)
+          $BranchRate = [math]::Round([double]$Xml.coverage.'branch-rate' * 100, 1)
+          @(
+            '### Test coverage (FanaBridge.dll)',
+            '',
+            "| Lines | Branches |",
+            "|-------|----------|",
+            "| $LineRate% | $BranchRate% |"
+          ) | Add-Content $env:GITHUB_STEP_SUMMARY
+          Write-Host "Line coverage: $LineRate%  Branch coverage: $BranchRate%"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ inputs.artifact-label }}
+          path: TestResults/
+          retention-days: 30
+          if-no-files-found: ignore
 
       - name: Package artifact
         id: package
