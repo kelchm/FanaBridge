@@ -98,7 +98,7 @@
     <Exec Command="magick --version" IgnoreExitCode="true" StandardOutputImportance="low">
       <Output TaskParameter="ExitCode" PropertyName="MagickExitCode" />
     </Exec>
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)..\process-device-logos.ps1&quot;"
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)..\..\scripts\process-device-logos.ps1&quot;"
           Condition="'$(MagickExitCode)' == '0'" />
     <!-- Fallback: if no ImageMagick, just copy source images to processed/ -->
     <MakeDir Directories="Resources\DeviceLogos\processed" Condition="'$(MagickExitCode)' != '0'" />

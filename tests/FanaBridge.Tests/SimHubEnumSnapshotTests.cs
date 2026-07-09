@@ -50,10 +50,10 @@ namespace FanaBridge.Tests
             Assert.True(
                 expected == actual,
                 "SimHub.FanatecManaged.dll public enums differ from the committed snapshot " +
-                $"(FanaBridge.Tests\\{SnapshotRelativePath}).\n" +
-                "Regenerate with .\\update-simhub-enum-snapshot.ps1, then review " +
-                "FanaBridge\\Adapters\\FanaBridgeVariantProvider.cs (StockWheelSuffixOverrides) and " +
-                "FanaBridge\\Protocol\\FanatecDeviceTables.cs for new or renamed wheel ids.\n\n" +
+                $"(tests\\FanaBridge.Tests\\{SnapshotRelativePath}).\n" +
+                "Regenerate with .\\scripts\\update-simhub-enum-snapshot.ps1, then review " +
+                "FanaBridgeVariantProvider.cs (StockWheelSuffixOverrides) and " +
+                "FanatecDeviceTables.cs for new or renamed wheel ids.\n\n" +
                 "Actual enum metadata read from " + dllPath + ":\n" + actual);
         }
 

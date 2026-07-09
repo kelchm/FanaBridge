@@ -4,12 +4,12 @@
 
 .DESCRIPTION
     Reads the public enum metadata of the shipped SimHub.FanatecManaged.dll via
-    reflection and writes it to FanaBridge.Tests\Snapshots\SimHub.FanatecManaged.enums.txt.
+    reflection and writes it to tests\FanaBridge.Tests\Snapshots\SimHub.FanatecManaged.enums.txt.
     SimHubEnumSnapshotTests compares the DLL against this snapshot so a SimHub
     update that adds or renames wheel ids fails loudly instead of slipping by.
 
     The output format must stay identical to the C# generator in
-    FanaBridge.Tests\SimHubEnumSnapshotTests.cs; the test itself catches drift
+    tests\FanaBridge.Tests\SimHubEnumSnapshotTests.cs; the test itself catches drift
     between the two implementations.
 
 .PARAMETER SimHubDir
@@ -24,7 +24,7 @@
 [CmdletBinding()]
 param(
     [string]$SimHubDir = 'C:\Program Files (x86)\SimHub\',
-    [string]$OutFile = (Join-Path $PSScriptRoot 'FanaBridge.Tests\Snapshots\SimHub.FanatecManaged.enums.txt')
+    [string]$OutFile = (Join-Path (Split-Path $PSScriptRoot -Parent) 'tests\FanaBridge.Tests\Snapshots\SimHub.FanatecManaged.enums.txt')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,5 +84,5 @@ $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($OutFile))
 [IO.File]::WriteAllText($OutFile, $sb.ToString(), [Text.UTF8Encoding]::new($false))
 Write-Host "Wrote $($enums.Count) enum(s) from $dllPath"
 Write-Host "  -> $OutFile"
-Write-Host 'If members changed, review FanaBridge\Adapters\FanaBridgeVariantProvider.cs (StockWheelSuffixOverrides)'
-Write-Host 'and FanaBridge\Protocol\FanatecDeviceTables.cs for new or renamed wheel ids.'
+Write-Host 'If members changed, review FanaBridgeVariantProvider.cs (StockWheelSuffixOverrides)'
+Write-Host 'and FanatecDeviceTables.cs for new or renamed wheel ids.'

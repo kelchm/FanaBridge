@@ -141,5 +141,28 @@ namespace FanaBridge.Protocol
                 default: return Blank;
             }
         }
+
+        /// <summary>
+        /// Encodes a string to 7-segment bytes, folding '.'/',' onto the previous
+        /// character's dot segment. Unbounded length — callers decide fit-vs-scroll
+        /// (the settings page's display test scrolls anything longer than 3).
+        /// <see cref="DisplayEncoder.DisplayText"/> applies the same fold capped at
+        /// 3 positions for the physical display.
+        /// </summary>
+        public static System.Collections.Generic.List<byte> EncodeWithDots(string text)
+        {
+            var encoded = new System.Collections.Generic.List<byte>();
+            if (string.IsNullOrEmpty(text))
+                return encoded;
+
+            foreach (char ch in text)
+            {
+                if ((ch == '.' || ch == ',') && encoded.Count > 0)
+                    encoded[encoded.Count - 1] |= Dot;
+                else
+                    encoded.Add(CharToSegment(ch));
+            }
+            return encoded;
+        }
     }
 }

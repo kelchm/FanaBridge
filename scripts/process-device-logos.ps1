@@ -17,7 +17,7 @@
 #>
 $ErrorActionPreference = 'Stop'
 
-$SourceDir = Join-Path (Join-Path (Join-Path $PSScriptRoot 'FanaBridge') 'Resources') 'DeviceLogos'
+$SourceDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'src\FanaBridge\Resources\DeviceLogos'
 $ProcessedDir = Join-Path $SourceDir 'processed'
 
 # Verify ImageMagick is available

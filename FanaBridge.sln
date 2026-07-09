@@ -3,9 +3,13 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.5.2.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FanaBridge", "FanaBridge\FanaBridge.csproj", "{77D40755-B5B5-4C53-BD35-1CDEF35AF422}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FanaBridge", "src\FanaBridge\FanaBridge.csproj", "{77D40755-B5B5-4C53-BD35-1CDEF35AF422}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FanaBridge.Tests", "FanaBridge.Tests\FanaBridge.Tests.csproj", "{59946302-1B57-4599-BFF0-94607AF98C6E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FanaBridge.Tests", "tests\FanaBridge.Tests\FanaBridge.Tests.csproj", "{59946302-1B57-4599-BFF0-94607AF98C6E}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{A5B7C9D1-3E24-4F68-9A0B-1C2D3E4F5A6B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{B6C8DA02-4F35-5079-AB1C-2D3E4F5A6B7C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -44,6 +48,10 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{77D40755-B5B5-4C53-BD35-1CDEF35AF422} = {A5B7C9D1-3E24-4F68-9A0B-1C2D3E4F5A6B}
+		{59946302-1B57-4599-BFF0-94607AF98C6E} = {B6C8DA02-4F35-5079-AB1C-2D3E4F5A6B7C}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {7D0CE281-CB34-443A-9B08-E267DDF0BDED}

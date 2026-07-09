@@ -1064,7 +1064,7 @@ namespace FanaBridge.UI
             if (string.IsNullOrEmpty(text)) text = "---";
 
             // Encode with dot-folding to see how many display positions we need
-            var encoded = EncodeText(text);
+            var encoded = SevenSegment.EncodeWithDots(text);
 
             if (encoded.Count <= 3)
             {
@@ -1091,26 +1091,6 @@ namespace FanaBridge.UI
             StopScroll();
             if (Plugin == null || !Plugin.IsDeviceConnected) return;
             Plugin.Display.ClearDisplay();
-        }
-
-        /// <summary>
-        /// Encode a string to 7-segment bytes, folding dots/commas onto the previous character.
-        /// </summary>
-        // TODO: The per-character dot/comma folding rule here duplicates
-        // DisplayEncoder.DisplayText. The length semantics differ (this builds an
-        // unbounded list for scroll-vs-fit; DisplayText caps at 3), but the folding
-        // step itself should be a shared SevenSegment/DisplayEncoder helper.
-        private static List<byte> EncodeText(string text)
-        {
-            var encoded = new List<byte>();
-            foreach (char ch in text)
-            {
-                if ((ch == '.' || ch == ',') && encoded.Count > 0)
-                    encoded[encoded.Count - 1] |= SevenSegment.Dot;
-                else
-                    encoded.Add(SevenSegment.CharToSegment(ch));
-            }
-            return encoded;
         }
 
         private void StartScroll(List<byte> encoded)
