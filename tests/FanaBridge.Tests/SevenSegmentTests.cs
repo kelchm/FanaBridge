@@ -22,5 +22,46 @@ namespace FanaBridge.Tests
         {
             Assert.Equal(SevenSegment.Blank, SevenSegment.CharToSegment('@'));
         }
+
+        // ── EncodeWithDots (shared fold for the scroll path) ─────────────
+
+        [Fact]
+        public void EncodeWithDots_FoldsDotOntoPreviousChar()
+        {
+            var encoded = SevenSegment.EncodeWithDots("1.2");
+
+            Assert.Equal(2, encoded.Count);
+            Assert.Equal((byte)(SevenSegment.Digit1 | SevenSegment.Dot), encoded[0]);
+            Assert.Equal(SevenSegment.Digit2, encoded[1]);
+        }
+
+        [Fact]
+        public void EncodeWithDots_CommaFoldsLikeDot_AndTrailingDotIsKept()
+        {
+            // Unbounded encoding keeps a trailing dot (unlike the 3-capped
+            // DisplayEncoder.DisplayText path).
+            var encoded = SevenSegment.EncodeWithDots("1,23.");
+
+            Assert.Equal(3, encoded.Count);
+            Assert.Equal((byte)(SevenSegment.Digit1 | SevenSegment.Dot), encoded[0]);
+            Assert.Equal((byte)(SevenSegment.Digit3 | SevenSegment.Dot), encoded[2]);
+        }
+
+        [Fact]
+        public void EncodeWithDots_LeadingDot_BecomesItsOwnSegment()
+        {
+            // Nothing to fold onto — the dot char passes through CharToSegment.
+            var encoded = SevenSegment.EncodeWithDots(".5");
+
+            Assert.Equal(2, encoded.Count);
+            Assert.Equal(SevenSegment.Digit5, encoded[1]);
+        }
+
+        [Fact]
+        public void EncodeWithDots_EmptyOrNull_ReturnsEmpty()
+        {
+            Assert.Empty(SevenSegment.EncodeWithDots(""));
+            Assert.Empty(SevenSegment.EncodeWithDots(null));
+        }
     }
 }
