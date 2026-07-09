@@ -10,7 +10,7 @@ namespace FanaBridge.Transport
     /// handles; a failed query is represented as -1 / null rather than an
     /// exception, so selection logic stays branch-testable.
     /// </summary>
-    public sealed class HidDeviceInfo
+    internal sealed class HidDeviceInfo
     {
         public HidDeviceInfo(int productId, int maxOutputReportLength, int maxInputReportLength, string productName)
         {
@@ -38,14 +38,14 @@ namespace FanaBridge.Transport
     /// for discovery so base-PID selection — which has historically bitten on
     /// interface-shape edge cases — is table-testable.
     /// </summary>
-    public interface IHidBusEnumerator
+    internal interface IHidBusEnumerator
     {
         /// <summary>Snapshots the HID devices for one vendor id.</summary>
         IReadOnlyList<HidDeviceInfo> GetDevices(ushort vendorId);
     }
 
     /// <summary>Production enumerator over HidSharp's <c>DeviceList.Local</c>.</summary>
-    public sealed class HidSharpBusEnumerator : IHidBusEnumerator
+    internal sealed class HidSharpBusEnumerator : IHidBusEnumerator
     {
         public IReadOnlyList<HidDeviceInfo> GetDevices(ushort vendorId)
         {

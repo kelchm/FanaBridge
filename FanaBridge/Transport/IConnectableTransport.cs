@@ -11,7 +11,7 @@ namespace FanaBridge.Transport
     /// disconnect reset) is unit-testable with a fake transport — the layer where
     /// field bugs have historically lived.
     /// </summary>
-    public interface IConnectableTransport : IDeviceTransport, IDisposable
+    internal interface IConnectableTransport : IDeviceTransport, IDisposable
     {
         /// <summary>Opens the HID interfaces for the given product ID.</summary>
         bool Connect(int productId);
