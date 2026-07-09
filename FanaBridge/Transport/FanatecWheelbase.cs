@@ -1,8 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
-using HidSharp;
 
 namespace FanaBridge.Transport
 {
@@ -37,14 +37,35 @@ namespace FanaBridge.Transport
 
         // The wheelbase OWNS its HID transport (col01 + col03 I/O). Identity is
         // read through it, and encoders reach it via Transport.
-        private readonly FanatecTransport _transport = new FanatecTransport();
+        private readonly IConnectableTransport _transport;
+        private readonly IHidBusEnumerator _bus;
+        private readonly Func<long> _nowMs;
         private bool _disposed;
 
         public FanatecWheelbase()
+            : this(new FanatecTransport(), new HidSharpBusEnumerator(), null)
         {
+        }
+
+        /// <summary>
+        /// Test seam: the identity state machine (drain → settle → commit, SRM
+        /// precedence, disconnect reset) runs against these injected dependencies.
+        /// Production uses the parameterless constructor.
+        /// </summary>
+        internal FanatecWheelbase(IConnectableTransport transport, IHidBusEnumerator bus, Func<long> nowMs)
+        {
+            _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+            _bus = bus ?? throw new ArgumentNullException(nameof(bus));
+            _nowMs = nowMs ?? DefaultClock();
             _ingest = OnDrainReading;
             _ingestSrm = OnDrainSrm;
             _bufferItm = BufferItmReport;
+        }
+
+        private static Func<long> DefaultClock()
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            return () => sw.ElapsedMilliseconds;
         }
 
         /// <summary>The wheelbase's HID transport — used by LED/display/tuning encoders.</summary>
@@ -67,7 +88,6 @@ namespace FanaBridge.Transport
         private long _lastSrmQueryMs;
         private SrmConverterIdentity.Result? _pendingSrm;  // a 0xDD reply seen in the drain, committed after it
         private readonly IdentitySettler _settler = new IdentitySettler(IdentitySettleMs);
-        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
         private readonly Action<SystemReportReader.Reading> _ingest;
         private readonly Action<byte[]> _ingestSrm;
         private long _lastEnableMs;
@@ -271,9 +291,7 @@ namespace FanaBridge.Transport
 
             try
             {
-                var fanatecDevices = DeviceList.Local.GetHidDevices()
-                    .Where(d => d.VendorID == FANATEC_VENDOR_ID)
-                    .ToList();
+                var fanatecDevices = _bus.GetDevices(FANATEC_VENDOR_ID);
 
                 if (fanatecDevices.Count == 0)
                     return FailConnect("No Fanatec devices (VID 0x0EB7) found on the HID bus.");
@@ -305,10 +323,7 @@ namespace FanaBridge.Transport
 
             try
             {
-                var fanatecDevices = DeviceList.Local.GetHidDevices()
-                    .Where(d => d.VendorID == FANATEC_VENDOR_ID)
-                    .ToList();
-                return Adopt(productId, fanatecDevices);
+                return Adopt(productId, _bus.GetDevices(FANATEC_VENDOR_ID));
             }
             catch (Exception ex)
             {
@@ -318,17 +333,10 @@ namespace FanaBridge.Transport
             }
         }
 
-        private bool Adopt(int productId, System.Collections.Generic.List<HidDevice> fanatecDevices)
+        private bool Adopt(int productId, IReadOnlyList<HidDeviceInfo> fanatecDevices)
         {
-            try
-            {
-                var device = fanatecDevices.FirstOrDefault(d => d.ProductID == productId);
-                ProductName = SafeProductName(device);
-            }
-            catch
-            {
-                ProductName = "Fanatec Device";
-            }
+            var device = fanatecDevices.FirstOrDefault(d => d.ProductId == productId);
+            ProductName = device?.ProductName ?? "Fanatec Device";
 
             // Open the HID transport for this base — identity + all I/O flow through it.
             if (!_transport.Connect(productId))
@@ -346,7 +354,7 @@ namespace FanaBridge.Transport
             // listens for pushes — no triggering.
             try
             {
-                long connectNow = _clock.ElapsedMilliseconds;
+                long connectNow = _nowMs();
                 _lastEnableMs = connectNow;
                 _lastSrmQueryMs = connectNow - SrmQueryMs;   // allow an immediate SRM ping if FF 08 is silent
                 _pendingSrm = null;
@@ -366,18 +374,16 @@ namespace FanaBridge.Transport
         // Deliberately looser than the transport's col03 check (which requires a 64-byte
         // OUTPUT): matching a 64-byte INPUT too lets an input-only base still be adopted,
         // so the transport can report NoCol03Interface rather than the base vanishing here.
-        private static int PickBasePid(System.Collections.Generic.List<HidDevice> devices)
+        internal static int PickBasePid(IReadOnlyList<HidDeviceInfo> devices)
         {
             foreach (var d in devices)
             {
-                try
-                {
-                    if (d.GetMaxOutputReportLength() >= 64 || d.GetMaxInputReportLength() >= 64)
-                        return d.ProductID;
-                }
-                catch { /* descriptor query can throw on busy handles */ }
+                // -1 means the descriptor query threw on a busy handle — treat
+                // as unknown, not as a mismatch, and keep scanning.
+                if (d.MaxOutputReportLength >= 64 || d.MaxInputReportLength >= 64)
+                    return d.ProductId;
             }
-            return devices.Select(d => d.ProductID).FirstOrDefault();
+            return devices.Select(d => d.ProductId).FirstOrDefault();
         }
 
         // Records the connect-failure reason for the live UI/status, logging it only when
@@ -416,12 +422,6 @@ namespace FanaBridge.Transport
             }
         }
 
-        private static string SafeProductName(HidDevice device)
-        {
-            try { return device?.GetProductName() ?? "Fanatec Device"; }
-            catch { return "Fanatec Device"; }
-        }
-
         // ── Identity ──────────────────────────────────────────────────────
 
         /// <summary>
@@ -440,7 +440,7 @@ namespace FanaBridge.Transport
             if (IsSrmConverter)
                 return false;
 
-            long now = _clock.ElapsedMilliseconds;
+            long now = _nowMs();
 
             // Keep the push-on-change subscription alive (the enable can lapse).
             if (now - _lastEnableMs >= IdentityReEnableMs)

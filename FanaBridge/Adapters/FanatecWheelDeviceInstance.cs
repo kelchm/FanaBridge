@@ -78,6 +78,15 @@ namespace FanaBridge.Adapters
         // are dropped/rebuilt against the current generation.
         private FanatecPlugin _boundPlugin;
 
+        // Test seam for the issue-#37 generation matrix: resolves the current
+        // plugin generation everywhere this class would read the singleton.
+        // Production keeps the default; tests substitute plugin generations to
+        // drive the null→A, A→A, A→B, and connected→scanning transitions.
+        internal Func<FanatecPlugin> PluginResolver = () => FanatecPlugin.Instance;
+
+        /// <summary>Test hook: the generation the cached drivers were built against.</summary>
+        internal FanatecPlugin BoundPluginForTest => _boundPlugin;
+
         public FanatecWheelDeviceInstance(DeviceConfig config)
         {
             _config = config;
@@ -99,7 +108,7 @@ namespace FanaBridge.Adapters
             // the initialized flag unset so the next call retries — latching it
             // here would permanently kill this instance's LED module just
             // because it raced ahead of plugin Init.
-            var plugin = FanatecPlugin.Instance;
+            var plugin = PluginResolver();
             if (plugin == null) return;
 
             _ledModuleInitialized = true;
@@ -242,7 +251,7 @@ namespace FanaBridge.Adapters
 
         public override DeviceState GetDeviceState()
         {
-            var plugin = FanatecPlugin.Instance;
+            var plugin = PluginResolver();
             if (plugin == null)
                 return DeviceState.Disabled;
 
@@ -356,7 +365,7 @@ namespace FanaBridge.Adapters
             // Generation guard: if the plugin was replaced since our drivers were
             // built, drop them so they rebuild against the current hardware core
             // (see _boundPlugin). Must run before anything below touches them.
-            var currentPlugin = FanatecPlugin.Instance;
+            var currentPlugin = PluginResolver();
             if (currentPlugin != null && _boundPlugin != null
                 && !ReferenceEquals(_boundPlugin, currentPlugin))
             {
@@ -396,7 +405,7 @@ namespace FanaBridge.Adapters
 
             EnsureLedModuleInitialized();
 
-            var plugin = FanatecPlugin.Instance;
+            var plugin = PluginResolver();
             var device = plugin?.Transport;
             if (device == null || !device.IsConnected)
                 return;
@@ -523,7 +532,7 @@ namespace FanaBridge.Adapters
             SimHub.Logging.Current.Info(
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: End called");
 
-            FanatecPlugin.Instance?.UnregisterDeviceInstance(this);
+            PluginResolver()?.UnregisterDeviceInstance(this);
             _displayManager?.Clear();
             _itmDisplay?.Stop();
             _ledModule?.FinalizeModule();
