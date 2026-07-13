@@ -70,7 +70,6 @@ Fanatec wheelbases communicate with the host PC over USB HID (Human Interface De
   - [RGB565 Color Encoding](#rgb565-color-encoding)
   - [7-Segment Encoding Tables](#7-segment-encoding-tables)
   - [ITM Parameter IDs](#itm-parameter-ids)
-  - [ITM Unit System](#itm-unit-system)
   - [ITM Page Layouts](#itm-page-layouts)
   - [ITM Supported Devices](#itm-supported-devices)
   - [APM-Capable Wheels](#apm-capable-wheels)
@@ -524,7 +523,7 @@ When only one has changed, send that report alone with commit = `0x01`.
 
 ### 0x02 — ITM Enable
 
-Conventionally the ITM session **enable** (command class `0x02`, not `0x05`). It is separate from the persistent [ITM Mode gate](#0x02--itm-mode-enable-gate) (`FF 05 02`); a full bring-up uses both — see [Control Model](#control-model).
+Conventionally the ITM session **enable** (command class `0x02`, not `0x05`). It is separate from the persistent [ITM Mode gate](#0x02--itm-mode-enable-gate) (`FF 05 02`); Fanatec's bring-up sequences include both, though only the gate has been observed to have a measured effect to date — see [Control Model](#control-model).
 
 ```
 FF 02 02 00 [00 x60]
@@ -535,11 +534,11 @@ FF 02 02 00 [00 x60]
 | 0 | `0xFF` | Report ID |
 | 1 | `0x02` | Command class |
 | 2 | `0x02` | Sub-command |
-| 3 | `0x00` | Always `0x00`. Not a page selector — paging is [PageSet](#0x04--pageset). |
+| 3 | `0x00`/`0x01` | Observed as `0x00` (before page changes) and `0x01` (at software startup) in official-software captures. Not a page selector — paging is [PageSet](#0x04--pageset). Semantics unresolved. |
 
 **Important:**
-- Send Enable **once** at session start (as the official app does), then keep sending [value updates](#0x01--valueupdate). (Repeating it appears harmless in testing.)
-- On its own, Enable shows nothing new. What the display shows is governed by the [ITM Mode gate](#0x02--itm-mode-enable-gate) and [PageSet](#0x04--pageset) — see [Control Model](#control-model) for the bring-up.
+- In hardware testing to date, "Enable" produced **no observable effect in any state tried** — mid-session, after gate-off, after a wheel hot-swap, after a base power cycle — and cold bring-up succeeds without it (gate + PageSet alone). Until this command is better understood, it is recommended to retain it in bring-up sequences purely to match official-software behavior.
+- On its own, Enable shows nothing. What the display shows is governed by the [ITM Mode gate](#0x02--itm-mode-enable-gate) and [PageSet](#0x04--pageset) — see [Control Model](#control-model) for the bring-up.
 
 ### 0x03 — Tuning Menu
 
@@ -793,7 +792,7 @@ Each entry:
 | 0 | 1 | Device ID | Which display this entry is for (values as in [PageSet](#0x04--pageset)) |
 | 1 | 1 | Handle | Parameter handle (dictated by the firmware — see [Firmware Subscription Pushes](#firmware-subscription-pushes-device--host)) |
 | 2–3 | 2 | Param ID | Parameter ID (little-endian). See [ITM Parameter IDs](#itm-parameter-ids). |
-| 4 | 1 | Size | Value size in bytes (1, 2, or 4) |
+| 4 | 1 | Size | Value size in bytes — 1, 2, or 4 for numeric types; text-typed parameters use the character count (e.g. ENGINE_MAPPING sends 1–2 bytes) |
 | 5+ | N | Value | Parameter value (little-endian, size from above) |
 
 > **The leading byte is the display-device id** — which display the entry is for, using the same values as [PageSet](#0x04--pageset). Entries addressed to a display that isn't attached are silently ignored.
@@ -802,12 +801,14 @@ Each entry:
 
 #### 0x02 — ITM Mode (Enable Gate)
 
-Turns ITM on or off at the firmware level — the same persistent state the Fanatec software's "ITM" switch sets; the on-screen "ITM" indicator (corner text) reflects it. This is the persistent `FF 05 02` gate, **not** the session [Enable](#0x02--itm-enable) (`FF 02 02`); a full bring-up uses both — see [Control Model](#control-model).
+Turns ITM on or off at the firmware level — the same persistent state the Fanatec software's "ITM" switch sets; the small "ITM" text in the lower-right of the display reflects it. This is the persistent `FF 05 02` gate, **not** the session [Enable](#0x02--itm-enable) (`FF 02 02`); bring-up sequences conventionally include both, though only the gate has a measured effect — see [Control Model](#control-model).
 
 - **`FF 05 02 00` (off):** the display drops to the true [legacy](#col01--legacy-control-8-bytes) 7-segment view and the "ITM" indicator disappears (any cached 7-seg value already on screen persists).
-- **`FF 05 02 01` (on):** ITM turns on and shows the page from the most recent [PageSet](#0x04--pageset) since the gate-off — **or the legacy page (6) if none** — emitting that page's subscription push (an **unsubscribe-all** clearing the old handles, then the new page's handles; a legacy target shows only the unsubscribe-all).
+- **`FF 05 02 01` (on):** ITM turns on and shows the page from the most recent [PageSet](#0x04--pageset) since the gate-off — **or the legacy ITM page if none** (page 6 on BME/GTSWX; the number varies by display — see [ITM Page Layouts](#itm-page-layouts)). If that lands on a *different* page than before, the firmware emits the page's subscription push: an **unsubscribe-all** clearing the old handles, then the new page's handles. Landing on the legacy ITM page — which carries no telemetry parameters — pushes only the unsubscribe-all. A gate-on that lands where the display already was — e.g. a bare gate cycle from legacy — emits nothing.
 
-A [PageSet](#0x04--pageset) works **even while gated off**: it's recorded (no visual, ITM is off) and applied on the next gate-on. So `gate off → PageSet(N) → gate on` lands directly on page N, whereas a bare `gate off → gate on` lands on legacy. There is always a current page — the legacy page (6) is the fallback, never "no page." (Hardware-confirmed.)
+A [PageSet](#0x04--pageset) works **even while gated off**: it's recorded (no visual, ITM is off) and applied on the next gate-on. So `gate off → PageSet(N) → gate on` lands directly on page N, whereas a bare `gate off → gate on` lands on legacy. There is always a current page — the legacy ITM page is the fallback, never "no page." (Hardware-confirmed.)
+
+> **Don't conflate the two legacy-looking states.** The **legacy ITM page** (gate on, session live) and **true legacy** (gate off) are easy to mistake for each other: both render 7-segment-style col01 content, and the visible difference is the small **"ITM" text in the lower-right of the screen** — shown on the legacy ITM page, absent in true legacy. On the wire they are worse than similar: entering either state produces at most an unsubscribe-all, so **an unsubscribe-all with no subscriptions following does not identify which state the display entered**, and this protocol has no state query. To disambiguate actively, send a `PageSet` targeting a telemetry page: a subscription push back means the session was live (and the display is now on that page); silence means gated off (the PageSet was recorded, not applied) — or a lost command. The `gate off → PageSet → gate on` sequence converges from *either* state, which is why recovery procedures prefer it over diagnosis.
 
 ```
 Enable:   FF 05 02 01 [00 x60]
@@ -818,11 +819,11 @@ Disable:  FF 05 02 00 [00 x60]
 |------|-------|-------------|
 | 3 | `0x01` / `0x00` | ITM on / off |
 
-The setting is **persistent** (survives power cycles).
+The **setting** is persistent (survives power cycles — the same state the official software's ITM switch reflects), but the **runtime session is not**: after a base power cycle or a wheel re-seat the device behaves cold regardless of the persisted setting — `PageSet`s are ignored until a fresh `gate off → PageSet → gate on` re-establishes the session. Persistence tells you what the display *will* be set to; it does not save the host from re-running bring-up.
 
 #### 0x03 — ParamDefs
 
-Defines the display slot layout — tells the firmware what parameters will be displayed and in which positions:
+Functionally a **unit/suffix report**: it attaches a short ASCII decoration to a parameter the firmware has already subscribed — a unit like `"C"` on a temperature, or a total like `"/24"` that renders "Position 5 **/24**". That is all it does. "ParamDefs" is the historical name used throughout these docs, dating from an early misreading that this command *defined* which parameters a page displays — it does not: page composition and placement are fixed by the firmware and announced via [subscription pushes](#firmware-subscription-pushes-device--host); this command only decorates those slots.
 
 ```
 FF 05 03 <entries...> [00-padded to 64 bytes]
@@ -833,9 +834,9 @@ Each entry:
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0 | 1 | Device ID | Which display this entry is for (values as in [PageSet](#0x04--pageset)) |
-| 1 | 1 | Slot ID | Display layout identifier (e.g., `0x82`, `0x85`, `0x88`) |
-| 2 | 1 | Position Lo | Low byte of position (typically `0x00`) |
-| 3 | 1 | Position Hi | High byte of position (typically `0x00`) |
+| 1 | 1 | Slot ID | The target parameter's handle with the high bit set (`0x80 \| handle` — e.g., `0x82` decorates handle 2) |
+| 2 | 1 | Position Lo | Low byte of position. Always `0x00` in captures; purpose unknown. |
+| 3 | 1 | Position Hi | High byte of position. Always `0x00` in captures; purpose unknown. |
 | 4 | 1 | Suffix Length | Number of suffix bytes following (0 = no suffix) |
 | 5+ | N | Suffix Bytes | ASCII text appended after values (e.g., `2F 30` = "/0") |
 
@@ -846,6 +847,8 @@ Each entry:
 ```
 
 The suffix system attaches a unit/total to a slot (e.g. `2F 30` = "/0" total denominator → "Lap 5 / 20"; `43` = "C" for °C on temperature params). **The slot ID is `0x80 + handle`** — i.e. ParamDefs decorates the same handles used by [ValueUpdate](#0x01--valueupdate), but with the high bit set. ParamDefs is **cosmetic** (units only): a param's value renders from its ValueUpdate alone; only params that carry a unit/total get a ParamDefs entry.
+
+Suffixes are the *entire* wire-level unit mechanism. Unit conversion happens host-side — the value is converted before sending (°C vs °F, km/h vs mph) and the matching suffix text chosen; the firmware renders whatever number it is given. A total suffix like `"/24"` is literal text, so the entry must be re-sent whenever the total changes. Suffix frames appear at bring-up, on page changes, and on total changes — not per value tick.
 
 Maximum subscribed parameters per device: **16**.
 
@@ -860,18 +863,18 @@ FF 05 04 <deviceId> <page> [00 x59]
 
 | Byte | Field | Description |
 |------|-------|-------------|
-| 3 | Device ID | Target display (1=Base, 2=not present on tested hardware, 3=BME/GTSWX, 4=Bentley) |
+| 3 | Device ID | Target display: 1=Base, 3=BME/GTSWX, 4=Bentley — see [ITM Supported Devices](#itm-supported-devices). Device 2 ("SmallOLED") exists in the protocol's device numbering but no known hardware implements it; frames addressed to it are seemingly accepted, but have no effect. |
 | 4 | Page number | Page to display (1–6, device-dependent). See [ITM Page Layouts](#itm-page-layouts). |
 
-Page change commands should be spaced at least 100ms apart. The firmware needs time to reconfigure its internal display state between pages.
+Space page-change commands at least ~100 ms apart — an established convention that matches official-software pacing; tighter spacing has not been probed.
 
-**We've observed `PageSet` commands being ignored, but the root cause isn't understood.** In testing, some `PageSet` commands produced no page change and no [subscription push](#firmware-subscription-pushes-device--host) — intermittently, and *regardless* of spacing (failures happened seconds apart, far beyond the 100 ms floor). Re-sending the identical command then worked.
+**Dropped `PageSet`s: concurrent traffic is an identified cause.** `PageSet` reliability depends on what else is on the wire. In hardware testing, switches issued on an otherwise-quiet col03 channel were consistently confirmed by a push, while switches issued with [ValueUpdate](#0x01--valueupdate)s streaming alongside failed a substantial fraction of the time (no push, no page change) — and in one instance, streaming that continued through the retries left the display unresponsive until a quiet gate-off → PageSet → gate-on cycle recovered it. The failure *rate* likely varies with wheelbase, firmware, and traffic volume; the *mechanism* — a switch can silently fail to take, and concurrent traffic makes that more likely — should be assumed everywhere. Two rules for reliable host-driven paging follow: **(1) suspend ValueUpdate/ParamDefs traffic from shortly before a `PageSet` until its push confirms; (2) treat the push as the only acknowledgment that a switch happened** — never assume a `PageSet` took, and be prepared to retry.
 
-What makes this genuinely hard to detect is that there is an **expected** case that looks identical to a dropped command: **the firmware only pushes on an actual page *change*. A `PageSet` for the page the display is already on correctly produces no push.** So the absence of a push is ambiguous — the host cannot tell "already on this page, nothing to do" from "the command was ignored." (Observed directly: a first `PageSet(5)` pushes page 5's subscription; three further `PageSet(5)` in a row push nothing, because the display is already there; a following `PageSet(6)` pushes again as it switches.)
+A second, *expected* case looks identical to a dropped command: **the firmware only pushes on an actual page *change*. A `PageSet` for the page the display is already on correctly produces no push** (consistent in testing; a preceding Enable makes no difference). The absence of a push is therefore ambiguous — the host cannot tell "already on this page" from "command lost." To convert silence into signal, force a *genuine* change: switch to a different page and back (each real change must push).
 
-Practical guidance for host-driven paging: track the page you believe is current, and treat a missing push as a *possible* failure only when you targeted a *different* page — then retry. Even so, whether such a miss is a firmware drop or a page switch that wasn't re-announced is still open, and needs a display-vs-push cross-check to resolve.
+Practical guidance for host-driven paging: suspend value traffic around the switch, treat a missing push as a possible failure only when targeting a *different* page, retry with ≥100 ms spacing, and escalate to a flip-away-and-back — then to a gate cycle with the PageSet sent while gated off, the most reliable recovery observed in testing (see the [gate](#0x02--itm-mode-enable-gate)).
 
-**The legacy "keepalive" is just a PageSet.** `FF 05 04 02 0B` decodes as `PageSet(device 2, page 11)` — addressed to a display not present on the tested hardware, so it does nothing visible, and it appears in zero live captures. No periodic frame is needed to keep the display fed by [ValueUpdate](#0x01--valueupdate)s: the display has **no idle timeout** (see [Control Model](#control-model)), and FanaBridge sends no keepalive.
+**The dev-2 `PageSet` stream is not a keepalive.** Current official software emits `PageSet(2, X)` at ~10 Hz from its first ITM activity until it exits (X varies by rig/version — pinned to 11, device 2's legacy page, or mirroring the active device-3 page). Since no current hardware implements device 2, the stream has no effect on anything; it runs even while gated off and stops only when the software exits. It serves no protocol function: the display has **no idle timeout** (see [Control Model](#control-model)) and no periodic frame is needed — our recommendation is to not send it.
 
 #### 0x05 — DisplayReset
 
@@ -885,7 +888,7 @@ What it does and doesn't touch (hardware-verified):
 
 - **Cleared:** every field value previously written by [ValueUpdate](#0x01--valueupdate), on every ITM page.
 - **Untouched:** the ITM Mode gate, the session enable, the active page, and the firmware's current subscriptions — no subscription push is emitted, and value flow resumes at the existing handles. (The reset elicits nothing on the input endpoint; it is a command, not a query.)
-- **Untouched:** the legacy page (6) — its 7-segment-style content is rendered from [col01 display writes](#0x02--7-segment-display-data) and is cleared through that path instead.
+- **Untouched:** the legacy ITM page — its 7-segment-style content is rendered from [col01 display writes](#0x02--7-segment-display-data) and is cleared through that path instead.
 
 This is the **only known way to clear already-written field values**: gating ITM off and back on does *not* clear them — the firmware retains every field's value across the off→on cycle and shows it again on re-enable (hardware-verified). The official software issues a reset during its own ITM initialization. Because subscriptions survive the reset, subsequent [ValueUpdate](#0x01--valueupdate)s repaint the same handles with no re-bring-up.
 
@@ -893,7 +896,7 @@ This is the **only known way to clear already-written field values**: gating ITM
 
 Control of the ITM display is **split** between the host and the firmware — neither drives it alone:
 
-- **The host selects the page.** A host [PageSet](#0x04--pageset) chooses which page is shown; the wheel's display button does the same thing. The two are equivalent triggers, and either can change the page at any time.
+- **The host selects the page.** A host [PageSet](#0x04--pageset) chooses which page is shown; the wheel's display button does the same thing. The two are equivalent triggers within a live session — neither works before a session exists (a cold display ignores both until brought up).
 - **The firmware assigns the handles.** On every page change it *pushes* the new page's parameter subscriptions (see [Firmware Subscription Pushes](#firmware-subscription-pushes-device--host)); the host echoes [ValueUpdate](#0x01--valueupdate)s only at the handles the firmware pushed. Values sent at *guessed* handles — for a page the firmware hasn't announced — are ignored.
 
 So the host chooses *what page*; the firmware chooses *which handles*.
@@ -902,18 +905,20 @@ So the host chooses *what page*; the firmware chooses *which handles*.
 
 ```
 1. FF 05 02 01 ...        ← ITM Mode gate ON (persistent — 0x02 above)
-2. FF 02 02 00 ...        ← session Enable (once — never in a loop; see 0x02 — ITM Enable)
+2. FF 02 02 00 ...        ← session Enable (optional, kept for official parity; see 0x02 — ITM Enable)
 3. FF 05 04 <dev> <page>  ← PageSet to establish a page
 4. FF 05 01 <entries>     ← ValueUpdates at the handles the PageSet pushes back
 ```
 
-Step 3 is what actually brings a page up: in testing, a bare [`FF 02 02`](#0x02--itm-enable) enable with no PageSet produced no push and no page. Once the gate is on (it is persistent) and enable has run, a [PageSet](#0x04--pageset) — or a wheel-button press — is all that's needed to make the firmware push a page's subscription.
+Step 3 is what actually brings a page up: in testing, a bare [`FF 02 02`](#0x02--itm-enable) enable with no PageSet produced no push and no page. Within a live session, a [PageSet](#0x04--pageset) — or a wheel-button press — is all that's needed to make the firmware push a page's subscription. But note the gate's **setting-vs-session** distinction (see [ITM Mode](#0x02--itm-mode-enable-gate)): after a power cycle or wheel re-seat the device is cold no matter what setting persisted, and the full sequence — with the gate command actually re-sent — is required again.
 
-**No keepalive.** The display has no idle timeout: it holds its content indefinitely, and the value stream isn't even required to keep it lit. FanaBridge sends no keepalive, and the official software sends none either. (Hardware-confirmed.)
+**No keepalive.** The display has no idle timeout: it holds its content indefinitely, and the value stream isn't even required to keep it lit. (Hardware-confirmed.) There is no liveness ping in this protocol — the periodic frame current official software emits is a page-set to an absent display device, not a keepalive (see [PageSet](#0x04--pageset)) — and none is needed.
 
 #### Firmware Subscription Pushes (Device → Host)
 
-This is the mechanism behind the [Control Model](#control-model) above. When the page changes — from a host [PageSet](#0x04--pageset) or the wheel button — the firmware *pushes* one or more `FF 05 01` reports on the col03 **input** endpoint, telling the host exactly which parameters to display at which handles. A host `PageSet` makes the firmware push the new page's subscription ~10–40 ms later; the host then echoes [ValueUpdate](#0x01--valueupdate)s for those subscriptions.
+This is the mechanism behind the [Control Model](#control-model) above. When the page changes — from a host [PageSet](#0x04--pageset) or the wheel button — the firmware *pushes* one or more `FF 05 01` reports on the col03 **input** endpoint, telling the host exactly which parameters to display at which handles. A host `PageSet` makes the firmware push the new page's subscription within tens of milliseconds (20–70 ms observed in testing; hosts should budget a comfortably larger deadline before treating a push as missed); the host then echoes [ValueUpdate](#0x01--valueupdate)s for those subscriptions.
+
+> **Fragmentation varies by setup.** One tested setup (Podium DD+ with a PBME) consolidates a push into 1–2 multi-entry reports; another (ClubSport DD with a GTSWX) sends **one entry per report** — 6–7 reports arriving ~2 ms apart for a single page change. Both wheelbase and wheel differ between those observations, so whether the framing is determined by the base or by the wheel/module is unknown. Accumulate across reports in all cases.
 
 Each pushed report uses the same `FF 05 01` framing, with 5-byte entries:
 
@@ -922,9 +927,9 @@ Each pushed report uses the same `FF 05 01` framing, with 5-byte entries:
 | 0 | 1 | Device ID | Which display this entry is for (values as in [PageSet](#0x04--pageset)) |
 | 1 | 1 | Handle | Firmware handle. The `0x80` bit marks a "slot" param (one with a ParamDefs unit). **Host ValueUpdate handle = handle `& 0x7F`.** |
 | 2–3 | 2 | Param ID | Subscribed parameter (little-endian), or `0xFFFF` = **unsubscribe** that handle. |
-| 4 | 1 | Type | Value data-type/size selector (1/2/4-byte int, float, or text) — not the display unit. |
+| 4 | 1 | Type | Value data-type/size selector — **low nibble** is the wire type (`1`=text, `2/3`=1-byte, `4/5`=2-byte, `6/7/9`=int32, `8/10`=float32); high-nibble meaning unknown (varies per display for the same parameter). Not the display unit. **The same parameter can declare different types on different displays** — GEAR is a 1-byte int on a PBME (`0x12`) but text on a GTSWX (`0x11`) — and the host's value encoding **must follow the declared type**, or the field renders nothing (capture- and hardware-confirmed). |
 
-A page change arrives across **several** reports — an unsubscribe of the old handles (`0xFFFF`), plus one or more (often overlapping / partial) reports listing the new page's handles. **The host must accumulate them** — apply each entry as it arrives (subscribe, or `0xFFFF` = unsubscribe) — never treating a single report as the complete set. (E.g. page 3's 7 handles arrive as two reports sharing `h1–h5`, one adding `h6=BRAKE_BIAS`, the other `h0=SPEED`.) Example — switching to the Tyre Temps page:
+A page change arrives across **several** reports — an unsubscribe of the old handles (`0xFFFF`), plus one or more (often overlapping / partial) reports listing the new page's handles. **The host must accumulate them** — apply each entry as it arrives (subscribe, or `0xFFFF` = unsubscribe) — never treating a single report as the complete set. (One observed instance: page 3's 7 handles arrived as two overlapping reports sharing `h1–h5`, one adding `h6=BRAKE_BIAS`, the other `h0=SPEED` — the specific handles are illustrative only, per the allocation rules below.) Example — switching to the Tyre Temps page:
 
 ```
 FF 05 01  03 00 0001 34  03 01 0004 12  03 82 002A 32  03 83 0030 32 ...
@@ -933,7 +938,13 @@ FF 05 01  03 00 0001 34  03 01 0004 12  03 82 002A 32  03 83 0030 32 ...
 
 (`0x82 & 0x7F = 2`, so the host sends TYRE_FL at handle 2.)
 
-**Handles are double-buffered — never assume a fixed page→handle map.** The firmware alternates the handle *base* between two regions (≈`h0–h5` and `h6–h11`) on every page change: it subscribes the new page's params on the currently-free region, then unsubscribes the old region. So the *same* page appears at different handles on successive visits — Lap Info is `h0=SPEED …` one time and `h6=SPEED …` the next. This is why every page change carries an unsubscribe of the old region alongside the new subscriptions, and why **the host must follow the pushed handles each time** rather than caching a map. (Confirmed by strict base alternation across a full page cycle: `6, 0, 6, 0, 6 …`.)
+**Never assume a fixed page→handle map — handle allocation varies by setup, and handles are not page-owned.** The universal rules, consistent across every observation:
+
+- The firmware announces every assignment via push; assignments are **not** a property of the page. Whichever page is established *first* takes the base handles (a session brought up on page 2 lands it at the handles page 1 would otherwise get).
+- **A handle number can be re-bound to a different parameter on any page change** — observed within a single session: `h9` = ERS_LEVEL while Fuel/ERS/DRS was up, then BEST_LAP_TIME after switching to Lap Times. This is the deeper reason to stop sending values the moment a page change begins: entries at the *old* page's handles may land on re-bound parameters, not just be ignored.
+- Handle numbers live in a small bounded space (≈`h0–h13`; no growth observed over 60 consecutive switches), every change unsubscribes what it replaces, and a [gate](#0x02--itm-mode-enable-gate) cycle resets the table.
+
+On top of those invariants, two different **allocation strategies** have been observed: one setup (Podium DD+ with a PBME) double-buffers between two regions (≈`h0–h5` / `h6–h13`), subscribing each new page into the currently-free region — the same page lands at different handles on successive visits (`6, 0, 6, 0 …` across a full cycle), and a 7th parameter spills into the far region. Another setup (ClubSport DD with a GTSWX) **reuses one region in place** for every page, rebinding the same handle numbers each change. Neither strategy should be assumed: follow the pushed handles after every change and never cache a page→handle map across visits.
 
 **Getting the first page.** The firmware pushes a subscription only when a page is *established or changed*. So after enabling, send a [PageSet](#0x04--pageset) (or wait for a wheel-button press) and populate the handles it pushes back; values sent before that push, at guessed handles, are ignored. See [Control Model](#control-model) for the full bring-up.
 
@@ -1164,7 +1175,7 @@ The firmware recognizes a vocabulary of parameter IDs. Only a subset is confirme
 | 1 | SPEED | 2 | Int16 LE | Present on all pages as header |
 | 2 | RPM | 4 | Int32 | |
 | 3 | RPM_MAX | 4 | Int32 | |
-| 4 | GEAR | 1 | Uint8 | Present on all pages as header |
+| 4 | GEAR | 1 | **Per-display** | Present on all pages as header. **The wire form differs by display and is dictated by the Type byte in the [subscription push](#firmware-subscription-pushes-device--host)**: displays declaring a Uint8 type (e.g. PBME) take numeric — `0x00` renders "n", `1–9` literal digits, **`0xFF` renders "r"** (reverse) — and **ignore ASCII bytes**; displays declaring a text type (e.g. GTSWX, Formula V3) take a single ASCII char — `'n'`, `'1'`–`'9'`, `'r'` (lowercase) — as the official software sends. Both capture-confirmed. Sending the wrong form renders nothing. |
 | 5 | FUEL | 4 | Float32 LE | Supports total (FUEL_MAX) |
 | 6 | FUEL_MAX | 4 | Float32 LE | |
 | 7 | FUEL_PER_LAP | 4 | Float32 LE | |
@@ -1202,27 +1213,6 @@ The full parameter vocabulary includes 120+ IDs covering tyre pressures, brake t
 - 501–536: Race/timing data and flags
 - 1001–1008: System metrics (CPU load, GPU temp, FPS, etc.)
 - 65535 (`0xFFFF`): UNSUBSCRIBE sentinel
-
-### ITM Unit System
-
-Parameters can have associated display units:
-
-| Value | Unit | Category |
-|-------|------|----------|
-| 0 | DEFAULT | No suffix |
-| 1 | SPEED_KPH | Speed |
-| 2 | SPEED_MPH | Speed |
-| 4 | VOLUME_LITER | Volume |
-| 5 | VOLUME_GALLON | Volume |
-| 7 | TIME_SEC | Time |
-| 8 | TEMP_C | Temperature |
-| 9 | TEMP_F | Temperature |
-| 17 | TOTAL_POSITION | Total companion |
-| 18 | TOTAL_LAP | Total companion |
-| 19 | TOTAL_CLASS | Total companion |
-| 22 | OTHERS_PERCENT | Percentage |
-
-"Total" units enable `value / total` display (e.g., "Lap 5 / 20"). The official software submits units on every tick; the raw HID equivalent maps to the suffix mechanism in ParamDefs.
 
 ### ITM Page Layouts
 
