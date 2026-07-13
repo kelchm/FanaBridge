@@ -1,0 +1,1050 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using FanaBridge.Protocol;
+using FanaBridge.Transport;
+using Xunit;
+
+namespace FanaBridge.Tests
+{
+    /// <summary>
+    /// Exercises every state transition, recovery rung, deadline, and the push-accumulation
+    /// window of <see cref="ItmLifecycleController"/>. The scenarios mirror the hardware
+    /// behavior the design is built on (see docs/reference/protocol.md, "ITM Display"):
+    /// pushes are the only acknowledgment, values are suspended around switches, exits gate
+    /// the display off, resumes send the PageSet while off, and unexpected pushes are
+    /// adopted in every state.
+    /// </summary>
+    public class ItmLifecycleControllerTests
+    {
+        // ── Test doubles ─────────────────────────────────────────────────
+
+        private class RecordingTransport : IDeviceTransport
+        {
+            public bool IsConnected { get; set; } = true;
+            public int Col03MaxInputReportLength { get; set; } = 64;
+            public List<byte[]> Sent { get; } = new List<byte[]>();
+            public bool SendReturns { get; set; } = true;
+            public Func<byte[], bool>? Decide { get; set; }
+
+            public bool SendCol03(byte[] data)
+            {
+                var copy = new byte[data.Length];
+                Array.Copy(data, copy, data.Length);
+                Sent.Add(copy);
+                return Decide?.Invoke(copy) ?? SendReturns;
+            }
+
+            public bool SendCol01(byte[] data) => true;
+            public IReportStream IdentityReports => FakeReportStream.Empty;
+            public IReportStream ItmReports => FakeReportStream.Empty;
+            public IReportStream SrmReports => FakeReportStream.Empty;
+            public IReportStream TuningReports => FakeReportStream.Empty;
+            public int ReadCol01(byte[] buffer, int timeoutMs) => -1;
+            public int Col01MaxInputReportLength => 34;
+            public IDisposable BeginBatch() => new NoOp();
+            private sealed class NoOp : IDisposable { public void Dispose() { } }
+        }
+
+        private sealed class Clock { public long T; public long Now() => T; }
+
+        private static ItmLifecycleController Make(out RecordingTransport t, out Clock clock,
+            out List<string> logs, byte deviceId = 3)
+        {
+            t = new RecordingTransport();
+            clock = new Clock();
+            var l = new List<string>();
+            logs = l;
+            return new ItmLifecycleController(new ItmEncoder(t), deviceId, clock.Now, l.Add);
+        }
+
+        private static ItmLifecycleController Make(out RecordingTransport t, out Clock clock)
+            => Make(out t, out clock, out _);
+
+        // ── Wire frame classifiers (col03: [0]=0xFF, [1]=class, [2]=subcmd) ──
+        private static bool IsGateOn(byte[] r) => r[1] == 0x05 && r[2] == 0x02 && r[3] == 0x01;
+        private static bool IsGateOff(byte[] r) => r[1] == 0x05 && r[2] == 0x02 && r[3] == 0x00;
+        private static bool IsEnable(byte[] r) => r[1] == 0x02 && r[2] == 0x02;
+        private static bool IsPageSet(byte[] r) => r[1] == 0x05 && r[2] == 0x04;
+        private static Predicate<byte[]> IsPageSetTo(byte page)
+            => r => r[1] == 0x05 && r[2] == 0x04 && r[4] == page;
+
+        // ── Push builders (parsed entries, as the driver would hand them over) ──
+
+        private static IReadOnlyList<ushort> ParamsOf(byte page, byte deviceId = 3)
+        {
+            foreach (var p in ItmDeviceCatalog.PagesFor(deviceId))
+                if (p.Number == page)
+                    return p.Params;
+            throw new InvalidOperationException("no such page " + page);
+        }
+
+        // The full subscription push for a page: params at handles firstHandle..N-1. The
+        // handle base is arbitrary on real hardware (allocation is setup-specific), which is
+        // exactly why matching is on the param set.
+        private static List<ItmSubscription> PushFor(byte page, byte firstHandle = 0, byte deviceId = 3)
+        {
+            var ps = ParamsOf(page, deviceId);
+            var list = new List<ItmSubscription>();
+            for (int i = 0; i < ps.Count; i++)
+                list.Add(new ItmSubscription((byte)(firstHandle + i), ps[i], 0x12));
+            return list;
+        }
+
+        private static List<ItmSubscription> UnsubAll(int handles, byte firstHandle = 0)
+        {
+            var list = new List<ItmSubscription>();
+            for (int i = 0; i < handles; i++)
+                list.Add(new ItmSubscription((byte)(firstHandle + i), ItmParam.Unsubscribe));
+            return list;
+        }
+
+        // ── Flow helpers ─────────────────────────────────────────────────
+
+        private static void Tick(ItmLifecycleController c, Clock clock, long advance = 0, bool live = true)
+        {
+            clock.T += advance;
+            c.Tick(live);
+        }
+
+        // Start + bring-up + confirming push: lands the controller in Synced on DefaultPage.
+        private static void Sync(ItmLifecycleController c, RecordingTransport t, Clock clock, bool live = true)
+        {
+            c.Start();
+            c.Tick(live);                              // bring-up commands drain, deadline armed
+            c.OnPush(PushFor(c.DefaultPage));
+            Tick(c, clock, c.AccumulateWindowMs, live);   // accumulation closes → confirmed
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            t.Sent.Clear();
+        }
+
+        // ── Bring-up ─────────────────────────────────────────────────────
+
+        [Fact]
+        public void Start_SendsGateEnablePageSet_InOrder_ThenAwaitsPush()
+        {
+            var c = Make(out var t, out _);
+            c.Start();
+            c.Tick(true);
+
+            int gate = t.Sent.FindIndex(IsGateOn);
+            int enable = t.Sent.FindIndex(IsEnable);
+            int page = t.Sent.FindIndex(IsPageSet);
+            Assert.True(gate >= 0 && enable >= 0 && page >= 0, "all three bring-up frames sent");
+            Assert.True(gate < enable && enable < page, "order: gate → enable → PageSet");
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
+            Assert.False(c.ValuesAllowed);
+        }
+
+        [Fact]
+        public void Start_TargetsConfiguredDefaultPage()
+        {
+            var c = Make(out var t, out _);
+            c.DefaultPage = 5;
+            c.Start();
+            c.Tick(true);
+
+            Assert.Contains(t.Sent, IsPageSetTo(5));
+        }
+
+        [Fact]
+        public void BringUp_PushMatchingTarget_Syncs_AndAdoptsHandles()
+        {
+            var c = Make(out var t, out var clock);
+            c.Start();
+            c.Tick(true);
+
+            // Handles from an arbitrary base (6..11) — allocation is setup-specific, so
+            // confirmation must match on the param set and adopt whatever handles came.
+            c.OnPush(PushFor(1, firstHandle: 6));
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(1, c.CurrentPage);
+            Assert.Equal(1, c.SyncGeneration);
+            Assert.True(c.ValuesAllowed);
+            var handles = c.Subscriptions.Select(kv => (int)kv.Key).ToList();
+            Assert.Equal(new[] { 6, 7, 8, 9, 10, 11 }, handles);
+            // The declared dataType travels with the adoption.
+            Assert.All(c.Subscriptions, kv => Assert.Equal(0x12, kv.Value.DataType));
+        }
+
+        [Fact]
+        public void BringUp_NoSeeding_NoValuesBeforePush()
+        {
+            // Values sent at guessed handles are ignored at best and — after a page change —
+            // can land on re-bound parameters. There is no pre-push seed.
+            var c = Make(out var t, out var clock);
+            c.Start();
+            Tick(c, clock, 100);
+
+            Assert.Equal(0, c.SubscriptionCount);
+            Assert.False(c.ValuesAllowed);
+        }
+
+        [Fact]
+        public void BringUp_DeclinedWrites_RetriedUntilAccepted()
+        {
+            var c = Make(out var t, out var clock);
+            t.SendReturns = false;
+            c.Start();
+            c.Tick(true);
+            Assert.Equal(ItmLifecycleState.BringUp, c.State);   // stuck on the first step
+            t.Sent.Clear();
+
+            t.SendReturns = true;
+            Tick(c, clock, 10);
+            Assert.Contains(t.Sent, IsGateOn);
+            Assert.Contains(t.Sent, IsEnable);
+            Assert.Contains(t.Sent, IsPageSet);
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
+        }
+
+        [Fact]
+        public void BringUp_AcceptedSteps_NotResent_OnRetry()
+        {
+            var c = Make(out var t, out var clock);
+            t.Decide = r => !IsPageSet(r);   // gate + enable accepted, PageSet declined
+            c.Start();
+            c.Tick(true);
+            Assert.Equal(ItmLifecycleState.BringUp, c.State);
+            t.Sent.Clear();
+
+            t.Decide = null;
+            Tick(c, clock, 10);
+            Assert.DoesNotContain(t.Sent, IsGateOn);
+            Assert.DoesNotContain(t.Sent, IsEnable);
+            Assert.Contains(t.Sent, IsPageSet);
+        }
+
+        [Fact]
+        public void BringUp_PushDeadlineMissed_EntersRecovery()
+        {
+            // A PageSet to the page the display is already on correctly pushes nothing, so a
+            // restart onto the current page looks exactly like a lost command — the ladder
+            // (ending in flip-away-and-back) disambiguates.
+            var c = Make(out var t, out var clock);
+            c.Start();
+            c.Tick(true);
+            t.Sent.Clear();
+
+            Tick(c, clock, c.PushDeadlineMs + 1);
+
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);
+        }
+
+        [Fact]
+        public void Push_FragmentedAcrossReports_JudgedOnce()
+        {
+            // One tested setup delivers a push as one entry per report over ~15 ms; the
+            // accumulation window must join them into a single judgment.
+            var c = Make(out var t, out var clock);
+            c.Start();
+            c.Tick(true);
+
+            var full = PushFor(1);
+            foreach (var entry in full)
+            {
+                c.OnPush(new List<ItmSubscription> { entry });
+                Tick(c, clock, 2);
+            }
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(1, c.SyncGeneration);   // exactly one adoption event
+            Assert.Equal(6, c.SubscriptionCount);
+        }
+
+        [Fact]
+        public void Push_PartialSet_DoesNotConfirm()
+        {
+            // Half a page's params is not a match — the deadline (not the fragment) decides.
+            var c = Make(out var t, out var clock);
+            c.Start();
+            c.Tick(true);
+
+            var half = PushFor(1).Take(3).ToList();
+            c.OnPush(half);
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
+        }
+
+        [Fact]
+        public void BringUp_PushForDifferentPage_Adopted()
+        {
+            // An unexpected push is adopted in every state — the firmware is the source of
+            // truth and is never fought.
+            var c = Make(out var t, out var clock);
+            c.Start();
+            c.Tick(true);
+
+            c.OnPush(PushFor(4));
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(4, c.CurrentPage);
+        }
+
+        [Fact]
+        public void Push_ArrivingWhileCommandsStillDeclined_ConfirmsAtDrain()
+        {
+            // The push can beat the tail of the command sequence (a declined write being
+            // retried). It is adopted immediately and confirms once the sequence completes.
+            var c = Make(out var t, out var clock);
+            t.Decide = r => !IsPageSet(r);       // PageSet keeps being declined
+            c.Start();
+            c.Tick(true);
+
+            c.OnPush(PushFor(1));                 // push lands mid-procedure
+            Tick(c, clock, c.AccumulateWindowMs); // accumulation judged; transition deferred
+            Assert.Equal(ItmLifecycleState.BringUp, c.State);
+
+            t.Decide = null;
+            Tick(c, clock, 10);                   // PageSet finally accepted → confirm
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+        }
+
+        // ── Switching (host page requests) ───────────────────────────────
+
+        [Fact]
+        public void RequestPage_SuspendsValues_QuietWindow_ThenPageSet()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.RequestPage(3);
+            Assert.Equal(ItmLifecycleState.Switching, c.State);
+            Assert.False(c.ValuesAllowed);        // suspended from the request instant
+
+            Tick(c, clock, c.SwitchQuietMs - 10);
+            Assert.DoesNotContain(t.Sent, IsPageSet);   // still inside the quiet window
+
+            Tick(c, clock, 20);                    // quiet window over (and past PageSet spacing)
+            Assert.Contains(t.Sent, IsPageSetTo(3));
+        }
+
+        [Fact]
+        public void RequestPage_SamePage_Ignored()
+        {
+            // A PageSet to the current page pushes nothing (hardware-consistent), which would
+            // guarantee a pointless recovery — never ask for one.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.RequestPage(c.CurrentPage);
+            Tick(c, clock, 500);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Empty(t.Sent);
+        }
+
+        [Fact]
+        public void Switch_PushConfirms_ResumesValues()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            int gen = c.SyncGeneration;
+
+            c.RequestPage(3);
+            Tick(c, clock, c.SwitchQuietMs + c.PageSetSpacingMs);
+            c.OnPush(UnsubAll(6).Concat(PushFor(3)).ToList());
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(3, c.CurrentPage);
+            Assert.Equal(gen + 1, c.SyncGeneration);
+            Assert.True(c.ValuesAllowed);
+        }
+
+        [Fact]
+        public void Switch_NoPush_EntersRecovery()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.RequestPage(3);
+            Tick(c, clock, c.SwitchQuietMs + c.PageSetSpacingMs);   // PageSet out
+            Tick(c, clock, c.PushDeadlineMs + 1);
+
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);
+            Assert.False(c.ValuesAllowed);
+        }
+
+        [Fact]
+        public void PageSets_RespectSpacingFloor()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);                 // bring-up PageSet accepted at T=0
+            c.SwitchQuietMs = 10;              // quiet window shorter than the spacing floor
+
+            c.RequestPage(3);
+            Tick(c, clock, 20);                // quiet over, but only ~70 ms since last PageSet
+            Assert.DoesNotContain(t.Sent, IsPageSet);
+
+            Tick(c, clock, c.PageSetSpacingMs);   // spacing satisfied now
+            Assert.Contains(t.Sent, IsPageSetTo(3));
+        }
+
+        [Fact]
+        public void WheelButtonPush_DuringSwitch_Adopted_HostRequestDropped()
+        {
+            // The user pressed the wheel button while our switch was in flight: adopt, never
+            // fight — the queued host request is dropped, not replayed over the user's choice.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.RequestPage(3);
+            Tick(c, clock, c.SwitchQuietMs + c.PageSetSpacingMs);   // PageSet(3) out
+            c.OnPush(UnsubAll(6).Concat(PushFor(5)).ToList());       // but page 5 arrives
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(5, c.CurrentPage);
+
+            t.Sent.Clear();
+            Tick(c, clock, 1000);
+            Assert.DoesNotContain(t.Sent, IsPageSetTo(3));   // no replay of the host request
+        }
+
+        [Fact]
+        public void RequestPage_WhileSwitching_QueuedAndAppliedAfterConfirm()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.RequestPage(3);
+            Tick(c, clock, c.SwitchQuietMs + c.PageSetSpacingMs);
+            c.RequestPage(4);                                        // second request mid-switch
+            c.OnPush(UnsubAll(6).Concat(PushFor(3)).ToList());       // first switch confirms
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Switching, c.State);      // second switch begins
+            Tick(c, clock, c.SwitchQuietMs + c.PageSetSpacingMs);
+            Assert.Contains(t.Sent, IsPageSetTo(4));
+        }
+
+        // ── Synced: wheel-button changes and subscription drops ──────────
+
+        [Fact]
+        public void WheelButton_UnsubThenSubs_AdoptedAsPageChange()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            int gen = c.SyncGeneration;
+
+            // The button's change arrives as unsub burst + new subs (here: two reports
+            // inside one accumulation window).
+            c.OnPush(UnsubAll(6));
+            Tick(c, clock, 10);
+            c.OnPush(PushFor(2, firstHandle: 6));   // double-buffered region — new handles
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(2, c.CurrentPage);
+            Assert.Equal(gen + 1, c.SyncGeneration);
+            Assert.Empty(t.Sent);   // adopted — nothing sent back, never fought
+        }
+
+        [Fact]
+        public void WheelButton_SubsArriveWithinGrace_NoRecovery()
+        {
+            // Unsub burst first, subs arriving in a separate (later) accumulation but within
+            // the grace window: a page change, not a drop.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.OnPush(UnsubAll(6));
+            Tick(c, clock, c.AccumulateWindowMs);     // unsub-only judgment → grace opens
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+
+            Tick(c, clock, 30);
+            c.OnPush(PushFor(4));
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(4, c.CurrentPage);
+        }
+
+        [Fact]
+        public void UnsubWithNothingFollowing_GraceExpiry_EntersRecovery()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.OnPush(UnsubAll(6));
+            Tick(c, clock, c.AccumulateWindowMs);     // grace opens
+            Tick(c, clock, c.UnsubGraceMs + 1);       // nothing followed
+
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);
+            Assert.Contains(t.Sent, IsPageSetTo(1));  // rung 1 re-PageSets the lost page
+        }
+
+        [Fact]
+        public void ValuesSuspended_WhileAPushIsAccumulating()
+        {
+            // An in-flight push means the page is changing under us — pause values until the
+            // accumulation is judged.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.OnPush(UnsubAll(6));
+            Assert.False(c.ValuesAllowed);
+
+            c.OnPush(PushFor(2));
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.True(c.ValuesAllowed);
+        }
+
+        [Fact]
+        public void HandleRebind_AdoptedFromPush()
+        {
+            // The same handle can be re-bound to a different parameter on any change — the
+            // adopted map must follow the push, never a cached page→handle association.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);   // page 1: handle 2 = LAP (505)
+            Assert.Equal(ItmParam.Lap, c.Subscriptions.First(kv => kv.Key == 2).Value.ParamId);
+
+            c.OnPush(UnsubAll(6).Concat(PushFor(4)).ToList());   // page 4 rebinds handle 2
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(4, c.CurrentPage);
+            Assert.Equal(ItmParam.LastLapTime, c.Subscriptions.First(kv => kv.Key == 2).Value.ParamId);
+        }
+
+        // ── Recovery ladder ──────────────────────────────────────────────
+
+        // Drives a synced controller into Recovery by requesting a page and letting the
+        // deadline lapse. On return the first ladder rung (re-PageSet 1/2) is active.
+        private static void EnterRecovery(ItmLifecycleController c, RecordingTransport t, Clock clock, byte target = 3)
+        {
+            c.RequestPage(target);
+            Tick(c, clock, c.SwitchQuietMs + c.PageSetSpacingMs);   // PageSet out
+            Tick(c, clock, c.PushDeadlineMs + 1);                    // deadline missed
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);
+        }
+
+        [Fact]
+        public void Ladder_Rung1_RePageSets_Twice_WithSpacing()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            EnterRecovery(c, t, clock);
+            t.Sent.Clear();
+
+            Tick(c, clock, c.PageSetSpacingMs);                      // rung 1 attempt 1 sends
+            Assert.Equal(1, t.Sent.Count(r => IsPageSetTo(3)(r)));
+
+            Tick(c, clock, c.PushDeadlineMs + 1);                    // attempt 1 deadline
+            Tick(c, clock, c.PageSetSpacingMs);                      // attempt 2 sends
+            Assert.Equal(2, t.Sent.Count(r => IsPageSetTo(3)(r)));
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);
+        }
+
+        [Fact]
+        public void Ladder_Rung1Confirmed_ResyncsAndResumes()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            int gen = c.SyncGeneration;
+            EnterRecovery(c, t, clock);
+
+            Tick(c, clock, c.PageSetSpacingMs);                      // rung 1 PageSet out
+            c.OnPush(UnsubAll(6).Concat(PushFor(3)).ToList());
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(3, c.CurrentPage);
+            Assert.Equal(gen + 1, c.SyncGeneration);
+        }
+
+        [Fact]
+        public void Ladder_Rung2_FlipAwayAndBack()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            EnterRecovery(c, t, clock, target: 3);
+
+            // Exhaust rung 1 (two re-PageSets, no push).
+            Tick(c, clock, c.PageSetSpacingMs);
+            Tick(c, clock, c.PushDeadlineMs + 1);
+            Tick(c, clock, c.PageSetSpacingMs);
+            Tick(c, clock, c.PushDeadlineMs + 1);
+            t.Sent.Clear();
+
+            // Rung 2: flip away to a different telemetry page (a genuine change MUST push).
+            Tick(c, clock, c.PageSetSpacingMs);
+            Assert.Contains(t.Sent, IsPageSetTo(1));    // flip page: first telemetry page ≠ 3
+
+            c.OnPush(UnsubAll(6).Concat(PushFor(1)).ToList());   // flip page pushes
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);   // not synced — flipping back
+
+            Tick(c, clock, c.PageSetSpacingMs);
+            Assert.Contains(t.Sent, IsPageSetTo(3));    // flip back to the target
+
+            c.OnPush(UnsubAll(6).Concat(PushFor(3)).ToList());
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(3, c.CurrentPage);
+        }
+
+        [Fact]
+        public void Ladder_Rung3_GateCycle_WithPageSetWhileOff()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            EnterRecovery(c, t, clock, target: 3);
+
+            // Exhaust rungs 1 (×2) and 2 (flip page silent).
+            Tick(c, clock, c.PageSetSpacingMs);
+            Tick(c, clock, c.PushDeadlineMs + 1);
+            Tick(c, clock, c.PageSetSpacingMs);
+            Tick(c, clock, c.PushDeadlineMs + 1);
+            Tick(c, clock, c.PageSetSpacingMs);          // flip-away PageSet out
+            Tick(c, clock, c.PushDeadlineMs + 1);        // flip silent → gate cycle
+            t.Sent.Clear();
+
+            Tick(c, clock, c.PageSetSpacingMs);
+            // Gate cycle order: gate-off → PageSet(target) while off → gate-on.
+            int off = t.Sent.FindIndex(IsGateOff);
+            int page = t.Sent.FindIndex(r => IsPageSetTo(3)(r));
+            int on = t.Sent.FindIndex(IsGateOn);
+            Assert.True(off >= 0 && page >= 0 && on >= 0, "gate cycle frames all sent");
+            Assert.True(off < page && page < on, "PageSet sent while gated off, never a bare gate-on");
+
+            c.OnPush(PushFor(3));                        // the elicited push
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+        }
+
+        [Fact]
+        public void Ladder_Exhausted_Unavailable_WithBackoffRetries()
+        {
+            var c = Make(out var t, out var clock, out var logs);
+            Sync(c, t, clock);
+            EnterRecovery(c, t, clock, target: 3);
+
+            // Silence through the whole ladder.
+            for (int i = 0; i < 4; i++)
+            {
+                Tick(c, clock, c.PageSetSpacingMs);
+                Tick(c, clock, c.PushDeadlineMs + 1);
+            }
+            Assert.Equal(ItmLifecycleState.Unavailable, c.State);
+            t.Sent.Clear();
+
+            // Quiet during backoff.
+            Tick(c, clock, 1000);
+            Assert.Empty(t.Sent);
+
+            // First backoff (5 s) expires → the strongest rung (gate cycle) retries.
+            Tick(c, clock, 4500);
+            Tick(c, clock, c.PageSetSpacingMs);
+            Assert.Contains(t.Sent, IsGateOff);
+            Assert.Contains(t.Sent, IsPageSetTo(3));
+            Assert.Contains(t.Sent, IsGateOn);
+
+            // Still silent → Unavailable again, with the next (30 s) backoff.
+            Tick(c, clock, c.PushDeadlineMs + 1);
+            Assert.Equal(ItmLifecycleState.Unavailable, c.State);
+            t.Sent.Clear();
+            Tick(c, clock, 10_000);                      // inside the 30 s backoff
+            Assert.Empty(t.Sent);
+        }
+
+        [Fact]
+        public void Unavailable_LatePush_AdoptedAndResyncs()
+        {
+            // Boot-cold firmware has answered a PageSet ~14 s late; a late push is just an
+            // unexpected push, and every state adopts it.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            EnterRecovery(c, t, clock, target: 3);
+            for (int i = 0; i < 4; i++)
+            {
+                Tick(c, clock, c.PageSetSpacingMs);
+                Tick(c, clock, c.PushDeadlineMs + 1);
+            }
+            Assert.Equal(ItmLifecycleState.Unavailable, c.State);
+
+            c.OnPush(PushFor(3));
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(3, c.CurrentPage);
+        }
+
+        [Fact]
+        public void Recovery_ValuesSuspended_ThroughEveryRung()
+        {
+            // A streaming recovery has been observed to wedge the display where a quiet one
+            // succeeded — the whole ladder runs with values suspended.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            EnterRecovery(c, t, clock);
+
+            for (int i = 0; i < 4; i++)
+            {
+                Assert.False(c.ValuesAllowed);
+                Tick(c, clock, c.PageSetSpacingMs);
+                Assert.False(c.ValuesAllowed);
+                Tick(c, clock, c.PushDeadlineMs + 1);
+            }
+            Assert.Equal(ItmLifecycleState.Unavailable, c.State);
+            Assert.False(c.ValuesAllowed);
+        }
+
+        [Fact]
+        public void Ladder_EscalationsAreLogged()
+        {
+            // The ladder doubles as field diagnostics — every rung logs what it tried.
+            var c = Make(out var t, out var clock, out var logs);
+            Sync(c, t, clock);
+            EnterRecovery(c, t, clock);
+            for (int i = 0; i < 4; i++)
+            {
+                Tick(c, clock, c.PageSetSpacingMs);
+                Tick(c, clock, c.PushDeadlineMs + 1);
+            }
+
+            Assert.Contains(logs, m => m.Contains("re-PageSet 1/2"));
+            Assert.Contains(logs, m => m.Contains("re-PageSet 2/2"));
+            Assert.Contains(logs, m => m.Contains("flip-away"));
+            Assert.Contains(logs, m => m.Contains("gate cycle"));
+            Assert.Contains(logs, m => m.Contains("unavailable"));
+        }
+
+        [Fact]
+        public void Recovery_TargetPushDuringFlipAway_ConfirmsDirectly()
+        {
+            // A late push from an earlier rung can land while the flip is in flight; if it is
+            // the target's set, the recovery is simply done.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            EnterRecovery(c, t, clock, target: 3);
+            Tick(c, clock, c.PageSetSpacingMs);
+            Tick(c, clock, c.PushDeadlineMs + 1);
+            Tick(c, clock, c.PageSetSpacingMs);
+            Tick(c, clock, c.PushDeadlineMs + 1);
+            Tick(c, clock, c.PageSetSpacingMs);          // flip-away out (expects page 1)
+
+            c.OnPush(UnsubAll(6).Concat(PushFor(3)).ToList());   // but the TARGET pushes
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(3, c.CurrentPage);
+        }
+
+        // ── TelemetryIdle (game exit / resume) ───────────────────────────
+
+        [Fact]
+        public void GameExit_GatesOff_ScreenDark()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            Tick(c, clock, 10, live: false);
+
+            Assert.Equal(ItmLifecycleState.TelemetryIdle, c.State);
+            Assert.Contains(t.Sent, IsGateOff);
+            Assert.False(c.ValuesAllowed);
+
+            // Dormant afterwards — no repeats, no other traffic.
+            t.Sent.Clear();
+            Tick(c, clock, 5000, live: false);
+            Assert.Empty(t.Sent);
+        }
+
+        [Fact]
+        public void GameExit_GateOffDeclined_Retried()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            t.SendReturns = false;
+            Tick(c, clock, 10, live: false);
+            t.Sent.Clear();
+
+            t.SendReturns = true;
+            Tick(c, clock, 10, live: false);
+            Assert.Contains(t.Sent, IsGateOff);
+        }
+
+        [Fact]
+        public void Resume_PageSetWhileOff_ThenGateOn_NeverBare()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);                            // synced on page 1
+            Tick(c, clock, 10, live: false);              // exit → gate-off
+            t.Sent.Clear();
+
+            Tick(c, clock, 5000, live: true);             // game returns
+
+            int page = t.Sent.FindIndex(r => IsPageSetTo(1)(r));
+            int on = t.Sent.FindIndex(IsGateOn);
+            Assert.True(page >= 0 && on >= 0, "resume sends PageSet and gate-on");
+            Assert.True(page < on, "PageSet goes out while gated off, before the gate-on");
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
+
+            c.OnPush(PushFor(1));                         // the elicited push (fresh handles)
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+        }
+
+        [Fact]
+        public void Resume_WithoutPush_MustNotSelfConfirm()
+        {
+            // The handle map still holds the pre-exit page's subscriptions; a resume to the
+            // same page must not read that stale state as confirmation — only a push counts.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            Tick(c, clock, 10, live: false);
+            Tick(c, clock, 5000, live: true);             // resume commands out, NO push
+
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
+            Tick(c, clock, c.PushDeadlineMs + 1);
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);
+        }
+
+        [Fact]
+        public void Resume_RestoresLastKnownPage()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            // Wheel button moved the display to page 5 before the exit.
+            c.OnPush(UnsubAll(6).Concat(PushFor(5)).ToList());
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(5, c.CurrentPage);
+
+            Tick(c, clock, 10, live: false);              // exit
+            t.Sent.Clear();
+            Tick(c, clock, 5000, live: true);             // resume
+
+            Assert.Contains(t.Sent, IsPageSetTo(5));      // the page survives the exit
+        }
+
+        [Fact]
+        public void RequestPage_WhileTelemetryIdle_ChangesResumePage()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            Tick(c, clock, 10, live: false);
+            t.Sent.Clear();
+
+            c.RequestPage(4);                              // setting changed while dark
+            Tick(c, clock, 100, live: false);
+            Assert.Empty(t.Sent);                          // nothing on the wire while off
+
+            Tick(c, clock, 5000, live: true);
+            Assert.Contains(t.Sent, IsPageSetTo(4));
+        }
+
+        [Fact]
+        public void GameExit_DuringRecovery_ParksInTelemetryIdle()
+        {
+            // An exit mid-ladder abandons the ladder: gate-off now, and the resume shape —
+            // the strongest recovery there is — re-establishes everything later.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            EnterRecovery(c, t, clock);
+
+            Tick(c, clock, 10, live: false);
+
+            Assert.Equal(ItmLifecycleState.TelemetryIdle, c.State);
+            Assert.Contains(t.Sent, IsGateOff);
+        }
+
+        [Fact]
+        public void BringUp_WithoutLiveTelemetry_StillRuns()
+        {
+            // ITM is always-on: bring-up runs at connect so the default page (and the settings
+            // panel's live preview) works before any game has run. TelemetryIdle is entered
+            // only on a live→dead edge, never because telemetry simply hasn't started yet.
+            var c = Make(out var t, out var clock);
+            c.Start();
+            c.Tick(false);
+
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
+            c.OnPush(PushFor(1));
+            Tick(c, clock, c.AccumulateWindowMs, live: false);
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.DoesNotContain(t.Sent, IsGateOff);
+        }
+
+        [Fact]
+        public void PushWhileGatedOff_AdoptedButNoTransition()
+        {
+            // A push while we hold the display off means another program gated it on —
+            // adopt the data (never fight), stay parked.
+            var c = Make(out var t, out var clock, out var logs);
+            Sync(c, t, clock);
+            Tick(c, clock, 10, live: false);
+            t.Sent.Clear();
+
+            c.OnPush(PushFor(2));
+            Tick(c, clock, c.AccumulateWindowMs, live: false);
+
+            Assert.Equal(ItmLifecycleState.TelemetryIdle, c.State);
+            Assert.Empty(t.Sent);
+            Assert.Contains(logs, m => m.Contains("another program"));
+        }
+
+        // ── User enable/disable ──────────────────────────────────────────
+
+        [Fact]
+        public void UserDisable_GatesOffOnce_ThenDormant()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.SetUserEnabled(false);
+            Tick(c, clock, 10);
+            Assert.Equal(ItmLifecycleState.Disabled, c.State);
+            Assert.Single(t.Sent, IsGateOff);
+
+            Tick(c, clock, 5000);
+            Assert.Single(t.Sent, IsGateOff);   // no repeats
+        }
+
+        [Fact]
+        public void UserDisable_GateOffDeclined_Retried()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            t.SendReturns = false;
+            c.SetUserEnabled(false);
+            Tick(c, clock, 10);
+            t.Sent.Clear();
+
+            t.SendReturns = true;
+            Tick(c, clock, 10);
+            Assert.Contains(t.Sent, IsGateOff);
+        }
+
+        [Fact]
+        public void UserDisable_FromIdle_StillEnforcesOff()
+        {
+            var c = Make(out var t, out var clock);
+            c.SetUserEnabled(false);
+            c.Tick(true);
+
+            Assert.Contains(t.Sent, IsGateOff);
+            Assert.DoesNotContain(t.Sent, IsGateOn);
+            Assert.DoesNotContain(t.Sent, IsEnable);
+        }
+
+        [Fact]
+        public void ReEnable_RunsColdBringUp()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            c.SetUserEnabled(false);
+            Tick(c, clock, 10);
+            t.Sent.Clear();
+
+            c.SetUserEnabled(true);
+            c.Start();
+            Tick(c, clock, c.PageSetSpacingMs);
+
+            Assert.Contains(t.Sent, IsGateOn);
+            Assert.Contains(t.Sent, IsEnable);
+            Assert.Contains(t.Sent, IsPageSet);
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
+        }
+
+        // ── Wheel change / stop ──────────────────────────────────────────
+
+        [Fact]
+        public void WheelChanged_TreatedAsColdStart()
+        {
+            // A hot-swap is invisible on the ITM channel and resets the display cold; the
+            // identity layer's event drops everything and re-runs the full bring-up.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            Assert.Equal(6, c.SubscriptionCount);
+
+            c.OnWheelChanged();
+            Assert.Equal(0, c.SubscriptionCount);   // stale handles must not survive
+            Assert.False(c.ValuesAllowed);
+            Tick(c, clock, c.PageSetSpacingMs);
+
+            Assert.Contains(t.Sent, IsGateOn);
+            Assert.Contains(t.Sent, IsEnable);
+            Assert.Contains(t.Sent, IsPageSet);
+        }
+
+        [Fact]
+        public void WheelChanged_WhileIdle_DoesNothing()
+        {
+            var c = Make(out var t, out var clock);
+            c.OnWheelChanged();
+            c.Tick(true);
+            Assert.Empty(t.Sent);
+        }
+
+        [Fact]
+        public void WheelChanged_WhileDisabled_ReassertsGateOff()
+        {
+            // The new wheel comes up with whatever gate setting persisted — the user's "off"
+            // is re-asserted on it.
+            var c = Make(out var t, out var clock);
+            c.SetUserEnabled(false);
+            c.Tick(true);
+            t.Sent.Clear();
+
+            c.OnWheelChanged();
+            Tick(c, clock, 10);
+
+            Assert.Contains(t.Sent, IsGateOff);
+            Assert.Equal(ItmLifecycleState.Disabled, c.State);
+        }
+
+        [Fact]
+        public void Stop_DropsEverything_StartRunsColdAgain()
+        {
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.Stop();
+            Assert.Equal(ItmLifecycleState.Idle, c.State);
+            Assert.Equal(0, c.SubscriptionCount);
+            c.Tick(true);
+            Assert.Empty(t.Sent);                    // nothing on the wire from Stop
+
+            c.Start();
+            Tick(c, clock, c.PageSetSpacingMs);
+            Assert.Contains(t.Sent, IsGateOn);       // full cold bring-up
+        }
+
+        // ── Deadline/accumulation interplay ──────────────────────────────
+
+        [Fact]
+        public void PushArrivingJustBeforeDeadline_NotMissed()
+        {
+            var c = Make(out var t, out var clock);
+            c.Start();
+            c.Tick(true);
+
+            Tick(c, clock, c.PushDeadlineMs - 5);     // 5 ms before the deadline
+            c.OnPush(PushFor(1));                      // accumulation opens — deadline defers
+            Tick(c, clock, 10);                        // past the nominal deadline
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);   // not missed
+
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+        }
+
+        [Fact]
+        public void Describe_SurfacesStateForDeviceStatus()
+        {
+            var c = Make(out var t, out var clock);
+            Assert.Equal("Idle", c.Describe());
+            Sync(c, t, clock);
+            Assert.Contains("page 1", c.Describe());
+            Assert.Contains("6 params", c.Describe());
+        }
+    }
+}
