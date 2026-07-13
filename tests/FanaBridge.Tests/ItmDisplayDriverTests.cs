@@ -438,8 +438,15 @@ namespace FanaBridge.Tests
             var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, logs.Add);
             Sync(driver, clock);
 
-            // The firmware announces param 9999 (outside every page layout) at handle 2.
-            Push(driver, clock, HexToBytes("ff050103820f2700"));
+            // The firmware re-announces the page with param 9999 (outside every page layout)
+            // at handle 2, in place of LAP — a set that matches no catalog page. It's held
+            // through the grace window (suspected mid-flight fragment) then adopted, and the
+            // repaint that follows encounters the unencodable param.
+            driver.OnSubscriptionReport(HexToBytes("ff050103820f2700"));
+            clock.T += 50;
+            driver.Update(EmptyData());   // accumulation judged → grace opens (uncataloged set)
+            clock.T += 120;
+            driver.Update(EmptyData());   // grace expires → adopted → repaint → 9999 logged
             clock.T += 40;
             driver.Update(EmptyData());   // ticks again — must not re-log
 

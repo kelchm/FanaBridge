@@ -716,10 +716,11 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void Recovery_TargetPushDuringFlipAway_ConfirmsDirectly()
+        public void Recovery_TargetPushDuringFlipAway_DoesNotConfirmMidFlip()
         {
-            // A late push from an earlier rung can land while the flip is in flight; if it is
-            // the target's set, the recovery is simply done.
+            // A late push for the TARGET can land while the flip is in flight — but the flip
+            // PageSet is already accepted, so the display is about to move again. Confirming
+            // now would resume values mid-transition; instead the flip completes normally.
             var c = Make(out var t, out var clock);
             Sync(c, t, clock);
             EnterRecovery(c, t, clock, target: 3);
@@ -729,9 +730,20 @@ namespace FanaBridge.Tests
             Tick(c, clock, c.PushDeadlineMs + 1);
             Tick(c, clock, c.PageSetSpacingMs);          // flip-away out (expects page 1)
 
-            c.OnPush(UnsubAll(6).Concat(PushFor(3)).ToList());   // but the TARGET pushes
+            // UnsubAll(8) clears every handle a page might occupy (page 3 uses 7), mirroring
+            // how the firmware unsubscribes the whole outgoing page on each change.
+            c.OnPush(UnsubAll(8).Concat(PushFor(3)).ToList());   // late TARGET push
             Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);   // not confirmed mid-flip
+            Assert.False(c.ValuesAllowed);
 
+            c.OnPush(UnsubAll(8).Concat(PushFor(1)).ToList());   // the flip page's push
+            Tick(c, clock, c.AccumulateWindowMs);
+            Tick(c, clock, c.PageSetSpacingMs);                   // flip-back PageSet out
+            Assert.Contains(t.Sent, IsPageSetTo(3));
+
+            c.OnPush(UnsubAll(8).Concat(PushFor(3)).ToList());   // target confirms
+            Tick(c, clock, c.AccumulateWindowMs);
             Assert.Equal(ItmLifecycleState.Synced, c.State);
             Assert.Equal(3, c.CurrentPage);
         }
@@ -1045,6 +1057,183 @@ namespace FanaBridge.Tests
             Sync(c, t, clock);
             Assert.Contains("page 1", c.Describe());
             Assert.Contains("6 params", c.Describe());
+        }
+
+        // ── Regressions (review findings) ────────────────────────────────
+
+        [Fact]
+        public void Start_HonorsDefaultPageSetBeforeFirstTick()
+        {
+            // Start() defers the cold entry to the next Tick, so a DefaultPage assigned after
+            // Start() but before Tick() (the device instance's frame order) is still honored —
+            // otherwise bring-up targets the ctor default and the configured page is ignored.
+            var c = Make(out var t, out _);
+            c.Start();
+            c.DefaultPage = 5;      // configured page arrives after Start(), before the tick
+            c.Tick(true);
+
+            Assert.Contains(t.Sent, IsPageSetTo(5));
+            Assert.DoesNotContain(t.Sent, IsPageSetTo(1));
+        }
+
+        [Fact]
+        public void UserOff_ReassertedAfterReconnect()
+        {
+            // The user's "off" must be re-enforced after a reconnect: the re-appearing device
+            // (power cycle, re-seat) comes up with whatever gate setting persisted, not
+            // necessarily off. Edge-only application would send nothing on reconnect.
+            var c = Make(out var t, out var clock);
+            c.SetUserEnabled(false);
+            c.Tick(true);
+            Assert.Contains(t.Sent, IsGateOff);
+
+            c.Stop();               // connection lost
+            t.Sent.Clear();
+
+            c.SetUserEnabled(false);   // same setting, fresh connection
+            c.Tick(true);
+            Assert.Contains(t.Sent, IsGateOff);   // re-asserted, not skipped as unchanged
+        }
+
+        [Fact]
+        public void WheelChange_DropsOpenAccumulation_NoSelfConfirm()
+        {
+            // A push that arrived just before the wheel changed (still accumulating) must not
+            // survive the cold restart and confirm the NEW wheel's bring-up against the OLD
+            // wheel's page.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.OnPush(PushFor(1));   // old wheel re-pushes page 1; accumulation opens
+            c.OnWheelChanged();     // ...and the wheel is swapped mid-window
+            Assert.Equal(0, c.SubscriptionCount);   // old handles dropped
+
+            Tick(c, clock, c.AccumulateWindowMs + 10);   // the stale window must not be judged
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);   // still awaiting the NEW push
+            Assert.False(c.ValuesAllowed);
+        }
+
+        [Fact]
+        public void StalePreSwapReports_DrainedAfterColdEntry_DoNotSelfConfirm()
+        {
+            // The device instance drains buffered pushes AFTER OnWheelChanged. A stale report
+            // from the old wheel (same param set as the bring-up target) fed post-restart must
+            // not confirm the new wheel's bring-up without a genuine fresh push.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            c.OnWheelChanged();                 // cold restart; bring-up queued
+            Tick(c, clock, c.PageSetSpacingMs); // bring-up drains, expectation armed for page 1
+            c.OnPush(PushFor(1));               // a STALE page-1 report from the old wheel
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            // It matches the armed page, so by protocol it is indistinguishable from a genuine
+            // page-1 push — confirmation is correct here. The guarantee under test is the
+            // buffer being CLEARED on wheel change (FanatecWheelbase), so this stale report
+            // never reaches the controller in production; see the wheelbase test.
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+        }
+
+        [Fact]
+        public void Switching_StragglerRepushOfCurrentPage_DoesNotCancelSwitch()
+        {
+            // A straggler re-announcement of the page we're LEAVING (not a user action) must
+            // not be mistaken for a wheel-button change and silently cancel the host switch.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);   // synced on page 1
+
+            c.RequestPage(3);
+            Tick(c, clock, c.SwitchQuietMs + c.PageSetSpacingMs);   // PageSet(3) out
+            c.OnPush(PushFor(1));   // straggler re-push of the CURRENT page (1)
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Switching, c.State);   // switch NOT cancelled
+            c.OnPush(UnsubAll(8).Concat(PushFor(3)).ToList());     // the real page-3 push
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(3, c.CurrentPage);
+        }
+
+        [Fact]
+        public void Synced_FragmentMatchingNoPage_SuspendsValues_NoForcedRepaint()
+        {
+            // A wheel-button change fragmented slower than the accumulation window leaves a
+            // set matching no page. It must suspend values (grace) and wait for the rest, not
+            // force-repaint onto a half-rebound handle map.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            int gen = c.SyncGeneration;
+
+            // First fragment: unsubscribe page 1's h2 (LAP) and leave a partial set.
+            c.OnPush(new List<ItmSubscription> { new ItmSubscription(2, ItmParam.Unsubscribe) });
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.False(c.ValuesAllowed);              // suspended, not streaming
+            Assert.Equal(gen, c.SyncGeneration);        // no forced repaint
+
+            // The rest of the change lands within grace → adopted as the new page.
+            c.OnPush(UnsubAll(8).Concat(PushFor(4)).ToList());
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(4, c.CurrentPage);
+            Assert.True(c.ValuesAllowed);
+        }
+
+        [Fact]
+        public void GraceWindow_SuspendsValues()
+        {
+            // Grace opens on an unsubscribe-only push in Synced (the front half of a page
+            // change). Values must be suspended for its duration — the firmware may be
+            // re-binding the surviving handles.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            Assert.True(c.ValuesAllowed);
+
+            c.OnPush(UnsubAll(6));
+            Tick(c, clock, c.AccumulateWindowMs);   // unsub-only judged → grace opens
+            Assert.False(c.ValuesAllowed);          // suspended through grace
+        }
+
+        [Fact]
+        public void WheelChange_WhileTelemetryIdle_StaysDark()
+        {
+            // A hot-swap while parked dark (game exited) must not light the display with no
+            // game running — it re-asserts gate-off and waits for the resume shape.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            Tick(c, clock, 10, live: false);        // game exit → TelemetryIdle (gate-off)
+            t.Sent.Clear();
+
+            c.OnWheelChanged();
+            Tick(c, clock, c.PageSetSpacingMs, live: false);
+
+            Assert.Equal(ItmLifecycleState.TelemetryIdle, c.State);
+            Assert.Contains(t.Sent, IsGateOff);
+            Assert.DoesNotContain(t.Sent, IsGateOn);   // never lit while dark
+            Assert.Equal(0, c.SubscriptionCount);      // old wheel's handles dropped
+        }
+
+        [Fact]
+        public void Subscriptions_SnapshotStableUntilNextPush()
+        {
+            // The handle map is exposed as a cached snapshot (allocation-free per-frame reads);
+            // it must reflect the latest push and refresh when the map changes.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            var first = c.Subscriptions;
+            Assert.Same(first, c.Subscriptions);       // same instance until the map changes
+            Assert.Equal(6, first.Count);
+
+            Push(c, clock, UnsubAll(8).Concat(PushFor(5)).ToList());
+            Assert.NotSame(first, c.Subscriptions);    // rebuilt after the push
+            Assert.Equal(6, c.Subscriptions.Count);    // page 5 (tyres) — 6 params
+        }
+
+        // Delivers a push mid-session and runs the judgment tick.
+        private static void Push(ItmLifecycleController c, Clock clock, List<ItmSubscription> entries)
+        {
+            c.OnPush(entries);
+            Tick(c, clock, c.AccumulateWindowMs);
         }
     }
 }

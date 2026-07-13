@@ -70,28 +70,21 @@ namespace FanaBridge.Adapters
         /// </summary>
         public byte DefaultPage { get; set; } = 1;
 
-        private bool _enabled = true;
-
         /// <summary>
         /// Whether the ITM display is enabled. Set false to turn ITM off (the display is gated
         /// off — the same persistent state the vendor software's ITM switch sets — and the
-        /// driver goes dormant); set true to re-enable. Read live each frame.
+        /// driver goes dormant); set true to re-enable. Read live each frame; applied to the
+        /// lifecycle inside <see cref="Update"/> so all controller mutation stays on the
+        /// update thread.
         /// </summary>
-        public bool Enabled
-        {
-            get { return _enabled; }
-            set
-            {
-                _enabled = value;
-                _lifecycle.SetUserEnabled(value);
-            }
-        }
+        public bool Enabled { get; set; } = true;
 
         // ── State ────────────────────────────────────────────────────────
         private long _lastValuesMs;
         private long _lastSendOkMs;    // last accepted value send — drives the periodic re-assert
-        private byte _lastRequestedPage;   // edge-detects a default-page settings change
-        private bool _pageEdgeArmed;
+        // Edge-detects a default-page settings change; null = re-baseline on the next Update
+        // (fresh driver or post-Stop), so the first frame never reads as a change.
+        private byte? _lastRequestedPage;
 
         // Post-sync repaint: first values immediately, a tight second tap, then ParamDefs.
         private enum Paint { None, First, SecondTap }
@@ -161,6 +154,8 @@ namespace FanaBridge.Adapters
         /// </summary>
         public void OnWheelChanged()
         {
+            // The cold entry runs immediately — make sure it targets the current setting.
+            _lifecycle.DefaultPage = DefaultPage;
             _lifecycle.OnWheelChanged();
         }
 
@@ -173,7 +168,7 @@ namespace FanaBridge.Adapters
             _defTap2DueMs = 0;
             _defTap2Defs = null;
             _paint = Paint.None;
-            _pageEdgeArmed = false;
+            _lastRequestedPage = null;
         }
 
         /// <summary>
@@ -199,12 +194,9 @@ namespace FanaBridge.Adapters
             // and requested live, so the wheel button isn't fought between changes.
             _lifecycle.DefaultPage = DefaultPage;
             _lifecycle.SetUserEnabled(Enabled);
-            if (!_pageEdgeArmed)
-            {
-                _pageEdgeArmed = true;
+            if (_lastRequestedPage == null)
                 _lastRequestedPage = DefaultPage;
-            }
-            if (DefaultPage != _lastRequestedPage)
+            else if (DefaultPage != _lastRequestedPage.Value)
             {
                 _lastRequestedPage = DefaultPage;
                 _lifecycle.RequestPage(DefaultPage);
@@ -294,8 +286,10 @@ namespace FanaBridge.Adapters
             List<ItmParamDef> defs = null;
             var sig = new System.Text.StringBuilder();
 
-            foreach (var kv in _lifecycle.Subscriptions)
+            var subs = _lifecycle.Subscriptions;
+            for (int i = 0; i < subs.Count; i++)
             {
+                var kv = subs[i];
                 ushort paramId = kv.Value.ParamId;
                 string suffix;
                 if (ItmTelemetryMapper.TryGetUnitSuffix(paramId, data, out suffix))
@@ -360,8 +354,10 @@ namespace FanaBridge.Adapters
         private SendOutcome TrySendValues(GameData data, long now, bool force)
         {
             _valueBuf.Clear();
-            foreach (var kv in _lifecycle.Subscriptions)
+            var subs = _lifecycle.Subscriptions;
+            for (int i = 0; i < subs.Count; i++)
             {
+                var kv = subs[i];
                 if (ItmTelemetryMapper.TryEncodeParam(kv.Value.ParamId, kv.Key, data, kv.Value.DataType, out var v))
                     _valueBuf.Add(v);
                 else if (_unencodableWarned.Add(kv.Value.ParamId))

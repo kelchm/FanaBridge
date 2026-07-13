@@ -94,11 +94,34 @@ namespace FanaBridge.Adapters
         /// <summary>Test hook: the generation the cached drivers were built against.</summary>
         internal FanatecPlugin BoundPluginForTest => _boundPlugin;
 
+        // ITM status snapshot for the Device Status panel / diagnostics. Composed on the
+        // DataUpdate thread (the only thread that mutates the lifecycle) and read from the
+        // UI's DispatcherTimer — a volatile string hand-off instead of cross-thread reads
+        // of live state-machine fields. Refreshed on state/sync changes plus a coarse
+        // 1 s tick (the Unavailable line carries a retry countdown).
+        private volatile string _itmStatusSnapshot;
+        private ItmLifecycleState _itmSnapState;
+        private int _itmSnapGen;
+        private int _itmSnapTick;
+
+        private void PublishItmStatusSnapshot(ItmLifecycleState state)
+        {
+            int gen = _itmDisplay.Lifecycle.SyncGeneration;
+            int tick = Environment.TickCount;
+            if (_itmStatusSnapshot != null && state == _itmSnapState && gen == _itmSnapGen
+                && tick - _itmSnapTick < 1000)
+                return;
+            _itmSnapState = state;
+            _itmSnapGen = gen;
+            _itmSnapTick = tick;
+            _itmStatusSnapshot = _itmDisplay.Lifecycle.Describe();
+        }
+
         /// <summary>
         /// The ITM lifecycle status line for the Device Status panel, or null when this
-        /// instance isn't driving an ITM display.
+        /// instance isn't driving an ITM display. Safe to read from any thread.
         /// </summary>
-        internal string ItmStatusDescription => _itmDisplay?.Lifecycle.Describe();
+        internal string ItmStatusDescription => _itmDisplay == null ? null : _itmStatusSnapshot;
 
         public FanatecWheelDeviceInstance(DeviceConfig config)
         {
@@ -405,6 +428,7 @@ namespace FanaBridge.Adapters
                 _displayManager?.Clear();
                 _itmDisplay?.Stop();
                 _itmWasRunning = false;
+                _itmStatusSnapshot = null;   // don't show a stale ITM row while disconnected
                 // Reset one-shot latches so a reconnect starts clean: errors can log again
                 // and the legacy page can re-blank when the mode is "None".
                 _itmErrorLogged = false;
@@ -512,13 +536,28 @@ namespace FanaBridge.Adapters
 
                     _itmDisplay.Update(data);
 
-                    // Log the bring-up completing once, so hardware verification can
-                    // confirm from the SimHub log that ITM went live.
+                    // Log the FIRST bring-up completing per connection, so hardware
+                    // verification can confirm from the SimHub log that ITM went live.
+                    // Sticky until disconnect: IsRunning legitimately flaps through page
+                    // switches, game exits, and recoveries (the controller logs those
+                    // itself), and re-firing here would read as a reconnect loop.
                     if (_itmDisplay.IsRunning && !_itmWasRunning)
+                    {
+                        _itmWasRunning = true;
                         SimHub.Logging.Current.Info(
                             "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                             "]: ITM enabled — following firmware subscriptions");
-                    _itmWasRunning = _itmDisplay.IsRunning;
+                    }
+
+                    // While the display is failing (recovery ladder / unavailable), run the
+                    // TTL-cached co-driver probe so its detection edge lands in the session
+                    // log next to the failure it may explain — not only while the settings
+                    // tab happens to be open.
+                    var itmState = _itmDisplay.Lifecycle.State;
+                    if (itmState == ItmLifecycleState.Recovery || itmState == ItmLifecycleState.Unavailable)
+                        plugin.ProbeItmCoDriver();
+
+                    PublishItmStatusSnapshot(itmState);
 
                     // Optionally also drive the legacy 7-segment gear/speed over col01. On an
                     // ITM OLED (e.g. PBME) the firmware renders this on its legacy page. This

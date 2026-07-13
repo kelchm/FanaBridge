@@ -24,7 +24,10 @@ namespace FanaBridge.Diagnostics
         /// <summary>How long a check result is reused before re-probing the process list.</summary>
         public int CacheTtlMs { get; set; } = 10_000;
 
-        private readonly Func<string, bool> _processExists;
+        // Probe seam: given the candidate process names, returns the first one running or
+        // null. The default takes ONE process-table snapshot and matches all names against
+        // it — per-name Process.GetProcessesByName calls each snapshot the whole table.
+        private readonly Func<string[], string> _probe;
         private readonly Func<long> _now;
         private readonly Action<string> _log;
 
@@ -33,27 +36,45 @@ namespace FanaBridge.Diagnostics
         private long _lastCheckMs = -1_000_000_000;
         private string _running;   // null = none detected
 
-        public FanatecSoftwareMonitor(Func<string, bool> processExists = null,
+        public FanatecSoftwareMonitor(Func<string[], string> probe = null,
             Func<long> nowMs = null, Action<string> log = null)
         {
-            _processExists = processExists ?? DefaultProbe;
+            _probe = probe ?? DefaultProbe;
             _now = nowMs ?? DefaultClock();
             _log = log ?? (_ => { });
         }
 
-        private static bool DefaultProbe(string name)
+        private static string DefaultProbe(string[] names)
         {
+            System.Diagnostics.Process[] procs;
             try
             {
-                var procs = System.Diagnostics.Process.GetProcessesByName(name);
-                foreach (var p in procs)
-                    p.Dispose();
-                return procs.Length > 0;
+                procs = System.Diagnostics.Process.GetProcesses();
             }
             catch
             {
-                return false;   // enumeration can fail under restricted accounts — stay quiet
+                return null;   // enumeration can fail under restricted accounts — stay quiet
             }
+
+            string found = null;
+            foreach (var p in procs)
+            {
+                if (found == null)
+                {
+                    string pn;
+                    try { pn = p.ProcessName; } catch { pn = null; }
+                    foreach (var n in names)
+                    {
+                        if (string.Equals(pn, n, StringComparison.OrdinalIgnoreCase))
+                        {
+                            found = n;
+                            break;
+                        }
+                    }
+                }
+                p.Dispose();
+            }
+            return found;
         }
 
         private static Func<long> DefaultClock()
@@ -74,15 +95,7 @@ namespace FanaBridge.Diagnostics
                 if (now - _lastCheckMs >= CacheTtlMs)
                 {
                     _lastCheckMs = now;
-                    string found = null;
-                    foreach (var name in CoDriverProcesses)
-                    {
-                        if (_processExists(name))
-                        {
-                            found = name;
-                            break;
-                        }
-                    }
+                    string found = _probe(CoDriverProcesses);
                     if (found != null && _running == null)
                         _log("ITM: Fanatec software detected running (" + found + ") — it may drive the display" +
                              " concurrently; page changes and values can conflict");

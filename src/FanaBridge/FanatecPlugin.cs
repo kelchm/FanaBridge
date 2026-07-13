@@ -222,7 +222,9 @@ namespace FanaBridge
         /// <summary>
         /// The ITM display's lifecycle status line (e.g. "Synced — page 1, 6 params",
         /// "Unavailable — retry in 30 s") from the connected instance driving an ITM
-        /// display, or null when none is. Shown in the Device Status panel.
+        /// display, or null when none is. Shown in the Device Status panel. The value is a
+        /// snapshot string the owning DataUpdate thread published, so this reads it (a
+        /// volatile field) without touching live state-machine fields off-thread.
         /// </summary>
         public string ItmStatus
         {
@@ -233,12 +235,8 @@ namespace FanaBridge
                 {
                     foreach (var inst in _deviceInstances)
                     {
-                        try
-                        {
-                            var s = inst.ItmStatusDescription;
-                            if (s != null) return s;
-                        }
-                        catch { }
+                        var s = inst.ItmStatusDescription;   // a volatile string read — cannot throw
+                        if (s != null) return s;
                     }
                 }
                 return null;
@@ -247,11 +245,22 @@ namespace FanaBridge
 
         /// <summary>
         /// A warning line when the Fanatec app/service is running alongside FanaBridge
-        /// while an ITM display is being driven (both write the same display; the
-        /// protocol has no arbitration and no way to detect the other writer on the
-        /// wire). Null when there is nothing to warn about.
+        /// (both write the same display; the protocol has no arbitration and no way to
+        /// detect the other writer on the wire). Null when there is nothing to warn
+        /// about. Callers gate on <see cref="ItmStatus"/> themselves where relevance
+        /// requires an ITM display to be in play.
         /// </summary>
-        public string ItmCoDriverWarning => ItmStatus == null ? null : _fanatecSoftware.Warning;
+        public string ItmCoDriverWarning => _fanatecSoftware.Warning;
+
+        /// <summary>
+        /// Runs the TTL-cached co-driver check (the monitor logs detection edges itself).
+        /// Called from the ITM path while the display is in a failure state, so the
+        /// detection line lands in the log next to the failure it may explain.
+        /// </summary>
+        internal void ProbeItmCoDriver()
+        {
+            var _ = _fanatecSoftware.DetectedProcess;
+        }
 
         /// <summary>
         /// Whether Control Mapper's "Recognize Individual Wheels" is on (the setting the

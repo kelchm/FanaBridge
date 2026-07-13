@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge.Diagnostics;
@@ -9,10 +10,15 @@ namespace FanaBridge.Tests
     {
         private sealed class Clock { public long T; public long Now() => T; }
 
+        // A probe simulating the given set of running process names: returns the first
+        // candidate name that is "running", like the real single-snapshot probe.
+        private static Func<string[], string> Running(params string[] running)
+            => names => names.FirstOrDefault(n => running.Contains(n, StringComparer.OrdinalIgnoreCase));
+
         [Fact]
         public void NoVendorProcesses_NoWarning()
         {
-            var m = new FanatecSoftwareMonitor(_ => false, () => 0);
+            var m = new FanatecSoftwareMonitor(Running(), () => 0);
             Assert.Null(m.DetectedProcess);
             Assert.Null(m.Warning);
         }
@@ -20,7 +26,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void VendorService_Detected_WithWarning()
         {
-            var m = new FanatecSoftwareMonitor(n => n == "FanatecService", () => 0);
+            var m = new FanatecSoftwareMonitor(Running("FanatecService"), () => 0);
             Assert.Equal("FanatecService", m.DetectedProcess);
             Assert.Contains("FanatecService", m.Warning);
         }
@@ -28,7 +34,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void VendorApp_Detected()
         {
-            var m = new FanatecSoftwareMonitor(n => n == "Fanatec", () => 0);
+            var m = new FanatecSoftwareMonitor(Running("Fanatec"), () => 0);
             Assert.Equal("Fanatec", m.DetectedProcess);
         }
 
@@ -37,7 +43,7 @@ namespace FanaBridge.Tests
         {
             // FWPnpService (the driver-package PnP service) auto-starts on every boot and
             // never emits ITM traffic — it must not trip the warning.
-            var m = new FanatecSoftwareMonitor(n => n == "FWPnpService", () => 0);
+            var m = new FanatecSoftwareMonitor(Running("FWPnpService"), () => 0);
             Assert.Null(m.DetectedProcess);
         }
 
@@ -46,7 +52,7 @@ namespace FanaBridge.Tests
         {
             var clock = new Clock();
             int probes = 0;
-            var m = new FanatecSoftwareMonitor(_ => { probes++; return false; }, clock.Now);
+            var m = new FanatecSoftwareMonitor(_ => { probes++; return null; }, clock.Now);
 
             _ = m.DetectedProcess;
             int first = probes;
@@ -64,7 +70,8 @@ namespace FanaBridge.Tests
             var clock = new Clock();
             bool running = false;
             var logs = new List<string>();
-            var m = new FanatecSoftwareMonitor(n => running && n == "FanatecService", clock.Now, logs.Add);
+            var m = new FanatecSoftwareMonitor(
+                names => running ? Running("FanatecService")(names) : null, clock.Now, logs.Add);
 
             _ = m.DetectedProcess;                 // not running — nothing to log
             Assert.Empty(logs);

@@ -112,13 +112,33 @@ namespace FanaBridge.Protocol
         /// the first fresh send.</summary>
         public int SyncGeneration { get; private set; }
 
-        /// <summary>Values (and ParamDefs) may only be sent while this is true: Synced, and no
-        /// push currently accumulating (an in-flight push means the page is changing under us).</summary>
-        public bool ValuesAllowed => State == ItmLifecycleState.Synced && _accumCloseAt == 0;
+        /// <summary>Values (and ParamDefs) may only be sent while this is true: Synced, with no
+        /// push currently accumulating and no grace window open — either means the page may be
+        /// changing under us, and mid-change values can land on re-bound handles.</summary>
+        public bool ValuesAllowed => State == ItmLifecycleState.Synced
+            && _accumCloseAt == 0 && _graceUntil == 0;
+
+        // Lazily-rebuilt snapshot of the handle map, so per-frame consumers don't pay a
+        // SortedDictionary enumerator allocation ~85 times a second for a map that only
+        // changes when a push arrives.
+        private KeyValuePair<byte, ItmSubscription>[] _subsSnapshot;
 
         /// <summary>The adopted handle map: host handle → subscription (param + declared type),
-        /// sorted by handle. Built exclusively from firmware pushes.</summary>
-        public IEnumerable<KeyValuePair<byte, ItmSubscription>> Subscriptions => _subs;
+        /// ordered by handle. Built exclusively from firmware pushes.</summary>
+        public IReadOnlyList<KeyValuePair<byte, ItmSubscription>> Subscriptions
+        {
+            get
+            {
+                if (_subsSnapshot == null)
+                {
+                    _subsSnapshot = new KeyValuePair<byte, ItmSubscription>[_subs.Count];
+                    int i = 0;
+                    foreach (var kv in _subs)
+                        _subsSnapshot[i++] = kv;
+                }
+                return _subsSnapshot;
+            }
+        }
 
         /// <summary>Number of parameters the firmware currently has subscribed.</summary>
         public int SubscriptionCount => _subs.Count;
@@ -139,7 +159,8 @@ namespace FanaBridge.Protocol
         private int _stepIdx;
         private bool _armOnDrain;    // arm the push expectation when the queue drains
         private byte _armPage;       // the page whose push the armed expectation matches
-        private bool _pushDuringProcedure;   // a push arrived while steps were still being sent
+        private bool _judgeAtDrain;  // an accumulation closed mid-procedure — judge it once the queue drains
+        private bool _startPending;  // Start() was called; the cold entry runs on the next Tick
 
         private long _lastPageSetMs = -1_000_000_000;   // last accepted PageSet (spacing floor)
 
@@ -175,7 +196,12 @@ namespace FanaBridge.Protocol
         private bool _wasLive;
         private byte _resumePage;
 
+        // The user's on/off setting, and whether it has been enforced since the last
+        // Stop(). Un-applied after every Stop so a reconnect re-asserts "off" — the
+        // re-appearing device (power cycle, re-seat) comes up with whatever gate setting
+        // persisted, not necessarily the user's.
         private bool _userEnabled = true;
+        private bool _enabledApplied;
 
         public ItmLifecycleController(ItmEncoder encoder, byte deviceId = ItmEncoder.DefaultDeviceId,
             Func<long> nowMs = null, Action<string> log = null)
@@ -244,60 +270,69 @@ namespace FanaBridge.Protocol
         // ── Inputs ───────────────────────────────────────────────────────
 
         /// <summary>
-        /// Begins the lifecycle with a full cold bring-up. Idempotent — a no-op unless Idle,
-        /// so it is safe to call every frame while the device is connected.
+        /// Begins the lifecycle with a full cold bring-up on the next <see cref="Tick"/> —
+        /// deferred one tick so the caller's per-frame settings sync (notably
+        /// <see cref="DefaultPage"/>) lands before the bring-up target is chosen. Idempotent —
+        /// a no-op unless Idle, so it is safe to call every frame while connected.
         /// </summary>
         public void Start()
         {
-            if (State != ItmLifecycleState.Idle || !_userEnabled)
+            if (State != ItmLifecycleState.Idle || _startPending || !_userEnabled)
                 return;
-            ColdEntry("start");
+            _startPending = true;
         }
 
         /// <summary>
         /// Stops the lifecycle (connection lost): back to Idle, all session state dropped,
-        /// nothing sent. A later <see cref="Start"/> re-runs the cold bring-up.
+        /// nothing sent. A later <see cref="Start"/> re-runs the cold bring-up, and the
+        /// user's on/off setting is re-enforced on the next <see cref="SetUserEnabled"/>.
         /// </summary>
         public void Stop()
         {
             State = ItmLifecycleState.Idle;
-            ClearProcedure();
-            ClearExpectation();
+            AbandonInFlight();
             _subs.Clear();
+            _subsSnapshot = null;
             CurrentPage = 0;
             _pendingRequest = 0;
-            _rung = Rung.None;
             _backoffIdx = 0;
             _wasLive = false;
+            _startPending = false;
+            _enabledApplied = false;
         }
 
         /// <summary>
         /// Applies the user's ITM on/off setting (safe to call every frame; edges are detected
-        /// internally). Off sends a single gate-off — the same persistent state the vendor
-        /// software's ITM switch sets — and goes dormant. On re-arms the cold bring-up.
+        /// internally, and the setting is re-enforced once after every <see cref="Stop"/>).
+        /// Off sends a single gate-off — the same persistent state the vendor software's ITM
+        /// switch sets — and goes dormant. On re-arms the cold bring-up.
         /// </summary>
         public void SetUserEnabled(bool enabled)
         {
-            if (enabled == _userEnabled)
+            if (_enabledApplied && enabled == _userEnabled)
                 return;
             _userEnabled = enabled;
+            _enabledApplied = true;
 
             if (!enabled)
             {
                 // Enforce "off" from any state, including Idle (user may have ITM disabled
-                // from the start — the display must still be gated off once).
-                ClearProcedure();
-                ClearExpectation();
-                _rung = Rung.None;
+                // from the start, or the device may have just reconnected with the gate
+                // setting persisted on — the display must be gated off either way).
+                AbandonInFlight();
+                _startPending = false;
                 State = ItmLifecycleState.Disabled;
                 QueueGateOff();
                 _log("ITM: disabled by user — gating off (setting persists until re-enabled here or in vendor software)");
             }
             else if (State == ItmLifecycleState.Disabled)
             {
-                // Back to Idle; the next Start() runs the cold entry.
+                // Re-enable: arm a cold bring-up (runs on this same Tick). The driver's
+                // Update applies the setting just before Tick, so re-enabling in settings
+                // brings the display up in the same frame, as the old driver did.
                 State = ItmLifecycleState.Idle;
-                ClearProcedure();
+                AbandonInFlight();
+                _startPending = true;
             }
         }
 
@@ -346,6 +381,20 @@ namespace FanaBridge.Protocol
                     // The new wheel comes up with whatever gate setting persisted — re-assert off.
                     QueueGateOff();
                     return;
+                case ItmLifecycleState.TelemetryIdle:
+                    // The display is deliberately dark (game exited). Stay parked: drop the
+                    // old wheel's handles, re-assert the gate-off on the new wheel (its
+                    // persisted setting may be on), and let the resume's PageSet-while-off →
+                    // gate-on shape — valid from any cold state — bring it up when telemetry
+                    // returns. A cold bring-up here would light the display with no game.
+                    AbandonInFlight();
+                    _subs.Clear();
+                    _subsSnapshot = null;
+                    CurrentPage = 0;
+                    State = ItmLifecycleState.TelemetryIdle;
+                    QueueGateOff();
+                    _log("ITM: wheel changed while parked — staying dark; resume will bring the new wheel up");
+                    return;
                 default:
                     ColdEntry("wheel changed");
                     return;
@@ -371,9 +420,7 @@ namespace FanaBridge.Protocol
                 else
                     _subs[s.Handle] = s;
             }
-
-            if (_stepIdx < _steps.Count || _armOnDrain)
-                _pushDuringProcedure = true;
+            _subsSnapshot = null;
 
             if (_accumCloseAt == 0)
                 _accumCloseAt = _now() + AccumulateWindowMs;
@@ -387,6 +434,15 @@ namespace FanaBridge.Protocol
         {
             long now = _now();
 
+            // A requested start runs here rather than in Start() itself, so the caller's
+            // per-frame settings sync (DefaultPage in particular) has landed before the
+            // bring-up target is chosen.
+            if (_startPending)
+            {
+                _startPending = false;
+                ColdEntry("start");
+            }
+
             // Telemetry live→dead edge: park in TelemetryIdle (gate-off, screen dark) from any
             // active state — a switch or recovery interrupted by a game exit is abandoned; the
             // resume shape re-establishes everything and is the strongest recovery there is.
@@ -394,22 +450,43 @@ namespace FanaBridge.Protocol
                 EnterTelemetryIdle("game exited");
             _wasLive = telemetryLive;
 
-            // Judge a completed push accumulation.
+            // Judge a completed push accumulation — unless a procedure's commands are still
+            // being sent, in which case the judgment is deferred to the queue drain so that
+            // every push goes through the one judgment path with the expectation armed.
             if (_accumCloseAt != 0 && now >= _accumCloseAt)
             {
                 _accumCloseAt = 0;
-                JudgeAccumulation(now);
+                if (_stepIdx < _steps.Count || _armOnDrain)
+                    _judgeAtDrain = true;
+                else
+                    JudgeAccumulation(now);
             }
 
-            // Unsub-grace expiry: subscriptions were dropped and nothing followed.
+            // Grace expiry. Grace opens in Synced when a push left the map in a state that
+            // doesn't form a page: empty (unsubscribe-all — the front half of a page change,
+            // or our subscriptions being dropped) or a partial set (a change fragmented
+            // slower than the accumulation window). Anything arriving meanwhile re-judges;
+            // expiry means nothing followed.
             if (_graceUntil != 0 && now >= _graceUntil && _accumCloseAt == 0)
             {
                 _graceUntil = 0;
                 if (State == ItmLifecycleState.Synced)
                 {
-                    byte target = KnownTelemetryPageOrDefault(CurrentPage);
-                    _log("ITM: subscriptions dropped (unsubscribe with nothing following) — recovering page " + target);
-                    EnterRecovery(target, Rung.PageSet1);
+                    var set = SubscribedParamSet();
+                    if (set.Count == 0)
+                    {
+                        byte target = KnownTelemetryPageOrDefault(CurrentPage);
+                        _log("ITM: subscriptions dropped (unsubscribe with nothing following) — recovering page " + target);
+                        EnterRecovery(target, Rung.PageSet1);
+                    }
+                    else
+                    {
+                        // A stable set that matches no catalog page — the firmware knows
+                        // pages we don't. Adopt it; values flow for the encodable params.
+                        CurrentPage = PageForParamSet(set);
+                        SyncGeneration++;
+                        _log("ITM: adopted uncataloged page set: " + DescribeMap());
+                    }
                 }
             }
 
@@ -462,12 +539,11 @@ namespace FanaBridge.Protocol
         // used to infer firmware state.
         private void ColdEntry(string why)
         {
-            ClearProcedure();
-            ClearExpectation();
+            AbandonInFlight();
             _subs.Clear();
+            _subsSnapshot = null;
             CurrentPage = 0;
-            _rung = Rung.None;
-            _graceUntil = 0;
+            _pendingRequest = 0;
 
             _targetPage = DefaultPage;
             State = ItmLifecycleState.BringUp;
@@ -483,15 +559,13 @@ namespace FanaBridge.Protocol
             _targetPage = page;
             State = ItmLifecycleState.Switching;
             ClearExpectation();
+            _graceUntil = 0;
             _quietUntil = _now() + SwitchQuietMs;   // values are suspended from this instant
         }
 
         private void EnterTelemetryIdle(string why)
         {
-            ClearProcedure();
-            ClearExpectation();
-            _graceUntil = 0;
-            _rung = Rung.None;
+            AbandonInFlight();
             _resumePage = KnownTelemetryPageOrDefault(CurrentPage);
             State = ItmLifecycleState.TelemetryIdle;
             QueueGateOff();
@@ -579,9 +653,7 @@ namespace FanaBridge.Protocol
         private void EnterUnavailable()
         {
             State = ItmLifecycleState.Unavailable;
-            _rung = Rung.None;
-            ClearProcedure();
-            ClearExpectation();
+            AbandonInFlight();
             int backoff = UnavailableBackoffMs[Math.Min(_backoffIdx, UnavailableBackoffMs.Count - 1)];
             if (_backoffIdx < UnavailableBackoffMs.Count - 1)
                 _backoffIdx++;
@@ -594,7 +666,9 @@ namespace FanaBridge.Protocol
 
         // Judges the state of the handle map after an accumulation window closes. Matching is
         // on the parameter SET (handles are setup-specific and can re-bind); the map itself was
-        // already adopted entry-by-entry as reports arrived.
+        // already adopted entry-by-entry as reports arrived. Runs only with the command queue
+        // drained (mid-procedure closes are deferred to the drain), so the armed expectation
+        // is always in place when its push is judged.
         private void JudgeAccumulation(long now)
         {
             var set = SubscribedParamSet();
@@ -608,25 +682,15 @@ namespace FanaBridge.Protocol
                     _graceUntil = now + UnsubGraceMs;
                 return;
             }
-            _graceUntil = 0;
 
             byte matchedPage = PageForParamSet(set);
 
-            // A procedure's commands are still being sent (e.g. resume's gate-on not yet
-            // accepted): adopt the data but defer transitions until the procedure completes —
-            // going Synced with a gate-on unsent would strand a dark display.
-            if (_stepIdx < _steps.Count)
-            {
-                CurrentPage = matchedPage;
-                return;
-            }
-
-            // The armed expectation (or the in-flight target, for a push that lands before the
-            // deadline is even armed) confirms the procedure.
+            // The armed expectation confirms the procedure.
             if (_armedPage != 0 && SetEqualsPage(set, _armedPage))
             {
                 byte page = _armedPage;
                 ClearExpectation();
+                _graceUntil = 0;
                 if (State == ItmLifecycleState.Recovery && _rung == Rung.FlipAway && page == _flipPage)
                 {
                     // Flip page confirmed — now flip back to the target.
@@ -637,9 +701,17 @@ namespace FanaBridge.Protocol
                 ConfirmSync(page, "push confirmed");
                 return;
             }
-            if (ExpectsTargetPush() && SetEqualsPage(set, _targetPage))
+
+            // A push for the in-flight target that lands before the expectation is armed
+            // (early) or after a rung re-targeted it (late). NOT during the flip-away rung:
+            // there the flip PageSet is already accepted, so the display is about to move
+            // again — confirming the target now would resume values mid-transition and
+            // abandon the flip; wait for the flip page's push instead.
+            if (ExpectsTargetPush() && SetEqualsPage(set, _targetPage)
+                && !(State == ItmLifecycleState.Recovery && _rung == Rung.FlipAway))
             {
                 ClearExpectation();
+                _graceUntil = 0;
                 ConfirmSync(_targetPage, "push confirmed (early)");
                 return;
             }
@@ -648,10 +720,19 @@ namespace FanaBridge.Protocol
             switch (State)
             {
                 case ItmLifecycleState.Synced:
+                    if (matchedPage == 0)
+                    {
+                        // A set that forms no page is most likely a fragment of a change
+                        // still in flight (fragmented slower than the accumulation window).
+                        // Suspend values (grace) and wait for the rest; grace expiry adopts
+                        // whatever proved stable.
+                        _graceUntil = now + UnsubGraceMs;
+                        return;
+                    }
+                    _graceUntil = 0;
                     CurrentPage = matchedPage;
                     SyncGeneration++;
-                    _log("ITM: page changed at the wheel — now page " +
-                         (matchedPage == 0 ? "?" : matchedPage.ToString()) + ": " + DescribeMap());
+                    _log("ITM: page changed at the wheel — now page " + matchedPage + ": " + DescribeMap());
                     break;
                 case ItmLifecycleState.AwaitPush:
                 case ItmLifecycleState.Switching:
@@ -659,21 +740,28 @@ namespace FanaBridge.Protocol
                 case ItmLifecycleState.Unavailable:
                     // A COMPLETE different page than asked for (wheel button, late push from a
                     // boot-cold base): the display is demonstrably alive — sync to reality. Any
-                    // queued host request is dropped rather than fought. A set matching no page
-                    // is most likely a fragment of a change still in flight (the rest lands in
-                    // a later accumulation) — resuming values on it would reopen the re-bound-
-                    // handle hazard, so keep waiting and let the deadline/ladder decide.
-                    if (matchedPage == 0)
+                    // queued host request is dropped rather than fought. Two look-alikes are
+                    // NOT that and must not resolve the procedure:
+                    // - a set matching no page is a fragment mid-flight; the rest lands in a
+                    //   later accumulation — resuming values on it would reopen the re-bound-
+                    //   handle hazard, so let the deadline/ladder decide;
+                    // - a set matching the page we're LEAVING is a straggler re-announcement,
+                    //   not a user action — confirming it would silently cancel the switch;
+                    // - during flip-away the accepted flip PageSet means the display is about
+                    //   to move again — wait for the flip push (or the deadline).
+                    if (matchedPage == 0 || matchedPage == CurrentPage
+                        || (State == ItmLifecycleState.Recovery && _rung == Rung.FlipAway))
                         break;
                     _pendingRequest = 0;
                     ClearExpectation();
                     _rung = Rung.None;
+                    _graceUntil = 0;
                     ConfirmSync(matchedPage, "adopted unexpected push");
                     break;
                 default:
-                    // Idle / Disabled / TelemetryIdle / BringUp: keep the adopted map, no
-                    // transition. In gated-off states a push means someone else gated on —
-                    // note it, don't fight it.
+                    // Idle / Disabled / TelemetryIdle: keep the adopted map, no transition.
+                    // In gated-off states a push means someone else gated on — note it,
+                    // don't fight it.
                     CurrentPage = matchedPage;
                     if (State == ItmLifecycleState.TelemetryIdle || State == ItmLifecycleState.Disabled)
                         _log("ITM: subscription push received while gated off — another program may be driving the display");
@@ -766,33 +854,22 @@ namespace FanaBridge.Protocol
             if (_armOnDrain)
             {
                 _armOnDrain = false;
-                bool pushArrived = _pushDuringProcedure;
-                _pushDuringProcedure = false;
                 _armedPage = _armPage;
                 _deadlineAt = now + PushDeadlineMs;
                 if (State == ItmLifecycleState.BringUp)
                     State = ItmLifecycleState.AwaitPush;
+            }
 
-                // A push may have landed while the commands were still being accepted
-                // (adopted with the transition deferred) — judge it now. Guarded on a push
-                // actually having arrived during the procedure: the map alone can look
-                // "already right" from stale pre-procedure state (e.g. a resume to the same
-                // page the display was on before the exit), and that must never self-confirm.
-                if (pushArrived && _accumCloseAt == 0 && _subs.Count > 0
-                    && SetEqualsPage(SubscribedParamSet(), _armedPage))
-                {
-                    byte page = _armedPage;
-                    ClearExpectation();
-                    if (State == ItmLifecycleState.Recovery && _rung == Rung.FlipAway && page == _flipPage)
-                    {
-                        _rung = Rung.FlipBack;
-                        StartRung();
-                    }
-                    else
-                    {
-                        ConfirmSync(page, "push confirmed (arrived during send)");
-                    }
-                }
+            // A push accumulation that closed while the commands were still being accepted
+            // is judged now, with the expectation armed — the one JudgeAccumulation path
+            // handles it exactly as if it had arrived after the drain. Judging is strictly
+            // push-driven: with no push, the map alone can look "already right" from stale
+            // pre-procedure state (e.g. a resume to the page shown before the exit), and
+            // that must never self-confirm.
+            if (_judgeAtDrain)
+            {
+                _judgeAtDrain = false;
+                JudgeAccumulation(now);
             }
         }
 
@@ -801,7 +878,7 @@ namespace FanaBridge.Protocol
             _steps.Clear();
             _stepIdx = 0;
             _armOnDrain = false;
-            _pushDuringProcedure = false;
+            _judgeAtDrain = false;
             _quietUntil = 0;
         }
 
@@ -809,6 +886,20 @@ namespace FanaBridge.Protocol
         {
             _armedPage = 0;
             _deadlineAt = 0;
+        }
+
+        // Drops everything in flight: the command procedure, the push expectation, an open
+        // accumulation, the grace window, and the recovery rung. Used by every transition
+        // that abandons the current activity (stop, cold entry, user off, telemetry exit) —
+        // hand-picked subsets at each site drift, and a survivor (e.g. an open accumulation
+        // crossing a cold entry) can mis-attribute a stale push to the new session.
+        private void AbandonInFlight()
+        {
+            ClearProcedure();
+            ClearExpectation();
+            _accumCloseAt = 0;
+            _graceUntil = 0;
+            _rung = Rung.None;
         }
 
         // ── Page catalog helpers ─────────────────────────────────────────
@@ -847,22 +938,25 @@ namespace FanaBridge.Protocol
             return 0;
         }
 
+        // The catalog entry for a wire page number on this device, or null if unknown.
+        private ItmPageInfo PageInfoFor(byte page)
+        {
+            if (page != 0)
+                foreach (var p in ItmDeviceCatalog.PagesFor(_deviceId))
+                    if (p.Number == page)
+                        return p;
+            return null;
+        }
+
         private bool SetEqualsPage(HashSet<ushort> set, byte page)
         {
-            IReadOnlyList<ushort> expected = null;
-            foreach (var p in ItmDeviceCatalog.PagesFor(_deviceId))
-            {
-                if (p.Number == page)
-                {
-                    expected = p.Params;
-                    break;
-                }
-            }
+            var info = PageInfoFor(page);
             // A page we have no catalog entry for (or the legacy page) can't be matched
             // exactly; accept any non-empty adopted set as that procedure's outcome.
-            if (expected == null || expected.Count == 0)
+            if (info == null || info.Params.Count == 0)
                 return set.Count > 0;
 
+            var expected = info.Params;
             if (expected.Count != set.Count)
                 return false;
             for (int i = 0; i < expected.Count; i++)
@@ -885,14 +979,13 @@ namespace FanaBridge.Protocol
             return 1;
         }
 
+        // "Telemetry page" = carries parameters, so a PageSet to it can be confirmed by a
+        // push. Deliberately keyed on Params.Count rather than IsLegacy: the wire behavior
+        // (a paramless page pushes nothing) is what the lifecycle depends on.
         private bool IsTelemetryPage(byte page)
         {
-            if (page == 0)
-                return false;
-            foreach (var p in ItmDeviceCatalog.PagesFor(_deviceId))
-                if (p.Number == page)
-                    return p.Params.Count > 0;
-            return false;
+            var info = PageInfoFor(page);
+            return info != null && info.Params.Count > 0;
         }
 
         // A different telemetry page to flip to — a genuine page change must push, so the flip
