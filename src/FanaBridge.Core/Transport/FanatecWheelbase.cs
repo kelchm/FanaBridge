@@ -268,6 +268,20 @@ namespace FanaBridge.Transport
         /// </summary>
         public event Action<FanatecWheelbase> WheelChanged;
 
+        /// <summary>
+        /// Monotonic count of <see cref="WheelChanged"/> firings — a poll-friendly change
+        /// signal for per-frame consumers (e.g. the ITM lifecycle treats every wheel change
+        /// as a cold start) that must not hold event subscriptions across plugin
+        /// generations (see issue #37).
+        /// </summary>
+        public int WheelChangeCount { get; private set; }
+
+        private void RaiseWheelChanged()
+        {
+            WheelChangeCount++;
+            WheelChanged?.Invoke(this);
+        }
+
         // ── Configuration ────────────────────────────────────────────────
 
         /// <summary>
@@ -597,7 +611,7 @@ namespace FanaBridge.Transport
             BaseCode = FanatecIdentity.DecodeBaseCode(_lastReading.BaseType);
 
             ResolveCapabilities("Wheel changed");
-            WheelChanged?.Invoke(this);
+            RaiseWheelChanged();
         }
 
         // Commit a fixed SRM converter identity from the DE FA channel (a one-shot — no settler). Rim +
@@ -621,7 +635,7 @@ namespace FanaBridge.Transport
             _identityStable = true;                          // fixed identity — always settled
 
             ResolveCapabilities("SRM converter identified");
-            WheelChanged?.Invoke(this);
+            RaiseWheelChanged();
             Log.Info(string.Format(
                 "FanatecWheelbase: SRM Conversion Kit — Wheel={0} (id 0x{1:X2}), Module={2}, KitFw={3}",
                 WheelCode ?? "unknown", wire, ModuleCode ?? "(none)", SrmKitFirmware ?? "?"));
@@ -638,7 +652,7 @@ namespace FanaBridge.Transport
                 return;
 
             ResolveCapabilities("RefreshCapabilities");
-            WheelChanged?.Invoke(this);
+            RaiseWheelChanged();
         }
 
         /// <summary>

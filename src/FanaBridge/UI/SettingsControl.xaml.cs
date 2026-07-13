@@ -281,6 +281,18 @@ namespace FanaBridge.UI
             if (_bootCaps == null)
                 _bootCaps = Plugin.CurrentCapabilities;
 
+            // The ITM lifecycle moves without StateChanged firing (page switches,
+            // recovery rungs, game exits) — poll its status row while visible.
+            if (_itmStatusTimer == null)
+            {
+                _itmStatusTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(2)
+                };
+                _itmStatusTimer.Tick += (s, a) => UpdateItmStatus();
+            }
+            _itmStatusTimer.Start();
+
             UpdateStatus();
         }
 
@@ -289,7 +301,31 @@ namespace FanaBridge.UI
             StopScroll();
             StopPromptRetry();
             UnwatchSimHubDevices();
+            _itmStatusTimer?.Stop();
             Plugin.StateChanged -= OnPluginStateChanged;
+        }
+
+        private System.Windows.Threading.DispatcherTimer _itmStatusTimer;
+
+        // ITM display row + co-driver warning. Self-contained (hides itself when no ITM
+        // display is being driven), safe on every connection state.
+        private void UpdateItmStatus()
+        {
+            if (Plugin == null || panelItmStatus == null) return;
+
+            string itm = null;
+            string warn = null;
+            try
+            {
+                itm = Plugin.ItmStatus;
+                warn = itm != null ? Plugin.ItmCoDriverWarning : null;
+            }
+            catch { }
+
+            panelItmStatus.Visibility = itm == null ? Visibility.Collapsed : Visibility.Visible;
+            txtItmStatus.Text = itm ?? "—";
+            txtItmCoDriver.Text = "⚠  " + warn;
+            txtItmCoDriver.Visibility = warn == null ? Visibility.Collapsed : Visibility.Visible;
         }
 
         private void OnPluginStateChanged()
@@ -308,6 +344,7 @@ namespace FanaBridge.UI
             // Also self-contained (hides itself while disconnected), so it runs
             // ahead of the early returns below and stays correct on every path.
             UpdateAddDevicePrompt();
+            UpdateItmStatus();
 
             if (!Plugin.IsDeviceConnected)
             {

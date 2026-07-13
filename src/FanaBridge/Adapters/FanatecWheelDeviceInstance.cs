@@ -57,6 +57,11 @@ namespace FanaBridge.Adapters
         private byte _itmDeviceId;
         private bool _itmWasRunning;
         private bool _itmErrorLogged;
+        // Wheel-change edge detection (polled — no event subscription that could
+        // outlive a plugin generation, see issue #37). A wheel/hub/module change
+        // resets the display cold with no trace on the ITM channel, so the ITM
+        // lifecycle must restart from bring-up.
+        private int _itmWheelChangeCount;
         // True once the legacy page has been blanked after switching to mode "None",
         // so it is cleared once on the transition rather than every frame.
         private bool _legacyBlanked;
@@ -88,6 +93,12 @@ namespace FanaBridge.Adapters
 
         /// <summary>Test hook: the generation the cached drivers were built against.</summary>
         internal FanatecPlugin BoundPluginForTest => _boundPlugin;
+
+        /// <summary>
+        /// The ITM lifecycle status line for the Device Status panel, or null when this
+        /// instance isn't driving an ITM display.
+        /// </summary>
+        internal string ItmStatusDescription => _itmDisplay?.Lifecycle.Describe();
 
         public FanatecWheelDeviceInstance(DeviceConfig config)
         {
@@ -466,6 +477,9 @@ namespace FanaBridge.Adapters
                     _itmDisplay = new ItmDisplayDriver(plugin.Itm,
                         log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
                         deviceId: _itmDeviceId);
+                    // Baseline the wheel-change counter at creation — the driver is starting
+                    // cold anyway, so changes before this point are already accounted for.
+                    _itmWheelChangeCount = plugin.Wheelbase?.WheelChangeCount ?? 0;
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created ITM display driver");
                 }
@@ -481,6 +495,16 @@ namespace FanaBridge.Adapters
                     _itmDisplay.ShowLapTotal = _displaySettings.ItmShowLapTotal;
                     _itmDisplay.ShowPositionTotal = _displaySettings.ItmShowPositionTotal;
                     _itmDisplay.DefaultPage = _displaySettings.ItmDefaultPage;
+
+                    // A wheel/hub/module change (identity layer, FF 08) resets the display to
+                    // a cold state that is invisible on the ITM channel — restart the ITM
+                    // lifecycle from bring-up. Polled via the monotonic counter.
+                    int wheelChanges = plugin.Wheelbase?.WheelChangeCount ?? 0;
+                    if (wheelChanges != _itmWheelChangeCount)
+                    {
+                        _itmWheelChangeCount = wheelChanges;
+                        _itmDisplay.OnWheelChanged();
+                    }
 
                     // Feed the firmware's pushed ITM subscription reports (col03-IN) to the
                     // driver so it follows the page the wheel button selects.

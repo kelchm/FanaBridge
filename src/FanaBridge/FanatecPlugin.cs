@@ -212,6 +212,47 @@ namespace FanaBridge
             return null;
         }
 
+        // Detects the vendor's app/service running alongside FanaBridge — the same
+        // display, no arbitration, so it's a warning the user needs to see instead of
+        // chasing phantom ITM flicker. TTL-cached; edges are logged once.
+        private readonly Diagnostics.FanatecSoftwareMonitor _fanatecSoftware =
+            new Diagnostics.FanatecSoftwareMonitor(
+                log: msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg));
+
+        /// <summary>
+        /// The ITM display's lifecycle status line (e.g. "Synced — page 1, 6 params",
+        /// "Unavailable — retry in 30 s") from the connected instance driving an ITM
+        /// display, or null when none is. Shown in the Device Status panel.
+        /// </summary>
+        public string ItmStatus
+        {
+            get
+            {
+                if (!IsDeviceConnected) return null;
+                lock (_deviceInstancesLock)
+                {
+                    foreach (var inst in _deviceInstances)
+                    {
+                        try
+                        {
+                            var s = inst.ItmStatusDescription;
+                            if (s != null) return s;
+                        }
+                        catch { }
+                    }
+                }
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// A warning line when the Fanatec app/service is running alongside FanaBridge
+        /// while an ITM display is being driven (both write the same display; the
+        /// protocol has no arbitration and no way to detect the other writer on the
+        /// wire). Null when there is nothing to warn about.
+        /// </summary>
+        public string ItmCoDriverWarning => ItmStatus == null ? null : _fanatecSoftware.Warning;
+
         /// <summary>
         /// Whether Control Mapper's "Recognize Individual Wheels" is on (the setting the
         /// integration depends on), or null if it can't be determined. Read-only; used by
@@ -562,8 +603,19 @@ namespace FanaBridge
                     + "  diagnostic error: " + ex.Message;
             }
 
+            // ITM display lifecycle state + co-driver detection — the flaky-display
+            // context a report is usually filed about.
+            string itmSection = null;
+            var itmStatus = ItmStatus;
+            if (itmStatus != null)
+            {
+                itmSection = "ITM display" + Environment.NewLine
+                    + "  State:     " + itmStatus + Environment.NewLine
+                    + "  Co-driver: " + (ItmCoDriverWarning ?? "none detected (Fanatec app/service not running)");
+            }
+
             var report = DiagnosticsReport.Build(
-                _wheelbase, IsDeviceConnected, StatusDetail, BuildIdentity.Full, controlMapperSection);
+                _wheelbase, IsDeviceConnected, StatusDetail, BuildIdentity.Full, controlMapperSection, itmSection);
 
             return report;
         }
