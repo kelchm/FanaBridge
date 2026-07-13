@@ -187,10 +187,30 @@ namespace FanaBridge.Adapters
         /// parameter has no known encoder.
         /// </summary>
         public static bool TryEncodeParam(ushort paramId, byte handle, GameData data, out ItmValue value)
+            => TryEncodeParam(paramId, handle, data, 0, out value);
+
+        /// <summary>
+        /// Encodes a single subscribed parameter honouring the firmware's declared slot type
+        /// (<paramref name="dataType"/>, from the subscription push; 0 = unknown). The type
+        /// matters for GEAR, whose wire form differs per display: a PBME declares u8 (0x12)
+        /// and ignores ASCII, while a Formula V3 takes ASCII chars ('n', '1'..'9', 'r') — both
+        /// hardware/capture-verified against the official software. Other parameters encode
+        /// the same regardless.
+        /// </summary>
+        public static bool TryEncodeParam(ushort paramId, byte handle, GameData data, byte dataType, out ItmValue value)
         {
             value = default;
             var status = data?.NewData;
-            if (status == null || !Registry.TryGetValue(paramId, out var encode))
+            if (status == null)
+                return false;
+
+            if (paramId == ItmParam.Gear && ItmTelemetry.IsTextType(dataType))
+            {
+                value = ItmValue.Ascii(handle, ItmParam.Gear, GearText(status.Gear));
+                return true;
+            }
+
+            if (!Registry.TryGetValue(paramId, out var encode))
                 return false;
             value = encode(status, handle);
             return true;
@@ -292,13 +312,18 @@ namespace FanaBridge.Adapters
             return map.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
-        /// <summary>Reverse sentinel: -1 as a Uint8, which the firmware renders as "r".</summary>
+        /// <summary>
+        /// Reverse sentinel: -1 as a Uint8, which the firmware renders as "r"
+        /// (hardware-verified on a PBME under clean single-writer conditions).
+        /// </summary>
         private const byte GearReverse = 0xFF;
 
         /// <summary>
         /// Parses SimHub's gear string to the ITM Uint8 gear value: "N"/empty = 0, "1".."9" =
         /// that number, "R" = <see cref="GearReverse"/>. Forward gears are literal, confirmed
-        /// against an official-software capture (N=0, 2=2, 3=3).
+        /// against official-software PBME captures (N=0, gears 1..4 literal). Used when the
+        /// firmware declares GEAR as a numeric slot (or the type is unknown); text-declared
+        /// displays take <see cref="GearText"/> instead.
         /// </summary>
         private static byte EncodeGear(string gear)
         {
@@ -310,6 +335,26 @@ namespace FanaBridge.Adapters
             if (gear == "N" || gear == "NEUTRAL") return 0;
 
             return int.TryParse(gear, out int g) && g >= 0 && g <= 254 ? (byte)g : (byte)0;
+        }
+
+        /// <summary>
+        /// Parses SimHub's gear string to the ITM ASCII gear form used by text-declared
+        /// displays (e.g. Formula V3): lowercase "n" for neutral, lowercase "r" for reverse,
+        /// forward gears as their decimal digits — exactly the characters the official
+        /// software puts on the wire (capture-verified: 'n', '5'..'1', 'r').
+        /// </summary>
+        private static string GearText(string gear)
+        {
+            if (string.IsNullOrEmpty(gear))
+                return "n";
+
+            gear = gear.Trim().ToUpperInvariant();
+            if (gear == "R" || gear == "REVERSE") return "r";
+            if (gear == "N" || gear == "NEUTRAL") return "n";
+
+            return int.TryParse(gear, out int g) && g >= 1 && g <= 99
+                ? g.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : "n";
         }
     }
 }

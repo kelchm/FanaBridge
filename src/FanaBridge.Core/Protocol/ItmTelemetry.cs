@@ -77,12 +77,22 @@ namespace FanaBridge.Protocol
         /// <summary>Subscribed parameter ID, or 0xFFFF for an unsubscribe.</summary>
         public ushort ParamId { get; }
 
+        /// <summary>
+        /// The firmware's declared wire type for the slot (report byte 4 of the entry),
+        /// or 0 when unknown (e.g. a host-seeded subscription). The low nibble is the
+        /// type: 1 = ASCII text, 2/3 = u8, 4/5 = i16, 6/7/9 = i32, 8/10 = f32. The same
+        /// parameter can differ per display — GEAR is u8 (0x12) on a PBME but text on a
+        /// Formula V3 — so value encoding must follow this, not the paramId alone.
+        /// </summary>
+        public byte DataType { get; }
+
         public bool IsUnsubscribe => ParamId == ItmParam.Unsubscribe;
 
-        public ItmSubscription(byte firmwareHandle, ushort paramId)
+        public ItmSubscription(byte firmwareHandle, ushort paramId, byte dataType = 0)
         {
             Handle = (byte)(firmwareHandle & 0x7F);
             ParamId = paramId;
+            DataType = dataType;
         }
     }
 
@@ -186,9 +196,17 @@ namespace FanaBridge.Protocol
                 if (report[i] != deviceId) continue;   // entry for a different display — skip it
                 byte fwHandle = report[i + 1];
                 ushort pid = (ushort)(report[i + 2] | (report[i + 3] << 8));
-                result.Add(new ItmSubscription(fwHandle, pid));
+                result.Add(new ItmSubscription(fwHandle, pid, report[i + 4]));
             }
             return result;
         }
+
+        /// <summary>
+        /// Whether a firmware-declared slot type (<see cref="ItmSubscription.DataType"/>) is
+        /// ASCII text (low nibble 1). Hardware-verified both ways on GEAR: a PBME declares
+        /// 0x12 (u8) and ignores ASCII bytes; a Formula V3 receives ASCII chars
+        /// ('n', '1'..'9', 'r') from the official software.
+        /// </summary>
+        public static bool IsTextType(byte dataType) => (dataType & 0x0F) == 1;
     }
 }

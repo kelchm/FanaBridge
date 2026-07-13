@@ -579,6 +579,73 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void Values_Unchanged_ReassertedAfterRefreshInterval()
+        {
+            // ValueUpdate is unacked, so unchanged values are re-asserted every
+            // RefreshIntervalMs as insurance against a lost frame sticking.
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);
+            driver.OnSubscriptionReport(TyreSubReport);
+
+            var s = NewStatus();
+            Set(s, "TyreTemperatureFrontLeft", 80.0);
+            clock.T += 40;
+            driver.Update(Data(s));
+            t.Sent.Clear();
+
+            clock.T += driver.RefreshIntervalMs;   // past the refresh window, telemetry unchanged
+            driver.Update(Data(s));
+
+            Assert.Contains(t.Sent, IsValueUpdate);
+        }
+
+        // The gear entry's value byte from a ValueUpdate frame
+        // (header [FF 05 01], entries [dev][handle][idLo][idHi][size][val...]).
+        private static byte? GearValue(byte[] r)
+        {
+            for (int i = 3; i + 6 <= r.Length && r[i] != 0; i += 5 + r[i + 4])
+                if (r[i + 2] == 0x04 && r[i + 3] == 0x00) return r[i + 5];
+            return null;
+        }
+
+        [Fact]
+        public void Gear_NumericSlot_SendsNumericByte()
+        {
+            // TyreSubReport declares GEAR with dataType 0x12 (u8, as a PBME does):
+            // gear "3" goes on the wire as numeric 0x03.
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);
+            driver.OnSubscriptionReport(TyreSubReport);
+            t.Sent.Clear();
+
+            var s = NewStatus();
+            Set(s, "Gear", "3");
+            clock.T += 40;
+            driver.Update(Data(s));
+
+            Assert.Equal((byte)0x03, GearValue(t.Sent.First(IsValueUpdate)));
+        }
+
+        [Fact]
+        public void Gear_TextSlot_SendsAsciiChar()
+        {
+            // A display that declares GEAR as text (low nibble 1, as a Formula V3 does)
+            // gets the ASCII form: gear "3" goes on the wire as '3' (0x33).
+            var textSub = HexToBytes("ff0501" + "0300010034" + "0301040011");
+            var driver = MakeDriver(out var t, out var clock);
+            Enable(driver, clock);
+            driver.OnSubscriptionReport(textSub);
+            t.Sent.Clear();
+
+            var s = NewStatus();
+            Set(s, "Gear", "3");
+            clock.T += 40;
+            driver.Update(Data(s));
+
+            Assert.Equal((byte)0x33, GearValue(t.Sent.First(IsValueUpdate)));
+        }
+
+        [Fact]
         public void Values_Resent_WhenSubscriptionChanges()
         {
             var driver = MakeDriver(out var t, out var clock);
