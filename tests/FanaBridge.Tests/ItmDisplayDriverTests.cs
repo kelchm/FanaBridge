@@ -10,6 +10,12 @@ using Xunit;
 
 namespace FanaBridge.Tests
 {
+    /// <summary>
+    /// Driver-level tests: telemetry→value mapping, ParamDefs suffixes, send pacing, and the
+    /// post-sync repaint (immediate values + tight double-tap, then defs), all riding on the
+    /// lifecycle controller. The lifecycle itself (states, recovery ladder, deadlines) is
+    /// covered exhaustively in <see cref="ItmLifecycleControllerTests"/>.
+    /// </summary>
     public class ItmDisplayDriverTests
     {
         // ── Test doubles ─────────────────────────────────────────────────
@@ -46,6 +52,11 @@ namespace FanaBridge.Tests
         // Frame classifiers (col03: [0]=0xFF, [1]=class, [2]=subcmd)
         private static bool IsEnable(byte[] r) => r[1] == 0x02 && r[2] == 0x02;
         private static bool IsValueUpdate(byte[] r) => r[1] == 0x05 && r[2] == 0x01;
+        private static bool IsParamDefs(byte[] r) => r[1] == 0x05 && r[2] == 0x03;
+        private static bool IsPageSet(byte[] r) => r[1] == 0x05 && r[2] == 0x04;
+        private static bool IsItmModeOn(byte[] r) => r[1] == 0x05 && r[2] == 0x02 && r[3] == 0x01;
+        private static bool IsItmModeOff(byte[] r) => r[1] == 0x05 && r[2] == 0x02 && r[3] == 0x00;
+        private static bool IsDisplayReset(byte[] r) => r[1] == 0x05 && r[2] == 0x05 && r[3] == 0x01;
 
         private sealed class Clock { public long T; public long Now() => T; }
 
@@ -63,7 +74,7 @@ namespace FanaBridge.Tests
         private static void Set(object s, string p, object v) =>
             s.GetType().GetProperty(p).GetSetMethod(true).Invoke(s, new[] { v });
 
-        // The driver only runs while a game is feeding telemetry, so test frames are
+        // The driver only sends values while a game is feeding telemetry, so test frames are
         // game-running by default (GameRunning has an internal setter — reflection).
         private static GameData Data(object status, bool gameRunning = true)
         {
@@ -75,10 +86,28 @@ namespace FanaBridge.Tests
         private static GameData EmptyData() => Data(NewStatus());
         private static GameData NotRunningData() => Data(NewStatus(), gameRunning: false);
 
-        // A firmware subscription report (col03-IN). Tyre page: SPEED@0, GEAR@1,
-        // FL(42)@0x82, RL(48)@0x83.
-        private static readonly byte[] TyreSubReport =
-            HexToBytes("ff05010300010034030104001203822a00320383300032");
+        // ── Firmware push reports (col03-IN, complete pages) ─────────────
+        // Confirmation matches on the parameter set, so syncing needs a page's COMPLETE push.
+        // Entry: [dev][handle][pidLo][pidHi][dataType]; the 0x80 handle bit marks slot params.
+
+        // Page 1 (Lap Info): SPEED@0, GEAR@1, LAP(505)@0x82, POSITION(501)@0x83,
+        // LAP_TIME(509)@4, LAST_LAP(510)@5.
+        private static readonly byte[] LapInfoPush = HexToBytes(
+            "ff0501" + "0300010034" + "0301040012" + "0382f90132" + "0383f50132" + "0304fd012a" + "0305fe012a");
+
+        // Page 5 (Tyre Temps): SPEED@0, GEAR@1, FL(42)@0x82, RL(48)@0x83, FR(45)@0x84, RR(51)@0x85.
+        private static readonly byte[] TyrePush = HexToBytes(
+            "ff0501" + "0300010034" + "0301040012" + "03822a0032" + "0383300032" + "03842d0032" + "0385330032");
+
+        // Page 2 (Fuel/ERS/DRS): SPEED@0, GEAR@1, FUEL(5)@0x82, ERS(9)@3, DRS_ZONE(14)@4,
+        // DRS_ACTIVE(15)@5, DELTA_OWN_BEST(516)@6.
+        private static readonly byte[] FuelPush = HexToBytes(
+            "ff0501" + "0300010034" + "0301040012" + "0382050018" + "0303090016" + "03040e0012" + "03050f0012" + "0306040214");
+
+        // A partial report: SPEED@0, GEAR@1, FL(42)@0x82, RL(48)@0x83 — not a complete page.
+        private static readonly byte[] PartialTyreReport =
+            HexToBytes("ff0501" + "0300010034" + "0301040012" + "03822a0032" + "0383300032");
+
         private static byte[] HexToBytes(string hex)
         {
             var b = new byte[hex.Length / 2];
@@ -86,13 +115,42 @@ namespace FanaBridge.Tests
             return b;
         }
 
-        private static void Enable(ItmDisplayDriver driver, Clock clock)
+        // A firmware unsubscribe report (FF FF param) for the given handles.
+        private static byte[] UnsubReport(params byte[] handles)
         {
-            driver.Start();
-            driver.Update(EmptyData());   // Enabling -> Running (Enable + seed)
+            var list = new List<byte> { 0xFF, 0x05, 0x01 };
+            foreach (var h in handles) { list.Add(0x03); list.Add(h); list.Add(0xFF); list.Add(0xFF); list.Add(0x00); }
+            return list.ToArray();
         }
 
-        // ── Lifecycle ────────────────────────────────────────────────────
+        // Brings the driver to push-confirmed sync and completes the post-sync repaint
+        // (first values, tight second tap, ParamDefs). Values only flow after this —
+        // there is no pre-push seeding.
+        private static void Sync(ItmDisplayDriver driver, Clock clock, byte[]? push = null, GameData? data = null)
+        {
+            var d = data ?? EmptyData();
+            driver.Start();
+            driver.Update(d);                    // bring-up: gate-on + enable + PageSet
+            driver.OnSubscriptionReport(push ?? LapInfoPush);
+            clock.T += 50;                       // push accumulation window
+            driver.Update(d);                    // judged → Synced; first paint
+            clock.T += 20;                       // value double-tap gap
+            driver.Update(d);                    // second tap + ParamDefs
+            Assert.True(driver.IsRunning);
+        }
+
+        // Delivers a push mid-session and runs the judgment + repaint ticks.
+        private static void Push(ItmDisplayDriver driver, Clock clock, byte[] report, GameData? data = null)
+        {
+            var d = data ?? EmptyData();
+            driver.OnSubscriptionReport(report);
+            clock.T += 50;
+            driver.Update(d);                    // judged; first paint
+            clock.T += 20;
+            driver.Update(d);                    // second tap + defs
+        }
+
+        // ── Lifecycle wiring ─────────────────────────────────────────────
 
         [Fact]
         public void Update_BeforeStart_SendsNothing()
@@ -103,74 +161,103 @@ namespace FanaBridge.Tests
             Assert.False(driver.IsRunning);
         }
 
-        private static bool IsItmModeOn(byte[] r) => r[1] == 0x05 && r[2] == 0x02 && r[3] == 0x01;
-
         [Fact]
-        public void Start_EnablesOnce_ThenRunning()
+        public void Start_SendsBringUp_ButNotRunningUntilPush()
         {
-            var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
+            var driver = MakeDriver(out var t, out _);
+            driver.Start();
+            driver.Update(EmptyData());
 
-            Assert.True(driver.IsRunning);
-            Assert.Single(t.Sent, IsEnable);
+            Assert.Contains(t.Sent, IsItmModeOn);
+            Assert.Contains(t.Sent, IsEnable);
+            Assert.Contains(t.Sent, IsPageSet);
+            Assert.False(driver.IsRunning);   // confirmation only ever comes from the push
         }
 
         [Fact]
         public void BringUp_ForcesDefaultPage()
         {
-            var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
+            var driver = MakeDriver(out var t, out _);
+            driver.Start();
+            driver.Update(EmptyData());
 
-            // Bring-up starts the session (FF 02 02) and forces page 1 (FF 05 04 03 01) so the
-            // display matches the Lap Info seed. Detecting the wheel's actual page is deferred (#43).
-            Assert.Contains(t.Sent, IsEnable);
-            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[3] == 0x03 && r[4] == 0x01);
+            // PageSet(dev 3, page 1) — the configured default.
+            Assert.Contains(t.Sent, r => r.Length > 4 && IsPageSet(r) && r[3] == 0x03 && r[4] == 0x01);
         }
 
         [Fact]
         public void BringUp_ForcesConfiguredDefaultPage()
         {
-            var driver = MakeDriver(out var t, out var clock);
+            var driver = MakeDriver(out var t, out _);
             driver.DefaultPage = 5;   // Tyre Temps
-            Enable(driver, clock);
+            driver.Start();
+            driver.Update(EmptyData());
 
-            // The forced-page PageSet uses the configured default page, not 1.
-            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[4] == 0x05);
-            // And the seed reflects that page (Tyre Temps = SPEED, GEAR + 4 tyre temps = 6 params).
+            Assert.Contains(t.Sent, r => r.Length > 4 && IsPageSet(r) && r[4] == 0x05);
+            // No seeding: nothing is subscribed until the firmware's push announces it.
+            Assert.Equal(0, driver.SubscriptionCount);
+        }
+
+        [Fact]
+        public void PushConfirmation_MakesRunning_AndAdoptsSubscriptions()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Sync(driver, clock);
+
+            Assert.True(driver.IsRunning);
             Assert.Equal(6, driver.SubscriptionCount);
+        }
+
+        [Fact]
+        public void NoValues_BeforePushConfirmation()
+        {
+            // Values sent at guessed handles are ignored at best — and after a page change can
+            // land on re-bound parameters. Nothing goes out until the push confirms.
+            var driver = MakeDriver(out var t, out var clock);
+            driver.Start();
+            driver.Update(EmptyData());
+            t.Sent.Clear();
+
+            var s = NewStatus();
+            Set(s, "SpeedLocal", 100.0);
+            clock.T += 200;
+            driver.Update(Data(s));
+
+            Assert.DoesNotContain(t.Sent, IsValueUpdate);
         }
 
         [Fact]
         public void ChangingDefaultPageWhileRunning_ForcesItLive()
         {
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);   // bring-up on the default page (1)
-            t.Sent.Clear();          // ignore bring-up frames
+            Sync(driver, clock);   // synced on page 1
+            t.Sent.Clear();
 
             driver.DefaultPage = 3;  // user picks a new default page in settings
             clock.T += 1000;
+            driver.Update(EmptyData());   // request registered; quiet window starts
+            clock.T += 60;                // past the switch quiet window
             driver.Update(EmptyData());
 
             // A PageSet to the new page is issued live — no re-enable / reconnect needed.
-            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[4] == 0x03);
+            Assert.Contains(t.Sent, r => r.Length > 4 && IsPageSet(r) && r[4] == 0x03);
         }
 
         [Fact]
         public void ChangingDefaultPageWhileRunning_DoesNotReseedSubscriptions()
         {
-            var driver = MakeDriver(out _, out var clock);
-            driver.DefaultPage = 1;
-            Enable(driver, clock);
-            int before = driver.SubscriptionCount;   // page 1's seeded set
+            var driver = MakeDriver(out var t, out var clock);
+            Sync(driver, clock);
+            int before = driver.SubscriptionCount;
 
-            driver.DefaultPage = 3;   // switch page live
+            driver.DefaultPage = 3;
             clock.T += 1000;
             driver.Update(EmptyData());
+            clock.T += 60;
+            driver.Update(EmptyData());
 
-            // The PageSet is issued (see ChangingDefaultPageWhileRunning_ForcesItLive), but the
-            // subscriptions are NOT speculatively reseeded — we wait for the firmware's push. A flaked
-            // switch, or a switch to the page already shown (no push), must not strand the display on
-            // wrong-page handles, so the existing set is kept until the firmware replaces it.
+            // The subscriptions are NOT speculatively replaced — the existing set stays until
+            // the firmware's push announces the new page's handles.
             Assert.Equal(before, driver.SubscriptionCount);
         }
 
@@ -182,10 +269,10 @@ namespace FanaBridge.Tests
             var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, deviceId: 4);   // Bentley
 
             driver.Start();
-            driver.Update(EmptyData());   // Enabling -> Running
+            driver.Update(EmptyData());
 
             // The forced-page PageSet targets device 4 (Bentley), not the default 3.
-            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[3] == 0x04 && r[4] == 0x01);
+            Assert.Contains(t.Sent, r => r.Length > 4 && IsPageSet(r) && r[3] == 0x04 && r[4] == 0x01);
         }
 
         [Fact]
@@ -195,47 +282,30 @@ namespace FanaBridge.Tests
             var clock = new Clock();
             var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, deviceId: 4);   // Bentley
             driver.Start();
-            driver.Update(EmptyData());   // bring-up + Lap Info seed
+            driver.Update(EmptyData());
+
+            // Bentley page 1 push (device id 4 in every entry): SPEED@0, GEAR@1, LAP@0x82,
+            // POSITION@0x83, LAP_TIME@4, LAST_LAP@5.
+            driver.OnSubscriptionReport(HexToBytes(
+                "ff0501" + "0400010034" + "0401040012" + "0482f90132" + "0483f50132" + "0404fd012a" + "0405fe012a"));
+            clock.T += 50;
 
             var s = NewStatus();
             Set(s, "SpeedLocal", 100.0);
-            clock.T += 1000;             // past the value interval
-            driver.Update(Data(s));
+            driver.Update(Data(s));   // judged → Synced; first paint
 
             var vu = t.Sent.LastOrDefault(IsValueUpdate);
             Assert.NotNull(vu);
-            Assert.Equal(0x04, vu[3]);   // per-entry device id = Bentley
-        }
-
-        [Fact]
-        public void Enable_SeedsLapInfoSubscriptions()
-        {
-            var driver = MakeDriver(out _, out var clock);
-            Enable(driver, clock);
-
-            // Lap Info has 6 params; seeded so the forced page 1 populates immediately,
-            // before the firmware's push (from the SetPage) arrives.
-            Assert.Equal(6, driver.SubscriptionCount);
-        }
-
-        [Fact]
-        public void Enable_DoesNotOverwriteAlreadyReceivedSubscriptions()
-        {
-            var driver = MakeDriver(out _, out var clock);
-            driver.OnSubscriptionReport(TyreSubReport);   // 4 subs arrive before Enable
-            Enable(driver, clock);
-
-            Assert.Equal(4, driver.SubscriptionCount);    // seed skipped
+            Assert.Equal(0x04, vu![3]);   // per-entry device id = Bentley
         }
 
         // ── Enable/disable gate ──────────────────────────────────────────
-        private static bool IsItmModeOff(byte[] r) => r[1] == 0x05 && r[2] == 0x02 && r[3] == 0x00;
 
         [Fact]
         public void Disabled_SendsItmModeOff_AndGoesDormant()
         {
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
+            Sync(driver, clock);
             t.Sent.Clear();
 
             driver.Enabled = false;
@@ -243,7 +313,7 @@ namespace FanaBridge.Tests
 
             Assert.Contains(t.Sent, IsItmModeOff);   // FF 05 02 00 sent
             Assert.False(driver.IsRunning);
-            Assert.Equal(0, driver.SubscriptionCount);
+            Assert.False(driver.Lifecycle.ValuesAllowed);
 
             // Dormant: no values on later ticks.
             t.Sent.Clear();
@@ -256,7 +326,7 @@ namespace FanaBridge.Tests
         public void Disabled_SendsItmModeOff_OnlyOnce()
         {
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
+            Sync(driver, clock);
             driver.Enabled = false;
 
             driver.Update(EmptyData());
@@ -270,17 +340,19 @@ namespace FanaBridge.Tests
         public void ReEnable_AfterDisable_ResumesBringUp()
         {
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
+            Sync(driver, clock);
             driver.Enabled = false;
             driver.Update(EmptyData());
             t.Sent.Clear();
 
             driver.Enabled = true;
-            driver.Update(EmptyData());   // Disabled -> Enabling -> Running in one tick
+            driver.Start();               // as the device instance does every frame while enabled
+            clock.T += 200;               // past the PageSet spacing floor
+            driver.Update(EmptyData());
 
-            Assert.True(driver.IsRunning);
             Assert.Contains(t.Sent, IsItmModeOn);   // gate turned back on
-            Assert.Contains(t.Sent, IsEnable);      // session re-enabled
+            Assert.Contains(t.Sent, IsEnable);      // session enable (official parity)
+            Assert.Contains(t.Sent, IsPageSet);     // and the page — confirmation via push
         }
 
         [Fact]
@@ -297,23 +369,24 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void SendValues_UnknownSubscribedParam_LogsOnce()
+        public void UserDisable_ItmOff_RetriedUntilAccepted()
         {
-            var t = new RecordingTransport();
-            var clock = new Clock();
-            var logs = new List<string>();
-            var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, logs.Add);
+            var driver = MakeDriver(out var t, out var clock);
+            Sync(driver, clock);
+            driver.Enabled = false;
 
-            // Subscribe param 9999 (outside every page layout) at handle 2 (fw 0x82).
-            driver.OnSubscriptionReport(HexToBytes("ff050103820f2700"));
-            driver.Start();
-            driver.Update(EmptyData());   // Enabling -> Running
-            clock.T += 40;
-            driver.Update(EmptyData());   // SendSubscribedValues encounters the unknown param
-            clock.T += 40;
-            driver.Update(EmptyData());   // ticks again — must not re-log
+            t.SendReturns = false;             // off command declined — must be retried
+            driver.Update(EmptyData());
+            t.Sent.Clear();
 
-            Assert.Single(logs, m => m.Contains("no encoder for subscribed param 9999"));
+            t.SendReturns = true;
+            driver.Update(EmptyData());        // retried and accepted
+            Assert.Contains(t.Sent, IsItmModeOff);
+
+            t.Sent.Clear();
+            clock.T += 500;
+            driver.Update(EmptyData());        // dormant after success
+            Assert.Empty(t.Sent);
         }
 
         // ── Subscription handling ────────────────────────────────────────
@@ -321,8 +394,10 @@ namespace FanaBridge.Tests
         [Fact]
         public void OnSubscriptionReport_AddsSubscriptions()
         {
+            // Pushes are adopted in every state — even before Start (host state must never
+            // be used to infer firmware state).
             var driver = MakeDriver(out _, out _);
-            driver.OnSubscriptionReport(TyreSubReport);
+            driver.OnSubscriptionReport(PartialTyreReport);
             Assert.Equal(4, driver.SubscriptionCount);   // SPEED, GEAR, FL, RL
         }
 
@@ -330,27 +405,21 @@ namespace FanaBridge.Tests
         public void OnSubscriptionReport_UnsubscribeRemovesHandles()
         {
             var driver = MakeDriver(out _, out _);
-            driver.OnSubscriptionReport(TyreSubReport);
+            driver.OnSubscriptionReport(PartialTyreReport);
 
             // Unsubscribe handles 0 and 1 (FF FF param).
             driver.OnSubscriptionReport(HexToBytes("ff05010300ffff340301ffff12"));
             Assert.Equal(2, driver.SubscriptionCount);   // FL, RL remain
         }
 
-        // A firmware unsubscribe report (FF FF param) for the given handles.
-        private static byte[] UnsubReport(params byte[] handles)
-        {
-            var list = new List<byte> { 0xFF, 0x05, 0x01 };
-            foreach (var h in handles) { list.Add(0x03); list.Add(h); list.Add(0xFF); list.Add(0xFF); list.Add(0x00); }
-            return list.ToArray();
-        }
-
         [Fact]
         public void AllUnsubscribed_SendsNoValues()
         {
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);   // seeds the 6 Lap Info handles
+            Sync(driver, clock);
             driver.OnSubscriptionReport(UnsubReport(0, 1, 2, 3, 4, 5));
+            clock.T += 50;
+            driver.Update(Data(NewStatus()));
             Assert.Equal(0, driver.SubscriptionCount);
             t.Sent.Clear();
 
@@ -361,15 +430,29 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void SendValues_UnknownSubscribedParam_LogsOnce()
+        {
+            var t = new RecordingTransport();
+            var clock = new Clock();
+            var logs = new List<string>();
+            var driver = new ItmDisplayDriver(new ItmEncoder(t), clock.Now, logs.Add);
+            Sync(driver, clock);
+
+            // The firmware announces param 9999 (outside every page layout) at handle 2.
+            Push(driver, clock, HexToBytes("ff050103820f2700"));
+            clock.T += 40;
+            driver.Update(EmptyData());   // ticks again — must not re-log
+
+            Assert.Single(logs, m => m.Contains("no encoder for subscribed param 9999"));
+        }
+
+        // ── ParamDefs (unit/total suffixes) ──────────────────────────────
+
+        [Fact]
         public void SubscriptionWithUnits_SendsParamDefsSuffix()
         {
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);          // Lap Info seed
-            driver.OnSubscriptionReport(TyreSubReport);   // tyre temps carry 'C'
-            t.Sent.Clear();
-
-            clock.T += 40;
-            driver.Update(EmptyData());     // ParamDefs refreshed here
+            Sync(driver, clock, TyrePush);   // tyre temps carry 'C'
 
             var pd = t.Sent.First(IsParamDefs);
             // entry: [03][slot][posLo][posHi][suffixLen][suffix]; tyre FL handle 2 -> slot 0x82
@@ -379,39 +462,55 @@ namespace FanaBridge.Tests
             Assert.Equal((byte)'C', pd[8]);            // Celsius
         }
 
-        // A game-exit DisplayReset clears the firmware's suffix; on resume the suffix set is
-        // unchanged, so the sig-latch would suppress the re-send and the suffix would never
-        // come back (value renders, suffix doesn't). The exit reset must clear the sig so the
-        // def re-decorates when telemetry returns.
+        [Fact]
+        public void ParamDefs_SentAfterValueDoubleTap()
+        {
+            // Post-sync ordering: first values, tight second tap, then ParamDefs — matching
+            // official-software post-switch behavior (defs-before-values coincided with a
+            // lost first render in captures).
+            var driver = MakeDriver(out var t, out var clock);
+            driver.Start();
+            driver.Update(EmptyData());
+            driver.OnSubscriptionReport(TyrePush);
+            clock.T += 50;
+            driver.Update(EmptyData());   // sync + first paint — defs must NOT be out yet
+            Assert.Single(t.Sent, IsValueUpdate);
+            Assert.DoesNotContain(t.Sent, IsParamDefs);
+
+            clock.T += 20;
+            driver.Update(EmptyData());   // second tap, then defs
+            Assert.Equal(2, t.Sent.Count(IsValueUpdate));
+            int lastValue = t.Sent.FindLastIndex(IsValueUpdate);
+            int defs = t.Sent.FindIndex(IsParamDefs);
+            Assert.True(defs > lastValue, "ParamDefs go out after the value double-tap");
+        }
+
         [Fact]
         public void GameExitThenResume_ReDecoratesSuffix()
         {
+            // The resume's fresh push may follow decorations being lost (observed after
+            // hot-swaps); the repaint clears the suffix signature so the same suffix set is
+            // re-sent rather than latched away.
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);   // 'C' suffix on the tyre page
-            clock.T += 1000;
-            driver.Update(EmptyData());                   // telemetry live -> def sent
+            Sync(driver, clock, TyrePush);
             Assert.Contains(t.Sent, IsParamDefs);
 
-            driver.Update(NotRunningData());              // game exit -> DisplayReset
+            clock.T += 40;
+            driver.Update(NotRunningData());              // game exit → display gated off
             t.Sent.Clear();
 
             clock.T += 1000;
-            driver.Update(EmptyData());                   // resume, same suffix set -> MUST re-send
-            Assert.Contains(t.Sent, IsParamDefs);
+            driver.Update(EmptyData());                   // resume: PageSet-while-off + gate-on
+            Push(driver, clock, TyrePush);                // the elicited push, same suffix set
+
+            Assert.Contains(t.Sent, IsParamDefs);         // re-decorated despite unchanged sig
         }
 
-        // ParamDefs is fire-and-forget (no ack): a single send is occasionally dropped by the
-        // firmware, so every def is sent as a tight double-tap (~50 ms), matching the official
-        // app's priming. Exactly one extra send, then silence until the suffix set changes.
         [Fact]
         public void ParamDefs_AreTightDoubleTapped()
         {
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
-            clock.T += 1000;
-            driver.Update(EmptyData());                    // first def (tap 1)
+            Sync(driver, clock, TyrePush);                 // first def tap goes out with the sync
             Assert.Equal(1, t.Sent.Count(IsParamDefs));
 
             clock.T += driver.DefDoubleTapMs;              // ~50 ms later
@@ -433,11 +532,7 @@ namespace FanaBridge.Tests
             Set(s, "OpponentsCount", 20);   // field of 20 (list already includes the player)
             Set(s, "Position", 7);
 
-            driver.Start();
-            driver.Update(Data(s));         // Enable + seed Lap Info (lap@h2, position@h3)
-            t.Sent.Clear();
-            clock.T += 40;
-            driver.Update(Data(s));         // ParamDefs with the dynamic totals
+            Sync(driver, clock, LapInfoPush, Data(s));   // lap@h2, position@h3
 
             var pd = t.Sent.First(IsParamDefs);
             // First suffixed slot is lap (handle 2 -> slot 0x82) with "/34".
@@ -454,10 +549,7 @@ namespace FanaBridge.Tests
             var driver = MakeDriver(out var t, out var clock);
             var s = NewStatus();
             Set(s, "OpponentsCount", 2); Set(s, "Position", 2);   // field 2, P2 -> "/2"
-            driver.Start();
-            driver.Update(Data(s));          // Enable + seed (position@h3)
-            clock.T += 40;
-            driver.Update(Data(s));          // sends "/2" on the position slot
+            Sync(driver, clock, LapInfoPush, Data(s));            // sends "/2" on the position slot
             t.Sent.Clear();
 
             Set(s, "Position", 3);           // now P3 in a field of 2 -> implausible
@@ -480,10 +572,7 @@ namespace FanaBridge.Tests
             driver.ShowPositionTotal = false;
             var s = NewStatus();
             Set(s, "OpponentsCount", 20); Set(s, "Position", 7);   // would be "/20"
-            driver.Start();
-            driver.Update(Data(s));
-            clock.T += 40;
-            driver.Update(Data(s));
+            Sync(driver, clock, LapInfoPush, Data(s));
 
             // Position slot (0x83) is present but blanked with a " " suffix (length 1) — a
             // zero-length suffix would leave the firmware's default "/0" showing.
@@ -496,14 +585,9 @@ namespace FanaBridge.Tests
         public void Fuel_FallsBackToUnitLabel_WhenNoCapacity()
         {
             var driver = MakeDriver(out var t, out var clock);
-            driver.OnSubscriptionReport(HexToBytes("ff05010382050018"));   // fuel @ handle 2 (slot 0x82)
-            Enable(driver, clock);                                          // seed skipped; only fuel subscribed
-
             var s = NewStatus();
             Set(s, "Fuel", 12.0); Set(s, "MaxFuel", 0.0);   // no tank capacity reported
-            t.Sent.Clear();
-            clock.T += 40;
-            driver.Update(Data(s));
+            Sync(driver, clock, FuelPush, Data(s));          // fuel @ handle 2 (slot 0x82)
 
             // With no capacity, the fuel slot (0x82) falls back to the unit label "L" (not a
             // blank " "), so a bare fuel value still reads as fuel.
@@ -518,14 +602,9 @@ namespace FanaBridge.Tests
         public void TempSuffix_FollowsFrameUnit()
         {
             var driver = MakeDriver(out var t, out var clock);
-            driver.OnSubscriptionReport(TyreSubReport);   // tyre temps @ 0x82/0x83
-            Enable(driver, clock);
-
             var s = NewStatus();
             Set(s, "TemperatureUnit", "F");   // frame reports Fahrenheit
-            t.Sent.Clear();
-            clock.T += 40;
-            driver.Update(Data(s));
+            Sync(driver, clock, TyrePush, Data(s));
 
             // The tyre slot (0x82) label comes from the frame's TemperatureUnit, not a fixed
             // default — normalized to a single char.
@@ -536,40 +615,89 @@ namespace FanaBridge.Tests
             Assert.True(tyreF);
         }
 
-        private static bool IsParamDefs(byte[] r) => r[1] == 0x05 && r[2] == 0x03;
-
         [Fact]
-        public void Running_SendsValuesForSubscribedParams()
+        public void ParamDefs_DeclinedSend_RetriedUntilAccepted()
         {
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
+
+            // ParamDefs declined during the sync repaint: the suffix signature must NOT
+            // latch, or the decoration would never be retried until the suffix set changes.
+            t.Decide = r => !IsParamDefs(r);
+            Sync(driver, clock, TyrePush);
+            Assert.Contains(t.Sent, IsParamDefs);   // attempted
             t.Sent.Clear();
 
+            t.Decide = null;
+            clock.T += 40;
+            driver.Update(EmptyData());             // unchanged suffix set — still retried
+            Assert.Contains(t.Sent, IsParamDefs);
+        }
+
+        [Fact]
+        public void ParamDefs_DoubleTap_Declined_RetriedNextTick()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            Sync(driver, clock, TyrePush);          // first def tap accepted, second scheduled
+            t.Sent.Clear();
+
+            t.Decide = r => !IsParamDefs(r);        // the tight second tap gets declined
+            clock.T += driver.DefDoubleTapMs;
+            driver.Update(EmptyData());
+            Assert.Contains(t.Sent, IsParamDefs);   // attempted
+            t.Sent.Clear();
+
+            t.Decide = null;
+            clock.T += 5;
+            driver.Update(EmptyData());             // retried next tick
+            Assert.Contains(t.Sent, IsParamDefs);
+        }
+
+        // ── Values ───────────────────────────────────────────────────────
+
+        [Fact]
+        public void Synced_SendsValuesForSubscribedParams()
+        {
+            var driver = MakeDriver(out var t, out var clock);
             var s = NewStatus();
             Set(s, "TyreTemperatureFrontLeft", 88.0);
-            clock.T += 40;
-            driver.Update(Data(s));
+            Sync(driver, clock, TyrePush, Data(s));
 
             var vu = t.Sent.First(IsValueUpdate);
             // Header [FF 05 01], then entries [03][handle][idLo][idHi][size][val...].
             // First subscribed handle is 0 (SPEED).
-            Assert.Equal(0x03, vu[3]);   // entry marker
+            Assert.Equal(0x03, vu[3]);   // entry device id
             Assert.Equal(0x00, vu[4]);   // handle 0
-            Assert.Contains(t.Sent, IsValueUpdate);
+        }
+
+        [Fact]
+        public void FirstValuesAfterSync_AreDoubleTapped()
+        {
+            // The first values after any push get a tight double-tap (~20 ms) — the periodic
+            // re-assert heals whatever single-shot sends lose.
+            var driver = MakeDriver(out var t, out var clock);
+            driver.Start();
+            driver.Update(EmptyData());
+            driver.OnSubscriptionReport(LapInfoPush);
+            clock.T += 50;
+            driver.Update(EmptyData());                  // sync → immediate first paint
+            Assert.Equal(1, t.Sent.Count(IsValueUpdate));
+
+            clock.T += driver.ValueDoubleTapMs;
+            driver.Update(EmptyData());                  // the tight second tap
+            Assert.Equal(2, t.Sent.Count(IsValueUpdate));
+
+            clock.T += 40;
+            driver.Update(EmptyData());                  // unchanged values — no third send
+            Assert.Equal(2, t.Sent.Count(IsValueUpdate));
         }
 
         [Fact]
         public void Values_NotResent_WhenUnchanged()
         {
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
-
             var s = NewStatus();
             Set(s, "TyreTemperatureFrontLeft", 80.0);
-            clock.T += 40;
-            driver.Update(Data(s));
+            Sync(driver, clock, TyrePush, Data(s));
             t.Sent.Clear();
 
             clock.T += 100;
@@ -584,16 +712,69 @@ namespace FanaBridge.Tests
             // ValueUpdate is unacked, so unchanged values are re-asserted every
             // RefreshIntervalMs as insurance against a lost frame sticking.
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
-
             var s = NewStatus();
             Set(s, "TyreTemperatureFrontLeft", 80.0);
+            Sync(driver, clock, TyrePush, Data(s));
+            t.Sent.Clear();
+
+            clock.T += driver.RefreshIntervalMs;   // past the refresh window, telemetry unchanged
+            driver.Update(Data(s));
+
+            Assert.Contains(t.Sent, IsValueUpdate);
+        }
+
+        [Fact]
+        public void Values_Resent_WhenSubscriptionChanges()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            var s = NewStatus();
+            Sync(driver, clock, TyrePush, Data(s));
+            t.Sent.Clear();
+
+            // A new push (page change at the wheel) forces a fresh repaint even with
+            // identical telemetry — the firmware may be showing stale cached values.
+            Push(driver, clock, LapInfoPush, Data(s));
+
+            Assert.Contains(t.Sent, IsValueUpdate);
+        }
+
+        [Fact]
+        public void Values_RateLimited_WithinInterval()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            var s = NewStatus();
+            Set(s, "TyreTemperatureFrontLeft", 80.0);
+            Sync(driver, clock, TyrePush, Data(s));
             clock.T += 40;
             driver.Update(Data(s));
             t.Sent.Clear();
 
-            clock.T += driver.RefreshIntervalMs;   // past the refresh window, telemetry unchanged
+            Set(s, "TyreTemperatureFrontLeft", 90.0);
+            clock.T += 10;   // within ValueIntervalMs
+            driver.Update(Data(s));
+
+            Assert.DoesNotContain(t.Sent, IsValueUpdate);
+        }
+
+        [Fact]
+        public void Values_RetriedAfterFailedSend()
+        {
+            var driver = MakeDriver(out var t, out var clock);
+            var s = NewStatus();
+            Set(s, "TyreTemperatureFrontLeft", 80.0);
+            Sync(driver, clock, TyrePush, Data(s));
+
+            // A value send that fails at the transport must NOT be recorded as last-sent...
+            Set(s, "TyreTemperatureFrontLeft", 85.0);
+            t.SendReturns = false;
+            clock.T += 40;
+            driver.Update(Data(s));
+            t.Sent.Clear();
+
+            // ...so when the transport recovers, the (unchanged) values are retried rather
+            // than skipped as "already sent".
+            t.SendReturns = true;
+            clock.T += 40;
             driver.Update(Data(s));
 
             Assert.Contains(t.Sent, IsValueUpdate);
@@ -611,17 +792,12 @@ namespace FanaBridge.Tests
         [Fact]
         public void Gear_NumericSlot_SendsNumericByte()
         {
-            // TyreSubReport declares GEAR with dataType 0x12 (u8, as a PBME does):
+            // TyrePush declares GEAR with dataType 0x12 (u8, as a PBME does):
             // gear "3" goes on the wire as numeric 0x03.
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
-            t.Sent.Clear();
-
             var s = NewStatus();
             Set(s, "Gear", "3");
-            clock.T += 40;
-            driver.Update(Data(s));
+            Sync(driver, clock, TyrePush, Data(s));
 
             Assert.Equal((byte)0x03, GearValue(t.Sent.First(IsValueUpdate)));
         }
@@ -631,97 +807,31 @@ namespace FanaBridge.Tests
         {
             // A display that declares GEAR as text (low nibble 1, as a Formula V3 does)
             // gets the ASCII form: gear "3" goes on the wire as '3' (0x33).
-            var textSub = HexToBytes("ff0501" + "0300010034" + "0301040011");
+            var textPush = HexToBytes(
+                "ff0501" + "0300010034" + "0301040011" + "03822a0032" + "0383300032" + "03842d0032" + "0385330032");
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(textSub);
-            t.Sent.Clear();
-
             var s = NewStatus();
             Set(s, "Gear", "3");
-            clock.T += 40;
-            driver.Update(Data(s));
+            Sync(driver, clock, textPush, Data(s));
 
             Assert.Equal((byte)0x33, GearValue(t.Sent.First(IsValueUpdate)));
         }
 
-        [Fact]
-        public void Values_Resent_WhenSubscriptionChanges()
-        {
-            var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
-
-            var s = NewStatus();
-            clock.T += 40;
-            driver.Update(Data(s));
-            t.Sent.Clear();
-
-            // A new subscription report forces a fresh send even with identical telemetry.
-            driver.OnSubscriptionReport(TyreSubReport);
-            clock.T += 40;
-            driver.Update(Data(s));
-
-            Assert.Contains(t.Sent, IsValueUpdate);
-        }
-
-        [Fact]
-        public void Values_RateLimited_WithinInterval()
-        {
-            var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
-
-            var s = NewStatus();
-            Set(s, "TyreTemperatureFrontLeft", 80.0);
-            clock.T += 40;
-            driver.Update(Data(s));
-            t.Sent.Clear();
-
-            Set(s, "TyreTemperatureFrontLeft", 90.0);
-            clock.T += 10;   // within ValueIntervalMs
-            driver.Update(Data(s));
-
-            Assert.DoesNotContain(t.Sent, IsValueUpdate);
-        }
-
-        [Fact]
-        public void Values_RetriedAfterFailedSend()
-        {
-            var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
-
-            var s = NewStatus();
-            Set(s, "TyreTemperatureFrontLeft", 80.0);
-
-            // A value send that fails at the transport must NOT be recorded as last-sent...
-            t.SendReturns = false;
-            clock.T += 40;
-            driver.Update(Data(s));
-            t.Sent.Clear();
-
-            // ...so when the transport recovers, the (unchanged) values are retried rather
-            // than skipped as "already sent".
-            t.SendReturns = true;
-            clock.T += 40;
-            driver.Update(Data(s));
-
-            Assert.Contains(t.Sent, IsValueUpdate);
-        }
-
-        // ── Game gating (issue #54) ──────────────────────────────────────
+        // ── Game gating & exit/resume ────────────────────────────────────
 
         [Fact]
         public void BringUp_RunsWithoutLiveTelemetry()
         {
             // ITM is always-on: bring-up runs at connect so the default page (and its
             // live settings preview) works in idle, before any game has run.
-            var driver = MakeDriver(out var t, out _);
+            var driver = MakeDriver(out var t, out var clock);
             driver.Start();
             driver.Update(NotRunningData());
-
             Assert.Contains(t.Sent, IsEnable);
+
+            driver.OnSubscriptionReport(LapInfoPush);
+            clock.T += 50;
+            driver.Update(NotRunningData());
             Assert.True(driver.IsRunning);
         }
 
@@ -732,8 +842,10 @@ namespace FanaBridge.Tests
             // never be painted while no game is running.
             var driver = MakeDriver(out var t, out var clock);
             driver.Start();
-            driver.Update(NotRunningData());   // bring-up in idle
-            driver.OnSubscriptionReport(TyreSubReport);
+            driver.Update(NotRunningData());   // bring-up in idle (never-live: no gate-off)
+            driver.OnSubscriptionReport(TyrePush);
+            clock.T += 50;
+            driver.Update(NotRunningData());   // synced, but no game
             t.Sent.Clear();
 
             var stale = NewStatus();
@@ -744,25 +856,24 @@ namespace FanaBridge.Tests
             Assert.DoesNotContain(t.Sent, IsValueUpdate);
         }
 
-        // DisplayReset (FF 05 05 01): every ITM field reverts to its per-field placeholder
-        // ("--- / -", "--:--.-", …); session/page/subs untouched. No effect on the Legacy ITM page.
-        private static bool IsDisplayReset(byte[] r) => r[1] == 0x05 && r[2] == 0x05 && r[3] == 0x01;
-
         [Fact]
-        public void GameExit_ResetsFields_SessionStaysUp()
+        public void GameExit_GatesDisplayOff_NoDisplayReset()
         {
+            // Exit = gate-off: the screen goes dark — stale values and burn-in solved in one
+            // move. DisplayReset is not part of the lifecycle (resets were observed to degrade
+            // subsequent bring-ups, and the reset leaves the OLED lit with placeholders).
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);             // live game, running (6 Lap Info subs)
+            Sync(driver, clock);               // live game, synced
             t.Sent.Clear();
 
-            driver.Update(NotRunningData());   // game exited — fields revert to placeholders
+            clock.T += 40;
+            driver.Update(NotRunningData());   // game exited
 
-            Assert.Contains(t.Sent, IsDisplayReset);
-            Assert.DoesNotContain(t.Sent, IsItmModeOff);   // session NOT torn down
-            Assert.True(driver.IsRunning);
-            Assert.Equal(6, driver.SubscriptionCount);     // subscriptions kept
+            Assert.Contains(t.Sent, IsItmModeOff);
+            Assert.DoesNotContain(t.Sent, IsDisplayReset);
+            Assert.False(driver.IsRunning);    // parked in TelemetryIdle
 
-            // Idle afterwards: no repeat resets, no values from stale telemetry.
+            // Idle afterwards: dormant.
             t.Sent.Clear();
             clock.T += 500;
             driver.Update(NotRunningData());
@@ -770,18 +881,19 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void GameExit_Reset_RetriedUntilAccepted()
+        public void GameExit_GateOff_RetriedUntilAccepted()
         {
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
+            Sync(driver, clock);
 
-            t.SendReturns = false;             // transport declines the reset
+            t.SendReturns = false;             // transport declines the gate-off
+            clock.T += 40;
             driver.Update(NotRunningData());
             t.Sent.Clear();
 
             t.SendReturns = true;
             driver.Update(NotRunningData());   // retried and accepted
-            Assert.Contains(t.Sent, IsDisplayReset);
+            Assert.Contains(t.Sent, IsItmModeOff);
 
             t.Sent.Clear();
             driver.Update(NotRunningData());   // no repeat after success
@@ -789,26 +901,30 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void GameRestart_AfterExit_RepaintsUnchangedValues()
+        public void GameRestart_AfterExit_ResumesAndRepaints()
         {
+            // Resume = PageSet-while-off then gate-on; the elicited push resyncs, and the
+            // repaint sends even UNCHANGED values — the display was dark and the firmware
+            // shows stale cached values until the first fresh send.
             var driver = MakeDriver(out var t, out var clock);
             var s = NewStatus();
             Set(s, "CurrentLap", 5);
+            Sync(driver, clock, LapInfoPush, Data(s));
 
-            driver.Start();
-            driver.Update(Data(s));            // bring-up (seeds Lap Info)
             clock.T += 40;
-            driver.Update(Data(s));            // values painted
-            driver.Update(Data(s, gameRunning: false));   // exit — fields reset to placeholders
+            driver.Update(Data(s, gameRunning: false));   // exit — gate-off
             t.Sent.Clear();
 
-            clock.T += 40;
-            driver.Update(Data(s));            // game returns with IDENTICAL telemetry
+            clock.T += 1000;
+            driver.Update(Data(s));            // game returns: PageSet-while-off + gate-on
+            int page = t.Sent.FindIndex(IsPageSet);
+            int gateOn = t.Sent.FindIndex(IsItmModeOn);
+            Assert.True(page >= 0 && gateOn >= 0 && page < gateOn,
+                "resume sends the PageSet while off, then the gate-on");
 
-            // The reset cleared the dirty tracking, so even unchanged values are
-            // repainted — otherwise the display would sit on placeholders until a
-            // value actually changed.
-            Assert.Contains(t.Sent, IsValueUpdate);
+            Push(driver, clock, LapInfoPush, Data(s));    // the elicited push, identical telemetry
+
+            Assert.Contains(t.Sent, IsValueUpdate);        // repainted anyway
         }
 
         [Fact]
@@ -819,55 +935,38 @@ namespace FanaBridge.Tests
             var driver = MakeDriver(out var t, out var clock);
             driver.Start();
             driver.Update(NotRunningData());   // bring-up in idle
+            driver.OnSubscriptionReport(LapInfoPush);
+            clock.T += 50;
+            driver.Update(NotRunningData());   // synced in idle
             t.Sent.Clear();
 
             driver.DefaultPage = 3;
             clock.T += 100;
+            driver.Update(NotRunningData());   // request registered; quiet window
+            clock.T += 60;
             driver.Update(NotRunningData());
 
-            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[4] == 0x03);
+            Assert.Contains(t.Sent, r => r.Length > 4 && IsPageSet(r) && r[4] == 0x03);
         }
 
-        [Fact]
-        public void UserDisable_ItmOff_RetriedUntilAccepted()
-        {
-            var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.Enabled = false;
-
-            t.SendReturns = false;             // off command declined — must not latch Disabled
-            driver.Update(EmptyData());
-            t.Sent.Clear();
-
-            t.SendReturns = true;
-            driver.Update(EmptyData());        // retried and accepted
-            Assert.Contains(t.Sent, IsItmModeOff);
-
-            t.Sent.Clear();
-            clock.T += 500;
-            driver.Update(EmptyData());        // dormant after success
-            Assert.Empty(t.Sent);
-        }
-
-        // ── Bring-up / ParamDefs transport-acceptance retries ────────────
+        // ── Bring-up transport-acceptance retries ────────────────────────
 
         [Fact]
-        public void BringUp_DeclinedWrites_RetriedUntilAccepted_NotRunningUntilComplete()
+        public void BringUp_DeclinedWrites_RetriedUntilAccepted()
         {
             var driver = MakeDriver(out var t, out var clock);
             driver.Start();
 
             t.SendReturns = false;             // whole bring-up declined
             driver.Update(EmptyData());
-            Assert.False(driver.IsRunning);    // must NOT latch Running on declined writes
+            Assert.False(driver.IsRunning);
             t.Sent.Clear();
 
             t.SendReturns = true;
-            driver.Update(EmptyData());        // retried and accepted → Running
-            Assert.True(driver.IsRunning);
+            driver.Update(EmptyData());        // retried and accepted
             Assert.Contains(t.Sent, IsItmModeOn);
             Assert.Contains(t.Sent, IsEnable);
-            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04);
+            Assert.Contains(t.Sent, IsPageSet);
         }
 
         [Fact]
@@ -876,102 +975,43 @@ namespace FanaBridge.Tests
             var driver = MakeDriver(out var t, out var clock);
             driver.Start();
 
-            // Gate + Enable accepted, PageSet declined: bring-up stalls before Running.
-            t.Decide = r => !(r[1] == 0x05 && r[2] == 0x04);
+            // Gate + Enable accepted, PageSet declined: bring-up stalls before AwaitPush.
+            t.Decide = r => !IsPageSet(r);
             driver.Update(EmptyData());
-            Assert.False(driver.IsRunning);
             t.Sent.Clear();
 
             t.Decide = null;
             driver.Update(EmptyData());        // only the missing step is retried
-            Assert.True(driver.IsRunning);
             Assert.DoesNotContain(t.Sent, IsItmModeOn);   // already accepted last tick
             Assert.DoesNotContain(t.Sent, IsEnable);      // already accepted last tick
-            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04);
+            Assert.Contains(t.Sent, IsPageSet);
         }
 
-        [Fact]
-        public void ParamDefs_DeclinedSend_RetriedUntilAccepted()
-        {
-            var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
-
-            // ParamDefs declined: the suffix signature must NOT latch, or the
-            // decoration would never be retried until the suffix set changes.
-            t.Decide = r => !IsParamDefs(r);
-            clock.T += 40;
-            driver.Update(EmptyData());
-            Assert.Contains(t.Sent, IsParamDefs);   // attempted
-            t.Sent.Clear();
-
-            t.Decide = null;
-            clock.T += 40;
-            driver.Update(EmptyData());             // unchanged suffix set — still retried
-            Assert.Contains(t.Sent, IsParamDefs);
-        }
+        // ── Wheel change (identity layer) ────────────────────────────────
 
         [Fact]
-        public void ParamDefs_DoubleTap_Declined_RetriedNextTick()
+        public void WheelChanged_RestartsColdAndSuspendsValues()
         {
+            // A hot-swap resets the display cold with zero trace on the ITM channel; the
+            // identity layer's event restarts the lifecycle and nothing is sent until the
+            // fresh push confirms.
             var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
-
-            clock.T += 40;
-            driver.Update(EmptyData());             // first ParamDefs accepted, tap scheduled
+            var s = NewStatus();
+            Set(s, "TyreTemperatureFrontLeft", 80.0);
+            Sync(driver, clock, TyrePush, Data(s));
             t.Sent.Clear();
 
-            t.Decide = r => !IsParamDefs(r);        // the tight second tap is declined
-            clock.T += 60;
-            driver.Update(EmptyData());
-            t.Sent.Clear();
+            driver.OnWheelChanged();
+            Assert.Equal(0, driver.SubscriptionCount);   // stale handles dropped
+            clock.T += 200;
+            driver.Update(Data(s));
 
-            t.Decide = null;
-            clock.T += 10;
-            driver.Update(EmptyData());             // tap retried once accepted
-            Assert.Contains(t.Sent, IsParamDefs);
-        }
+            Assert.Contains(t.Sent, IsItmModeOn);        // full cold bring-up
+            Assert.Contains(t.Sent, IsPageSet);
+            Assert.DoesNotContain(t.Sent, IsValueUpdate);   // no values until the push
 
-        [Fact]
-        public void DefaultPageChange_DeclinedPageSet_RetriedUntilAccepted()
-        {
-            var driver = MakeDriver(out var t, out var clock);
-            driver.Start();
-            driver.Update(NotRunningData());
-            t.Sent.Clear();
-
-            driver.DefaultPage = 3;
-            t.SendReturns = false;                  // live page switch declined
-            driver.Update(NotRunningData());
-            t.Sent.Clear();
-
-            t.SendReturns = true;
-            driver.Update(NotRunningData());        // edge still pending — retried
-            Assert.Contains(t.Sent, r => r.Length > 4 && r[1] == 0x05 && r[2] == 0x04 && r[4] == 0x03);
-        }
-
-        // ── Stop / restart ───────────────────────────────────────────────
-
-        [Fact]
-        public void Stop_ClearsSubscriptionsAndHalts()
-        {
-            var driver = MakeDriver(out var t, out var clock);
-            Enable(driver, clock);
-            driver.OnSubscriptionReport(TyreSubReport);
-
-            driver.Stop();
-            Assert.False(driver.IsRunning);
-            Assert.Equal(0, driver.SubscriptionCount);
-            t.Sent.Clear();
-
-            clock.T += 1000;
-            driver.Update(EmptyData());
-            Assert.Empty(t.Sent);
-
-            driver.Start();
-            driver.Update(EmptyData());
-            Assert.Contains(t.Sent, IsEnable);   // fresh Enable on restart
+            Push(driver, clock, TyrePush, Data(s));      // fresh push after re-seat
+            Assert.Contains(t.Sent, IsValueUpdate);      // repainted
         }
     }
 }
