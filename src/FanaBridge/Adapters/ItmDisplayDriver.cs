@@ -189,9 +189,9 @@ namespace FanaBridge.Adapters
             long now = _now();
             bool telemetryLive = data != null && data.GameRunning && data.NewData != null;
 
-            // Settings flow into the lifecycle: the default page (cold-entry/resume target) and
-            // the user's on/off switch. A settings change of the default page is edge-detected
-            // and requested live, so the wheel button isn't fought between changes.
+            // Settings flow into the lifecycle: the default page (cold-entry target) and the
+            // user's on/off switch. A settings change of the default page is edge-detected and
+            // requested live, so the wheel button isn't fought between changes.
             _lifecycle.DefaultPage = DefaultPage;
             _lifecycle.SetUserEnabled(Enabled);
             if (_lastRequestedPage == null)
@@ -225,7 +225,7 @@ namespace FanaBridge.Adapters
 
             // ...and only while a game is feeding telemetry: SimHub keeps the last telemetry
             // values around after a game exits, and painting from stale data would resurrect
-            // exactly the frozen frame the exit gate-off just hid.
+            // exactly the frozen frame the exit DisplayReset just cleared to placeholders.
             if (!telemetryLive)
                 return;
 

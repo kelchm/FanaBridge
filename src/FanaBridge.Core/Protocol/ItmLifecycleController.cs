@@ -20,8 +20,6 @@ namespace FanaBridge.Protocol
         Synced,
         /// <summary>Expected push missing — running the recovery ladder (values stay suspended).</summary>
         Recovery,
-        /// <summary>Game exited: gate-off (screen dark). Resumes via PageSet-while-off → gate-on.</summary>
-        TelemetryIdle,
         /// <summary>Recovery ladder exhausted. Exponential backoff, then retry the gate-cycle rung.</summary>
         Unavailable,
     }
@@ -42,10 +40,13 @@ namespace FanaBridge.Protocol
     /// - A PageSet to the already-displayed page yields no push, so "no push" after one PageSet
     ///   is ambiguous; the ladder's flip-away-and-back forces a genuine change to convert
     ///   silence into signal.
-    /// - The <c>FF 05 02</c> gate is the real screen control. Exit = gate-off (screen dark —
-    ///   no stale values, no burn-in). Resume = PageSet-while-off then gate-on, which elicits
-    ///   the page's push deterministically; a bare gate-on lands on the legacy page with no
-    ///   subscriptions and must never be sent.
+    /// - The <c>FF 05 02</c> gate is the real screen control, but it is <b>never used at idle</b>
+    ///   — a game exit clears the fields to placeholders (DisplayReset) and keeps the ITM page
+    ///   visible, so the display never drops to the legacy 7-segment view on its own. Cold
+    ///   entries also DisplayReset so the page comes up showing placeholders, never a previous
+    ///   session's cached values. Gate-off is reserved for the user's explicit ITM-off and for
+    ///   the recovery ladder's last-resort gate-cycle rung (its brief drop to legacy is the
+    ///   escape hatch that re-establishes a wedged display).
     /// - The runtime session does not survive a power cycle or wheel re-seat even though the
     ///   gate <i>setting</i> persists — every cold entry re-runs the full bring-up, and a
     ///   wheel-change event (from the identity layer) is treated as a cold start.
@@ -95,7 +96,9 @@ namespace FanaBridge.Protocol
         public IReadOnlyList<int> UnavailableBackoffMs { get; set; } =
             new int[] { 5_000, 30_000, 300_000 };
 
-        /// <summary>The page targeted by cold entries (and resume, when no better page is known).</summary>
+        /// <summary>The page the display starts on: targeted by cold entries (connect / wheel
+        /// change / power cycle) and re-established at each game start. The wheel button
+        /// navigates from there within a session. Read live.</summary>
         public byte DefaultPage { get; set; } = 1;
 
         // ── Observable state ─────────────────────────────────────────────
@@ -144,7 +147,7 @@ namespace FanaBridge.Protocol
         public int SubscriptionCount => _subs.Count;
 
         // ── Internal state ───────────────────────────────────────────────
-        private enum Cmd { GateOn, GateOff, Enable, PageSet }
+        private enum Cmd { GateOn, GateOff, Enable, PageSet, Reset }
 
         private struct Step
         {
@@ -192,9 +195,8 @@ namespace FanaBridge.Protocol
         private int _backoffIdx;
         private long _retryAt;
 
-        // Telemetry-liveness edge tracking + resume page.
+        // Telemetry-liveness edge tracking (game exit clears fields; game return repaints).
         private bool _wasLive;
-        private byte _resumePage;
 
         // The user's on/off setting, and whether it has been enforced since the last
         // Stop(). Un-applied after every Stop so a reconnect re-asserts "off" — the
@@ -338,8 +340,9 @@ namespace FanaBridge.Protocol
 
         /// <summary>
         /// Host page request (e.g. the default-page setting changed). In Synced this starts the
-        /// switch procedure; while another procedure is in flight it is queued and applied after
-        /// the next sync — unless a wheel-button change supersedes it (adopt, never fight).
+        /// switch procedure — which works whether or not a game is running (the page previews on
+        /// the wheel either way). While another procedure is in flight it is queued and applied
+        /// after the next sync, unless a wheel-button change supersedes it (adopt, never fight).
         /// </summary>
         public void RequestPage(byte page)
         {
@@ -351,9 +354,6 @@ namespace FanaBridge.Protocol
                     if (page == CurrentPage)
                         return;   // same-page PageSet pushes nothing — never ask for one
                     BeginSwitch(page);
-                    break;
-                case ItmLifecycleState.TelemetryIdle:
-                    _resumePage = page;   // used by the resume PageSet-while-off
                     break;
                 case ItmLifecycleState.BringUp:
                 case ItmLifecycleState.AwaitPush:
@@ -380,20 +380,6 @@ namespace FanaBridge.Protocol
                 case ItmLifecycleState.Disabled:
                     // The new wheel comes up with whatever gate setting persisted — re-assert off.
                     QueueGateOff();
-                    return;
-                case ItmLifecycleState.TelemetryIdle:
-                    // The display is deliberately dark (game exited). Stay parked: drop the
-                    // old wheel's handles, re-assert the gate-off on the new wheel (its
-                    // persisted setting may be on), and let the resume's PageSet-while-off →
-                    // gate-on shape — valid from any cold state — bring it up when telemetry
-                    // returns. A cold bring-up here would light the display with no game.
-                    AbandonInFlight();
-                    _subs.Clear();
-                    _subsSnapshot = null;
-                    CurrentPage = 0;
-                    State = ItmLifecycleState.TelemetryIdle;
-                    QueueGateOff();
-                    _log("ITM: wheel changed while parked — staying dark; resume will bring the new wheel up");
                     return;
                 default:
                     ColdEntry("wheel changed");
@@ -443,11 +429,25 @@ namespace FanaBridge.Protocol
                 ColdEntry("start");
             }
 
-            // Telemetry live→dead edge: park in TelemetryIdle (gate-off, screen dark) from any
-            // active state — a switch or recovery interrupted by a game exit is abandoned; the
-            // resume shape re-establishes everything and is the strongest recovery there is.
-            if (_wasLive && !telemetryLive && IsActiveState(State))
-                EnterTelemetryIdle("game exited");
+            // Telemetry live→dead edge (game exit): clear the fields to placeholders so no
+            // stale numbers linger. The ITM page stays visible — no gate-off; dropping to
+            // legacy is reserved for the recovery escape hatch, never idle. Only from Synced
+            // (there's a page to clear); a mid-transition exit just lets its procedure resolve.
+            bool becameLive = telemetryLive && !_wasLive;
+            if (_wasLive && !telemetryLive && State == ItmLifecycleState.Synced)
+                QueueStep(Cmd.Reset);
+            // Game start (telemetry returns) from a settled Synced display: re-establish the
+            // default page. The DefaultPage setting is a real default — each game launch starts
+            // on it — while the wheel button owns navigation within a session. If the display is
+            // already on the default (the common case), just repaint over the placeholders.
+            if (becameLive && State == ItmLifecycleState.Synced)
+            {
+                byte def = EffectiveDefaultPage();
+                if (CurrentPage != def)
+                    BeginSwitch(def);
+                else
+                    SyncGeneration++;
+            }
             _wasLive = telemetryLive;
 
             // Judge a completed push accumulation — unless a procedure's commands are still
@@ -463,10 +463,9 @@ namespace FanaBridge.Protocol
             }
 
             // Grace expiry. Grace opens in Synced when a push left the map in a state that
-            // doesn't form a page: empty (unsubscribe-all — the front half of a page change,
-            // or our subscriptions being dropped) or a partial set (a change fragmented
-            // slower than the accumulation window). Anything arriving meanwhile re-judges;
-            // expiry means nothing followed.
+            // doesn't form a page: empty (unsubscribe-all with nothing following) or a partial
+            // set (a change fragmented slower than the accumulation window). Anything arriving
+            // meanwhile re-judges; expiry means nothing followed.
             if (_graceUntil != 0 && now >= _graceUntil && _accumCloseAt == 0)
             {
                 _graceUntil = 0;
@@ -475,9 +474,13 @@ namespace FanaBridge.Protocol
                     var set = SubscribedParamSet();
                     if (set.Count == 0)
                     {
-                        byte target = KnownTelemetryPageOrDefault(CurrentPage);
-                        _log("ITM: subscriptions dropped (unsubscribe with nothing following) — recovering page " + target);
-                        EnterRecovery(target, Rung.PageSet1);
+                        // An unsubscribe-all with nothing following means the display moved to
+                        // the legacy ITM page (no telemetry parameters) — the wheel button
+                        // reaches it, and it's a valid destination. Adopt it; never fight it
+                        // back to a telemetry page (that was the "can't select legacy" bug).
+                        CurrentPage = LegacyPageNumber();
+                        SyncGeneration++;
+                        _log("ITM: on the legacy ITM page (no telemetry parameters)");
                     }
                     else
                     {
@@ -488,19 +491,6 @@ namespace FanaBridge.Protocol
                         _log("ITM: adopted uncataloged page set: " + DescribeMap());
                     }
                 }
-            }
-
-            // TelemetryIdle → resume on telemetry arrival: PageSet-while-off, then gate-on.
-            // (Never a bare gate-on — that lands on the legacy page with no subscriptions.)
-            if (State == ItmLifecycleState.TelemetryIdle && telemetryLive)
-            {
-                byte page = KnownTelemetryPageOrDefault(_resumePage);
-                _targetPage = page;
-                State = ItmLifecycleState.AwaitPush;
-                QueueStep(Cmd.PageSet, page);
-                QueueStep(Cmd.GateOn);
-                ArmOnDrain(page);
-                _log("ITM: telemetry resumed — PageSet(" + page + ") while off, then gate-on");
             }
 
             // Switching: after the quiet window, send the PageSet.
@@ -545,13 +535,17 @@ namespace FanaBridge.Protocol
             CurrentPage = 0;
             _pendingRequest = 0;
 
-            _targetPage = DefaultPage;
+            byte page = EffectiveDefaultPage();
+            _targetPage = page;
             State = ItmLifecycleState.BringUp;
+            QueueStep(Cmd.Reset);       // clear the firmware's stale field cache first, so the
+                                        // page comes up showing placeholders, not a previous
+                                        // session's values (gate-independent — safe before gate-on)
             QueueStep(Cmd.GateOn);
             QueueStep(Cmd.Enable);
-            QueueStep(Cmd.PageSet, DefaultPage);
-            ArmOnDrain(DefaultPage);
-            _log("ITM: bring-up (" + why + ") — gate + enable + PageSet(" + DefaultPage + ")");
+            QueueStep(Cmd.PageSet, page);
+            ArmOnDrain(page);
+            _log("ITM: bring-up (" + why + ") — reset + gate + enable + PageSet(" + page + ")");
         }
 
         private void BeginSwitch(byte page)
@@ -561,15 +555,6 @@ namespace FanaBridge.Protocol
             ClearExpectation();
             _graceUntil = 0;
             _quietUntil = _now() + SwitchQuietMs;   // values are suspended from this instant
-        }
-
-        private void EnterTelemetryIdle(string why)
-        {
-            AbandonInFlight();
-            _resumePage = KnownTelemetryPageOrDefault(CurrentPage);
-            State = ItmLifecycleState.TelemetryIdle;
-            QueueGateOff();
-            _log("ITM: " + why + " — gating display off (dark; resume restores page " + _resumePage + ")");
         }
 
         private void EnterRecovery(byte target, Rung rung)
@@ -619,6 +604,16 @@ namespace FanaBridge.Protocol
 
         private void OnPushMissed()
         {
+            // A PageSet to the legacy page can correctly push nothing (it carries no telemetry
+            // parameters, and it may already be shown). A missed push there means we're on the
+            // legacy page — confirm it, don't recover away from it.
+            if ((State == ItmLifecycleState.AwaitPush || State == ItmLifecycleState.Switching)
+                && IsLegacyPage(_targetPage))
+            {
+                ConfirmSync(_targetPage, "on the legacy ITM page (no push expected)");
+                return;
+            }
+
             switch (State)
             {
                 case ItmLifecycleState.AwaitPush:
@@ -675,9 +670,19 @@ namespace FanaBridge.Protocol
 
             if (set.Count == 0)
             {
-                // Unsubscribe-only. In Synced this may be the front half of a page change
-                // (host- or button-driven) or our subscriptions being dropped — grace decides.
-                // After our own gate-off (TelemetryIdle/Disabled) it is the expected echo.
+                // Unsubscribe-only push (no telemetry parameters).
+                // - If we asked for the legacy page, this IS its confirming push — the legacy
+                //   ITM page carries no parameters, so an unsubscribe-all is all it emits.
+                if (ExpectsTargetPush() && IsLegacyPage(_targetPage))
+                {
+                    ClearExpectation();
+                    _graceUntil = 0;
+                    ConfirmSync(_targetPage, "on the legacy ITM page");
+                    return;
+                }
+                // - In Synced it may be the front half of a page change (subs arrive within
+                //   grace) or the display moving to the legacy page (wheel button) — grace
+                //   decides (see the grace-expiry handling in Tick).
                 if (State == ItmLifecycleState.Synced)
                     _graceUntil = now + UnsubGraceMs;
                 return;
@@ -759,11 +764,10 @@ namespace FanaBridge.Protocol
                     ConfirmSync(matchedPage, "adopted unexpected push");
                     break;
                 default:
-                    // Idle / Disabled / TelemetryIdle: keep the adopted map, no transition.
-                    // In gated-off states a push means someone else gated on — note it,
-                    // don't fight it.
+                    // Idle / Disabled: keep the adopted map, no transition. While the user has
+                    // ITM gated off, a push means someone else gated it on — note it, don't fight.
                     CurrentPage = matchedPage;
-                    if (State == ItmLifecycleState.TelemetryIdle || State == ItmLifecycleState.Disabled)
+                    if (State == ItmLifecycleState.Disabled)
                         _log("ITM: subscription push received while gated off — another program may be driving the display");
                     break;
             }
@@ -786,6 +790,13 @@ namespace FanaBridge.Protocol
             SyncGeneration++;
             _log("ITM: " + why + " — page " + (page == 0 ? "?" : page.ToString())
                  + (recovered ? " (recovered)" : "") + ": " + DescribeMap());
+
+            // Reached a synced display with no game feeding it — a bring-up at connect or a
+            // page change while idle. Clear the fields to placeholders so the page shows --- ,
+            // not a previous session's cached values; a game arriving repaints over them. (Not
+            // for the legacy page, which has no fields.)
+            if (!_wasLive && !IsLegacyPage(page))
+                QueueStep(Cmd.Reset);
 
             if (_pendingRequest != 0)
             {
@@ -831,6 +842,9 @@ namespace FanaBridge.Protocol
                         break;
                     case Cmd.Enable:
                         ok = _encoder.EnableItm();
+                        break;
+                    case Cmd.Reset:
+                        ok = _encoder.ResetDisplay();   // FF 05 05 01 — clear cached field values
                         break;
                     default:   // PageSet
                         if (now - _lastPageSetMs < PageSetSpacingMs)
@@ -890,9 +904,9 @@ namespace FanaBridge.Protocol
 
         // Drops everything in flight: the command procedure, the push expectation, an open
         // accumulation, the grace window, and the recovery rung. Used by every transition
-        // that abandons the current activity (stop, cold entry, user off, telemetry exit) —
-        // hand-picked subsets at each site drift, and a survivor (e.g. an open accumulation
-        // crossing a cold entry) can mis-attribute a stale push to the new session.
+        // that abandons the current activity (stop, cold entry, user off) — hand-picked subsets
+        // at each site drift, and a survivor (e.g. an open accumulation crossing a cold entry)
+        // can mis-attribute a stale push to the new session.
         private void AbandonInFlight()
         {
             ClearProcedure();
@@ -951,10 +965,17 @@ namespace FanaBridge.Protocol
         private bool SetEqualsPage(HashSet<ushort> set, byte page)
         {
             var info = PageInfoFor(page);
-            // A page we have no catalog entry for (or the legacy page) can't be matched
-            // exactly; accept any non-empty adopted set as that procedure's outcome.
-            if (info == null || info.Params.Count == 0)
+            // An unknown page (no catalog entry) can't be matched exactly — accept any non-empty
+            // set as that procedure's outcome. Armed pages are always catalog pages, so this is
+            // only a safety net.
+            if (info == null)
                 return set.Count > 0;
+            // The legacy page carries no parameters, so its confirming push is the empty
+            // unsubscribe-all (handled earlier in JudgeAccumulation). A NON-empty set reaching
+            // here is a telemetry page and must never match legacy — otherwise we'd confirm
+            // "on legacy" while holding telemetry subscriptions.
+            if (info.Params.Count == 0)
+                return set.Count == 0;
 
             var expected = info.Params;
             if (expected.Count != set.Count)
@@ -965,27 +986,34 @@ namespace FanaBridge.Protocol
             return true;
         }
 
-        // A telemetry (non-legacy) page suitable as a target: the candidate itself if it is
-        // one, else the default page, else the device's first telemetry page.
-        private byte KnownTelemetryPageOrDefault(byte candidate)
-        {
-            if (IsTelemetryPage(candidate))
-                return candidate;
-            if (IsTelemetryPage(DefaultPage))
-                return DefaultPage;
-            foreach (var p in ItmDeviceCatalog.PagesFor(_deviceId))
-                if (p.Params.Count > 0)
-                    return p.Number;
-            return 1;
-        }
-
-        // "Telemetry page" = carries parameters, so a PageSet to it can be confirmed by a
-        // push. Deliberately keyed on Params.Count rather than IsLegacy: the wire behavior
-        // (a paramless page pushes nothing) is what the lifecycle depends on.
-        private bool IsTelemetryPage(byte page)
+        // The legacy ITM page has no telemetry parameters — its PageSet pushes only an
+        // unsubscribe-all (or nothing, if already there), which the matcher must treat as a
+        // valid destination rather than a dropped-subscriptions failure.
+        private bool IsLegacyPage(byte page)
         {
             var info = PageInfoFor(page);
-            return info != null && info.Params.Count > 0;
+            return info != null && info.IsLegacy;
+        }
+
+        // The device's legacy page number, or 0 if it has none.
+        private byte LegacyPageNumber()
+        {
+            foreach (var p in ItmDeviceCatalog.PagesFor(_deviceId))
+                if (p.IsLegacy)
+                    return p.Number;
+            return 0;
+        }
+
+        // The configured starting page resolved to a real page on this device. Guards against a
+        // 0 (unset) or an out-of-range value (e.g. a page number saved for a different display)
+        // becoming a PageSet(0) or a target no push can ever confirm — falls back to the
+        // device's first page.
+        private byte EffectiveDefaultPage()
+        {
+            if (PageInfoFor(DefaultPage) != null)
+                return DefaultPage;
+            var pages = ItmDeviceCatalog.PagesFor(_deviceId);
+            return pages.Count > 0 ? pages[0].Number : (byte)1;
         }
 
         // A different telemetry page to flip to — a genuine page change must push, so the flip
@@ -996,16 +1024,6 @@ namespace FanaBridge.Protocol
                 if (p.Params.Count > 0 && p.Number != target)
                     return p.Number;
             return target == 1 ? (byte)2 : (byte)1;
-        }
-
-        private static bool IsActiveState(ItmLifecycleState s)
-        {
-            return s == ItmLifecycleState.BringUp
-                || s == ItmLifecycleState.AwaitPush
-                || s == ItmLifecycleState.Switching
-                || s == ItmLifecycleState.Synced
-                || s == ItmLifecycleState.Recovery
-                || s == ItmLifecycleState.Unavailable;
         }
     }
 }

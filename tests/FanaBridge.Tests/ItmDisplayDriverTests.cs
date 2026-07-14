@@ -495,20 +495,26 @@ namespace FanaBridge.Tests
         [Fact]
         public void GameExitThenResume_ReDecoratesSuffix()
         {
-            // The resume's fresh push may follow decorations being lost (observed after
-            // hot-swaps); the repaint clears the suffix signature so the same suffix set is
-            // re-sent rather than latched away.
+            // On game return the repaint clears the suffix signature so the same suffix set is
+            // re-sent rather than latched away. (Starting page = the tyre page here, so the
+            // return repaints it in place rather than switching to a different default.)
             var driver = MakeDriver(out var t, out var clock);
+            driver.DefaultPage = 5;                       // Tyre Temps — matches TyrePush
             Sync(driver, clock, TyrePush);
             Assert.Contains(t.Sent, IsParamDefs);
 
             clock.T += 40;
-            driver.Update(NotRunningData());              // game exit → display gated off
+            driver.Update(NotRunningData());              // game exit → fields cleared to ---
             t.Sent.Clear();
 
+            // Game returns, repaints in place: first values, tight second tap, then ParamDefs.
+            var s = NewStatus();
             clock.T += 1000;
-            driver.Update(EmptyData());                   // resume: PageSet-while-off + gate-on
-            Push(driver, clock, TyrePush);                // the elicited push, same suffix set
+            driver.Update(Data(s));
+            clock.T += driver.ValueDoubleTapMs;
+            driver.Update(Data(s));
+            clock.T += 40;
+            driver.Update(Data(s));
 
             Assert.Contains(t.Sent, IsParamDefs);         // re-decorated despite unchanged sig
         }
@@ -864,11 +870,10 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void GameExit_GatesDisplayOff_NoDisplayReset()
+        public void GameExit_ClearsFieldsToPlaceholders_StaysVisible()
         {
-            // Exit = gate-off: the screen goes dark — stale values and burn-in solved in one
-            // move. DisplayReset is not part of the lifecycle (resets were observed to degrade
-            // subsequent bring-ups, and the reset leaves the OLED lit with placeholders).
+            // Game exit clears the fields to --- (DisplayReset) and keeps the ITM page visible.
+            // No gate-off — the display never drops to legacy at idle; it stays Synced.
             var driver = MakeDriver(out var t, out var clock);
             Sync(driver, clock);               // live game, synced
             t.Sent.Clear();
@@ -876,11 +881,11 @@ namespace FanaBridge.Tests
             clock.T += 40;
             driver.Update(NotRunningData());   // game exited
 
-            Assert.Contains(t.Sent, IsItmModeOff);
-            Assert.DoesNotContain(t.Sent, IsDisplayReset);
-            Assert.False(driver.IsRunning);    // parked in TelemetryIdle
+            Assert.Contains(t.Sent, IsDisplayReset);         // fields cleared to ---
+            Assert.DoesNotContain(t.Sent, IsItmModeOff);     // no gate-off (no legacy)
+            Assert.True(driver.IsRunning);                   // stays Synced, page visible
 
-            // Idle afterwards: dormant.
+            // Idle afterwards: no repeated resets, no values from stale telemetry.
             t.Sent.Clear();
             clock.T += 500;
             driver.Update(NotRunningData());
@@ -888,19 +893,19 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void GameExit_GateOff_RetriedUntilAccepted()
+        public void GameExit_Reset_RetriedUntilAccepted()
         {
             var driver = MakeDriver(out var t, out var clock);
             Sync(driver, clock);
 
-            t.SendReturns = false;             // transport declines the gate-off
+            t.SendReturns = false;             // transport declines the reset
             clock.T += 40;
             driver.Update(NotRunningData());
             t.Sent.Clear();
 
             t.SendReturns = true;
             driver.Update(NotRunningData());   // retried and accepted
-            Assert.Contains(t.Sent, IsItmModeOff);
+            Assert.Contains(t.Sent, IsDisplayReset);
 
             t.Sent.Clear();
             driver.Update(NotRunningData());   // no repeat after success
@@ -908,30 +913,24 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void GameRestart_AfterExit_ResumesAndRepaints()
+        public void GameRestart_AfterExit_RepaintsInPlace()
         {
-            // Resume = PageSet-while-off then gate-on; the elicited push resyncs, and the
-            // repaint sends even UNCHANGED values — the display was dark and the firmware
-            // shows stale cached values until the first fresh send.
+            // The display never went dark (stayed Synced showing ---); a game returning just
+            // repaints fresh values over the placeholders — no reset, no gate cycle.
             var driver = MakeDriver(out var t, out var clock);
             var s = NewStatus();
             Set(s, "CurrentLap", 5);
             Sync(driver, clock, LapInfoPush, Data(s));
 
             clock.T += 40;
-            driver.Update(Data(s, gameRunning: false));   // exit — gate-off
+            driver.Update(Data(s, gameRunning: false));   // exit — reset to ---
             t.Sent.Clear();
 
-            clock.T += 1000;
-            driver.Update(Data(s));            // game returns: PageSet-while-off + gate-on
-            int page = t.Sent.FindIndex(IsPageSet);
-            int gateOn = t.Sent.FindIndex(IsItmModeOn);
-            Assert.True(page >= 0 && gateOn >= 0 && page < gateOn,
-                "resume sends the PageSet while off, then the gate-on");
-
-            Push(driver, clock, LapInfoPush, Data(s));    // the elicited push, identical telemetry
-
-            Assert.Contains(t.Sent, IsValueUpdate);        // repainted anyway
+            clock.T += 40;
+            driver.Update(Data(s));            // game returns with identical telemetry
+            Assert.Contains(t.Sent, IsValueUpdate);        // repainted over the ---
+            Assert.DoesNotContain(t.Sent, IsItmModeOn);    // no gate cycle
+            Assert.DoesNotContain(t.Sent, IsPageSet);      // no re-page
         }
 
         [Fact]

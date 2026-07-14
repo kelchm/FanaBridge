@@ -66,6 +66,8 @@ namespace FanaBridge.Tests
         private static bool IsGateOff(byte[] r) => r[1] == 0x05 && r[2] == 0x02 && r[3] == 0x00;
         private static bool IsEnable(byte[] r) => r[1] == 0x02 && r[2] == 0x02;
         private static bool IsPageSet(byte[] r) => r[1] == 0x05 && r[2] == 0x04;
+        private static bool IsReset(byte[] r) => r[1] == 0x05 && r[2] == 0x05 && r[3] == 0x01;
+        private static bool IsValueUpdate(byte[] r) => r[1] == 0x05 && r[2] == 0x01;
         private static Predicate<byte[]> IsPageSetTo(byte page)
             => r => r[1] == 0x05 && r[2] == 0x04 && r[4] == page;
 
@@ -467,17 +469,22 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void UnsubWithNothingFollowing_GraceExpiry_EntersRecovery()
+        public void UnsubWithNothingFollowing_GraceExpiry_AdoptsLegacyPage()
         {
+            // An unsubscribe-all with nothing following means the display moved to the legacy
+            // ITM page (no telemetry parameters) — a valid destination the wheel button reaches.
+            // Adopt it; never recover it back to a telemetry page (the "can't select legacy" bug).
             var c = Make(out var t, out var clock);
             Sync(c, t, clock);
+            t.Sent.Clear();
 
             c.OnPush(UnsubAll(6));
             Tick(c, clock, c.AccumulateWindowMs);     // grace opens
             Tick(c, clock, c.UnsubGraceMs + 1);       // nothing followed
 
-            Assert.Equal(ItmLifecycleState.Recovery, c.State);
-            Assert.Contains(t.Sent, IsPageSetTo(1));  // rung 1 re-PageSets the lost page
+            Assert.Equal(ItmLifecycleState.Synced, c.State);   // stays synced, not recovering
+            Assert.Equal(LegacyPage(), c.CurrentPage);         // adopted the legacy page
+            Assert.DoesNotContain(t.Sent, IsPageSet);          // never fought it back
         }
 
         [Fact]
@@ -748,159 +755,258 @@ namespace FanaBridge.Tests
             Assert.Equal(3, c.CurrentPage);
         }
 
-        // ── TelemetryIdle (game exit / resume) ───────────────────────────
+        // ── Idle (game exit) — clear to placeholders, stay visible, never legacy ─────────
 
         [Fact]
-        public void GameExit_GatesOff_ScreenDark()
+        public void GameExit_ClearsToPlaceholders_StaysSynced_NoGateOff()
         {
+            // A game exit clears the fields to --- (DisplayReset) and keeps the ITM page up —
+            // no gate-off, so the display never drops to legacy at idle. Stays Synced.
             var c = Make(out var t, out var clock);
             Sync(c, t, clock);
-
-            Tick(c, clock, 10, live: false);
-
-            Assert.Equal(ItmLifecycleState.TelemetryIdle, c.State);
-            Assert.Contains(t.Sent, IsGateOff);
-            Assert.False(c.ValuesAllowed);
-
-            // Dormant afterwards — no repeats, no other traffic.
             t.Sent.Clear();
-            Tick(c, clock, 5000, live: false);
+
+            Tick(c, clock, 10, live: false);                 // game exits
+
+            Assert.Contains(t.Sent, IsReset);                // fields cleared to ---
+            Assert.DoesNotContain(t.Sent, IsGateOff);        // never gate off at idle
+            Assert.Equal(ItmLifecycleState.Synced, c.State); // page stays visible
+
+            // Idle afterwards: one reset, then quiet.
+            t.Sent.Clear();
+            Tick(c, clock, 60000, live: false);
             Assert.Empty(t.Sent);
         }
 
         [Fact]
-        public void GameExit_GateOffDeclined_Retried()
+        public void GameExit_ResetDeclined_Retried()
         {
             var c = Make(out var t, out var clock);
             Sync(c, t, clock);
+            t.Sent.Clear();
 
             t.SendReturns = false;
-            Tick(c, clock, 10, live: false);
+            Tick(c, clock, 10, live: false);                 // reset declined
             t.Sent.Clear();
 
             t.SendReturns = true;
-            Tick(c, clock, 10, live: false);
-            Assert.Contains(t.Sent, IsGateOff);
+            Tick(c, clock, 10, live: false);                 // retried and accepted
+            Assert.Contains(t.Sent, IsReset);
         }
 
         [Fact]
-        public void Resume_PageSetWhileOff_ThenGateOn_NeverBare()
+        public void GameReturn_OnDefaultPage_RepaintsInPlace_NoGateCycle()
         {
+            // Already on the starting page: a game returning just repaints over the --- —
+            // no reset, no gate cycle, no re-page.
             var c = Make(out var t, out var clock);
-            Sync(c, t, clock);                            // synced on page 1
-            Tick(c, clock, 10, live: false);              // exit → gate-off
+            Sync(c, t, clock);                               // synced on page 1 (the default)
+            Tick(c, clock, 10, live: false);                 // exit → cleared to ---
+            int gen = c.SyncGeneration;
             t.Sent.Clear();
 
-            Tick(c, clock, 5000, live: true);             // game returns
+            Tick(c, clock, 1000, live: true);                // game returns
 
-            int page = t.Sent.FindIndex(r => IsPageSetTo(1)(r));
-            int on = t.Sent.FindIndex(IsGateOn);
-            Assert.True(page >= 0 && on >= 0, "resume sends PageSet and gate-on");
-            Assert.True(page < on, "PageSet goes out while gated off, before the gate-on");
-            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
-
-            c.OnPush(PushFor(1));                         // the elicited push (fresh handles)
-            Tick(c, clock, c.AccumulateWindowMs);
             Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.DoesNotContain(t.Sent, IsGateOff);
+            Assert.DoesNotContain(t.Sent, IsGateOn);         // no gate cycle
+            Assert.DoesNotContain(t.Sent, IsPageSet);        // already on the starting page
+            Assert.True(c.SyncGeneration > gen);             // repaint forced over the ---
         }
 
         [Fact]
-        public void Resume_WithoutPush_MustNotSelfConfirm()
+        public void GameStart_OffStartingPage_SwitchesBackToIt()
         {
-            // The handle map still holds the pre-exit page's subscriptions; a resume to the
-            // same page must not read that stale state as confirmation — only a push counts.
+            // The starting (default) page is re-established each game launch: if the wheel
+            // button left the display on a different page across the launch, a game starting
+            // switches back to the starting page.
             var c = Make(out var t, out var clock);
-            Sync(c, t, clock);
-            Tick(c, clock, 10, live: false);
-            Tick(c, clock, 5000, live: true);             // resume commands out, NO push
+            c.DefaultPage = 1;
+            Sync(c, t, clock);                               // synced on page 1
 
-            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
-            Tick(c, clock, c.PushDeadlineMs + 1);
-            Assert.Equal(ItmLifecycleState.Recovery, c.State);
-        }
-
-        [Fact]
-        public void Resume_RestoresLastKnownPage()
-        {
-            var c = Make(out var t, out var clock);
-            Sync(c, t, clock);
-
-            // Wheel button moved the display to page 5 before the exit.
-            c.OnPush(UnsubAll(6).Concat(PushFor(5)).ToList());
+            // Wheel button moved to page 5 during the last session.
+            c.OnPush(UnsubAll(8).Concat(PushFor(5)).ToList());
             Tick(c, clock, c.AccumulateWindowMs);
             Assert.Equal(5, c.CurrentPage);
 
-            Tick(c, clock, 10, live: false);              // exit
+            Tick(c, clock, 10, live: false);                 // game exits → cleared, on page 5
             t.Sent.Clear();
-            Tick(c, clock, 5000, live: true);             // resume
 
-            Assert.Contains(t.Sent, IsPageSetTo(5));      // the page survives the exit
+            Tick(c, clock, 1000, live: true);                // a game starts
+            Assert.Equal(ItmLifecycleState.Switching, c.State);   // switching back to the default
+            Tick(c, clock, c.SwitchQuietMs + c.PageSetSpacingMs);
+            Assert.Contains(t.Sent, IsPageSetTo(1));
+
+            c.OnPush(UnsubAll(8).Concat(PushFor(1)).ToList());
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(1, c.CurrentPage);
         }
 
         [Fact]
-        public void RequestPage_WhileTelemetryIdle_ChangesResumePage()
+        public void GameExit_DuringRecovery_LetsTheProcedureResolve()
         {
-            var c = Make(out var t, out var clock);
-            Sync(c, t, clock);
-            Tick(c, clock, 10, live: false);
-            t.Sent.Clear();
-
-            c.RequestPage(4);                              // setting changed while dark
-            Tick(c, clock, 100, live: false);
-            Assert.Empty(t.Sent);                          // nothing on the wire while off
-
-            Tick(c, clock, 5000, live: true);
-            Assert.Contains(t.Sent, IsPageSetTo(4));
-        }
-
-        [Fact]
-        public void GameExit_DuringRecovery_ParksInTelemetryIdle()
-        {
-            // An exit mid-ladder abandons the ladder: gate-off now, and the resume shape —
-            // the strongest recovery there is — re-establishes everything later.
+            // A mid-transition exit (not Synced) doesn't clear or gate off — the in-flight
+            // recovery keeps running (it just isn't fed values), and resolves on its own.
             var c = Make(out var t, out var clock);
             Sync(c, t, clock);
             EnterRecovery(c, t, clock);
+            t.Sent.Clear();
 
             Tick(c, clock, 10, live: false);
 
-            Assert.Equal(ItmLifecycleState.TelemetryIdle, c.State);
-            Assert.Contains(t.Sent, IsGateOff);
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);   // still recovering
+            Assert.DoesNotContain(t.Sent, IsGateOff);
+            Assert.DoesNotContain(t.Sent, IsReset);
         }
 
         [Fact]
-        public void BringUp_WithoutLiveTelemetry_StillRuns()
+        public void BringUp_WithoutLiveTelemetry_ClearsToPlaceholders_StaysSynced()
         {
-            // ITM is always-on: bring-up runs at connect so the default page (and the settings
-            // panel's live preview) works before any game has run. TelemetryIdle is entered
-            // only on a live→dead edge, never because telemetry simply hasn't started yet.
+            // Bring-up at connect with no game comes up clean (DisplayReset clears any stale
+            // cache) and stays on the page showing --- — no auto-off, no gate-off.
             var c = Make(out var t, out var clock);
             c.Start();
             c.Tick(false);
-
+            Assert.Contains(t.Sent, IsReset);                // cold entry clears the stale cache
             Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
+
             c.OnPush(PushFor(1));
             Tick(c, clock, c.AccumulateWindowMs, live: false);
+            Assert.Equal(ItmLifecycleState.Synced, c.State); // up, showing placeholders
+
+            t.Sent.Clear();
+            Tick(c, clock, 60000, live: false);              // no game → stays lit, no gate-off
             Assert.Equal(ItmLifecycleState.Synced, c.State);
             Assert.DoesNotContain(t.Sent, IsGateOff);
         }
 
-        [Fact]
-        public void PushWhileGatedOff_AdoptedButNoTransition()
+        // ── Legacy ITM page (no telemetry parameters) ────────────────────
+
+        // The legacy page's wire number on the standard device (device 3).
+        private static byte LegacyPage()
         {
-            // A push while we hold the display off means another program gated it on —
-            // adopt the data (never fight), stay parked.
-            var c = Make(out var t, out var clock, out var logs);
-            Sync(c, t, clock);
-            Tick(c, clock, 10, live: false);
+            foreach (var p in ItmDeviceCatalog.PagesFor(3))
+                if (p.IsLegacy) return p.Number;
+            throw new InvalidOperationException("no legacy page");
+        }
+
+        [Fact]
+        public void DefaultPageLegacy_BringUp_ConfirmsOnEmptyPush()
+        {
+            // Default page = Legacy: the legacy page carries no parameters, so its PageSet
+            // pushes only an unsubscribe-all. That IS its confirmation — not a dropped-subs
+            // failure that recovers away. (The "default page Legacy goes sideways" bug.)
+            byte legacy = LegacyPage();
+            var c = Make(out var t, out var clock);
+            c.DefaultPage = legacy;
+            c.Start();
+            c.Tick(true);
+            Assert.Contains(t.Sent, IsPageSetTo(legacy));
+
+            c.OnPush(UnsubAll(8));                            // the legacy page's empty push
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(legacy, c.CurrentPage);
+        }
+
+        [Fact]
+        public void DefaultPageLegacy_BringUp_ConfirmsOnMissedPush()
+        {
+            // If the display is already on the legacy page, the PageSet pushes nothing at all.
+            // A missed push on a legacy target means we're on legacy — confirm, don't recover.
+            byte legacy = LegacyPage();
+            var c = Make(out var t, out var clock);
+            c.DefaultPage = legacy;
+            c.Start();
+            c.Tick(true);
             t.Sent.Clear();
 
-            c.OnPush(PushFor(2));
-            Tick(c, clock, c.AccumulateWindowMs, live: false);
+            Tick(c, clock, c.PushDeadlineMs + 1);            // no push arrives
 
-            Assert.Equal(ItmLifecycleState.TelemetryIdle, c.State);
-            Assert.Empty(t.Sent);
-            Assert.Contains(logs, m => m.Contains("another program"));
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(legacy, c.CurrentPage);
+            Assert.DoesNotContain(t.Sent, IsPageSet);        // did NOT recover to a telemetry page
+        }
+
+        [Fact]
+        public void WheelButtonToLegacy_Adopted_NotRecoveredAway()
+        {
+            // Synced on a telemetry page, the user presses the wheel button to the legacy page:
+            // the firmware sends an unsubscribe-all with nothing following. Adopt "on legacy" —
+            // never re-PageSet back to a telemetry page. (The "can't select legacy" bug.)
+            byte legacy = LegacyPage();
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);                               // synced on page 1
+            t.Sent.Clear();
+
+            c.OnPush(UnsubAll(8));                            // wheel button → legacy (empty push)
+            Tick(c, clock, c.AccumulateWindowMs);            // unsub-only → grace opens
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+
+            Tick(c, clock, c.UnsubGraceMs + 1);              // nothing follows → adopt legacy
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(legacy, c.CurrentPage);
+            Assert.DoesNotContain(t.Sent, IsPageSet);        // did NOT fight it back to telemetry
+        }
+
+        [Fact]
+        public void ColdEntry_InvalidDefaultPage_FallsBackToARealPage()
+        {
+            // A 0 (unset) or out-of-range starting page must never become PageSet(0) or a
+            // target no push can confirm — bring-up falls back to the device's first page.
+            var c = Make(out var t, out var clock);
+            c.DefaultPage = 0;
+            c.Start();
+            c.Tick(true);
+
+            var pageSet = t.Sent.FirstOrDefault(IsPageSet);
+            Assert.NotNull(pageSet);
+            Assert.NotEqual(0, pageSet[4]);   // byte 4 = page number, never 0
+        }
+
+        [Fact]
+        public void ArmedForLegacy_NonEmptyPush_AdoptsThatPage_NotLegacy()
+        {
+            // Armed for the legacy page (starting page = legacy), a NON-empty telemetry push
+            // must not be mistaken for the legacy page's empty confirmation — it's a real
+            // telemetry page (a straggler re-push, or the page gate-on landed on). Adopt it as
+            // itself, never confirm "on legacy" while holding telemetry subscriptions.
+            byte legacy = LegacyPage();
+            var c = Make(out var t, out var clock);
+            c.DefaultPage = legacy;
+            c.Start();
+            c.Tick(true);                                // bring-up armed for legacy
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
+
+            c.OnPush(PushFor(2));                        // a telemetry page pushes instead
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(2, c.CurrentPage);              // adopted page 2, not mislabeled legacy
+            Assert.Equal(ParamsOf(2).Count, c.SubscriptionCount);   // page 2's real params
+        }
+
+        [Fact]
+        public void FromLegacy_WheelButtonToTelemetryPage_Adopted()
+        {
+            // From the legacy page, the wheel button to a telemetry page pushes its full set —
+            // adopt it normally.
+            byte legacy = LegacyPage();
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            c.OnPush(UnsubAll(8));
+            Tick(c, clock, c.AccumulateWindowMs);
+            Tick(c, clock, c.UnsubGraceMs + 1);              // now on legacy
+            Assert.Equal(legacy, c.CurrentPage);
+
+            c.OnPush(PushFor(2));                            // wheel button → a telemetry page
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(2, c.CurrentPage);
         }
 
         // ── User enable/disable ──────────────────────────────────────────
@@ -1195,22 +1301,22 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void WheelChange_WhileTelemetryIdle_StaysDark()
+        public void WheelChange_WhileIdle_ColdRestarts()
         {
-            // A hot-swap while parked dark (game exited) must not light the display with no
-            // game running — it re-asserts gate-off and waits for the resume shape.
+            // A hot-swap while idle (game exited, display showing --- on the ITM page) is a
+            // cold event — drop the old wheel's handles and re-run the full bring-up.
             var c = Make(out var t, out var clock);
             Sync(c, t, clock);
-            Tick(c, clock, 10, live: false);        // game exit → TelemetryIdle (gate-off)
+            Tick(c, clock, 10, live: false);        // game exit → cleared to ---, still Synced
             t.Sent.Clear();
 
             c.OnWheelChanged();
+            Assert.Equal(0, c.SubscriptionCount);   // old wheel's handles dropped
             Tick(c, clock, c.PageSetSpacingMs, live: false);
 
-            Assert.Equal(ItmLifecycleState.TelemetryIdle, c.State);
-            Assert.Contains(t.Sent, IsGateOff);
-            Assert.DoesNotContain(t.Sent, IsGateOn);   // never lit while dark
-            Assert.Equal(0, c.SubscriptionCount);      // old wheel's handles dropped
+            Assert.Contains(t.Sent, IsGateOn);      // full cold bring-up
+            Assert.Contains(t.Sent, IsPageSet);
+            Assert.DoesNotContain(t.Sent, IsValueUpdate);   // nothing until the fresh push
         }
 
         [Fact]
