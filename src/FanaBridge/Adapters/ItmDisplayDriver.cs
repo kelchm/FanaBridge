@@ -34,6 +34,17 @@ namespace FanaBridge.Adapters
         public int ValueIntervalMs { get; set; } = 40;
 
         /// <summary>
+        /// Maximum age of the on-display values before they are re-sent even when unchanged.
+        /// ValueUpdate is unacked, so a lost frame would otherwise stay wrong until the value
+        /// next changes — which in practice only matters when the whole set is static (any
+        /// single changed value already re-sends the full buffer at <see cref="ValueIntervalMs"/>
+        /// cadence). Cheap insurance: one report per interval. Same rationale as the ParamDefs
+        /// double-tap; there is no confirmed observation of a dropped ValueUpdate (an earlier
+        /// lab sighting turned out to be col03 co-driver contention).
+        /// </summary>
+        public int RefreshIntervalMs { get; set; } = 500;
+
+        /// <summary>
         /// Gap before the tight second ParamDefs send (double-tap). ParamDefs is unacked
         /// and a single send is occasionally dropped by the firmware; the official app
         /// double-taps ~49ms apart to prime the decoration so it sticks.
@@ -71,10 +82,13 @@ namespace FanaBridge.Adapters
         // Running against a display that never got its enable/page-set.
         private bool _bringUpModeSent, _bringUpEnableSent, _bringUpPageSent;
 
-        // Firmware-driven subscription map: host handle -> parameter ID. Kept sorted by
-        // handle so the dirty-tracking comparison sees a stable order.
-        private readonly SortedDictionary<byte, ushort> _subs = new SortedDictionary<byte, ushort>();
+        // Firmware-driven subscription map: host handle -> subscription (parameter ID plus
+        // the firmware's declared slot dataType, which steers per-display value encoding —
+        // GEAR is numeric on a PBME but ASCII text on a Formula V3). Kept sorted by handle
+        // so the dirty-tracking comparison sees a stable order.
+        private readonly SortedDictionary<byte, ItmSubscription> _subs = new SortedDictionary<byte, ItmSubscription>();
         private ItmValue[] _lastValues;
+        private long _lastSendOkMs;   // last accepted value send — drives the periodic re-assert
         private bool _loggedFirstValues;
         private string _lastSlotDefsSig = "";   // last ParamDefs suffix set, to skip redundant writes
         private long _defTap2DueMs;               // when to fire the tight second def tap (0 = none)
@@ -168,7 +182,7 @@ namespace FanaBridge.Adapters
                 if (s.IsUnsubscribe)
                     _subs.Remove(s.Handle);
                 else
-                    _subs[s.Handle] = s.ParamId;
+                    _subs[s.Handle] = s;
             }
 
             _lastValues = null;   // subscription set changed — force a fresh value send
@@ -199,22 +213,23 @@ namespace FanaBridge.Adapters
 
             foreach (var kv in _subs)
             {
+                ushort paramId = kv.Value.ParamId;
                 string suffix;
-                if (ItmTelemetryMapper.TryGetUnitSuffix(kv.Value, data, out suffix))
+                if (ItmTelemetryMapper.TryGetUnitSuffix(paramId, data, out suffix))
                 {
                     // Static unit label (e.g. "C").
                 }
-                else if (ItmTelemetryMapper.IsTotalParam(kv.Value))
+                else if (ItmTelemetryMapper.IsTotalParam(paramId))
                 {
                     // Lap/position/fuel: always emit an entry so a total that disappears is
                     // actively cleared — a zero-length suffix does NOT overwrite the firmware's
                     // default "/0", so we write a blank " " to clear it. Fuel is special: with no
                     // tank capacity it falls back to the unit label ("L"/"G") rather than a blank,
                     // so a bare fuel value still reads as fuel.
-                    suffix = ShowTotalFor(kv.Value)
-                          && ItmTelemetryMapper.TryGetTotalSuffix(kv.Value, data, out var total)
+                    suffix = ShowTotalFor(paramId)
+                          && ItmTelemetryMapper.TryGetTotalSuffix(paramId, data, out var total)
                         ? total
-                        : (kv.Value == ItmParam.Fuel ? ItmTelemetryMapper.FuelUnitLabel(data) : " ");
+                        : (paramId == ItmParam.Fuel ? ItmTelemetryMapper.FuelUnitLabel(data) : " ");
                 }
                 else
                 {
@@ -377,7 +392,7 @@ namespace FanaBridge.Adapters
             UpdateSlotDefs(data, now);   // refresh unit/total suffixes; tight double-tap so they stick
             if (now - _lastValuesMs >= ValueIntervalMs)
             {
-                SendSubscribedValues(data);
+                SendSubscribedValues(data, now);
                 _lastValuesMs = now;
             }
         }
@@ -392,7 +407,9 @@ namespace FanaBridge.Adapters
                 return;
             var ids = SeedParamsForPage(DefaultPage);
             for (int h = 0; h < ids.Count; h++)
-                _subs[(byte)h] = ids[h];
+                // dataType 0 = unknown: values encode with the default (numeric) forms until
+                // the firmware's push supplies each slot's declared type.
+                _subs[(byte)h] = new ItmSubscription((byte)h, ids[h]);
         }
 
         // The params the given page carries on this driver's device (empty for an unknown page
@@ -405,7 +422,7 @@ namespace FanaBridge.Adapters
             return Array.Empty<ushort>();
         }
 
-        private void SendSubscribedValues(GameData data)
+        private void SendSubscribedValues(GameData data, long now)
         {
             if (_subs.Count == 0)
                 return;
@@ -413,16 +430,20 @@ namespace FanaBridge.Adapters
             _valueBuf.Clear();
             foreach (var kv in _subs)
             {
-                if (ItmTelemetryMapper.TryEncodeParam(kv.Value, kv.Key, data, out var v))
+                if (ItmTelemetryMapper.TryEncodeParam(kv.Value.ParamId, kv.Key, data, kv.Value.DataType, out var v))
                     _valueBuf.Add(v);
-                else if (_unencodableWarned.Add(kv.Value))
+                else if (_unencodableWarned.Add(kv.Value.ParamId))
                     // Firmware subscribed a parameter outside our page layouts — it will
                     // render as dashes. Note it once so the gap is diagnosable.
-                    _log("ITM: no encoder for subscribed param " + kv.Value +
+                    _log("ITM: no encoder for subscribed param " + kv.Value.ParamId +
                          " (handle " + kv.Key + ") — field will show dashes");
             }
 
-            if (_valueBuf.Count == 0 || !HasChanged(_valueBuf))
+            // Re-assert even unchanged values every RefreshIntervalMs: ValueUpdate is unacked,
+            // and change-gated sending alone would leave a lost frame wrong on the display
+            // until the value next changes.
+            bool refresh = now - _lastSendOkMs >= RefreshIntervalMs;
+            if (_valueBuf.Count == 0 || (!refresh && !HasChanged(_valueBuf)))
                 return;
 
             // Only record the values as last-sent (and log the first update) when the send
@@ -431,6 +452,7 @@ namespace FanaBridge.Adapters
             if (!_encoder.SendValues(_valueBuf, _deviceId))
                 return;
 
+            _lastSendOkMs = now;
             Remember(_valueBuf);
 
             if (!_loggedFirstValues)
@@ -441,7 +463,8 @@ namespace FanaBridge.Adapters
         }
 
         private string Describe()
-            => string.Join(" ", _subs.Select(kv => "h" + kv.Key + "=p" + kv.Value));
+            => string.Join(" ", _subs.Select(kv => "h" + kv.Key + "=p" + kv.Value.ParamId
+                + (kv.Value.DataType != 0 ? ":t" + kv.Value.DataType.ToString("X2") : "")));
 
         private bool HasChanged(IReadOnlyList<ItmValue> values)
         {

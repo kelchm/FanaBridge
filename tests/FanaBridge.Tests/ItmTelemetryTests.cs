@@ -357,6 +357,30 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void ParseSubscriptionReport_CapturesDeclaredDataType()
+        {
+            // Same tyre-page report: each entry's 5th byte is the firmware's declared slot
+            // type (0x34 = i16 speed, 0x12 = u8 gear, 0x32 = u8 temps).
+            var report = HexToBytes("ff05010300010034030104001203822a00320383300032");
+            var subs = ItmTelemetry.ParseSubscriptionReport(report, report.Length);
+
+            Assert.Equal((byte)0x34, subs[0].DataType);
+            Assert.Equal((byte)0x12, subs[1].DataType);
+            Assert.Equal((byte)0x32, subs[2].DataType);
+            Assert.Equal((byte)0x32, subs[3].DataType);
+        }
+
+        [Fact]
+        public void IsTextType_LowNibbleOne_Only()
+        {
+            Assert.True(ItmTelemetry.IsTextType(0x01));
+            Assert.True(ItmTelemetry.IsTextType(0x11));
+            Assert.False(ItmTelemetry.IsTextType(0x12));   // PBME GEAR (u8)
+            Assert.False(ItmTelemetry.IsTextType(0x34));   // SPEED (i16)
+            Assert.False(ItmTelemetry.IsTextType(0x00));   // unknown / seeded
+        }
+
+        [Fact]
         public void ParseSubscriptionReport_DecodesUnsubscribe()
         {
             // FF 05 01, then [03][h][FF FF][unit] entries = unsubscribe
@@ -424,6 +448,41 @@ namespace FanaBridge.Tests
         public void TryEncodeParam_UnknownParam_ReturnsFalse()
         {
             Assert.False(ItmTelemetryMapper.TryEncodeParam(9999, 0, Wrap(NewStatus()), out _));
+        }
+
+        // ── GEAR per-display encoding (declared dataType steers the wire form) ──
+
+        [Theory]
+        [InlineData("N", "n")]
+        [InlineData("", "n")]
+        [InlineData("3", "3")]
+        [InlineData("9", "9")]
+        [InlineData("R", "r")]
+        [InlineData("reverse", "r")]
+        [InlineData("garbage", "n")]
+        public void TryEncodeParam_Gear_TextSlot_SendsAsciiChar(string gear, string expected)
+        {
+            // A display that declares GEAR as text (e.g. Formula V3) takes the ASCII form
+            // the official software sends: lowercase 'n'/'r', digits literal.
+            var s = NewStatus();
+            Set(s, "Gear", gear);
+
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.Gear, 1, Wrap(s), 0x11, out var v));
+            Assert.Equal((byte)1, v.Size);
+            Assert.Equal(expected, AsAscii(v));
+        }
+
+        [Theory]
+        [InlineData(0x12)]   // PBME's declared u8 type
+        [InlineData(0x00)]   // unknown (host-seeded before the push lands)
+        public void TryEncodeParam_Gear_NumericOrUnknownSlot_SendsNumericByte(int dataType)
+        {
+            var s = NewStatus();
+            Set(s, "Gear", "3");
+
+            Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.Gear, 1, Wrap(s), (byte)dataType, out var v));
+            Assert.Equal((byte)1, v.Size);
+            Assert.Equal((byte)3, AsU8(v));
         }
 
         [Fact]
