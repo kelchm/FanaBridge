@@ -242,6 +242,10 @@ namespace FanaBridge.Adapters
             // lazily (DataUpdate builds them on demand from the live plugin).
             _displayManager = null;
             _itmDisplay = null;
+            // Clear the status cache the instant the driver is invalidated (not just at the
+            // rebuild site) so the Device Status row can never read a disposed generation's
+            // description in the window before the new driver publishes (issue #37 path).
+            _itmStatusSnapshot = null;
             _itmWasRunning = false;
             _itmErrorLogged = false;
             _legacyBlanked = false;
@@ -504,6 +508,10 @@ namespace FanaBridge.Adapters
                     // Baseline the wheel-change counter at creation — the driver is starting
                     // cold anyway, so changes before this point are already accounted for.
                     _itmWheelChangeCount = plugin.Wheelbase?.WheelChangeCount ?? 0;
+                    // Drop any status snapshot cached from a disposed generation's controller,
+                    // so the Device Status row never shows the old controller's description
+                    // (a plugin-generation rebind or a display-id change rebuilds the driver here).
+                    _itmStatusSnapshot = null;
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created ITM display driver");
                 }
@@ -528,6 +536,10 @@ namespace FanaBridge.Adapters
                     {
                         _itmWheelChangeCount = wheelChanges;
                         _itmDisplay.OnWheelChanged();
+                        // A hot-swap fully cold-restarts the lifecycle — re-arm the one-shot
+                        // "ITM enabled" log so the re-sync on the new wheel gets a fresh
+                        // confirmation line (swaps are infrequent, so no reconnect-loop noise).
+                        _itmWasRunning = false;
                     }
 
                     // Feed the firmware's pushed ITM subscription reports (col03-IN) to the

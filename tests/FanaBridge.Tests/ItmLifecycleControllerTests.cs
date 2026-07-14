@@ -410,6 +410,30 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void Switching_PushDuringQuietWindow_DefersPageSet_AdoptsThePush()
+        {
+            // A push arriving during the switch quiet window means the display is already
+            // changing (wheel button / late firmware). Don't PageSet over an accumulating push
+            // — let it be judged first; it supersedes the host request. (Guards against
+            // reintroducing the concurrent-traffic hazard the state machine is built to avoid.)
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);                                   // synced on page 1
+
+            c.RequestPage(3);                                    // host switch → Switching, quiet window
+            Tick(c, clock, 10);                                  // still within the quiet window
+            c.OnPush(UnsubAll(8).Concat(PushFor(5)).ToList());   // a wheel-button push arrives
+            Tick(c, clock, c.SwitchQuietMs - 5);                 // quiet elapsed, push still accumulating
+
+            Assert.Equal(ItmLifecycleState.Switching, c.State);  // not judged yet
+            Assert.DoesNotContain(t.Sent, IsPageSetTo(3));       // PageSet deferred, not sent over the push
+
+            Tick(c, clock, c.AccumulateWindowMs);                // the push is judged → adopts page 5
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(5, c.CurrentPage);
+            Assert.DoesNotContain(t.Sent, IsPageSetTo(3));       // host request dropped, never sent
+        }
+
+        [Fact]
         public void RequestPage_WhileSwitching_QueuedAndAppliedAfterConfirm()
         {
             var c = Make(out var t, out var clock);
@@ -658,6 +682,25 @@ namespace FanaBridge.Tests
             t.Sent.Clear();
             Tick(c, clock, 10_000);                      // inside the 30 s backoff
             Assert.Empty(t.Sent);
+        }
+
+        [Fact]
+        public void Ladder_Exhausted_EmptyBackoffList_FallsBackDoesNotThrow()
+        {
+            // UnavailableBackoffMs is publicly settable; an empty (misconfigured) list must not
+            // index out of range when the ladder exhausts — fall back to a default backoff.
+            var c = Make(out var t, out var clock);
+            c.UnavailableBackoffMs = new int[0];
+            Sync(c, t, clock);
+            EnterRecovery(c, t, clock, target: 3);
+
+            for (int i = 0; i < 4; i++)
+            {
+                Tick(c, clock, c.PageSetSpacingMs);
+                Tick(c, clock, c.PushDeadlineMs + 1);
+            }
+
+            Assert.Equal(ItmLifecycleState.Unavailable, c.State);   // reached it without throwing
         }
 
         [Fact]

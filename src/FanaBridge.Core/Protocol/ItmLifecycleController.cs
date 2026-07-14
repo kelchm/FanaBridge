@@ -493,8 +493,14 @@ namespace FanaBridge.Protocol
                 }
             }
 
-            // Switching: after the quiet window, send the PageSet.
-            if (State == ItmLifecycleState.Switching && _quietUntil != 0 && now >= _quietUntil)
+            // Switching: after the quiet window, send the PageSet — but only once no push is
+            // accumulating. A push arriving during the quiet window is evidence the display is
+            // already changing pages (a wheel-button change or late firmware activity); sending
+            // a PageSet over it would reintroduce the concurrent-traffic hazard. Wait for the
+            // accumulation to be judged first — it may adopt that page and drop the host request
+            // (the judgment above cleared _accumCloseAt, so this fires the same tick it resolves).
+            if (State == ItmLifecycleState.Switching && _quietUntil != 0 && now >= _quietUntil
+                && _accumCloseAt == 0)
             {
                 _quietUntil = 0;
                 QueueStep(Cmd.PageSet, _targetPage);
@@ -649,9 +655,18 @@ namespace FanaBridge.Protocol
         {
             State = ItmLifecycleState.Unavailable;
             AbandonInFlight();
-            int backoff = UnavailableBackoffMs[Math.Min(_backoffIdx, UnavailableBackoffMs.Count - 1)];
-            if (_backoffIdx < UnavailableBackoffMs.Count - 1)
-                _backoffIdx++;
+            // UnavailableBackoffMs is publicly settable — tolerate a null/empty list rather
+            // than crashing the lifecycle on a bad tunable.
+            var steps = UnavailableBackoffMs;
+            int backoff;
+            if (steps == null || steps.Count == 0)
+                backoff = 5_000;
+            else
+            {
+                backoff = steps[Math.Min(_backoffIdx, steps.Count - 1)];
+                if (_backoffIdx < steps.Count - 1)
+                    _backoffIdx++;
+            }
             _retryAt = _now() + backoff;
             _log("ITM: recovery ladder exhausted for page " + _targetPage + " — display unavailable, retrying in "
                  + (backoff / 1000) + " s. If this persists, another program may be driving the display.");
