@@ -29,7 +29,7 @@ namespace FanaBridge.Protocol
     {
         public static string Build(
             FanatecWheelbase wheelbase, bool connected, string statusDetail, string buildInfo,
-            string controlMapperSection = null)
+            string controlMapperSection = null, string itmSection = null)
         {
             var sb = new StringBuilder();
 
@@ -67,6 +67,11 @@ namespace FanaBridge.Protocol
             {
                 sb.AppendLine();
                 sb.AppendLine(controlMapperSection.TrimEnd());
+            }
+            if (!string.IsNullOrEmpty(itmSection))
+            {
+                sb.AppendLine();
+                sb.AppendLine(itmSection.TrimEnd());
             }
 
             sb.AppendLine("```");

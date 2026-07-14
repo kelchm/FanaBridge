@@ -1,22 +1,21 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using FanaBridge.Protocol;
 using GameReaderCommon;
 
 namespace FanaBridge.Adapters
 {
     /// <summary>
-    /// Drives a Fanatec ITM telemetry display, firmware-driven: it enables ITM once and
-    /// sends rate-limited value updates for exactly the parameters the firmware has
-    /// subscribed. No keepalive is needed — the display has no idle timeout (hardware-
-    /// confirmed); the value stream, or simply the last frame it holds, keeps it lit.
+    /// Drives a Fanatec ITM telemetry display: maps SimHub telemetry to the parameters the
+    /// firmware has subscribed, paces the sends, and maintains the ParamDefs unit/total
+    /// suffixes. The <b>lifecycle</b> — bring-up, page switches, push confirmation, game-exit
+    /// gating, recovery — lives in <see cref="ItmLifecycleController"/>; this driver only
+    /// sends while the controller says the display is synced (<see cref="ItmLifecycleController.ValuesAllowed"/>)
+    /// and repaints whenever a push is adopted (<see cref="ItmLifecycleController.SyncGeneration"/>):
+    /// after any resync the display shows stale firmware-cached values until the first fresh send.
     ///
-    /// This driver follows the wheel's subscription reports: when the ITM page changes, the
-    /// firmware pushes subscription reports on col03-IN telling the host which parameter
-    /// sits at which handle for the new page (see
-    /// <see cref="ItmTelemetry.ParseSubscriptionReport"/>); the host echoes values back at
-    /// those handles.
+    /// First values after a sync are double-tapped (~20 ms apart, matching official-software
+    /// post-switch behavior), and ParamDefs go out <i>after</i> the value double-tap.
     ///
     /// Sits above <see cref="ItmEncoder"/> (framing) and <see cref="ItmTelemetry"/>
     /// (value encoding + subscription parsing). The clock is injectable so the timing is
@@ -28,10 +27,18 @@ namespace FanaBridge.Adapters
         private readonly byte _deviceId;   // which display this driver targets (PageSet + per-entry id)
         private readonly Func<long> _now;
         private readonly Action<string> _log;
+        private readonly ItmLifecycleController _lifecycle;
 
         // ── Tunables (ms) ────────────────────────────────────────────────
         /// <summary>Minimum spacing between value-update sends (caps the rate).</summary>
         public int ValueIntervalMs { get; set; } = 40;
+
+        /// <summary>
+        /// Gap before the tight second value send after a sync (double-tap). The first values
+        /// after a page change are double-tapped ~20 ms apart, matching the official software's
+        /// post-switch behavior — free insurance against a single lost first paint.
+        /// </summary>
+        public int ValueDoubleTapMs { get; set; } = 20;
 
         /// <summary>
         /// Maximum age of the on-display values before they are re-sent even when unchanged.
@@ -58,37 +65,34 @@ namespace FanaBridge.Adapters
         public bool ShowPositionTotal { get; set; } = true;
 
         /// <summary>
-        /// The ITM page (wire page number) forced on bring-up; the wheel's display button
-        /// navigates from there. Read once per bring-up. Defaults to page 1 (Lap Info).
+        /// The ITM page (wire page number) targeted by bring-up; the wheel's display button
+        /// navigates from there. Changing it live requests a confirmed page switch.
         /// </summary>
         public byte DefaultPage { get; set; } = 1;
 
         /// <summary>
-        /// Whether the ITM display is enabled. Set false to turn ITM off (the driver sends
-        /// the firmware "ITM off" command and goes dormant); set true to re-enable (the
-        /// next <see cref="Update"/> re-runs bring-up). Read live each frame.
+        /// Whether the ITM display is enabled. Set false to turn ITM off (the display is gated
+        /// off — the same persistent state the vendor software's ITM switch sets — and the
+        /// driver goes dormant); set true to re-enable. Read live each frame; applied to the
+        /// lifecycle inside <see cref="Update"/> so all controller mutation stays on the
+        /// update thread.
         /// </summary>
         public bool Enabled { get; set; } = true;
 
         // ── State ────────────────────────────────────────────────────────
-        private enum Phase { Idle, Enabling, Running, Disabled }
-        private Phase _phase = Phase.Idle;
-
         private long _lastValuesMs;
-        private byte _lastPageApplied;   // last page we forced via SetPage — edge-detects a settings change
+        private long _lastSendOkMs;    // last accepted value send — drives the periodic re-assert
+        // Edge-detects a default-page settings change; null = re-baseline on the next Update
+        // (fresh driver or post-Stop), so the first frame never reads as a change.
+        private byte? _lastRequestedPage;
 
-        // Bring-up progress: each command is latched only once the transport accepts it,
-        // so a declined write is retried next tick instead of leaving the driver in
-        // Running against a display that never got its enable/page-set.
-        private bool _bringUpModeSent, _bringUpEnableSent, _bringUpPageSent;
+        // Post-sync repaint: first values immediately, a tight second tap, then ParamDefs.
+        private enum Paint { None, First, SecondTap }
+        private Paint _paint = Paint.None;
+        private long _paintTap2At;
+        private int _lastSyncGen;
 
-        // Firmware-driven subscription map: host handle -> subscription (parameter ID plus
-        // the firmware's declared slot dataType, which steers per-display value encoding —
-        // GEAR is numeric on a PBME but ASCII text on a Formula V3). Kept sorted by handle
-        // so the dirty-tracking comparison sees a stable order.
-        private readonly SortedDictionary<byte, ItmSubscription> _subs = new SortedDictionary<byte, ItmSubscription>();
         private ItmValue[] _lastValues;
-        private long _lastSendOkMs;   // last accepted value send — drives the periodic re-assert
         private bool _loggedFirstValues;
         private string _lastSlotDefsSig = "";   // last ParamDefs suffix set, to skip redundant writes
         private long _defTap2DueMs;               // when to fire the tight second def tap (0 = none)
@@ -105,6 +109,7 @@ namespace FanaBridge.Adapters
             _now = nowMs ?? DefaultClock();
             _log = log ?? (_ => { });
             _deviceId = deviceId;
+            _lifecycle = new ItmLifecycleController(encoder, deviceId, _now, _log);
         }
 
         private static Func<long> DefaultClock()
@@ -113,82 +118,152 @@ namespace FanaBridge.Adapters
             return () => sw.ElapsedMilliseconds;
         }
 
-        /// <summary>True once ITM is enabled and values are flowing.</summary>
-        public bool IsRunning => _phase == Phase.Running;
+        /// <summary>The lifecycle state machine — exposed for status surfacing and tuning.</summary>
+        public ItmLifecycleController Lifecycle => _lifecycle;
+
+        /// <summary>True while the display is push-confirmed in sync (values may flow).</summary>
+        public bool IsRunning => _lifecycle.State == ItmLifecycleState.Synced;
 
         /// <summary>The number of parameters the firmware currently has subscribed.</summary>
-        public int SubscriptionCount => _subs.Count;
+        public int SubscriptionCount => _lifecycle.SubscriptionCount;
 
         /// <summary>
-        /// Begins ITM bring-up (a single Enable) on the next <see cref="Update"/>.
+        /// Begins the ITM lifecycle (cold bring-up) on the next <see cref="Update"/>.
         /// Idempotent — a no-op unless idle, so it is safe to call every frame.
         /// </summary>
         public void Start()
         {
-            if (_phase == Phase.Idle)
-                _phase = Phase.Enabling;
+            _lifecycle.DefaultPage = DefaultPage;
+            _lifecycle.Start();
         }
 
         /// <summary>
-        /// Stops driving and returns to idle, dropping all subscriptions. A later
-        /// <see cref="Start"/> re-enables.
+        /// Stops driving and returns to idle (connection lost), dropping all subscriptions.
+        /// A later <see cref="Start"/> re-runs the cold bring-up.
         /// </summary>
         public void Stop()
         {
-            _phase = Phase.Idle;
-            ResetSession();
+            _lifecycle.Stop();
+            ResetSendState();
         }
 
-        /// <summary>Drops all per-session state (subscriptions, dirty tracking, one-shot logs).</summary>
-        private void ResetSession()
+        /// <summary>
+        /// A wheel/hub/module change from the identity layer. A hot-swap resets the display
+        /// cold without any trace on the ITM channel itself — the lifecycle restarts from
+        /// bring-up and nothing is sent until the fresh push confirms.
+        /// </summary>
+        public void OnWheelChanged()
         {
-            _subs.Clear();
+            // The cold entry runs immediately — make sure it targets the current setting.
+            _lifecycle.DefaultPage = DefaultPage;
+            _lifecycle.OnWheelChanged();
+        }
+
+        /// <summary>Drops the driver-side send latches (dirty tracking, def signatures, taps).</summary>
+        private void ResetSendState()
+        {
             _lastValues = null;
             _loggedFirstValues = false;
             _lastSlotDefsSig = "";
             _defTap2DueMs = 0;
             _defTap2Defs = null;
-            _wasTelemetryLive = false;
-            _pendingExitReset = false;
-            _bringUpModeSent = false;
-            _bringUpEnableSent = false;
-            _bringUpPageSent = false;
+            _paint = Paint.None;
+            _lastRequestedPage = null;
         }
 
-        // Game-exit tracking: values must never be painted from SimHub's stale
-        // post-exit telemetry, and the fields already on the display would hold
-        // their last values forever (no idle timeout). On the live→not-live
-        // transition a DisplayReset reverts every field to its placeholder
-        // (e.g. "--- / -", "--:--.-") — session, page, and subscriptions stay
-        // put. The reset is retried across ticks until the transport accepts
-        // it. (The Legacy ITM page is unaffected by the reset; its content is
-        // cleared separately by the col01 display driver's exit blank.)
-        private bool _wasTelemetryLive;
-        private bool _pendingExitReset;
-
         /// <summary>
-        /// Applies a firmware ITM subscription report (col03-IN, pushed on a wheel-button
-        /// page change): subscribes/updates each handle's parameter, removes unsubscribed
-        /// handles. Safe to call before <see cref="Start"/> — the map is simply pre-seeded.
+        /// Applies a firmware ITM subscription report (col03-IN push): parsed and handed to the
+        /// lifecycle, which adopts the entries in every state and judges the accumulated set.
         /// </summary>
         public void OnSubscriptionReport(byte[] report)
         {
             var subs = ItmTelemetry.ParseSubscriptionReport(report, report?.Length ?? 0, _deviceId);
             if (subs.Count == 0)
                 return;
+            _lifecycle.OnPush(subs);
+        }
 
-            foreach (var s in subs)
+        /// <summary>Drives the lifecycle and the value/defs pipeline one tick. Call once per frame while connected.</summary>
+        public void Update(GameData data)
+        {
+            long now = _now();
+            bool telemetryLive = data != null && data.GameRunning && data.NewData != null;
+
+            // Settings flow into the lifecycle: the default page (cold-entry target) and the
+            // user's on/off switch. A settings change of the default page is edge-detected and
+            // requested live, so the wheel button isn't fought between changes.
+            _lifecycle.DefaultPage = DefaultPage;
+            _lifecycle.SetUserEnabled(Enabled);
+            if (_lastRequestedPage == null)
+                _lastRequestedPage = DefaultPage;
+            else if (DefaultPage != _lastRequestedPage.Value)
             {
-                if (s.IsUnsubscribe)
-                    _subs.Remove(s.Handle);
-                else
-                    _subs[s.Handle] = s;
+                _lastRequestedPage = DefaultPage;
+                _lifecycle.RequestPage(DefaultPage);
             }
 
-            _lastValues = null;   // subscription set changed — force a fresh value send
-            _log("ITM: subscriptions now — " + Describe());
-            // ParamDefs (suffixes) are refreshed from Update(), where telemetry is
-            // available for the dynamic "/total" suffixes.
+            _lifecycle.Tick(telemetryLive);
+
+            // A new sync generation = a push was adopted (bring-up, page change, resume,
+            // recovery). The firmware may be showing stale cached values and its suffix
+            // decorations may be gone — repaint everything: values immediately, a tight
+            // second tap, then ParamDefs.
+            if (_lifecycle.SyncGeneration != _lastSyncGen)
+            {
+                _lastSyncGen = _lifecycle.SyncGeneration;
+                _lastValues = null;
+                _lastSlotDefsSig = "";
+                _defTap2DueMs = 0;
+                _defTap2Defs = null;
+                _paint = Paint.First;
+            }
+
+            // Values (and defs) flow only while push-confirmed in sync — mid-switch traffic
+            // is the identified cause of dropped switches, and handles can re-bind.
+            if (!_lifecycle.ValuesAllowed)
+                return;
+
+            // ...and only while a game is feeding telemetry: SimHub keeps the last telemetry
+            // values around after a game exits, and painting from stale data would resurrect
+            // exactly the frozen frame the exit DisplayReset just cleared to placeholders.
+            if (!telemetryLive)
+                return;
+
+            switch (_paint)
+            {
+                case Paint.First:
+                    // Immediate post-sync paint, bypassing the interval and the change gate.
+                    switch (TrySendValues(data, now, force: true))
+                    {
+                        case SendOutcome.Sent:
+                            _paint = Paint.SecondTap;
+                            _paintTap2At = now + ValueDoubleTapMs;
+                            break;
+                        case SendOutcome.NothingToSend:
+                            _paint = Paint.None;   // nothing encodable — no tap needed
+                            break;
+                            // Declined: retry next tick.
+                    }
+                    break;
+
+                case Paint.SecondTap:
+                    if (now >= _paintTap2At && TrySendValues(data, now, force: true) != SendOutcome.Declined)
+                        _paint = Paint.None;
+                    break;
+
+                default:
+                    if (now - _lastValuesMs >= ValueIntervalMs)
+                    {
+                        TrySendValues(data, now, force: false);
+                        _lastValuesMs = now;
+                    }
+                    break;
+            }
+
+            // ParamDefs go out after the post-sync value double-tap completes (values-then-defs,
+            // matching the official software's post-switch ordering), then on every suffix change.
+            if (_paint == Paint.None)
+                UpdateSlotDefs(data, now);
         }
 
         // Sends ParamDefs declaring each subscribed param's display suffix — a static
@@ -211,8 +286,10 @@ namespace FanaBridge.Adapters
             List<ItmParamDef> defs = null;
             var sig = new System.Text.StringBuilder();
 
-            foreach (var kv in _subs)
+            var subs = _lifecycle.Subscriptions;
+            for (int i = 0; i < subs.Count; i++)
             {
+                var kv = subs[i];
                 ushort paramId = kv.Value.ParamId;
                 string suffix;
                 if (ItmTelemetryMapper.TryGetUnitSuffix(paramId, data, out suffix))
@@ -270,166 +347,17 @@ namespace FanaBridge.Adapters
             return false;
         }
 
-        /// <summary>Drives the state machine one tick. Call once per frame while connected.</summary>
-        public void Update(GameData data)
+        private enum SendOutcome { Sent, NothingToSend, Declined }
+
+        // Encodes the subscribed values and sends them. force bypasses the change gate (used
+        // by the post-sync paint and its double-tap); the periodic re-assert bypasses it too.
+        private SendOutcome TrySendValues(GameData data, long now, bool force)
         {
-            // User turned ITM off: send the firmware "ITM off" command, then stay
-            // dormant (no values) so the display stays off, as the Fanatec software does.
-            // Only latch Disabled once the off command was actually accepted — a
-            // declined write is retried next tick. Re-enabling drops back into
-            // bring-up below.
-            if (!Enabled)
-            {
-                if (_phase != Phase.Disabled)
-                {
-                    if (!_encoder.SetItmMode(false))   // FF 05 02 00
-                        return;
-                    ResetSession();
-                    _phase = Phase.Disabled;
-                    _log("ITM: disabled by user — sent ITM off");
-                }
-                return;
-            }
-
-            // Enabled again after being disabled — re-arm bring-up.
-            if (_phase == Phase.Disabled)
-                _phase = Phase.Enabling;
-
-            if (_phase == Phase.Idle)
-                return;
-
-            long now = _now();
-            bool telemetryLive = data != null && data.GameRunning && data.NewData != null;
-
-            if (_phase == Phase.Enabling)
-            {
-                // Bring-up: gate ITM on (FF 05 02 01), start the session (FF 02 02 00), then force
-                // the configured default page (FF 05 04 <dev> <page>) so the display matches our
-                // seed and shows correct values right away. The wheel button navigates from there;
-                // detecting the wheel's current page on cold start instead is deferred — see #43.
-                // Each command advances only once the transport accepts it — bring-up fires right
-                // as the rim settles, exactly when a transient write failure is most likely, and a
-                // dropped Enable/PageSet would otherwise leave the driver streaming values at a
-                // display that never started a session.
-                if (!_bringUpModeSent)
-                {
-                    if (!_encoder.SetItmMode(true))     // FF 05 02 01 — firmware ITM gate on
-                        return;
-                    _bringUpModeSent = true;
-                }
-                if (!_bringUpEnableSent)
-                {
-                    if (!_encoder.EnableItm())          // FF 02 02 00 — start the display session
-                        return;
-                    _bringUpEnableSent = true;
-                }
-                if (!_bringUpPageSent)
-                {
-                    if (!_encoder.SetPage(_deviceId, DefaultPage))  // force the configured default page
-                        return;
-                    _bringUpPageSent = true;
-                }
-                _lastPageApplied = DefaultPage;
-                SeedInitialSubscriptions();             // the default page's params
-                _log("ITM: enabled — seeded " + _subs.Count + " params, following firmware subscriptions");
-                _phase = Phase.Running;
-                // Record liveness on this tick too — a game exiting right after a
-                // single live frame must still trigger the exit reset below.
-                _wasTelemetryLive = telemetryLive;
-                return;
-            }
-
-            // Running
-
-            // Game just exited (or an earlier exit reset is still pending): DisplayReset
-            // reverts every field to its placeholder rendering so the last telemetry
-            // frame doesn't sit on the display forever. The session, page, and firmware
-            // subscriptions stay put — values simply flow again when the next game
-            // starts. An ITM off→on cycle does NOT clear fields (hardware-verified:
-            // the firmware retains their values), so this reset is the one command
-            // that does. Retried until the transport accepts it.
-            if (_pendingExitReset || (_wasTelemetryLive && !telemetryLive))
-            {
-                _pendingExitReset = true;
-                if (!_encoder.ResetDisplay())      // declined — retry next tick
-                    return;
-                _pendingExitReset = false;
-                _wasTelemetryLive = false;
-                _lastValues = null;                // repaint everything when telemetry returns
-                _lastSlotDefsSig = "";             // the reset cleared the firmware suffix — force a
-                                                   // re-decorate on resume (same page/suffix set won't
-                                                   // otherwise trip the sig change, so it'd stay blank)
-                _log("ITM: game exited — display reset (fields back to placeholders)");
-                return;
-            }
-            _wasTelemetryLive = telemetryLive;
-
-            // If the user changed the default page in settings, switch the display to it live
-            // (edge-triggered, so we don't fight the wheel button between changes). Runs in
-            // idle too — this is the settings panel's live preview.
-            if (DefaultPage != _lastPageApplied)
-            {
-                // Latch only on an accepted write — a declined PageSet retries next tick
-                // (the edge condition stays true until it lands).
-                if (_encoder.SetPage(_deviceId, DefaultPage))
-                {
-                    _lastPageApplied = DefaultPage;
-                    // Deliberately DON'T reseed here — keep the current subscriptions until the firmware
-                    // pushes the new page's set. Unlike bring-up (which has no prior state), a live switch
-                    // has valid subs to lose: if the PageSet flakes, or targets the page already shown (no
-                    // push comes back), a speculative reseed would strand the display on wrong-page handles
-                    // with nothing to correct it. The existing subs stay valid for whatever is displayed.
-                    _log("ITM: default page changed — forcing page " + DefaultPage);
-                }
-            }
-
-            // Values only flow while a game is feeding telemetry: SimHub keeps the last
-            // telemetry values around after a game exits, so painting from stale data
-            // would resurrect exactly the frozen frame the exit reset just cleared.
-            if (!telemetryLive)
-                return;
-
-            UpdateSlotDefs(data, now);   // refresh unit/total suffixes; tight double-tap so they stick
-            if (now - _lastValuesMs >= ValueIntervalMs)
-            {
-                SendSubscribedValues(data, now);
-                _lastValuesMs = now;
-            }
-        }
-
-        // Bring-up forces the default page via SetPage(device, DefaultPage), which makes the
-        // firmware push that page's subscription — but that push takes ~tens of ms to arrive, and
-        // a bare Enable announces nothing. Pre-seed the default page's handle→param map so values
-        // flow in that gap; the firmware's push then confirms/replaces it. Seeds only when empty.
-        private void SeedInitialSubscriptions()
-        {
-            if (_subs.Count > 0)
-                return;
-            var ids = SeedParamsForPage(DefaultPage);
-            for (int h = 0; h < ids.Count; h++)
-                // dataType 0 = unknown: values encode with the default (numeric) forms until
-                // the firmware's push supplies each slot's declared type.
-                _subs[(byte)h] = new ItmSubscription((byte)h, ids[h]);
-        }
-
-        // The params the given page carries on this driver's device (empty for an unknown page
-        // or the legacy page). Used only to seed handles 0..N-1 before the firmware's push lands.
-        private IReadOnlyList<ushort> SeedParamsForPage(byte page)
-        {
-            foreach (var p in ItmDeviceCatalog.PagesFor(_deviceId))
-                if (p.Number == page)
-                    return p.Params;
-            return Array.Empty<ushort>();
-        }
-
-        private void SendSubscribedValues(GameData data, long now)
-        {
-            if (_subs.Count == 0)
-                return;
-
             _valueBuf.Clear();
-            foreach (var kv in _subs)
+            var subs = _lifecycle.Subscriptions;
+            for (int i = 0; i < subs.Count; i++)
             {
+                var kv = subs[i];
                 if (ItmTelemetryMapper.TryEncodeParam(kv.Value.ParamId, kv.Key, data, kv.Value.DataType, out var v))
                     _valueBuf.Add(v);
                 else if (_unencodableWarned.Add(kv.Value.ParamId))
@@ -439,18 +367,21 @@ namespace FanaBridge.Adapters
                          " (handle " + kv.Key + ") — field will show dashes");
             }
 
+            if (_valueBuf.Count == 0)
+                return SendOutcome.NothingToSend;
+
             // Re-assert even unchanged values every RefreshIntervalMs: ValueUpdate is unacked,
             // and change-gated sending alone would leave a lost frame wrong on the display
             // until the value next changes.
             bool refresh = now - _lastSendOkMs >= RefreshIntervalMs;
-            if (_valueBuf.Count == 0 || (!refresh && !HasChanged(_valueBuf)))
-                return;
+            if (!force && !refresh && !HasChanged(_valueBuf))
+                return SendOutcome.NothingToSend;
 
             // Only record the values as last-sent (and log the first update) when the send
             // actually succeeded — a transport failure must not suppress the retry, or the
             // display would stay stale until a value changes.
             if (!_encoder.SendValues(_valueBuf, _deviceId))
-                return;
+                return SendOutcome.Declined;
 
             _lastSendOkMs = now;
             Remember(_valueBuf);
@@ -458,13 +389,10 @@ namespace FanaBridge.Adapters
             if (!_loggedFirstValues)
             {
                 _loggedFirstValues = true;
-                _log("ITM: first value update — " + _valueBuf.Count + " params: " + Describe());
+                _log("ITM: first value update — " + _valueBuf.Count + " params: " + _lifecycle.DescribeMap());
             }
+            return SendOutcome.Sent;
         }
-
-        private string Describe()
-            => string.Join(" ", _subs.Select(kv => "h" + kv.Key + "=p" + kv.Value.ParamId
-                + (kv.Value.DataType != 0 ? ":t" + kv.Value.DataType.ToString("X2") : "")));
 
         private bool HasChanged(IReadOnlyList<ItmValue> values)
         {

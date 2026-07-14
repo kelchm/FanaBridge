@@ -57,6 +57,11 @@ namespace FanaBridge.Adapters
         private byte _itmDeviceId;
         private bool _itmWasRunning;
         private bool _itmErrorLogged;
+        // Wheel-change edge detection (polled — no event subscription that could
+        // outlive a plugin generation, see issue #37). A wheel/hub/module change
+        // resets the display cold with no trace on the ITM channel, so the ITM
+        // lifecycle must restart from bring-up.
+        private int _itmWheelChangeCount;
         // True once the legacy page has been blanked after switching to mode "None",
         // so it is cleared once on the transition rather than every frame.
         private bool _legacyBlanked;
@@ -88,6 +93,38 @@ namespace FanaBridge.Adapters
 
         /// <summary>Test hook: the generation the cached drivers were built against.</summary>
         internal FanatecPlugin BoundPluginForTest => _boundPlugin;
+
+        // ITM status snapshot for the Device Status panel / diagnostics. Composed on the
+        // DataUpdate thread (the only thread that mutates the lifecycle) and read from the
+        // UI's DispatcherTimer — a volatile string hand-off instead of cross-thread reads
+        // of live state-machine fields. Refreshed on state/sync changes plus a coarse
+        // 1 s tick (the Unavailable line carries a retry countdown).
+        private volatile string _itmStatusSnapshot;
+        private ItmLifecycleState _itmSnapState;
+        private int _itmSnapGen;
+        private int _itmSnapTick;
+
+        private void PublishItmStatusSnapshot(ItmLifecycleState state)
+        {
+            int gen = _itmDisplay.Lifecycle.SyncGeneration;
+            int tick = Environment.TickCount;
+            // Wrap-safe elapsed check: Environment.TickCount rolls to int.MinValue every ~24.9
+            // days (and net48 has no TickCount64), so measure the delta as an unsigned difference
+            // — correct across the wrap, and it never throws even under a checked-arithmetic build.
+            if (_itmStatusSnapshot != null && state == _itmSnapState && gen == _itmSnapGen
+                && unchecked((uint)(tick - _itmSnapTick)) < 1000)
+                return;
+            _itmSnapState = state;
+            _itmSnapGen = gen;
+            _itmSnapTick = tick;
+            _itmStatusSnapshot = _itmDisplay.Lifecycle.Describe();
+        }
+
+        /// <summary>
+        /// The ITM lifecycle status line for the Device Status panel, or null when this
+        /// instance isn't driving an ITM display. Safe to read from any thread.
+        /// </summary>
+        internal string ItmStatusDescription => _itmDisplay == null ? null : _itmStatusSnapshot;
 
         public FanatecWheelDeviceInstance(DeviceConfig config)
         {
@@ -208,6 +245,10 @@ namespace FanaBridge.Adapters
             // lazily (DataUpdate builds them on demand from the live plugin).
             _displayManager = null;
             _itmDisplay = null;
+            // Clear the status cache the instant the driver is invalidated (not just at the
+            // rebuild site) so the Device Status row can never read a disposed generation's
+            // description in the window before the new driver publishes (issue #37 path).
+            _itmStatusSnapshot = null;
             _itmWasRunning = false;
             _itmErrorLogged = false;
             _legacyBlanked = false;
@@ -394,6 +435,7 @@ namespace FanaBridge.Adapters
                 _displayManager?.Clear();
                 _itmDisplay?.Stop();
                 _itmWasRunning = false;
+                _itmStatusSnapshot = null;   // don't show a stale ITM row while disconnected
                 // Reset one-shot latches so a reconnect starts clean: errors can log again
                 // and the legacy page can re-blank when the mode is "None".
                 _itmErrorLogged = false;
@@ -466,6 +508,13 @@ namespace FanaBridge.Adapters
                     _itmDisplay = new ItmDisplayDriver(plugin.Itm,
                         log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
                         deviceId: _itmDeviceId);
+                    // Baseline the wheel-change counter at creation — the driver is starting
+                    // cold anyway, so changes before this point are already accounted for.
+                    _itmWheelChangeCount = plugin.Wheelbase?.WheelChangeCount ?? 0;
+                    // Drop any status snapshot cached from a disposed generation's controller,
+                    // so the Device Status row never shows the old controller's description
+                    // (a plugin-generation rebind or a display-id change rebuilds the driver here).
+                    _itmStatusSnapshot = null;
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created ITM display driver");
                 }
@@ -482,19 +531,48 @@ namespace FanaBridge.Adapters
                     _itmDisplay.ShowPositionTotal = _displaySettings.ItmShowPositionTotal;
                     _itmDisplay.DefaultPage = _displaySettings.ItmDefaultPage;
 
+                    // A wheel/hub/module change (identity layer, FF 08) resets the display to
+                    // a cold state that is invisible on the ITM channel — restart the ITM
+                    // lifecycle from bring-up. Polled via the monotonic counter.
+                    int wheelChanges = plugin.Wheelbase?.WheelChangeCount ?? 0;
+                    if (wheelChanges != _itmWheelChangeCount)
+                    {
+                        _itmWheelChangeCount = wheelChanges;
+                        _itmDisplay.OnWheelChanged();
+                        // A hot-swap fully cold-restarts the lifecycle — re-arm the one-shot
+                        // "ITM enabled" log so the re-sync on the new wheel gets a fresh
+                        // confirmation line (swaps are infrequent, so no reconnect-loop noise).
+                        _itmWasRunning = false;
+                    }
+
                     // Feed the firmware's pushed ITM subscription reports (col03-IN) to the
                     // driver so it follows the page the wheel button selects.
                     plugin.Wheelbase?.DrainItmReports(_itmDisplay.OnSubscriptionReport);
 
                     _itmDisplay.Update(data);
 
-                    // Log the bring-up completing once, so hardware verification can
-                    // confirm from the SimHub log that ITM went live.
+                    // Log the FIRST bring-up completing per connection, so hardware
+                    // verification can confirm from the SimHub log that ITM went live.
+                    // Sticky until disconnect: IsRunning legitimately flaps through page
+                    // switches, game exits, and recoveries (the controller logs those
+                    // itself), and re-firing here would read as a reconnect loop.
                     if (_itmDisplay.IsRunning && !_itmWasRunning)
+                    {
+                        _itmWasRunning = true;
                         SimHub.Logging.Current.Info(
                             "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                             "]: ITM enabled — following firmware subscriptions");
-                    _itmWasRunning = _itmDisplay.IsRunning;
+                    }
+
+                    // While the display is failing (recovery ladder / unavailable), run the
+                    // TTL-cached co-driver probe so its detection edge lands in the session
+                    // log next to the failure it may explain — not only while the settings
+                    // tab happens to be open.
+                    var itmState = _itmDisplay.Lifecycle.State;
+                    if (itmState == ItmLifecycleState.Recovery || itmState == ItmLifecycleState.Unavailable)
+                        plugin.ProbeItmCoDriver();
+
+                    PublishItmStatusSnapshot(itmState);
 
                     // Optionally also drive the legacy 7-segment gear/speed over col01. On an
                     // ITM OLED (e.g. PBME) the firmware renders this on its legacy page. This

@@ -657,6 +657,50 @@ namespace FanaBridge.Tests
             Assert.Equal(8, drained[0][3]);                    // oldest 8 dropped
         }
 
+        [Fact]
+        public void WheelChange_ClearsBufferedItmReports()
+        {
+            // A wheel/hub change invalidates buffered ITM subscription reports: they were
+            // pushed by the PREVIOUS attachment, and feeding them to the restarted ITM
+            // lifecycle could falsely confirm the new wheel's bring-up against the old page.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("GTSWX")));   // an ITM wheel
+
+            t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, 0x11 });   // old wheel's push
+            clock.T += 10;
+            wb.UpdateIdentity();                                     // buffered
+
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("CSSWFORMV3")));   // rim swap
+
+            var drained = new List<byte[]>();
+            wb.DrainItmReports(drained.Add);
+            Assert.Empty(drained);   // the stale pre-swap report was cleared
+        }
+
+        [Fact]
+        public void RefreshCapabilities_DoesNotCountAsAWheelChange()
+        {
+            // WheelChangeCount drives the ITM lifecycle's cold-restart. A profile-store
+            // re-resolution (override save, profile delete) fires WheelChanged too, but the
+            // physical attachment is unchanged — bumping the count would needlessly cold-
+            // restart the ITM display because the user saved an unrelated setting.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("GTSWX")));
+
+            int afterIdentity = wb.WheelChangeCount;
+            Assert.True(afterIdentity > 0);   // the identity commit counted
+
+            wb.RefreshCapabilities();
+            Assert.Equal(afterIdentity, wb.WheelChangeCount);   // the re-resolution did not
+
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("CSSWFORMV3")));   // a real swap
+            Assert.Equal(afterIdentity + 1, wb.WheelChangeCount);
+        }
+
         // ── Guard rails ────────────────────────────────────────────────────
 
         [Fact]

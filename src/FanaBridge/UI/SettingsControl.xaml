@@ -52,6 +52,19 @@
                         <TextBlock Text="Capabilities" Foreground="#888888" FontSize="11" />
                     </StackPanel>
 
+                    <!-- ITM display lifecycle state (only while an ITM display is driven).
+                         Refreshed on a light timer — the state machine moves without
+                         StateChanged firing (page switches, recovery, game exits). -->
+                    <StackPanel x:Name="panelItmStatus" Margin="0,8,0,2" Visibility="Collapsed">
+                        <TextBlock x:Name="txtItmStatus" Text="—" TextWrapping="Wrap" />
+                        <TextBlock Text="ITM Display" Foreground="#888888" FontSize="11" />
+                    </StackPanel>
+
+                    <!-- Co-driver warning: the vendor app/service writes the same display
+                         with no arbitration; there is no wire-level way to detect it. -->
+                    <TextBlock x:Name="txtItmCoDriver" Foreground="#E0A800" FontSize="11"
+                               TextWrapping="Wrap" Margin="0,4,0,4" Visibility="Collapsed" />
+
                     <!-- Shown when the attached wheel resolves to a registered SimHub
                          device the user hasn't added yet — LED/display output never
                          starts without the device. Sits below the status readout

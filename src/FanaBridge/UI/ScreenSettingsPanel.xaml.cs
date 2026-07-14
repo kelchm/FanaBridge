@@ -46,6 +46,7 @@ namespace FanaBridge.UI
             PopulateDefaultPages(itmDeviceId);
             SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
 
+
             borderItmInfo.Visibility = isItm ? Visibility.Visible : Visibility.Collapsed;
             sectionItmOptions.Visibility = isItm ? Visibility.Visible : Visibility.Collapsed;
             // The mode selector drives the simple 7-seg gear/speed — the only display on
