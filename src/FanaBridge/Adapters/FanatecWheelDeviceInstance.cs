@@ -108,8 +108,11 @@ namespace FanaBridge.Adapters
         {
             int gen = _itmDisplay.Lifecycle.SyncGeneration;
             int tick = Environment.TickCount;
+            // Wrap-safe elapsed check: Environment.TickCount rolls to int.MinValue every ~24.9
+            // days (and net48 has no TickCount64), so measure the delta as an unsigned difference
+            // — correct across the wrap, and it never throws even under a checked-arithmetic build.
             if (_itmStatusSnapshot != null && state == _itmSnapState && gen == _itmSnapGen
-                && tick - _itmSnapTick < 1000)
+                && unchecked((uint)(tick - _itmSnapTick)) < 1000)
                 return;
             _itmSnapState = state;
             _itmSnapGen = gen;

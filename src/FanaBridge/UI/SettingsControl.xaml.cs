@@ -324,7 +324,9 @@ namespace FanaBridge.UI
 
             panelItmStatus.Visibility = itm == null ? Visibility.Collapsed : Visibility.Visible;
             txtItmStatus.Text = itm ?? "—";
-            txtItmCoDriver.Text = "⚠  " + warn;
+            // Only carry the warning glyph when there is a warning — a collapsed element still
+            // exposes its Text to automation/accessibility trees, so don't leave a stray "⚠".
+            txtItmCoDriver.Text = warn == null ? "" : "⚠  " + warn;
             txtItmCoDriver.Visibility = warn == null ? Visibility.Collapsed : Visibility.Visible;
         }
 
