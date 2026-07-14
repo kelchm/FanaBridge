@@ -80,8 +80,9 @@ namespace FanaBridge.Adapters
 
                 // Lap Times
                 [ItmParam.BestLapTime] = F32(ItmParam.BestLapTime, d => Seconds(d.BestLapTime)),
-                // Car ahead is shown as a negative gap (you're behind them); car behind positive.
-                [ItmParam.CarAhead] = F32(ItmParam.CarAhead, d => -(float)Math.Round(NearestGap(d.OpponentsAheadOnTrack), 2)),
+                // Both gaps are sent as positive magnitudes — the firmware decorates the field
+                // with its own sign, so a negative value renders a doubled sign ("+-1.51s").
+                [ItmParam.CarAhead] = F32(ItmParam.CarAhead, d => (float)Math.Round(NearestGap(d.OpponentsAheadOnTrack), 2)),
                 [ItmParam.CarBehind] = F32(ItmParam.CarBehind, d => (float)Math.Round(NearestGap(d.OpponentsBehindOnTrack), 2)),
 
                 // Tyre Temps

@@ -319,11 +319,11 @@ namespace FanaBridge.Tests
         public void CarGaps_AreRoundedToTwoDecimals()
         {
             var s = NewStatus();
-            Set(s, "OpponentsAheadOnTrack", OpponentList(1.997));    // -> 2.00, negated (you're behind them)
+            Set(s, "OpponentsAheadOnTrack", OpponentList(1.997));    // -> 2.00
             Set(s, "OpponentsBehindOnTrack", OpponentList(1.992));   // -> 1.99
             Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.CarAhead, 10, Wrap(s), out var ahead));
             Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.CarBehind, 11, Wrap(s), out var behind));
-            Assert.Equal(-2.0f, AsF32(ahead), 3);
+            Assert.Equal(2.0f, AsF32(ahead), 3);
             Assert.Equal(1.99f, AsF32(behind), 3);
         }
 
@@ -539,9 +539,10 @@ namespace FanaBridge.Tests
             Set(s, "OpponentsAheadOnTrack", OpponentList(2.5, 0.8, 5.0));    // nearest = 0.8
             Set(s, "OpponentsBehindOnTrack", OpponentList(-1.2, -3.4));     // nearest = 1.2 (abs)
 
-            // Car ahead is negative (you're behind them); car behind is positive.
+            // Both gaps are positive magnitudes — the firmware renders the field's own sign,
+            // so a negative value would show a doubled sign on the display.
             Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.CarAhead, 4, Wrap(s), out var ahead));
-            Assert.Equal(-0.8f, AsF32(ahead), 3);
+            Assert.Equal(0.8f, AsF32(ahead), 3);
             Assert.True(ItmTelemetryMapper.TryEncodeParam(ItmParam.CarBehind, 5, Wrap(s), out var behind));
             Assert.Equal(1.2f, AsF32(behind), 3);
         }

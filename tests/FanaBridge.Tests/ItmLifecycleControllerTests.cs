@@ -977,7 +977,8 @@ namespace FanaBridge.Tests
         public void WheelButtonToLegacy_Adopted_NotRecoveredAway()
         {
             // Synced on a telemetry page, the user presses the wheel button to the legacy page:
-            // the firmware sends an unsubscribe-all with nothing following. Adopt "on legacy" —
+            // the firmware sends an unsubscribe-all with nothing following. The recent sync puts
+            // this inside the activity window, so it reads as user navigation: adopt "on legacy",
             // never re-PageSet back to a telemetry page. (The "can't select legacy" bug.)
             byte legacy = LegacyPage();
             var c = Make(out var t, out var clock);
@@ -993,6 +994,85 @@ namespace FanaBridge.Tests
             Assert.Equal(ItmLifecycleState.Synced, c.State);
             Assert.Equal(legacy, c.CurrentPage);
             Assert.DoesNotContain(t.Sent, IsPageSet);        // did NOT fight it back to telemetry
+        }
+
+        [Fact]
+        public void SpontaneousUnsubMidGame_RecoversThePage_InsteadOfAdoptingLegacy()
+        {
+            // Field-observed (ClubSport DD + GTSWX): mid-game, out of steady state — no host
+            // command, no user input — the firmware unsubscribes everything and the display
+            // falls to the legacy page, looking "ITM disabled" until a manual page change.
+            // With telemetry live and no page activity inside the window, the unsub-all is
+            // that drop, not the user choosing legacy: recover the page we were on.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);                                       // synced on page 1
+            Tick(c, clock, c.SpontaneousUnsubWindowMs + 1);          // long steady state
+            t.Sent.Clear();
+
+            c.OnPush(UnsubAll(6));                                   // spontaneous firmware drop
+            Tick(c, clock, c.AccumulateWindowMs);                    // unsub-only → grace opens
+            Tick(c, clock, c.UnsubGraceMs + 1);                      // nothing follows → recovery
+
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);
+            Assert.Contains(t.Sent, IsPageSetTo(c.DefaultPage));     // re-asserting the dropped page
+
+            c.OnPush(PushFor(c.DefaultPage));                        // firmware confirms the page
+            Tick(c, clock, c.AccumulateWindowMs);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(c.DefaultPage, c.CurrentPage);
+            Assert.True(c.ValuesAllowed);                            // ITM back without user action
+        }
+
+        [Fact]
+        public void SpontaneousUnsub_AtIdle_StillAdoptsLegacy()
+        {
+            // Without live telemetry there is nothing to bring back — a drop to legacy at idle
+            // is adopted exactly as before (fighting it would loop against a user poking the
+            // wheel with no game running).
+            byte legacy = LegacyPage();
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock, live: false);
+            Tick(c, clock, c.SpontaneousUnsubWindowMs + 1, live: false);
+            t.Sent.Clear();
+
+            c.OnPush(UnsubAll(6));
+            Tick(c, clock, c.AccumulateWindowMs, live: false);
+            Tick(c, clock, c.UnsubGraceMs + 1, live: false);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(legacy, c.CurrentPage);
+            Assert.DoesNotContain(t.Sent, IsPageSet);
+        }
+
+        [Fact]
+        public void SpontaneousUnsub_SecondDropAfterRecovery_IsRespectedAsLegacy()
+        {
+            // A second unsub-all arriving shortly after the recovery re-sync lands inside the
+            // activity window: an insistent user (or firmware too broken to keep fighting) gets
+            // the legacy page. One automatic recovery, never a fight loop.
+            byte legacy = LegacyPage();
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+            Tick(c, clock, c.SpontaneousUnsubWindowMs + 1);
+
+            c.OnPush(UnsubAll(6));                                   // first drop → recovery
+            Tick(c, clock, c.AccumulateWindowMs);
+            Tick(c, clock, c.UnsubGraceMs + 1);
+            Assert.Equal(ItmLifecycleState.Recovery, c.State);
+            c.OnPush(PushFor(c.DefaultPage));                        // recovery confirms
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            t.Sent.Clear();
+
+            Tick(c, clock, 1_000);                                   // shortly after — inside window
+            c.OnPush(UnsubAll(6));                                   // dropped again
+            Tick(c, clock, c.AccumulateWindowMs);
+            Tick(c, clock, c.UnsubGraceMs + 1);
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State);
+            Assert.Equal(legacy, c.CurrentPage);                     // respected this time
+            Assert.DoesNotContain(t.Sent, IsPageSet);
         }
 
         [Fact]

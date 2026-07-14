@@ -51,7 +51,10 @@ namespace FanaBridge.Protocol
     ///   gate <i>setting</i> persists — every cold entry re-runs the full bring-up, and a
     ///   wheel-change event (from the identity layer) is treated as a cold start.
     /// - Unexpected pushes are adopted in every state (wheel-button page changes, late pushes
-    ///   from a boot-cold base): the firmware is the source of truth and is never fought.
+    ///   from a boot-cold base): the firmware is the source of truth and is never fought. The
+    ///   one exception is a spontaneous unsubscribe-all during live telemetry with no recent
+    ///   page activity — field-observed firmware behavior that silently strands the display on
+    ///   the legacy page; that is a session drop, not a user action, and it is recovered.
     ///
     /// This class is a pure state machine: injected clock, no HID reads, no threads. It consumes
     /// parsed pushes (<see cref="OnPush"/>), telemetry-liveness edges (<see cref="Tick"/>), user
@@ -81,8 +84,18 @@ namespace FanaBridge.Protocol
 
         /// <summary>Grace window after an unsubscribe-only push in Synced: subscriptions arriving
         /// within it are a page change (host- or button-driven); nothing arriving means the
-        /// firmware dropped our subscriptions → Recovery.</summary>
+        /// display moved to the legacy page — by the user, or by a firmware drop (see
+        /// <see cref="SpontaneousUnsubWindowMs"/>).</summary>
         public int UnsubGraceMs { get; set; } = 100;
+
+        /// <summary>How recently some page activity (a host page change, or any adopted push)
+        /// must have happened for an unsubscribe-all with nothing following to be read as the
+        /// user navigating to the legacy page. With no activity inside this window and game
+        /// telemetry live, it is a spontaneous firmware session drop (observed in the field:
+        /// ClubSport DD drops all subscriptions with no host command and no user input,
+        /// stranding the display on legacy — "ITM disappeared") and is recovered instead of
+        /// adopted.</summary>
+        public int SpontaneousUnsubWindowMs { get; set; } = 5_000;
 
         /// <summary>Quiet time between suspending values and sending a host PageSet. Suspension
         /// is load-bearing: switches with values streaming alongside fail a substantial fraction
@@ -176,6 +189,11 @@ namespace FanaBridge.Protocol
 
         // Unsubscribe-grace (Synced only).
         private long _graceUntil;    // 0 = none
+
+        // When a page last changed or was confirmed by any means (host request, push
+        // confirmation, adopted wheel-button change). Read by the spontaneous-drop
+        // disambiguation — user navigation to legacy always has recent activity.
+        private long _lastPageActivityMs;
 
         // Adopted handle map (from pushes only — cold entries clear it; there is no seeding).
         private readonly SortedDictionary<byte, ItmSubscription> _subs =
@@ -474,13 +492,31 @@ namespace FanaBridge.Protocol
                     var set = SubscribedParamSet();
                     if (set.Count == 0)
                     {
-                        // An unsubscribe-all with nothing following means the display moved to
-                        // the legacy ITM page (no telemetry parameters) — the wheel button
-                        // reaches it, and it's a valid destination. Adopt it; never fight it
-                        // back to a telemetry page (that was the "can't select legacy" bug).
-                        CurrentPage = LegacyPageNumber();
-                        SyncGeneration++;
-                        _log("ITM: on the legacy ITM page (no telemetry parameters)");
+                        // An unsubscribe-all with nothing following has two causes with an
+                        // identical wire shape: the user navigating to the legacy ITM page (a
+                        // valid destination — adopt it, never fight it back; that was the
+                        // "can't select legacy" bug), and the firmware spontaneously dropping
+                        // the session (field-observed on ClubSport DD: no host command, no
+                        // user input — the display falls to legacy mid-game and looks "ITM
+                        // disabled" until a manual page change). Recent page activity is the
+                        // disambiguator: navigation always has some, a drop out of steady
+                        // state has none. Only fight while a game is live — and a second drop
+                        // arriving shortly after the recovery lands inside the window, so an
+                        // insistent user (or hopelessly broken firmware) is respected.
+                        if (telemetryLive && CurrentPage != 0 && !IsLegacyPage(CurrentPage)
+                            && now - _lastPageActivityMs > SpontaneousUnsubWindowMs)
+                        {
+                            _log("ITM: firmware dropped all subscriptions mid-game (no page activity for "
+                                 + (now - _lastPageActivityMs) + " ms) — recovering page " + CurrentPage);
+                            EnterRecovery(CurrentPage, Rung.PageSet1);
+                        }
+                        else
+                        {
+                            CurrentPage = LegacyPageNumber();
+                            SyncGeneration++;
+                            _lastPageActivityMs = now;
+                            _log("ITM: on the legacy ITM page (no telemetry parameters)");
+                        }
                     }
                     else
                     {
@@ -488,6 +524,7 @@ namespace FanaBridge.Protocol
                         // pages we don't. Adopt it; values flow for the encodable params.
                         CurrentPage = PageForParamSet(set);
                         SyncGeneration++;
+                        _lastPageActivityMs = now;
                         _log("ITM: adopted uncataloged page set: " + DescribeMap());
                     }
                 }
@@ -560,6 +597,7 @@ namespace FanaBridge.Protocol
             State = ItmLifecycleState.Switching;
             ClearExpectation();
             _graceUntil = 0;
+            _lastPageActivityMs = _now();
             _quietUntil = _now() + SwitchQuietMs;   // values are suspended from this instant
         }
 
@@ -752,6 +790,7 @@ namespace FanaBridge.Protocol
                     _graceUntil = 0;
                     CurrentPage = matchedPage;
                     SyncGeneration++;
+                    _lastPageActivityMs = now;
                     _log("ITM: page changed at the wheel — now page " + matchedPage + ": " + DescribeMap());
                     break;
                 case ItmLifecycleState.AwaitPush:
@@ -803,6 +842,7 @@ namespace FanaBridge.Protocol
             _rung = Rung.None;
             _backoffIdx = 0;
             SyncGeneration++;
+            _lastPageActivityMs = _now();
             _log("ITM: " + why + " — page " + (page == 0 ? "?" : page.ToString())
                  + (recovered ? " (recovered)" : "") + ": " + DescribeMap());
 
