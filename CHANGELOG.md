@@ -1,9 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.6.0 - 2026-07-14
 
 ### Changed
-- Internal: the device stack (HID transport, Fanatec protocol, wheel profiles) now lives in a separate `FanaBridge.Core` project, merged into the shipped `FanaBridge.dll` at package time — installation is unchanged (still a single DLL).
+- ITM display reworked for reliable page switching and automatic recovery (experimental): page changes are confirmed by the display instead of sent blind, a stuck display self-recovers, fields clear cleanly outside a game, and the starting-page setting re-applies each game start. Device Status shows the live ITM state and warns when Fanatec's own software is running alongside FanaBridge. ([#69](https://github.com/kelchm/FanaBridge/pull/69))
+- Internal: the device stack now lives in a separate `FanaBridge.Core` project, merged into the shipped `FanaBridge.dll` at package time — installation is unchanged. ([#67](https://github.com/kelchm/FanaBridge/pull/67))
+- Internal: repository reorganized (`src`/`tests`/`scripts`) with build, test-seam, and CI improvements — no functional or install impact. ([#58](https://github.com/kelchm/FanaBridge/pull/58), [#61](https://github.com/kelchm/FanaBridge/pull/61), [#62](https://github.com/kelchm/FanaBridge/pull/62), [#66](https://github.com/kelchm/FanaBridge/pull/66))
+
+### Fixed
+- Gear now renders on Formula V3 and GT Extreme wheels, which declare the gear field as text rather than a number. ([#68](https://github.com/kelchm/FanaBridge/pull/68), fixes [#70](https://github.com/kelchm/FanaBridge/issues/70))
+- ITM bring-up, page changes, and "/total" suffixes are retried when the wheel briefly declines a write, so the display no longer streams to a session that never started. ([#60](https://github.com/kelchm/FanaBridge/pull/60))
+- Display-type and ITM device-id profile overrides now take effect live, without a restart. ([#64](https://github.com/kelchm/FanaBridge/pull/64))
+- Control Mapper integration failures now show a clear status line instead of stopping silently, and a transient startup hiccup no longer disables it for the session. ([#63](https://github.com/kelchm/FanaBridge/pull/63))
+- Pulling a wheel mid-session no longer logs a warning every second (a re-armed SRM Conversion Kit ping loop). ([#65](https://github.com/kelchm/FanaBridge/pull/65))
+- Fixed an LED-pipeline stall when a profile changed mid-write, wrong LED bindings after changing counts via Back in the profile wizard, and the 7-segment display test fighting live gear/speed. ([#60](https://github.com/kelchm/FanaBridge/pull/60))
 
 ## v0.5.0 - 2026-07-07
 
