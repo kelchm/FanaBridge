@@ -35,8 +35,8 @@ namespace FanaBridge.UI
     /// <summary>One recent-activity row: relative age plus the event's pre-built text.</summary>
     internal sealed class ActivityRowModel
     {
-        /// <summary>Age at render time, "mm:ss" (or "h:mm:ss" past an hour).</summary>
-        public string Age { get; set; }
+        /// <summary>The event's absolute local wall-clock time, "HH:mm:ss".</summary>
+        public string Time { get; set; }
 
         public string Text { get; set; }
     }
@@ -44,9 +44,9 @@ namespace FanaBridge.UI
     /// <summary>
     /// Maps the volatile engine snapshots into the Overview view's row models — all of the
     /// Display tab's rendering decisions that are not literally WPF live here, so they are
-    /// unit-testable with no UI thread. Pure functions of their inputs; relative ages use
-    /// the engine-clock "now" estimated by <see cref="EstimatedNowMs"/> from the snapshot's
-    /// own compose stamps (engine clock + wall clock).
+    /// unit-testable with no UI thread. Pure functions of their inputs; activity
+    /// timestamps are absolute wall-clock times derived via <see cref="EventTimeUtc"/>
+    /// from the snapshot's dual compose stamps (engine clock + wall clock).
     /// </summary>
     internal static class DisplayOverviewRender
     {
@@ -83,17 +83,6 @@ namespace FanaBridge.UI
                     return page.Name;
             return ItmTelemetry.NameOf(ItmPage.LapInfo);
         }
-
-        /// <summary>
-        /// The engine clock's estimated current value: the snapshot's compose clock plus
-        /// the wall time elapsed since composition (the snapshot stamps both). Correct
-        /// however late the snapshot is first observed — a panel-side "first seen" anchor
-        /// would understate every age when the dialog opens after a quiet period, because
-        /// composition is change-gated and the latest snapshot can be minutes old.
-        /// </summary>
-        public static long EstimatedNowMs(DisplayRuleSnapshot snapshot, DateTime utcNow)
-            => snapshot.ComposedAtMs
-                + (long)(utcNow - snapshot.ComposedAtUtc).TotalMilliseconds;
 
         /// <summary>True when the config has ITM trigger rules — gates the priority list's
         /// "No triggers configured yet." empty state.</summary>
@@ -151,11 +140,14 @@ namespace FanaBridge.UI
         }
 
         /// <summary>
-        /// The activity card's rows: newest first, capped at <see cref="ActivityCap"/>.
-        /// <paramref name="nowMs"/> is the estimated current engine-clock value (events and
-        /// <see cref="DisplayRuleSnapshot.ComposedAtMs"/> share that clock).
+        /// The activity card's rows: newest first, capped at <see cref="ActivityCap"/>,
+        /// stamped with the event's absolute LOCAL wall-clock time ("09:41:12", per the
+        /// design). Events carry engine-clock ms; the snapshot stamps both clocks at
+        /// composition, so an event's wall time is the compose wall time minus how far
+        /// the event preceded composition on the engine clock — exact regardless of how
+        /// stale the snapshot is when the panel first observes it.
         /// </summary>
-        public static List<ActivityRowModel> ActivityRows(DisplayRuleSnapshot snapshot, long nowMs)
+        public static List<ActivityRowModel> ActivityRows(DisplayRuleSnapshot snapshot)
         {
             var rows = new List<ActivityRowModel>();
             var events = snapshot?.Activity;
@@ -164,26 +156,18 @@ namespace FanaBridge.UI
             for (int i = events.Count - 1; i >= 0 && rows.Count < ActivityCap; i--)
                 rows.Add(new ActivityRowModel
                 {
-                    Age = FormatAge(nowMs - events[i].AtMs),
+                    Time = EventTimeUtc(snapshot, events[i].AtMs).ToLocalTime()
+                        .ToString("HH:mm:ss"),
                     Text = events[i].Text,
                 });
             return rows;
         }
 
-        /// <summary>A relative age as "mm:ss", growing to "h:mm:ss" past an hour. Clock skew
-        /// (an event newer than the estimate) clamps to zero rather than going negative.</summary>
-        public static string FormatAge(long ageMs)
-        {
-            if (ageMs < 0)
-                ageMs = 0;
-            long totalSeconds = ageMs / 1000;
-            long hours = totalSeconds / 3600;
-            long minutes = totalSeconds % 3600 / 60;
-            long seconds = totalSeconds % 60;
-            return hours > 0
-                ? hours + ":" + minutes.ToString("00") + ":" + seconds.ToString("00")
-                : minutes.ToString("00") + ":" + seconds.ToString("00");
-        }
+        /// <summary>An event's absolute UTC wall time from the snapshot's dual compose
+        /// stamps (engine ms + UTC taken together at composition).</summary>
+        public static DateTime EventTimeUtc(DisplayRuleSnapshot snapshot, long eventAtMs)
+            => snapshot.ComposedAtUtc
+                - TimeSpan.FromMilliseconds(snapshot.ComposedAtMs - eventAtMs);
 
         /// <summary>
         /// The current-page card's caption, from the lifecycle status line

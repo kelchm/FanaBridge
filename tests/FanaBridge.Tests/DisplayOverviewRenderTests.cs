@@ -191,51 +191,46 @@ namespace FanaBridge.Tests
         // ── Activity rows ────────────────────────────────────────────────
 
         [Fact]
-        public void ActivityRows_NewestFirst_CappedAtTen_WithRelativeAges()
+        public void ActivityRows_NewestFirst_CappedAtTen_WithWallClockTimes()
         {
-            // 12 events, oldest first (the snapshot's order), 1 s apart.
+            // 12 events, oldest first (the snapshot's order), 1 s apart, composed at
+            // engine 12s = 12:00:00 UTC. Timestamps are ABSOLUTE local times (the design
+            // shows "09:41:12"-style clock times, not ages).
+            var composedUtc = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
             var events = new DisplayActivityEvent[12];
             for (int i = 0; i < 12; i++)
                 events[i] = new DisplayActivityEvent(
                     atMs: i * 1000, ActivityKind.RuleFired, "event " + i, "r" + i);
-            var snapshot = Snapshot(activity: events, composedAtMs: 12_000);
+            var snapshot = Snapshot(activity: events, composedAtMs: 12_000,
+                composedAtUtc: composedUtc);
 
-            var rows = DisplayOverviewRender.ActivityRows(snapshot, nowMs: 12_000);
+            var rows = DisplayOverviewRender.ActivityRows(snapshot);
 
             Assert.Equal(DisplayOverviewRender.ActivityCap, rows.Count);
             Assert.Equal("event 11", rows[0].Text);     // newest first
             Assert.Equal("event 2", rows[9].Text);      // the two oldest fell off
-            Assert.Equal("00:01", rows[0].Age);         // 12000 - 11000
-            Assert.Equal("00:10", rows[9].Age);
+            // Rendered times are local; assert through the same conversion the
+            // renderer uses so the test is timezone-independent.
+            Assert.Equal(composedUtc.AddSeconds(-1).ToLocalTime().ToString("HH:mm:ss"),
+                rows[0].Time);   // event 11 fired 1 s before composition
+            Assert.Equal(composedUtc.AddSeconds(-10).ToLocalTime().ToString("HH:mm:ss"),
+                rows[9].Time);
         }
 
         [Fact]
         public void ActivityRows_NullSnapshot_Empty()
         {
-            Assert.Empty(DisplayOverviewRender.ActivityRows(null, nowMs: 0));
+            Assert.Empty(DisplayOverviewRender.ActivityRows(null));
         }
 
         [Fact]
-        public void EstimatedNowMs_AddsTheWallTimeSinceComposition()
+        public void EventTimes_AreAbsolute_UnaffectedByHowStaleTheSnapshotIs()
         {
-            // Composition is change-gated, so the latest snapshot can be minutes old when
-            // it is first observed (a settings dialog opened after a quiet period). The
-            // estimate must be compose clock + wall time SINCE COMPOSITION — never
-            // anchored to when the observer first saw the reference.
-            var composedUtc = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
-            var snapshot = Snapshot(composedAtMs: 5_000, composedAtUtc: composedUtc);
-
-            Assert.Equal(5_000,
-                DisplayOverviewRender.EstimatedNowMs(snapshot, composedUtc));
-            Assert.Equal(5_000 + 15 * 60_000,
-                DisplayOverviewRender.EstimatedNowMs(snapshot, composedUtc.AddMinutes(15)));
-        }
-
-        [Fact]
-        public void ActivityAges_ReflectTimeSinceTheEvent_NotSinceComposition()
-        {
-            // A rule fired 2 s before the last compose; the dialog opens 15 minutes
-            // later. The age must read ~15:02, not 00:02.
+            // Composition is change-gated, so the latest snapshot can be minutes old
+            // when the dialog opens. Absolute event times derive purely from the
+            // snapshot's own dual compose stamps — a rule that fired 2 s before an
+            // 12:00:00 compose reads 11:59:58 whether the dialog opens now or an hour
+            // from now (the old relative-age rendering had exactly this staleness bug).
             var composedUtc = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
             var snapshot = Snapshot(
                 activity: new[] { new DisplayActivityEvent(
@@ -243,23 +238,11 @@ namespace FanaBridge.Tests
                 composedAtMs: 60_000,
                 composedAtUtc: composedUtc);
 
-            long nowMs = DisplayOverviewRender.EstimatedNowMs(
-                snapshot, composedUtc.AddMinutes(15));
-            var row = Assert.Single(DisplayOverviewRender.ActivityRows(snapshot, nowMs));
-            Assert.Equal("15:02", row.Age);
-        }
-
-        [Theory]
-        [InlineData(0, "00:00")]
-        [InlineData(999, "00:00")]
-        [InlineData(12_000, "00:12")]
-        [InlineData(72_000, "01:12")]
-        [InlineData(3_599_000, "59:59")]
-        [InlineData(3_725_000, "1:02:05")]
-        [InlineData(-500, "00:00")]   // clock-skew clamp
-        public void FormatAge_MmSs_GrowingToHours(long ageMs, string expected)
-        {
-            Assert.Equal(expected, DisplayOverviewRender.FormatAge(ageMs));
+            Assert.Equal(new DateTime(2026, 1, 1, 11, 59, 58, DateTimeKind.Utc),
+                DisplayOverviewRender.EventTimeUtc(snapshot, eventAtMs: 58_000));
+            var row = Assert.Single(DisplayOverviewRender.ActivityRows(snapshot));
+            Assert.Equal(composedUtc.AddSeconds(-2).ToLocalTime().ToString("HH:mm:ss"),
+                row.Time);
         }
 
         // ── Current-page caption ─────────────────────────────────────────

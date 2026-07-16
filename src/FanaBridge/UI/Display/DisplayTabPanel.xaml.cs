@@ -23,10 +23,9 @@ namespace FanaBridge.UI
     ///
     /// Threading: everything live is read through the <see cref="IDisplayPanelHost"/>
     /// members — the snapshot accessor returns the ONE immutable envelope the device
-    /// instance publishes. A DispatcherTimer polls it at 500 ms while the panel is
+    /// instance publishes. A DispatcherTimer polls it at 100 ms while the panel is
     /// loaded and re-renders per part on change (values part → the mirror; rule part
-    /// or status line → the rows), plus a 1 s floor so the relative-age labels keep
-    /// ticking between snapshots. The panel never touches engine state directly.
+    /// or status line → the rows). The panel never touches engine state directly.
     /// </summary>
     public partial class DisplayTabPanel : UserControl
     {
@@ -44,7 +43,6 @@ namespace FanaBridge.UI
         private DisplayRuleSnapshot _lastSnapshot;
         private DisplayValuesSnapshot _lastValues;
         private string _lastStatus;
-        private DateTime _lastAgeRenderUtc;
 
         // ── Palette (the design mock's SimHub-dark values) ───────────────
         private static readonly SolidColorBrush AccentBg = Frozen("#1E8FD5");
@@ -337,12 +335,6 @@ namespace FanaBridge.UI
                 RenderPriority(snapshot);
                 RenderActivity(snapshot);
             }
-            else if (snapshot != null && snapshot.Activity.Count > 0
-                && (DateTime.UtcNow - _lastAgeRenderUtc).TotalMilliseconds >= 1000)
-            {
-                // Nothing changed, but the age labels still tick — 1 s floor.
-                RenderActivity(snapshot);
-            }
         }
 
         // ── Overview rendering (row models from DisplayOverviewRender) ───
@@ -366,13 +358,11 @@ namespace FanaBridge.UI
 
         private void RenderActivity(DisplayRuleSnapshot snapshot)
         {
-            _lastAgeRenderUtc = DateTime.UtcNow;
             panelActivity.Children.Clear();
             int count = 0;
             if (snapshot != null)
             {
-                var rows = DisplayOverviewRender.ActivityRows(snapshot,
-                    DisplayOverviewRender.EstimatedNowMs(snapshot, DateTime.UtcNow));
+                var rows = DisplayOverviewRender.ActivityRows(snapshot);
                 foreach (var row in rows)
                     panelActivity.Children.Add(BuildActivityRow(row));
                 count = rows.Count;
@@ -490,7 +480,7 @@ namespace FanaBridge.UI
 
             var age = new TextBlock
             {
-                Text = model.Age,
+                Text = model.Time,
                 FontFamily = new FontFamily("Consolas"),
                 FontSize = 11.5,
                 Foreground = AgeText,
