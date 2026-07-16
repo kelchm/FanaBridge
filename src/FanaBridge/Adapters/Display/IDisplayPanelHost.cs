@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using FanaBridge.Customization;
 using FanaBridge.Profiles;
 
@@ -46,5 +47,20 @@ namespace FanaBridge.Adapters
         /// instance syncs <see cref="DisplaySettings"/> back into its persisted
         /// settings — the same callback contract the old Screen panel had.</summary>
         void NotifySettingsChanged();
+
+        /// <summary>Every SimHub property name the picker can offer, from
+        /// <c>PluginManager.GetAllPropertiesNames()</c>. Defensively wrapped (null plugin
+        /// manager or an exception yields an empty list). Fetched on demand when the
+        /// picker opens — never per frame; the list can hold thousands of names.</summary>
+        IReadOnlyList<string> GetAllPropertyNames();
+
+        /// <summary>Control Mapper roles for THIS rim, for the mapped-control add flow.
+        /// Reads the wheel's own button→role mappings when present (marked
+        /// <see cref="MappedRolesSource.MappedOnThisWheel"/>), else falls back to the
+        /// sanctioned role catalog (<see cref="MappedRolesSource.AllRoles"/>), else empty
+        /// (<see cref="MappedRolesSource.None"/>) — so the UI can hint "mapped on this
+        /// wheel" vs "all roles". Read-only; no Control Mapper writes anywhere. Fetched on
+        /// demand (dropdown open).</summary>
+        MappedRoles GetMappedRoles();
     }
 }

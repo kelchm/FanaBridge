@@ -446,5 +446,19 @@ namespace FanaBridge.Tests
             host.NotifySettingsChanged();
             Assert.Equal((byte?)5, (byte?)((JObject)s.Instance.GetSettings(false, false))["itmDefaultPage"]);
         }
+
+        [Fact]
+        public void Host_PickerSurfaces_DegradeToEmpty_WithNoPluginManager()
+        {
+            // Init is never called in this harness, so PluginManager is null — the
+            // on-demand picker surfaces must return empties, never throw.
+            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            var host = s.Host;
+
+            Assert.Empty(host.GetAllPropertyNames());
+            var roles = host.GetMappedRoles();
+            Assert.Equal(MappedRolesSource.None, roles.Source);
+            Assert.Empty(roles.Roles);
+        }
     }
 }

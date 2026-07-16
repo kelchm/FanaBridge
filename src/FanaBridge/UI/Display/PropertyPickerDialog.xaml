@@ -1,0 +1,76 @@
+<Window x:Class="FanaBridge.UI.PropertyPickerDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Pick a property"
+        Width="460" Height="560"
+        WindowStartupLocation="CenterOwner"
+        Background="#252527"
+        Foreground="White"
+        ShowInTaskbar="False">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#3A3A3C" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderBrush" Value="#565658" />
+            <Setter Property="Padding" Value="16,6" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <!-- One list row: a group header (muted, uppercase, non-selectable) or a
+             pickable property name (monospace). -->
+        <Style x:Key="PickerItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                    <Setter Property="Focusable" Value="False" />
+                    <Setter Property="IsHitTestVisible" Value="False" />
+                    <Setter Property="Cursor" Value="Arrow" />
+                    <Setter Property="Padding" Value="8,9,8,3" />
+                    <Setter Property="Foreground" Value="#8F8F8F" />
+                    <Setter Property="FontWeight" Value="Bold" />
+                    <Setter Property="FontSize" Value="10" />
+                    <Setter Property="FontFamily" Value="Segoe UI" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBox x:Name="txtFilter" Grid.Row="0" Margin="0,0,0,10"
+                 Background="#1A1A1B" Foreground="#EAEAEA" BorderBrush="#45454A"
+                 Padding="8,6" FontSize="13"
+                 TextChanged="Filter_TextChanged" PreviewKeyDown="Filter_PreviewKeyDown" />
+
+        <ListBox x:Name="lstProps" Grid.Row="1"
+                 Background="#1E1E1F" BorderBrush="#3D3D3F" BorderThickness="1"
+                 Foreground="#EAEAEA" FontFamily="Consolas" FontSize="12.5"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.CanContentScroll="True"
+                 VirtualizingStackPanel.IsVirtualizing="True"
+                 VirtualizingStackPanel.VirtualizationMode="Recycling"
+                 ItemContainerStyle="{StaticResource PickerItemStyle}"
+                 MouseDoubleClick="List_MouseDoubleClick">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding Text}" TextTrimming="CharacterEllipsis" />
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right"
+                    Margin="0,12,0,0">
+            <TextBlock x:Name="txtCount" Foreground="#7A7A7A" FontSize="11.5"
+                       VerticalAlignment="Center" Margin="0,0,14,0" />
+            <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0" />
+            <Button x:Name="btnOk" Content="OK" Click="Ok_Click"
+                    Background="#1E8FD5" BorderBrush="#1E8FD5" />
+        </StackPanel>
+    </Grid>
+</Window>

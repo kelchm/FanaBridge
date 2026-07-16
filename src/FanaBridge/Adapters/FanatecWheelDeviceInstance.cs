@@ -970,6 +970,51 @@ namespace FanaBridge.Adapters
             // ITM driver reads _displaySettings live each frame.
         }
 
+        IReadOnlyList<string> IDisplayPanelHost.GetAllPropertyNames()
+        {
+            // On demand only (picker open) — the list can hold thousands of names, so it
+            // is never fetched per frame. Defensive: no plugin manager (Init not reached)
+            // or a SimHub-side throw yields an empty list, never an exception at the panel.
+            try
+            {
+                var pm = PluginResolver()?.PluginManager;
+                var names = pm?.GetAllPropertiesNames();
+                return names != null ? new List<string>(names) : (IReadOnlyList<string>)Array.Empty<string>();
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Debug(
+                    "FanaBridge: GetAllPropertyNames failed: " + ex.GetBaseException().Message);
+                return Array.Empty<string>();
+            }
+        }
+
+        MappedRoles IDisplayPanelHost.GetMappedRoles()
+        {
+            // On demand (mapped-control dropdown open). Read-only: the reader never writes
+            // to Control Mapper. The rim's own variant is the key FanaBridge already owns
+            // (the same string its variant provider emits); the reader nulls it when RIW is
+            // off so the single-base row matches instead. Any failure degrades to the
+            // sanctioned role catalog, then to empty — never a throw.
+            try
+            {
+                var pm = PluginResolver()?.PluginManager;
+                if (pm == null)
+                    return MappedRoles.None;
+                string variant = FanaBridgeVariantProvider.ComputeCurrentVariant();
+                // DirectInput InterfacePath resolution for the RIW-off narrowing is
+                // deferred (it needs a device enumeration); the reader still matches the
+                // single no-variant base row, and the catalog is the honest fallback.
+                return new ControlMapperRoleReader().Read(pm, variant, interfacePath: null);
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Debug(
+                    "FanaBridge: GetMappedRoles failed: " + ex.GetBaseException().Message);
+                return MappedRoles.None;
+            }
+        }
+
         public override void End()
         {
             SimHub.Logging.Current.Info(

@@ -37,6 +37,7 @@ namespace FanaBridge.UI
         private bool _isItm;
 
         private Dictionary<TabView, UIElement> _views;
+        private TabView _currentView = TabView.Overview;
 
         // ── Polling state ────────────────────────────────────────────────
         private DispatcherTimer _timer;
@@ -182,8 +183,14 @@ namespace FanaBridge.UI
 
         private void NavigateTo(TabView view)
         {
+            _currentView = view;
             foreach (var kv in _views)
                 kv.Value.Visibility = kv.Key == view ? Visibility.Visible : Visibility.Collapsed;
+
+            // Build (or rebuild) the Triggers editor from the current config each time it
+            // becomes the active view — a clean slate, snapshot-driven from there.
+            if (view == TabView.Triggers && _host != null)
+                EnterTriggersEditor();
 
             // The DISPLAY MODE header belongs to the hub — it shows on Overview only
             // (and only on ITM wheels), never inside an editor.
@@ -334,6 +341,10 @@ namespace FanaBridge.UI
             {
                 RenderPriority(snapshot);
                 RenderActivity(snapshot);
+                // The Triggers editor merges the same live state into its rows — patched in
+                // place while an editor is open so poll re-renders never disturb it.
+                if (_currentView == TabView.Triggers)
+                    TriggersPoll(snapshot);
             }
         }
 

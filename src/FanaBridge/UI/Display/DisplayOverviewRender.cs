@@ -32,6 +32,24 @@ namespace FanaBridge.UI
         public bool IsBase { get; set; }
     }
 
+    /// <summary>The live-state styling for one rule row (see
+    /// <see cref="DisplayOverviewRender.StateChip"/>) — shared by the Overview priority
+    /// list and the Triggers editor so both speak the same row language.</summary>
+    internal struct RuleStateChip
+    {
+        /// <summary>Chip text: "on screen", "waiting", "n/a on this wheel", or "" (armed).</summary>
+        public string Chip;
+
+        /// <summary>Hold countdown ("4s"), only while on screen with a timed hold.</summary>
+        public string Seconds;
+
+        /// <summary>The winning rule — green accent and left bar.</summary>
+        public bool OnScreen;
+
+        /// <summary>Disabled or ineligible — the row renders dimmed.</summary>
+        public bool Muted;
+    }
+
     /// <summary>One recent-activity row: relative age plus the event's pre-built text.</summary>
     internal sealed class ActivityRowModel
     {
@@ -114,29 +132,47 @@ namespace FanaBridge.UI
 
         private static PriorityRowModel RuleRow(int rank, DisplayRuleRow rule)
         {
-            var row = new PriorityRowModel { Rank = rank.ToString(), Label = rule.Label };
-            switch (rule.Status)
+            var chip = StateChip(rule.Status, rule.RemainingMs);
+            return new PriorityRowModel
+            {
+                Rank = rank.ToString(),
+                Label = rule.Label,
+                Chip = chip.Chip,
+                Seconds = chip.Seconds,
+                OnScreen = chip.OnScreen,
+                Muted = chip.Muted,
+            };
+        }
+
+        /// <summary>The live-state chip for one rule, shared by the Overview priority list
+        /// and the Triggers editor rows so their row language cannot drift: chip text,
+        /// countdown seconds (OnScreen + timed hold only), the on-screen accent, and the
+        /// muted (disabled/ineligible) styling.</summary>
+        internal static RuleStateChip StateChip(RuleStatus status, int? remainingMs)
+        {
+            var chip = new RuleStateChip { Chip = "" };
+            switch (status)
             {
                 case RuleStatus.OnScreen:
-                    row.Chip = "on screen";
-                    row.OnScreen = true;
-                    if (rule.RemainingMs != null)
+                    chip.Chip = "on screen";
+                    chip.OnScreen = true;
+                    if (remainingMs != null)
                         // Ceiling, so a 3.2s hold reads "4s" and only hits "0s" at expiry.
-                        row.Seconds = (rule.RemainingMs.Value + 999) / 1000 + "s";
+                        chip.Seconds = (remainingMs.Value + 999) / 1000 + "s";
                     break;
                 case RuleStatus.Waiting:
-                    row.Chip = "waiting";
+                    chip.Chip = "waiting";
                     break;
                 case RuleStatus.Unavailable:
-                    row.Chip = "n/a on this wheel";
+                    chip.Chip = "n/a on this wheel";
                     break;
                 case RuleStatus.Disabled:
                 case RuleStatus.Ineligible:
-                    row.Muted = true;
+                    chip.Muted = true;
                     break;
                     // Armed: no chip, default styling.
             }
-            return row;
+            return chip;
         }
 
         /// <summary>

@@ -77,7 +77,8 @@ namespace FanaBridge.Tests.CmFakes
     }
 
     /// <summary>Stand-in for SimHub's PluginManager exposing the generic
-    /// <c>GetPlugin&lt;T&gt;()</c> the bridge invokes by reflection.</summary>
+    /// <c>GetPlugin&lt;T&gt;()</c> the bridge invokes by reflection, plus the sanctioned
+    /// <c>GetControlMapperInterface()</c> the role reader falls back to.</summary>
     public class FakePluginManager
     {
         private readonly object? _plugin;
@@ -85,6 +86,34 @@ namespace FanaBridge.Tests.CmFakes
         public T GetPlugin<T>() => (T)_plugin!;
         /// <summary>Test-only accessor to the wrapped fake plugin.</summary>
         public object? Plugin => _plugin;
+
+        /// <summary>The role catalog the reader reaches via reflection when the rim has no
+        /// mappings of its own; null models Control Mapper not being loaded.</summary>
+        public FakeControlMapperInterface? ControlMapperInterface { get; set; }
+        public FakeControlMapperInterface? GetControlMapperInterface() => ControlMapperInterface;
+    }
+
+    /// <summary>Stand-in for SimHub's ControlMapperInterface — only the sanctioned role
+    /// catalog method the reader uses.</summary>
+    public class FakeControlMapperInterface
+    {
+        public List<string> Roles { get; } = new List<string>();
+        public List<string> GetAvailableButtonRoles() => Roles;
+    }
+
+    /// <summary>Test double for SimHub's ButtonMap — the reader reads TargetRole +
+    /// HasRoleAssigned.</summary>
+    public class FakeButtonMap
+    {
+        public string? TargetRole { get; set; }
+        public bool HasRoleAssigned { get; set; }
+    }
+
+    /// <summary>Test double for SimHub's ControllerMapping (the input side) — the sparse
+    /// button→role table the reader walks.</summary>
+    public class FakeControllerMapping
+    {
+        public List<FakeButtonMap> Buttons { get; } = new List<FakeButtonMap>();
     }
 
     /// <summary>A PluginManager that lacks GetPlugin&lt;T&gt;(), to drive the
@@ -126,12 +155,18 @@ namespace FanaBridge.Tests.CmFakes
         public int ProductId { get; set; }
         public string? ControllerName { get; set; }
         public string? Variant { get; set; }
+        /// <summary>The strongest half of Control Mapper's match key — the reader reads it
+        /// for the RIW-off (single-base) narrowing.</summary>
+        public string? InterfacePath { get; set; }
     }
 
-    /// <summary>Test double for ControllerSourceMapping (owns one description).</summary>
+    /// <summary>Test double for ControllerSourceMapping (owns one description and its
+    /// button→role table).</summary>
     public class FakeControllerSourceMapping
     {
         public FakeControllerDescription? ControllerDescription { get; set; }
+        /// <summary>The input-side mapping; null models a source with no mappings yet.</summary>
+        public FakeControllerMapping? ControllerMapping { get; set; }
     }
 
     /// <summary>Mirrors the shape DescribeResolution reflects into:
