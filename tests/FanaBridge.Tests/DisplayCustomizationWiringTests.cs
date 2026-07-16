@@ -17,11 +17,13 @@ namespace FanaBridge.Tests
     /// <summary>
     /// Device-instance wiring for display customization: the per-device settings key
     /// (parse on SetSettings, snapshot serialization on GetSettings, before-Init
-    /// tolerance), <see cref="DisplayCustomizationConfig.IsEmpty"/>, and the
-    /// byte-parity gate — a scripted ITM session driven through a real
-    /// FanatecWheelDeviceInstance must emit an identical frame sequence with no
-    /// displayCustomization key and with an explicitly empty document, constructing
-    /// no piece of the rules runtime in either case.
+    /// tolerance), <see cref="DisplayCustomizationConfig.IsEmpty"/>, and the two wire
+    /// gates over one scripted ITM session driven through a real
+    /// FanatecWheelDeviceInstance — a golden gate (the session's absolute col03 frame
+    /// sequence, pinned byte for byte, so no code path can add/drop/reorder a frame
+    /// unnoticed) and a byte-parity gate (no displayCustomization key vs an explicitly
+    /// empty document must emit identical sequences, constructing no piece of the
+    /// rules runtime in either case).
     /// </summary>
     public class DisplayCustomizationWiringTests
     {
@@ -354,6 +356,44 @@ namespace FanaBridge.Tests
         private static string[] AsHex(List<byte[]> frames)
             => frames.Select(f => BitConverter.ToString(f)).ToArray();
 
+        // The scripted session's complete col03 output, byte for byte: gate-on identity
+        // reads, DisplayReset, ITM-mode-on, enable, PageSet(1); page-1 values + tight
+        // second tap + ParamDefs double-tap (lap/position totals); the wheel-button
+        // page-5 repaint (values ×2 + temp-unit ParamDefs); the game-exit DisplayReset.
+        // Regenerate by dumping AsHex(RunScriptedSession(...)) after any DELIBERATE
+        // wire-behavior change — an unreviewed diff here is a regression.
+        private static readonly string[] GoldenFrames =
+        {
+            "FF-08-01-FF-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-08-02-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-05-01-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-02-01-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-02-02-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-04-03-01-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-01-03-00-01-00-02-8E-00-03-01-04-00-01-04-03-02-F9-01-01-03-03-03-F5-01-01-02-03-04-FD-01-04-00-00-00-00-03-05-FE-01-04-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-01-03-00-01-00-02-8E-00-03-01-04-00-01-04-03-02-F9-01-01-03-03-03-F5-01-01-02-03-04-FD-01-04-00-00-00-00-03-05-FE-01-04-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-03-03-82-00-00-03-2F-31-32-03-83-00-00-03-2F-31-36-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-03-03-82-00-00-03-2F-31-32-03-83-00-00-03-2F-31-36-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-01-03-00-01-00-02-8E-00-03-01-04-00-01-04-03-02-2A-00-01-00-03-03-30-00-01-00-03-04-2D-00-01-00-03-05-33-00-01-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-01-03-00-01-00-02-8E-00-03-01-04-00-01-04-03-02-2A-00-01-00-03-03-30-00-01-00-03-04-2D-00-01-00-03-05-33-00-01-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-03-03-82-00-00-01-43-03-83-00-00-01-43-03-84-00-00-01-43-03-85-00-00-01-43-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+            "FF-05-05-01-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00",
+        };
+
+        [Fact]
+        public void ScriptedSession_MatchesTheGoldenFrameSequence()
+        {
+            // The arm-vs-arm parity gate below cannot see a change that affects both
+            // of its arms identically — the snapshot/observer path runs in BOTH, so a
+            // stray send from (say) the values-snapshot compose would keep parity while
+            // changing the wire. This golden pins the absolute frame sequence of the
+            // same scripted session: any added, dropped, reordered, or altered frame
+            // fails here even when parity holds.
+            var frames = RunScriptedSession(
+                new JObject { ["wheelType"] = "CSSWFORMV3" }, out _);
+            Assert.Equal(GoldenFrames, AsHex(frames));
+        }
+
         [Fact]
         public void EmptyConfig_FramePathIsByteIdentical_AndBuildsNothing()
         {
@@ -569,12 +609,14 @@ namespace FanaBridge.Tests
             Assert.NotNull(context.GetConfig);
             Assert.NotNull(context.ApplyConfig);
             Assert.NotNull(context.GetSnapshot);
+            Assert.NotNull(context.GetValues);
             Assert.NotNull(context.GetItmStatus);
             Assert.NotNull(context.SettingsChanged);
 
             // The delegates are live windows into the instance: no config yet …
             Assert.Null(context.GetConfig!());
             Assert.Null(context.GetSnapshot!());
+            Assert.Null(context.GetValues!());
             Assert.Null(context.GetItmStatus!());
 
             // … and ApplyConfig routes through the instance's normalize-and-publish.
@@ -590,6 +632,47 @@ namespace FanaBridge.Tests
             var inst = BareDisplayInstance("None", out var panels);
             Assert.Empty(inst.GetSettingsControls());
             Assert.Null(panels.LastContext);
+        }
+
+        // ── Display-values snapshot (the live-mirror feed) ───────────────
+
+        [Fact]
+        public void ValuesSnapshot_PublishedWithoutAnyRuleConfig_AndClearedWithTheDriver()
+        {
+            // The values snapshot exists for every ITM user — no customization document
+            // required (unlike the rule snapshot, which stays null here).
+            var session = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+
+            var s = NewStatus();
+            Set(s, "SpeedLocal", 268.0);
+            Set(s, "Gear", "6");
+            Set(s, "CurrentLap", 15);
+            Set(s, "TotalLaps", 73);
+            var running = Data(s);
+
+            session.Frame(running);                  // bring-up
+            session.Transport.Itm.Enqueue(HexToBytes(
+                "ff0501" + "0300010034" + "0301040012" + "0382f90132" + "0383f50132" + "0304fd012a" + "0305fe012a"));
+            session.Frame(running);                  // push adopted
+            session.Clock.T += 80;
+            session.Frame(running);                  // Synced; first values
+            session.Clock.T += 300;                  // snapshot throttle window
+            session.Frame(running);
+
+            var snap = session.Instance.DisplayValuesSnapshot;
+            Assert.NotNull(snap);
+            Assert.Equal(ItmPage.LapInfo, snap!.Page);
+            Assert.Equal("15 /73", Assert.Single(snap.LeftTop!.Fields).Value);
+            Assert.Equal("268", snap.SpeedText);
+            Assert.Null(session.Instance.DisplayRuleSnapshot);   // no rules involved
+
+            // Switching the display type away from ITM tears the driver down — the
+            // values snapshot must go with it (same edge as the ITM status snapshot).
+            var basic = WheelProfileStore.FindByWheelType("PSWBMW");
+            session.Wheelbase.ProfileOverrideResolver = _ => basic!.Id;
+            session.Wheelbase.RefreshCapabilities();
+            session.Frame(running);
+            Assert.Null(session.Instance.DisplayValuesSnapshot);
         }
 
         // ── Display-type teardown ────────────────────────────────────────

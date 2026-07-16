@@ -41,6 +41,7 @@ namespace FanaBridge.UI
         // ── Polling state ────────────────────────────────────────────────
         private DispatcherTimer _timer;
         private DisplayRuleSnapshot _lastSnapshot;
+        private DisplayValuesSnapshot _lastValues;
         private string _lastStatus;
         private DateTime _lastAgeRenderUtc;
 
@@ -303,16 +304,28 @@ namespace FanaBridge.UI
                 return;
 
             var snapshot = _context.GetSnapshot?.Invoke();
+            var values = _context.GetValues?.Invoke();
             string status = _context.GetItmStatus?.Invoke();
             bool snapshotChanged = !ReferenceEquals(snapshot, _lastSnapshot);
+            bool valuesChanged = !ReferenceEquals(values, _lastValues);
             bool statusChanged = !string.Equals(status, _lastStatus, StringComparison.Ordinal);
             _lastSnapshot = snapshot;
+            _lastValues = values;
             _lastStatus = status;
+
+            // The LIVE card: the mirror redraws only on a values-snapshot reference
+            // change; the captions also follow the status line (their fallback path).
+            if (force || valuesChanged)
+                displayMirror.Render(values);
+            if (force || valuesChanged || statusChanged)
+            {
+                txtCurrentPage.Text = ItmDisplayMirrorRender.PageCaption(
+                    values, status, _context.ItmDeviceId);
+                txtMirrorState.Text = ItmDisplayMirrorRender.StateCaption(values) ?? "";
+            }
 
             if (force || snapshotChanged || statusChanged)
             {
-                txtCurrentPage.Text = DisplayOverviewRender.CurrentPageCaption(
-                    status, _context.ItmDeviceId);
                 RenderPriority(snapshot);
                 RenderActivity(snapshot);
             }

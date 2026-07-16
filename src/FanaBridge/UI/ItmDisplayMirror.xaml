@@ -1,0 +1,31 @@
+<UserControl x:Class="FanaBridge.UI.ItmDisplayMirror"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             MinWidth="320" MaxWidth="720" HorizontalAlignment="Center">
+    <!-- The 4:1 virtual panel: everything is laid out on a fixed 1000×250 canvas and
+         the Viewbox scales it uniformly, so the twin keeps the display's aspect and
+         proportions at any card width (the control's Min/MaxWidth bound the range). -->
+    <Viewbox Stretch="Uniform">
+        <!-- ClipToBounds: nothing ever paints past the panel edge (the hardware's
+             glass is a hard boundary; per-zone clipping is handled at each text
+             block's box in code-behind). -->
+        <Grid x:Name="panelRoot" Width="1000" Height="250" Background="Black"
+              ClipToBounds="True">
+            <Canvas x:Name="canvas" Width="1000" Height="250">
+                <!-- The two thin zone dividers (left 0–400, center 400–600, right
+                     600–1000), per the official quick guide's page renders. -->
+                <Rectangle x:Name="dividerLeft" Canvas.Left="399" Canvas.Top="10"
+                           Width="2" Height="230" Fill="White" />
+                <Rectangle x:Name="dividerRight" Canvas.Left="599" Canvas.Top="10"
+                           Width="2" Height="230" Fill="White" />
+                <!-- Slots, gear glyph, speed, and hit regions are built in code per
+                     snapshot (see Render). -->
+            </Canvas>
+            <!-- The legacy ITM page carries no telemetry slots; its 3-character
+                 surface is not mirrored yet — a muted caption stands in. -->
+            <TextBlock x:Name="txtLegacy" Text="Legacy page" FontFamily="Arial"
+                       FontSize="40" Foreground="#666666" Visibility="Collapsed"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Grid>
+    </Viewbox>
+</UserControl>

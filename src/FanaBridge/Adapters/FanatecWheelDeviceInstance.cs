@@ -142,6 +142,16 @@ namespace FanaBridge.Adapters
         /// </summary>
         internal DisplayRuleSnapshot DisplayRuleSnapshot => _displayRuleSnapshot;
 
+        /// <summary>
+        /// The latest display-values snapshot (what the ITM display is showing, rendered
+        /// from the values the driver last sent), or null while this instance isn't
+        /// driving an ITM display. Cleared at the same teardown edges as
+        /// <see cref="ItmStatusDescription"/>: the driver drops it on Stop (disconnect,
+        /// display-type switch, End) and the driver reference itself is dropped on a
+        /// generation rebind or display-id change. Safe to read from any thread.
+        /// </summary>
+        internal DisplayValuesSnapshot DisplayValuesSnapshot => _itmDisplay?.ValuesSnapshot;
+
         /// <summary>Test hook (parity gate): the rule stack, null when nothing is built.</summary>
         internal DisplayRuleStack DisplayStackForTest => _displayStack;
 
@@ -834,6 +844,7 @@ namespace FanaBridge.Adapters
                     GetConfig = () => _displayConfig,
                     ApplyConfig = ApplyDisplayConfig,
                     GetSnapshot = () => _displayRuleSnapshot,
+                    GetValues = () => DisplayValuesSnapshot,
                     GetItmStatus = () => ItmStatusDescription,
                     SettingsChanged = () =>
                     {

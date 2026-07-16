@@ -39,6 +39,11 @@ namespace FanaBridge.Adapters
         /// active — poll it, never touch live engine state.</summary>
         public Func<DisplayRuleSnapshot> GetSnapshot { get; set; }
 
+        /// <summary>The latest display-values snapshot (what the ITM display is showing,
+        /// for the live mirror), or null while this device isn't driving an ITM display
+        /// — poll it like <see cref="GetSnapshot"/>.</summary>
+        public Func<DisplayValuesSnapshot> GetValues { get; set; }
+
         /// <summary>The ITM lifecycle status line, or null when this device isn't
         /// driving an ITM display.</summary>
         public Func<string> GetItmStatus { get; set; }
