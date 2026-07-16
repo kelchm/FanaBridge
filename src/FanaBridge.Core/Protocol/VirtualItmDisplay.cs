@@ -104,7 +104,7 @@ namespace FanaBridge.Protocol
 
         /// <summary>Minimum spacing between snapshot compositions. Change-gated on top
         /// of this floor: nothing recomposes while nothing on the screen changed.</summary>
-        public int SnapshotIntervalMs { get; set; } = 250;
+        public int SnapshotIntervalMs { get; set; } = 50;
 
         /// <summary>
         /// How long an accumulated parameter set that identifies no page may stand

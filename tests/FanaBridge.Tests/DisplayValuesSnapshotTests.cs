@@ -232,6 +232,9 @@ namespace FanaBridge.Tests
         public void ChangedValue_Recomposes_ButOnlyAfterTheThrottleWindow()
         {
             var m = MakeMirror(out var clock);
+            // Pin the window explicitly: this test asserts the throttle CONTRACT and
+            // must not drift with the production default (tuned for UI liveness).
+            m.Twin.SnapshotIntervalMs = 250;
             var s = NewStatus();
             Set(s, "SpeedLocal", 268.0);
             Set(s, "Gear", "6");

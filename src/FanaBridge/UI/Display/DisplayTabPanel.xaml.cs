@@ -287,7 +287,11 @@ namespace FanaBridge.UI
         {
             if (_timer == null)
             {
-                _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                // 100ms: the mirror should feel live (the hardware repaints values at
+                // 40ms cadence). Cheap by construction — each tick is one volatile read
+                // plus reference compares; parts re-render only when their snapshot
+                // actually changed, so an idle tab does no layout work at any rate.
+                _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
                 _timer.Tick += (s, a) => Poll();
             }
             _timer.Start();
