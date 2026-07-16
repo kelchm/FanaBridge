@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge.Display
+namespace FanaBridge.Customization
 {
     /// <summary>
     /// Enum ↔ camelCase-string translation for the display config document. The document

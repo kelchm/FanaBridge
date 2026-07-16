@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using FanaBridge.Adapters;
-using FanaBridge.Display;
 using FanaBridge.Protocol;
 using FanaBridge.UI;
 using Xunit;

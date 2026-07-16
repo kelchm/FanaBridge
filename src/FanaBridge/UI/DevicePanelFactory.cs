@@ -7,10 +7,10 @@ namespace FanaBridge.UI
     /// <summary>UI-side implementation of the device settings-panel factory.</summary>
     internal sealed class DevicePanelFactory : IDevicePanelFactory
     {
-        public Control CreateDisplayPanel(DisplayPanelContext context)
+        public Control CreateDisplayPanel(IDisplayPanelHost host)
         {
             var panel = new DisplayTabPanel();
-            panel.Bind(context);
+            panel.Bind(host);
             return panel;
         }
 

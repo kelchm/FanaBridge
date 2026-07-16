@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using FanaBridge.Adapters;
-using FanaBridge.Display;
+using FanaBridge.Customization;
 using Xunit;
 
 namespace FanaBridge.Tests

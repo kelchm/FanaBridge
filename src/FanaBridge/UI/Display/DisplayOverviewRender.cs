@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using FanaBridge.Adapters;
-using FanaBridge.Display;
+using FanaBridge.Customization;
 using FanaBridge.Protocol;
 
 namespace FanaBridge.UI

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.Display
+namespace FanaBridge.Customization
 {
     /// <summary>One director tick's output, consumed by the device's frame loop.</summary>
     public struct DirectorTickResult

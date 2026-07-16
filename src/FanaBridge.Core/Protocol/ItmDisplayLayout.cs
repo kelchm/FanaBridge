@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Protocol;
 
-namespace FanaBridge.Display
+namespace FanaBridge.Protocol
 {
     /// <summary>The four field slots of an ITM telemetry page, as the display lays them
     /// out: two stacked slots left of the gear/speed center zone, two right of it.</summary>

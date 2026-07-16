@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Display;
 using FanaBridge.Protocol;
 using GameReaderCommon;
 
@@ -71,19 +70,61 @@ namespace FanaBridge.Adapters
         public bool ShowPositionTotal { get; set; } = true;
 
         /// <summary>
-        /// The ITM page (wire page number) targeted by bring-up; the wheel's display button
-        /// navigates from there. Changing it live requests a confirmed page switch.
+        /// The built-in page policy's base page (the user's ItmDefaultPage setting, as a
+        /// wire page number): targeted by bring-up, and the page the wheel's display
+        /// button navigates from. Read live each frame; changing it while the built-in
+        /// policy owns pages requests a confirmed page switch (edge-detected inside
+        /// <see cref="Update"/>). While an external owner holds page policy
+        /// (<see cref="SetPagePolicy"/>) this setting is retained but dormant — it takes
+        /// over again on <see cref="RestoreBuiltInPagePolicy"/>.
         /// </summary>
         public byte DefaultPage { get; set; } = 1;
 
+        // ── Page policy ──────────────────────────────────────────────────
+        // Exactly one owner at a time decides which page the display rests on:
+        //
+        //   Built-in (default): the DefaultPage setting is the resting page. The
+        //   lifecycle re-establishes it at every game start (GameStartPageRevert) and
+        //   cold entries target it.
+        //
+        //   External (display rules): SetPagePolicy hands the resting page to the rule
+        //   stack's base page. The lifecycle's own game-start revert is suppressed for
+        //   the whole tenure, because the revert belongs to whoever owns page policy:
+        //   the rule engine performs the same revert itself (resting target → base on
+        //   the in-game rising edge, routed through the page director), and a switch
+        //   the lifecycle initiated on its own would read upstream as phantom
+        //   wheel-button navigation, dismissing rules the user never touched (brief
+        //   §4.6 history: the phantom-manual bug).
+        //
+        // The handoff is edge-triggered — called at stack build/teardown and on a base
+        // change within a live stack, never as per-frame reconciliation. Page requests
+        // ride the existing edge detection in UpdateCore, so a handoff that changes the
+        // effective base switches the display live on the next Update, exactly like a
+        // DefaultPage settings change does in the built-in mode.
+
+        // Non-null while an external owner holds page policy (its base wire page).
+        private byte? _externalBasePage;
+
         /// <summary>
-        /// Whether a game starting re-establishes <see cref="DefaultPage"/> (see
-        /// <see cref="ItmLifecycleController.GameStartPageRevert"/>). The display-rules
-        /// runtime turns this off while it owns page policy — its engine performs the
-        /// revert itself, and a controller-initiated switch would read upstream as
-        /// wheel-button navigation. Read live each frame, like the page.
+        /// Hands page policy to an external owner whose resting page is
+        /// <paramref name="baseWirePage"/> (the rule stack's base page). Call on stack
+        /// build and whenever the base changes within a live stack.
         /// </summary>
-        public bool GameStartPageRevert { get; set; } = true;
+        public void SetPagePolicy(byte baseWirePage) => _externalBasePage = baseWirePage;
+
+        /// <summary>
+        /// Returns page policy to the built-in owner (the <see cref="DefaultPage"/>
+        /// setting, game-start revert re-enabled). Call on stack teardown; also implied
+        /// by <see cref="Stop"/> — every Stop edge coincides with a stack teardown, and
+        /// the next session must bring up under the setting's policy.
+        /// </summary>
+        public void RestoreBuiltInPagePolicy() => _externalBasePage = null;
+
+        /// <summary>True while an external owner (the display rules) holds page policy.</summary>
+        public bool HasExternalPagePolicy => _externalBasePage != null;
+
+        // The resting page under the current policy owner.
+        private byte EffectiveBasePage => _externalBasePage ?? DefaultPage;
 
         /// <summary>
         /// Whether the ITM display is enabled. Set false to turn ITM off (the display is gated
@@ -179,19 +220,22 @@ namespace FanaBridge.Adapters
         /// </summary>
         public void Start()
         {
-            _lifecycle.DefaultPage = DefaultPage;
+            _lifecycle.DefaultPage = EffectiveBasePage;
             _lifecycle.Start();
         }
 
         /// <summary>
         /// Stops driving and returns to idle (connection lost), dropping all subscriptions.
-        /// A later <see cref="Start"/> re-runs the cold bring-up.
+        /// A later <see cref="Start"/> re-runs the cold bring-up. Page policy returns to
+        /// the built-in owner: the stack that held it is torn down at every Stop edge,
+        /// and a rebuilt stack re-takes policy explicitly.
         /// </summary>
         public void Stop()
         {
             _lifecycle.Stop();
             ResetSendState();
             ResetValuesSnapshot();
+            RestoreBuiltInPagePolicy();
         }
 
         // Drops the published values snapshot and its change trackers — the same
@@ -218,8 +262,10 @@ namespace FanaBridge.Adapters
         /// </summary>
         public void OnWheelChanged()
         {
-            // The cold entry runs immediately — make sure it targets the current setting.
-            _lifecycle.DefaultPage = DefaultPage;
+            // The cold entry runs immediately — make sure it targets the current
+            // policy owner's resting page (the stack that owned policy is rebuilt for
+            // the new wheel from the same config, so its base stays valid here).
+            _lifecycle.DefaultPage = EffectiveBasePage;
             _lifecycle.OnWheelChanged();
         }
 
@@ -278,18 +324,22 @@ namespace FanaBridge.Adapters
         // early-out this path takes, without touching any send ordering.
         private void UpdateCore(GameData data, long now, bool telemetryLive)
         {
-            // Settings flow into the lifecycle: the default page (cold-entry target) and the
-            // user's on/off switch. A settings change of the default page is edge-detected and
-            // requested live, so the wheel button isn't fought between changes.
-            _lifecycle.DefaultPage = DefaultPage;
-            _lifecycle.GameStartPageRevert = GameStartPageRevert;
+            // The page policy flows into the lifecycle: the current owner's resting
+            // page (cold-entry target) and — revert belongs to the policy owner — the
+            // game-start revert only while the built-in owner holds policy. A change of
+            // the effective base (a DefaultPage settings change in the built-in mode, a
+            // policy handoff, or a base change within a live stack) is edge-detected
+            // and requested live, so the wheel button isn't fought between changes.
+            byte basePage = EffectiveBasePage;
+            _lifecycle.DefaultPage = basePage;
+            _lifecycle.GameStartPageRevert = _externalBasePage == null;
             _lifecycle.SetUserEnabled(Enabled);
             if (_lastRequestedPage == null)
-                _lastRequestedPage = DefaultPage;
-            else if (DefaultPage != _lastRequestedPage.Value)
+                _lastRequestedPage = basePage;
+            else if (basePage != _lastRequestedPage.Value)
             {
-                _lastRequestedPage = DefaultPage;
-                _lifecycle.RequestPage(DefaultPage);
+                _lastRequestedPage = basePage;
+                _lifecycle.RequestPage(basePage);
             }
 
             _lifecycle.Tick(telemetryLive);

@@ -234,9 +234,10 @@ namespace FanaBridge
         /// <summary>
         /// The ITM display's lifecycle status line (e.g. "Synced — page 1, 6 params",
         /// "Unavailable — retry in 30 s") from the connected instance driving an ITM
-        /// display, or null when none is. Shown in the Device Status panel. The value is a
-        /// snapshot string the owning DataUpdate thread published, so this reads it (a
-        /// volatile field) without touching live state-machine fields off-thread.
+        /// display, or null when none is. Shown in the Device Status panel. The value is
+        /// the status part of the display envelope the owning DataUpdate thread published
+        /// (one volatile reference to an immutable snapshot), so this reads it without
+        /// touching live state-machine fields off-thread.
         /// </summary>
         public string ItmStatus
         {
@@ -247,7 +248,7 @@ namespace FanaBridge
                 {
                     foreach (var inst in _deviceInstances)
                     {
-                        var s = inst.ItmStatusDescription;   // a volatile string read — cannot throw
+                        var s = inst.ItmStatusDescription;   // a volatile envelope read — cannot throw
                         if (s != null) return s;
                     }
                 }

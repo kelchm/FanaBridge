@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using Newtonsoft.Json;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.Display
+namespace FanaBridge.Customization
 {
     /// <summary>
     /// The per-wheel display customization document: prioritized rules for the ITM and

@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using FanaBridge.Adapters;
-using FanaBridge.Display;
 using FanaBridge.Protocol;
 
 namespace FanaBridge.UI

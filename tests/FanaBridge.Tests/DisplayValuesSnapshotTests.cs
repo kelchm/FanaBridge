@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
 using FanaBridge.Adapters;
-using FanaBridge.Display;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using GameReaderCommon;

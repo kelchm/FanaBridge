@@ -14,7 +14,7 @@ namespace FanaBridge.Adapters
     internal interface IDevicePanelFactory
     {
         /// <summary>A bound Display settings panel — the per-device Display tab.</summary>
-        Control CreateDisplayPanel(DisplayPanelContext context);
+        Control CreateDisplayPanel(IDisplayPanelHost host);
 
         /// <summary>A bound Tuning settings panel.</summary>
         Control CreateTuningPanel(JObject customSettings);

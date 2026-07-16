@@ -6,7 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using FanaBridge.Adapters;
-using FanaBridge.Display;
+using FanaBridge.Protocol;
 
 namespace FanaBridge.UI
 {

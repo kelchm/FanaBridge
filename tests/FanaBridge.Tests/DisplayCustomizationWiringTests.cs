@@ -4,7 +4,7 @@ using System.Linq;
 using System.Runtime.Serialization;
 using FanaBridge;
 using FanaBridge.Adapters;
-using FanaBridge.Display;
+using FanaBridge.Customization;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
@@ -428,12 +428,13 @@ namespace FanaBridge.Tests
         [Fact]
         public void NonEmptyConfig_DriverPagePolicyFollowsTheStack()
         {
-            // With a rule stack live, the ITM driver's default page must be the STACK's
-            // base page (config base page wins over the ItmDefaultPage setting) and the
-            // lifecycle's own game-start revert must be suppressed — the rule engine
-            // performs that revert itself, and a controller-initiated switch would read
-            // upstream as wheel-button navigation the user never made, dismissing rules
-            // and adopting the wrong resting page.
+            // With a rule stack live, the stack owns page policy: the lifecycle's
+            // effective base page must be the STACK's base page (config base page wins
+            // over the ItmDefaultPage setting) and the lifecycle's own game-start
+            // revert must be suppressed — the rule engine performs that revert itself,
+            // and a controller-initiated switch would read upstream as wheel-button
+            // navigation the user never made, dismissing rules and adopting the wrong
+            // resting page.
             var doc = RuleDocument();
             doc["itm"]!["basePage"] = "fuelErsDrs";
             var s = StartSession(new JObject
@@ -454,8 +455,9 @@ namespace FanaBridge.Tests
 
             var driver = s.Instance.ItmDisplayForTest;
             Assert.NotNull(driver);
-            Assert.Equal(fuelWire, driver!.DefaultPage);
-            Assert.False(driver.GameStartPageRevert);
+            Assert.True(driver!.HasExternalPagePolicy);
+            Assert.Equal(fuelWire, driver.Lifecycle.DefaultPage);
+            Assert.False(driver.Lifecycle.GameStartPageRevert);
         }
 
         [Fact]
@@ -470,8 +472,9 @@ namespace FanaBridge.Tests
 
             var driver = s.Instance.ItmDisplayForTest;
             Assert.NotNull(driver);
-            Assert.Equal(DisplaySettings.DefaultItmDefaultPage, driver!.DefaultPage);
-            Assert.True(driver.GameStartPageRevert);
+            Assert.False(driver!.HasExternalPagePolicy);
+            Assert.Equal(DisplaySettings.DefaultItmDefaultPage, driver.Lifecycle.DefaultPage);
+            Assert.True(driver.Lifecycle.GameStartPageRevert);
         }
 
         // ── ApplyDisplayConfig (the UI write path) ───────────────────────
@@ -556,11 +559,11 @@ namespace FanaBridge.Tests
 
         private sealed class FakePanelFactory : IDevicePanelFactory
         {
-            public DisplayPanelContext? LastContext;
+            public IDisplayPanelHost? LastHost;
 
-            public System.Windows.Controls.Control CreateDisplayPanel(DisplayPanelContext context)
+            public System.Windows.Controls.Control CreateDisplayPanel(IDisplayPanelHost host)
             {
-                LastContext = context;
+                LastHost = host;
                 return null!;   // no WPF control off the UI thread; the tab only stores it
             }
 
@@ -602,27 +605,20 @@ namespace FanaBridge.Tests
 
             var tab = Assert.Single(tabs);
             Assert.Equal("Display", tab.Title);   // the old tab said "Screen"
-            Assert.NotNull(panels.LastContext);
-            var context = panels.LastContext!;
-            Assert.Equal(expectedType, context.DisplayType);
-            Assert.NotNull(context.DisplaySettings);
-            Assert.NotNull(context.GetConfig);
-            Assert.NotNull(context.ApplyConfig);
-            Assert.NotNull(context.GetSnapshot);
-            Assert.NotNull(context.GetValues);
-            Assert.NotNull(context.GetItmStatus);
-            Assert.NotNull(context.SettingsChanged);
+            Assert.NotNull(panels.LastHost);
+            var host = panels.LastHost!;
+            Assert.Same(inst, host);              // the instance IS the panel's host
+            Assert.Equal(expectedType, host.DisplayType);
+            Assert.NotNull(host.DisplaySettings);
 
-            // The delegates are live windows into the instance: no config yet …
-            Assert.Null(context.GetConfig!());
-            Assert.Null(context.GetSnapshot!());
-            Assert.Null(context.GetValues!());
-            Assert.Null(context.GetItmStatus!());
+            // The members are live windows into the instance: no config yet …
+            Assert.Null(host.GetDisplayConfig());
+            Assert.Null(host.Snapshot);
 
-            // … and ApplyConfig routes through the instance's normalize-and-publish.
+            // … and ApplyDisplayConfig routes through the instance's normalize-and-publish.
             var config = DisplayConfigSerializer.Load(RuleDocument().ToString(), _ => { });
-            context.ApplyConfig!(config);
-            Assert.NotNull(context.GetConfig!());
+            host.ApplyDisplayConfig(config);
+            Assert.NotNull(host.GetDisplayConfig());
             Assert.NotNull(((JObject)inst.GetSettings(false, false))["displayCustomization"]);
         }
 
@@ -631,7 +627,7 @@ namespace FanaBridge.Tests
         {
             var inst = BareDisplayInstance("None", out var panels);
             Assert.Empty(inst.GetSettingsControls());
-            Assert.Null(panels.LastContext);
+            Assert.Null(panels.LastHost);
         }
 
         // ── Display-values snapshot (the live-mirror feed) ───────────────

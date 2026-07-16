@@ -21,17 +21,18 @@ namespace FanaBridge.UI
     /// back button. There is no persistent tab strip; the mode header shows on
     /// Overview only.
     ///
-    /// Threading: everything live is read through the <see cref="DisplayPanelContext"/>
-    /// delegates, which return volatile snapshots — a DispatcherTimer polls them at
-    /// 500 ms while the panel is loaded and re-renders only on change (snapshot
-    /// reference or status string), plus a 1 s floor so the relative-age labels keep
+    /// Threading: everything live is read through the <see cref="IDisplayPanelHost"/>
+    /// members — the snapshot accessor returns the ONE immutable envelope the device
+    /// instance publishes. A DispatcherTimer polls it at 500 ms while the panel is
+    /// loaded and re-renders per part on change (values part → the mirror; rule part
+    /// or status line → the rows), plus a 1 s floor so the relative-age labels keep
     /// ticking between snapshots. The panel never touches engine state directly.
     /// </summary>
     public partial class DisplayTabPanel : UserControl
     {
         private enum TabView { Overview, Triggers, Pages, Legacy }
 
-        private DisplayPanelContext _context;
+        private IDisplayPanelHost _host;
         private DisplaySettings _settings;
         private bool _suppressEvents;
         private bool _isItm;
@@ -78,14 +79,14 @@ namespace FanaBridge.UI
         }
 
         /// <summary>
-        /// Binds the panel to its device context. Call once after construction, before
+        /// Binds the panel to its device host. Call once after construction, before
         /// the panel is displayed (the old Screen panel's contract).
         /// </summary>
-        internal void Bind(DisplayPanelContext context)
+        internal void Bind(IDisplayPanelHost host)
         {
-            _context = context ?? throw new ArgumentNullException(nameof(context));
-            _settings = context.DisplaySettings ?? new DisplaySettings();
-            _isItm = context.DisplayType == DisplayType.Itm;
+            _host = host ?? throw new ArgumentNullException(nameof(host));
+            _settings = host.DisplaySettings ?? new DisplaySettings();
+            _isItm = host.DisplayType == DisplayType.Itm;
             _suppressEvents = true;
 
             _views = new Dictionary<TabView, UIElement>
@@ -102,7 +103,7 @@ namespace FanaBridge.UI
             SelectByTag(cmbDisplayMode, _settings.DisplayMode ?? DisplaySettings.DefaultMode);
             chkShowLapTotal.IsChecked = _settings.ItmShowLapTotal;
             chkShowPositionTotal.IsChecked = _settings.ItmShowPositionTotal;
-            PopulateDefaultPages(context.ItmDeviceId);
+            PopulateDefaultPages(host.ItmDeviceId);
             SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
 
             // ITM wheels get the mode header (via NavigateTo — it shows on Overview
@@ -136,7 +137,7 @@ namespace FanaBridge.UI
 
             _settings.ItmEnabled = enabled;
             UpdateModeState();
-            _context?.SettingsChanged?.Invoke();
+            _host?.NotifySettingsChanged();
             Poll(force: true);
         }
 
@@ -204,7 +205,7 @@ namespace FanaBridge.UI
 
             _settings.ItmShowLapTotal = chkShowLapTotal.IsChecked == true;
             _settings.ItmShowPositionTotal = chkShowPositionTotal.IsChecked == true;
-            _context?.SettingsChanged?.Invoke();
+            _host?.NotifySettingsChanged();
         }
 
         private void CmbDisplayMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -215,7 +216,7 @@ namespace FanaBridge.UI
             if (cmbDisplayMode.SelectedItem is ComboBoxItem selected)
             {
                 _settings.DisplayMode = (string)selected.Tag;
-                _context?.SettingsChanged?.Invoke();
+                _host?.NotifySettingsChanged();
             }
         }
 
@@ -227,7 +228,7 @@ namespace FanaBridge.UI
             if (cmbDefaultPage.SelectedItem is ComboBoxItem selected && selected.Tag is byte pageNumber)
             {
                 _settings.ItmDefaultPage = pageNumber;
-                _context?.SettingsChanged?.Invoke();
+                _host?.NotifySettingsChanged();
                 // The base ("Always") row: with no rule stack live the ITM driver reads
                 // this setting each frame, so refresh the row to the new page now. While
                 // a stack is live the snapshot carries the stack's OWN base page — the
@@ -300,12 +301,15 @@ namespace FanaBridge.UI
 
         private void Poll(bool force = false)
         {
-            if (_context == null || panelItmLive.Visibility != Visibility.Visible)
+            if (_host == null || panelItmLive.Visibility != Visibility.Visible)
                 return;
 
-            var snapshot = _context.GetSnapshot?.Invoke();
-            var values = _context.GetValues?.Invoke();
-            string status = _context.GetItmStatus?.Invoke();
+            // ONE volatile read — the envelope; the parts gate their own re-renders
+            // below (values part → the mirror; rule part / status line → the rows).
+            var envelope = _host.Snapshot;
+            var snapshot = envelope?.Rules;
+            var values = envelope?.Values;
+            string status = envelope?.ItmStatus;
             bool snapshotChanged = !ReferenceEquals(snapshot, _lastSnapshot);
             bool valuesChanged = !ReferenceEquals(values, _lastValues);
             bool statusChanged = !string.Equals(status, _lastStatus, StringComparison.Ordinal);
@@ -320,7 +324,7 @@ namespace FanaBridge.UI
             if (force || valuesChanged || statusChanged)
             {
                 txtCurrentPage.Text = ItmDisplayMirrorRender.PageCaption(
-                    values, status, _context.ItmDeviceId);
+                    values, status, _host.ItmDeviceId);
                 txtMirrorState.Text = ItmDisplayMirrorRender.StateCaption(values) ?? "";
             }
 
@@ -341,11 +345,11 @@ namespace FanaBridge.UI
 
         private void RenderPriority(DisplayRuleSnapshot snapshot)
         {
-            if (_context == null)
+            if (_host == null)
                 return;
-            var config = _context.GetConfig?.Invoke();
+            var config = _host.GetDisplayConfig();
             string basePage = DisplayOverviewRender.BasePageName(
-                snapshot, config, _context.ItmDeviceId, _settings.ItmDefaultPage);
+                snapshot, config, _host.ItmDeviceId, _settings.ItmDefaultPage);
 
             panelPriorityRows.Children.Clear();
             foreach (var row in DisplayOverviewRender.PriorityRows(snapshot, basePage))
