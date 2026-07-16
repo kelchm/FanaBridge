@@ -1,4 +1,5 @@
 using System;
+using FanaBridge.Protocol;
 
 namespace FanaBridge.Adapters
 {

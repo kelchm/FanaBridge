@@ -53,6 +53,13 @@ namespace FanaBridge.Adapters
 
         // ITM display driver — null until a wheel with an ITM display is driven.
         private ItmDisplayDriver _itmDisplay;
+        // The wire-driven digital twin for the live Overview mirror: a virtual panel that
+        // consumes the exact col03 frames the driver+lifecycle send (via the plugin's
+        // outbound tap) plus the same firmware pushes, and publishes the screen-state
+        // snapshot the UI reads. Built and torn down on the SAME lifetime edges as the
+        // driver (it models the same device), attached to the shared ITM tap for the
+        // instance's whole ITM tenure and detached (identity-guarded) at teardown.
+        private VirtualItmDisplay _itmTwin;
         // The display id the ITM driver was built against; an override changing
         // it hot-swaps the driver (deviceId is a ctor-fixed value).
         private byte _itmDeviceId;
@@ -152,7 +159,7 @@ namespace FanaBridge.Adapters
             // accessor was, so a stale line can never describe a dropped driver.
             string status = _itmDisplay == null ? null : _itmStatus;
             var rules = _displayRuleSnapshot;
-            var values = _itmDisplay?.ValuesSnapshot;
+            var values = _itmTwin?.Snapshot;
 
             var current = _panelSnapshot;
             if (current == null)
@@ -189,13 +196,14 @@ namespace FanaBridge.Adapters
 
         /// <summary>
         /// Test seam: the values-part of the display envelope (what the ITM display is
-        /// showing, rendered from the values the driver last sent), or null while this
-        /// instance isn't driving an ITM display. The driver drops it on Stop
-        /// (disconnect, display-type switch, End) and the driver reference itself is
-        /// dropped on a generation rebind or display-id change. The UI reads the
-        /// envelope (<see cref="IDisplayPanelHost.Snapshot"/>), never this.
+        /// showing, rendered by the wire-driven twin from the frames that actually went
+        /// out), or null while this instance isn't driving an ITM display. The twin is
+        /// cold-started (snapshot cleared) on disconnect / wheel change / End and its
+        /// reference dropped on a generation rebind, display-id change, or display-type
+        /// switch. The UI reads the envelope (<see cref="IDisplayPanelHost.Snapshot"/>),
+        /// never this.
         /// </summary>
-        internal DisplayValuesSnapshot DisplayValuesSnapshot => _itmDisplay?.ValuesSnapshot;
+        internal DisplayValuesSnapshot DisplayValuesSnapshot => _itmTwin?.Snapshot;
 
         /// <summary>Test hook (parity gate): the rule stack, null when nothing is built.</summary>
         internal DisplayRuleStack DisplayStackForTest => _displayStack;
@@ -328,6 +336,11 @@ namespace FanaBridge.Adapters
             // lazily (DataUpdate builds them on demand from the live plugin).
             _displayManager = null;
             _itmDisplay = null;
+            // The twin observed the OLD generation's tap (which dies with the disposed
+            // transport); drop the reference so the rebuilt driver constructs a fresh
+            // twin and attaches it to the new generation's tap. No detach needed — the
+            // old tap is gone (issue #37: never keep references into a disposed generation).
+            _itmTwin = null;
             // The rule stack wraps the driver's lifecycle — same fate (issue #37:
             // never keep references into a disposed generation).
             _displayStack = null;
@@ -549,6 +562,11 @@ namespace FanaBridge.Adapters
 
                 _displayManager?.Clear();
                 _itmDisplay?.Stop();
+                // Cold-start the twin so its published screen goes blank with the driver
+                // (a stale mirror must never outlive the session). It stays attached to
+                // the tap — no ITM frames flow while disconnected — and re-grounds itself
+                // from the fresh bring-up frames on reconnect.
+                _itmTwin?.OnColdStart();
                 _itmWasRunning = false;
                 _itmStatus = null;           // don't show a stale ITM row while disconnected
                 _displayStack = null;        // rules restart clean with the reconnect
@@ -608,6 +626,12 @@ namespace FanaBridge.Adapters
             {
                 _itmDisplay.Stop();
                 _itmDisplay = null;
+                // The twin models the ITM panel — it goes with the driver. Detach it from
+                // the shared tap (identity-guarded) so a later ITM device doesn't inherit
+                // a dead observer, and drop the reference (nothing on the non-ITM path
+                // would ever clear its snapshot otherwise).
+                plugin.DetachItmObserver(_itmTwin);
+                _itmTwin = null;
                 _itmWasRunning = false;
                 _displayStack = null;         // rules only drive an ITM display
                 _displayRuleSnapshot = null;  // and their published snapshot goes with them
@@ -623,6 +647,11 @@ namespace FanaBridge.Adapters
                 {
                     _itmDisplay.Stop();
                     _itmDisplay = null;
+                    // The twin is keyed to the display id (its constructor fixes it) —
+                    // drop it with the driver so the rebuild below constructs one for the
+                    // new id and re-attaches. Detach the old one from the shared tap.
+                    plugin.DetachItmObserver(_itmTwin);
+                    _itmTwin = null;
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                         "]: ITM display id changed (" + _itmDeviceId + " → " +
@@ -635,6 +664,15 @@ namespace FanaBridge.Adapters
                         nowMs: ItmClockForTest,
                         log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
                         deviceId: _itmDeviceId);
+                    // The wire-driven twin for the same display device, on the same clock
+                    // as the driver so their snapshot throttles stay in step. Attached to
+                    // the shared ITM outbound tap the instant it exists — bootstrap by
+                    // construction (research R2): the tap is live from encoder creation,
+                    // so the twin observes the whole session from the first bring-up frame
+                    // with no mid-stream attach. A replace-on-attach tap means a wheel
+                    // swap re-points cleanly to this instance's twin.
+                    _itmTwin = new VirtualItmDisplay(deviceId: _itmDeviceId, nowMs: ItmClockForTest);
+                    plugin.AttachItmObserver(_itmTwin);
                     // A display-id hot-swap rebuilds the driver UNDER a still-live rule
                     // stack (UpdateDisplayRules below replaces the stack after the
                     // driver's first Update this same frame). Carry the stack's page
@@ -687,6 +725,11 @@ namespace FanaBridge.Adapters
                     {
                         _itmWheelChangeCount = wheelChanges;
                         _itmDisplay.OnWheelChanged();
+                        // The twin gets the same cold-start signal the lifecycle does: the
+                        // new wheel is a different device, so every observed frame so far
+                        // described one that no longer exists. It re-grounds from the fresh
+                        // bring-up frames (research R2 — re-ground on the caller's cold edge).
+                        _itmTwin?.OnColdStart();
                         // Rule/engine state belongs to the wheel session that produced
                         // it — rebuild the stack cold alongside the display. Page policy
                         // deliberately stays external across this null: the cold entry
@@ -701,10 +744,17 @@ namespace FanaBridge.Adapters
                     }
 
                     // Feed the firmware's pushed ITM subscription reports (col03-IN) to the
-                    // driver so it follows the page the wheel button selects.
-                    plugin.Wheelbase?.DrainItmReports(_itmDisplay.OnSubscriptionReport);
+                    // driver so it follows the page the wheel button selects — and to the
+                    // twin, which needs the SAME pushes to build its handle table and infer
+                    // wheel-button page changes (the OUT wire carries no PageSet for those).
+                    plugin.Wheelbase?.DrainItmReports(FeedItmSubscriptionReport);
 
                     _itmDisplay.Update(data);
+                    // Stamp the host lifecycle state onto the twin's snapshot (the wire does
+                    // not carry it) and expire its grace/throttle windows. Runs after the
+                    // driver's Update so the twin has already observed this frame's OUT
+                    // frames through the tap; nothing here sends.
+                    _itmTwin?.Tick(_itmDisplay.Lifecycle.State);
 
                     // Log the FIRST bring-up completing per connection, so hardware
                     // verification can confirm from the SimHub log that ITM went live.
@@ -800,6 +850,16 @@ namespace FanaBridge.Adapters
             }
 
             _ledModule?.Display();
+        }
+
+        // Hands one firmware subscription report to both consumers of the push stream:
+        // the driver (whose lifecycle adopts the entries and paces the sends) and the
+        // twin (whose handle table and page inference are built from the same reports).
+        // A named method keeps the per-frame drain callback a single cached delegate.
+        private void FeedItmSubscriptionReport(byte[] report)
+        {
+            _itmDisplay.OnSubscriptionReport(report);
+            _itmTwin?.OnSubscriptionReport(report);
         }
 
         // ── Display customization (rules) ────────────────────────────────
@@ -918,9 +978,12 @@ namespace FanaBridge.Adapters
             PluginResolver()?.UnregisterDeviceInstance(this);
             _displayManager?.Clear();
             _itmDisplay?.Stop();
-            // Stop dropped the driver's values snapshot — republish so the envelope
-            // can't carry a stopped session's values (teardown edge on
-            // DisplayPanelSnapshot; DataUpdate won't run again for this instance).
+            // The twin's screen goes with the session: detach it from the shared tap
+            // (identity-guarded) and drop the reference so the republish below composes
+            // a null values part (teardown edge on DisplayPanelSnapshot; DataUpdate won't
+            // run again for this instance).
+            PluginResolver()?.DetachItmObserver(_itmTwin);
+            _itmTwin = null;
             MaybePublishPanelSnapshot();
             _ledModule?.FinalizeModule();
         }

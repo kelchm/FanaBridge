@@ -47,6 +47,12 @@ namespace FanaBridge
         private DisplayEncoder _display;
         private ItmEncoder _itm;
 
+        // The outbound ITM tap: the transport the ITM encoder writes through, wrapped so a
+        // later stage can attach the wire-driven display twin as an observer. Left
+        // observer-less here — with nothing attached it is a byte-invisible pass-through,
+        // which the golden frame-sequence / byte-parity tests prove.
+        private TappedDeviceTransport _itmTap;
+
         /// <summary>
         /// Experimental Control Mapper integration bridge. Lazily constructed
         /// the first time the feature is enabled (so a missing SimHub Control
@@ -165,7 +171,10 @@ namespace FanaBridge
             _leds = new LedEncoder(transport);
             _legacyLeds = new LegacyLedEncoder(transport);
             _display = new DisplayEncoder(transport);
-            _itm = new ItmEncoder(transport);
+            // Mirror InitializeCore's ITM tap so device-instance tests exercise the same
+            // wrapped transport the production core uses (proving byte-invisibility).
+            _itmTap = new TappedDeviceTransport(transport);
+            _itm = new ItmEncoder(_itmTap);
         }
 
         /// <summary>
@@ -321,6 +330,24 @@ namespace FanaBridge
         /// <summary>Shared ITM encoder (col03) — used by DeviceInstance ITM display drivers.</summary>
         public ItmEncoder Itm => _itm;
 
+        /// <summary>
+        /// Attaches the wire-driven display twin as the observer of the ITM outbound tap,
+        /// so it sees a byte copy of every accepted col03 frame the shared ITM encoder
+        /// sends (driver values AND lifecycle bring-up alike). The connected device
+        /// instance owns the twin and attaches it when it builds its ITM driver; a later
+        /// attach replaces any previous one, so a wheel swap re-points the tap to the new
+        /// instance's twin. No-op if the core has not built the tap yet.
+        /// </summary>
+        public void AttachItmObserver(ICol03SendObserver observer) => _itmTap?.AttachObserver(observer);
+
+        /// <summary>
+        /// Detaches <paramref name="observer"/> from the ITM outbound tap, only if it is
+        /// the one currently attached (identity-guarded — see
+        /// <see cref="TappedDeviceTransport.DetachObserver(ICol03SendObserver)"/>). Called
+        /// on the owning instance's teardown edges.
+        /// </summary>
+        public void DetachItmObserver(ICol03SendObserver observer) => _itmTap?.DetachObserver(observer);
+
         /// <summary>Shared tuning controller — used by TuningSettingsPanel for encoder config.</summary>
         public FanatecTuningController Tuning => _tuning;
 
@@ -405,7 +432,11 @@ namespace FanaBridge
             _leds = new LedEncoder(transport);
             _legacyLeds = new LegacyLedEncoder(transport);
             _display = new DisplayEncoder(transport);
-            _itm = new ItmEncoder(transport);
+            // Route ITM OUT traffic through the tap so the wire-driven twin can observe
+            // exactly what goes out. Only the ITM encoder is wrapped — LED/tuning/engage
+            // traffic on the same transport is none of the twin's business.
+            _itmTap = new TappedDeviceTransport(transport, msg => SimHub.Logging.Current.Warn(msg));
+            _itm = new ItmEncoder(_itmTap);
             _tuning = new FanatecTuningController(
                 transport,
                 msg => SimHub.Logging.Current.Warn(msg),

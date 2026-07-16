@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Protocol;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Protocol
 {
     /// <summary>One rendered field in a display-values snapshot: the parameter, its
     /// label (when the field carries its own — dual TC/ABS style), and the display
@@ -44,13 +43,15 @@ namespace FanaBridge.Adapters
     }
 
     /// <summary>
-    /// An immutable cross-thread snapshot of what the ITM display is showing — composed
-    /// by <see cref="ItmDisplayDriver"/> from the values it last put on the wire (never
-    /// from a separate telemetry read, so it cannot drift from the hardware), published
-    /// through a volatile field and polled by the UI's display mirror. Recomposed only
-    /// when a sent value, suffix, page, or lifecycle state actually changed, at a
-    /// bounded cadence — the same hand-off pattern as <see cref="DisplayRuleSnapshot"/>,
-    /// kept separate from it (this one exists for every ITM user, rules or not).
+    /// An immutable cross-thread snapshot of what the ITM display is showing, published
+    /// through a volatile field and polled by the UI's display mirror. This is the seam
+    /// type between the device model and its viewers: it speaks display vocabulary only
+    /// (pages, labels, rendered strings, placeholder flags — never handles or report
+    /// bytes), so a consumer needs no protocol knowledge. Produced by
+    /// <see cref="VirtualItmDisplay"/> from the frames that actually went on the wire —
+    /// never from a separate telemetry read, so it cannot drift from the hardware.
+    /// Recomposed only when a value, suffix, page, or lifecycle state actually changed,
+    /// at a bounded cadence.
     /// </summary>
     public sealed class DisplayValuesSnapshot
     {
@@ -110,8 +111,8 @@ namespace FanaBridge.Adapters
         /// the page has no telemetry fields.</summary>
         public string SpeedText { get; }
 
-        /// <summary>The driver clock's value at composition (same pattern as
-        /// <see cref="DisplayRuleSnapshot.ComposedAtMs"/>).</summary>
+        /// <summary>The producer's injected clock at composition (the same
+        /// milliseconds domain its other timings use).</summary>
         public long ComposedAtMs { get; }
 
         /// <summary>Wall-clock UTC at composition, paired with <see cref="ComposedAtMs"/>

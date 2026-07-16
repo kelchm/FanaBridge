@@ -284,7 +284,11 @@ namespace FanaBridge.Tests
             Assert.NotNull(after.Values);            // for a part that silently vanished
             Assert.NotSame(before!.Values, after.Values);
             Assert.NotSame(before.Rules, after.Rules);
-            Assert.Null(after.Values!.Page);         // the rebuilt driver starts cold
+            // The rebuilt driver starts cold: the fresh twin has observed this frame's
+            // bring-up PageSet (so it truthfully shows the newly-selected page) but no
+            // values have been painted yet — placeholders, not the disposed session's
+            // synced screen.
+            Assert.True(after.Values!.ShowingPlaceholders);
         }
 
         [Fact]
@@ -319,7 +323,10 @@ namespace FanaBridge.Tests
             Assert.NotEqual(before.ItmStatus, after.ItmStatus);  // not the old controller's line
             Assert.NotNull(after.Values);
             Assert.NotSame(before.Values, after.Values);
-            Assert.Null(after.Values!.Page);         // the rebuilt driver starts cold
+            // The rebuilt driver starts cold: the fresh twin shows the newly-selected
+            // page (from this frame's bring-up PageSet) with placeholders — not the old
+            // driver's synced values.
+            Assert.True(after.Values!.ShowingPlaceholders);
             // …and the rule part is replaced when the rebuilt stack first composes —
             // the stack was rebuilt against the NEW driver this same frame.
             Assert.NotNull(after.Rules);

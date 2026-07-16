@@ -10,14 +10,18 @@ using Xunit;
 namespace FanaBridge.Tests
 {
     /// <summary>
-    /// The display-values snapshot <see cref="ItmDisplayDriver"/> composes for the UI's
-    /// live mirror: per-slot rendered strings from the values/suffixes as last sent,
-    /// page identity + wire page, lifecycle state, placeholder behavior around resets,
-    /// change-gated + throttled recomposition, and teardown on Stop. Wire behavior is
-    /// covered by <see cref="ItmDisplayDriverTests"/> and the golden frame-sequence
-    /// gate in <see cref="DisplayCustomizationWiringTests"/> (which pins the absolute
-    /// col03 output of a scripted session, so the snapshot/observer path cannot add,
-    /// drop, or reorder a frame unnoticed) — nothing here asserts frames.
+    /// The display-values screen state, retargeted at the wire-driven twin
+    /// (<see cref="VirtualItmDisplay"/>) — the producer of the snapshot the UI mirror
+    /// consumes since the snapshot bookkeeping left <see cref="ItmDisplayDriver"/>. These
+    /// drive the REAL driver + lifecycle over a RecordingTransport wrapped in the REAL
+    /// <see cref="TappedDeviceTransport"/> (the twin attached as its observer, the same
+    /// seam production uses) with real SimHub telemetry, then assert what the twin renders
+    /// from the frames that ACTUALLY went out: per-slot rendered strings, page identity,
+    /// placeholder behavior around the wire's own DisplayReset, change-gated + throttled
+    /// recomposition, and teardown. The twin follows the bytes, so these double as the
+    /// telemetry→wire→screen integration goldens. Absolute wire output is pinned
+    /// separately by the golden frame-sequence gate in
+    /// <see cref="DisplayCustomizationWiringTests"/>; nothing here asserts frames.
     /// </summary>
     public class DisplayValuesSnapshotTests
     {
@@ -50,10 +54,56 @@ namespace FanaBridge.Tests
 
         private sealed class Clock { public long T; public long Now() => T; }
 
-        private static ItmDisplayDriver MakeDriver(out Clock clock)
+        // The production seam: the driver's encoder writes through the tap, the twin is
+        // its observer, and both share one injected clock so their throttles stay in
+        // step. Update ticks the twin with the driver's lifecycle state (the host-side
+        // annotation the wire does not carry); Push feeds ONE firmware report to both
+        // consumers of the push stream, exactly as the device instance does per frame.
+        private sealed class Mirror
         {
-            clock = new Clock();
-            return new ItmDisplayDriver(new ItmEncoder(new RecordingTransport()), clock.Now);
+            public readonly ItmDisplayDriver Driver;
+            public readonly VirtualItmDisplay Twin;
+
+            public Mirror(ItmDisplayDriver driver, VirtualItmDisplay twin)
+            {
+                Driver = driver;
+                Twin = twin;
+            }
+
+            public DisplayValuesSnapshot Snapshot => Twin.Snapshot;
+            public bool IsRunning => Driver.IsRunning;
+            public bool Enabled { set => Driver.Enabled = value; }
+
+            public void Start() => Driver.Start();
+            public void Update(GameData data)
+            {
+                Driver.Update(data);
+                Twin.Tick(Driver.Lifecycle.State);
+            }
+            public void Push(byte[] report)
+            {
+                Driver.OnSubscriptionReport(report);
+                Twin.OnSubscriptionReport(report);
+            }
+            // The device instance cold-starts the twin on the same teardown edge that
+            // stops the driver (disconnect, End) — a stale screen never outlives its
+            // session.
+            public void Stop()
+            {
+                Driver.Stop();
+                Twin.OnColdStart();
+            }
+        }
+
+        private static Mirror MakeMirror(out Clock clock)
+        {
+            var c = new Clock();
+            clock = c;
+            var twin = new VirtualItmDisplay(nowMs: c.Now);
+            var tap = new TappedDeviceTransport(new RecordingTransport());
+            tap.AttachObserver(twin);
+            var driver = new ItmDisplayDriver(new ItmEncoder(tap), c.Now);
+            return new Mirror(driver, twin);
         }
 
         // ── GameData (see ItmTelemetryTests) ─────────────────────────────
@@ -109,22 +159,25 @@ namespace FanaBridge.Tests
             return list.ToArray();
         }
 
+        // The page-1 firmware handles, unsubscribed as the front edge of a wheel-button
+        // page change (real firmware drops the old set before pushing the new one).
+        private static byte[] LapInfoUnsub => UnsubReport(0x00, 0x01, 0x82, 0x83, 0x04, 0x05);
+
         // Brings the driver to push-confirmed sync, completes the post-sync repaint
         // (values, tap, ParamDefs), then lets the snapshot throttle window pass so the
-        // published snapshot reflects the settled values + suffixes.
-        private static void SyncAndSettle(ItmDisplayDriver driver, Clock clock, GameData data,
-            byte[]? push = null)
+        // twin's published snapshot reflects the settled values + suffixes.
+        private static void SyncAndSettle(Mirror m, Clock clock, GameData data, byte[]? push = null)
         {
-            driver.Start();
-            driver.Update(data);                    // bring-up
-            driver.OnSubscriptionReport(push ?? LapInfoPush);
+            m.Start();
+            m.Update(data);                    // bring-up
+            m.Push(push ?? LapInfoPush);
             clock.T += 50;
-            driver.Update(data);                    // judged → Synced; first paint
+            m.Update(data);                    // judged → Synced; first paint
             clock.T += 20;
-            driver.Update(data);                    // second tap + ParamDefs
-            Assert.True(driver.IsRunning);
+            m.Update(data);                    // second tap + ParamDefs
+            Assert.True(m.IsRunning);
             clock.T += 250;
-            driver.Update(data);                    // snapshot throttle window passed
+            m.Update(data);                    // snapshot throttle window passed
         }
 
         private static string FieldValue(DisplayValueSlot? slot)
@@ -135,10 +188,10 @@ namespace FanaBridge.Tests
         [Fact]
         public void SyncedWithValues_RendersTheGuideExamplePage()
         {
-            var driver = MakeDriver(out var clock);
-            SyncAndSettle(driver, clock, LapInfoData());
+            var m = MakeMirror(out var clock);
+            SyncAndSettle(m, clock, LapInfoData());
 
-            var snap = driver.ValuesSnapshot;
+            var snap = m.Snapshot;
             Assert.NotNull(snap);
             Assert.Equal(ItmPage.LapInfo, snap!.Page);
             Assert.Equal(1, snap.WirePage);
@@ -162,23 +215,23 @@ namespace FanaBridge.Tests
         [Fact]
         public void UnchangedFrames_KeepTheSameSnapshotReference()
         {
-            var driver = MakeDriver(out var clock);
+            var m = MakeMirror(out var clock);
             var data = LapInfoData();
-            SyncAndSettle(driver, clock, data);
+            SyncAndSettle(m, clock, data);
 
-            var before = driver.ValuesSnapshot;
+            var before = m.Snapshot;
             for (int i = 0; i < 20; i++)
             {
                 clock.T += 300;   // periodic unchanged re-asserts happen in here
-                driver.Update(data);
+                m.Update(data);
             }
-            Assert.Same(before, driver.ValuesSnapshot);
+            Assert.Same(before, m.Snapshot);
         }
 
         [Fact]
         public void ChangedValue_Recomposes_ButOnlyAfterTheThrottleWindow()
         {
-            var driver = MakeDriver(out var clock);
+            var m = MakeMirror(out var clock);
             var s = NewStatus();
             Set(s, "SpeedLocal", 268.0);
             Set(s, "Gear", "6");
@@ -189,19 +242,19 @@ namespace FanaBridge.Tests
             Set(s, "CurrentLapTime", TimeSpan.FromSeconds(96.911));
             Set(s, "LastLapTime", TimeSpan.FromSeconds(134.169));
             var data = Data(s);
-            SyncAndSettle(driver, clock, data);
-            var settled = driver.ValuesSnapshot;
+            SyncAndSettle(m, clock, data);
+            var settled = m.Snapshot;
 
             // A changed value sent inside the throttle window does not recompose yet…
             Set(s, "CurrentLap", 16);
             clock.T += 100;
-            driver.Update(data);   // the new value goes on the wire
-            Assert.Same(settled, driver.ValuesSnapshot);
+            m.Update(data);   // the new value goes on the wire and the twin paints it
+            Assert.Same(settled, m.Snapshot);
 
             // …but the held change composes once the window passes, with no further edge.
             clock.T += 200;
-            driver.Update(data);
-            var recomposed = driver.ValuesSnapshot;
+            m.Update(data);
+            var recomposed = m.Snapshot;
             Assert.NotSame(settled, recomposed);
             Assert.Equal("16 /73", FieldValue(recomposed!.LeftTop));
         }
@@ -209,14 +262,16 @@ namespace FanaBridge.Tests
         [Fact]
         public void GameExit_ShowsTheResetPlaceholders_AndResumeRepaints()
         {
-            var driver = MakeDriver(out var clock);
+            var m = MakeMirror(out var clock);
             var data = LapInfoData();
-            SyncAndSettle(driver, clock, data);
+            SyncAndSettle(m, clock, data);
 
-            // Game exits: the lifecycle sends DisplayReset; the mirror follows suit.
+            // Game exits: the lifecycle sends the actual DisplayReset frame (FF 05 05);
+            // the twin observes it on the wire and clears its painted fields — no edge
+            // heuristic, the twin just follows the bytes.
             clock.T += 300;
-            driver.Update(Data(NewStatus(), gameRunning: false));
-            var idle = driver.ValuesSnapshot;
+            m.Update(Data(NewStatus(), gameRunning: false));
+            var idle = m.Snapshot;
             Assert.NotNull(idle);
             Assert.Equal(ItmLifecycleState.Synced, idle!.State);
             Assert.True(idle.ShowingPlaceholders);
@@ -229,10 +284,10 @@ namespace FanaBridge.Tests
             // Telemetry returns: the repaint puts values back on the display and the
             // snapshot follows once the throttle window passes.
             clock.T += 300;
-            driver.Update(data);
+            m.Update(data);
             clock.T += 300;
-            driver.Update(data);
-            var resumed = driver.ValuesSnapshot;
+            m.Update(data);
+            var resumed = m.Snapshot;
             Assert.False(resumed!.ShowingPlaceholders);
             Assert.Equal("15 /73", FieldValue(resumed.LeftTop));
         }
@@ -242,17 +297,17 @@ namespace FanaBridge.Tests
         {
             // Bring-up with no game running: the display is synced but shows the
             // post-reset placeholders (nothing has been sent).
-            var driver = MakeDriver(out var clock);
+            var m = MakeMirror(out var clock);
             var idle = Data(NewStatus(), gameRunning: false);
-            driver.Start();
-            driver.Update(idle);
-            driver.OnSubscriptionReport(LapInfoPush);
+            m.Start();
+            m.Update(idle);
+            m.Push(LapInfoPush);
             clock.T += 50;
-            driver.Update(idle);
+            m.Update(idle);
             clock.T += 250;
-            driver.Update(idle);
+            m.Update(idle);
 
-            var snap = driver.ValuesSnapshot;
+            var snap = m.Snapshot;
             Assert.NotNull(snap);
             Assert.Equal(ItmLifecycleState.Synced, snap!.State);
             Assert.True(snap.ShowingPlaceholders);
@@ -264,7 +319,7 @@ namespace FanaBridge.Tests
         [Fact]
         public void WheelButtonPageChange_FollowsToTheNewPage()
         {
-            var driver = MakeDriver(out var clock);
+            var m = MakeMirror(out var clock);
             var s = NewStatus();
             Set(s, "SpeedLocal", 164.0);
             Set(s, "Gear", "3");
@@ -273,18 +328,22 @@ namespace FanaBridge.Tests
             Set(s, "TyreTemperatureFrontRight", 73.0);
             Set(s, "TyreTemperatureRearRight", 81.0);
             var data = Data(s);
-            SyncAndSettle(driver, clock, data);   // page 1 first
+            SyncAndSettle(m, clock, data);   // page 1 first
 
-            // The wheel button moves to page 5 (Tyre Temps).
-            driver.OnSubscriptionReport(TyrePush);
+            // The wheel button moves to page 5 (Tyre Temps): the firmware drops the
+            // page-1 subscriptions and pushes the page-5 set — the twin infers the new
+            // page from the pushed parameter set (no PageSet on the OUT wire).
+            m.Push(LapInfoUnsub);
+            clock.T += 2;
+            m.Push(TyrePush);
             clock.T += 50;
-            driver.Update(data);                  // adopted; repaint
+            m.Update(data);                  // adopted; repaint
             clock.T += 20;
-            driver.Update(data);                  // tap + defs (temp-unit suffixes)
+            m.Update(data);                  // tap + defs (temp-unit suffixes)
             clock.T += 250;
-            driver.Update(data);                  // throttle window passed
+            m.Update(data);                  // throttle window passed
 
-            var snap = driver.ValuesSnapshot;
+            var snap = m.Snapshot;
             Assert.Equal(ItmPage.TyreTemps, snap!.Page);
             Assert.Equal(5, snap.WirePage);
             Assert.Equal("FL TIRE TEMP:", snap.LeftTop!.Label);
@@ -297,62 +356,58 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void GearWireForm_IsLatchedAtSendTime_NotReadFromLiveSubscriptions()
+        public void GearWireForm_IsLatchedWithThePaintedValue_NotTheLiveSubscription()
         {
             // Formula V3-class displays declare GEAR as ASCII text (dataType low nibble
-            // 1). A wheel-button page change front-runs with unsubscribe entries that
-            // leave the LIVE subscription map immediately, while the state stays Synced
-            // through the accumulate/grace windows. A compose landing in that window
-            // must render the latched ASCII '6' with the wire form latched at the same
-            // send — resolving it from the live map would find no gear entry, fall back
-            // to numeric, and misdecode '6' (0x36) as "54".
+            // 1). The twin latches the declared wire form WITH the painted value, so an
+            // unsubscribe of the gear handle (the front edge of a page change, within the
+            // identity grace window) drops the live table entry but leaves the painted
+            // ASCII '6' — and its text form — on the held page. Reading the form from the
+            // live map instead would find no gear entry, fall back to numeric, and
+            // misdecode '6' (0x36) as "54".
             var textGearPush = HexToBytes(
                 "ff0501" + "0300010034" + "0301040011" + "0382f90132" + "0383f50132" + "0304fd012a" + "0305fe012a");
-            var driver = MakeDriver(out var clock);
+            var m = MakeMirror(out var clock);
             var s = NewStatus();
             Set(s, "SpeedLocal", 268.0);
             Set(s, "Gear", "6");
             Set(s, "CurrentLap", 15);
             Set(s, "TotalLaps", 73);
             var data = Data(s);
-            SyncAndSettle(driver, clock, data, textGearPush);
-            Assert.Equal("6", driver.ValuesSnapshot!.GearText);
-            var settled = driver.ValuesSnapshot;
+            SyncAndSettle(m, clock, data, textGearPush);
+            Assert.Equal("6", m.Snapshot!.GearText);
+            var settled = m.Snapshot;
 
-            // A changed value sent inside the throttle window keeps a recompose pending…
-            Set(s, "CurrentLap", 16);
-            clock.T += 100;
-            driver.Update(data);
+            // The page change begins: the firmware unsubscribes the gear handle. Within
+            // the grace window the page is still held and the painted glyphs stay put.
+            m.Push(UnsubReport(0x01));
+            clock.T += 10;                  // inside the page-identity grace window
+            m.Update(data);
 
-            // …then the page change begins: the firmware unsubscribes the gear handle.
-            driver.OnSubscriptionReport(UnsubReport(0x01));
-            clock.T += 160;   // past the accumulate window (Synced, in grace) and the compose throttle
-            driver.Update(data);
-
-            var snap = driver.ValuesSnapshot;
-            Assert.NotSame(settled, snap);   // the pending change composed on this tick
+            var snap = m.Snapshot;
+            Assert.Same(settled, snap);     // nothing on the screen moved within grace
             Assert.Equal(ItmLifecycleState.Synced, snap!.State);
-            Assert.Equal("16 /73", FieldValue(snap.LeftTop));
+            Assert.Equal("15 /73", FieldValue(snap.LeftTop));
             Assert.Equal("6", snap.GearText);   // not the numeric misdecode "54"
         }
 
         [Fact]
         public void LegacyPage_HasNoSlots()
         {
-            var driver = MakeDriver(out var clock);
+            var m = MakeMirror(out var clock);
             var data = LapInfoData();
-            SyncAndSettle(driver, clock, data);
+            SyncAndSettle(m, clock, data);
 
             // An unsubscribe-all with nothing following = the legacy ITM page.
-            driver.OnSubscriptionReport(UnsubReport(0, 1, 0x82, 0x83, 4, 5));
+            m.Push(UnsubReport(0, 1, 0x82, 0x83, 4, 5));
             clock.T += 50;
-            driver.Update(data);   // judged: empty set → grace opens
+            m.Update(data);   // judged: empty set → grace opens
             clock.T += 150;
-            driver.Update(data);   // grace expired → legacy page adopted
+            m.Update(data);   // grace expired → legacy page adopted
             clock.T += 250;
-            driver.Update(data);
+            m.Update(data);
 
-            var snap = driver.ValuesSnapshot;
+            var snap = m.Snapshot;
             Assert.Equal(ItmPage.Legacy, snap!.Page);
             Assert.Equal("Legacy", snap.PageName);
             Assert.Null(snap.LeftTop);
@@ -364,25 +419,25 @@ namespace FanaBridge.Tests
         [Fact]
         public void UserDisable_SurfacesTheDisabledState()
         {
-            var driver = MakeDriver(out var clock);
+            var m = MakeMirror(out var clock);
             var data = LapInfoData();
-            SyncAndSettle(driver, clock, data);
+            SyncAndSettle(m, clock, data);
 
-            driver.Enabled = false;
+            m.Enabled = false;
             clock.T += 300;
-            driver.Update(data);
-            Assert.Equal(ItmLifecycleState.Disabled, driver.ValuesSnapshot!.State);
+            m.Update(data);
+            Assert.Equal(ItmLifecycleState.Disabled, m.Snapshot!.State);
         }
 
         [Fact]
         public void Stop_ClearsThePublishedSnapshot()
         {
-            var driver = MakeDriver(out var clock);
-            SyncAndSettle(driver, clock, LapInfoData());
-            Assert.NotNull(driver.ValuesSnapshot);
+            var m = MakeMirror(out var clock);
+            SyncAndSettle(m, clock, LapInfoData());
+            Assert.NotNull(m.Snapshot);
 
-            driver.Stop();
-            Assert.Null(driver.ValuesSnapshot);
+            m.Stop();
+            Assert.Null(m.Snapshot);
         }
     }
 }
