@@ -322,6 +322,125 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void Snapshot_TimedHold_RecomposesAtTheCountdownFloor()
+        {
+            // While the winner holds the screen on a timer, RemainingMs is the one
+            // visible thing that changes with no status/activity/intent edge — the
+            // stack must recompose at the bounded countdown cadence or a UI countdown
+            // would freeze at its first value.
+            var h = Harness.Create(ActionRuleConfig);
+            h.Control.Land(1);
+            h.Tick(SpeedData(0));                        // baseline snapshot
+
+            h.Stack.Actions.OnTriggered("ShowTyres");
+            h.T += 16;
+            var fired = h.Tick(SpeedData(0));            // fired → OnScreen, 5000 ms hold
+            Assert.NotNull(fired);
+            var row = Assert.Single(fired!.ItmRules);
+            Assert.Equal(RuleStatus.OnScreen, row.Status);
+            Assert.Equal(5000, row.RemainingMs);
+
+            // Below the floor nothing recomposes (bounded churn).
+            h.T += 100;
+            Assert.Null(h.Tick(SpeedData(0)));
+            h.T += 100;
+            Assert.Null(h.Tick(SpeedData(0)));
+
+            // Past the floor the countdown alone recomposes.
+            h.T += 100;                                  // 300 ms since the fire compose
+            var ticked = h.Tick(SpeedData(0));
+            Assert.NotNull(ticked);
+            Assert.Equal(4700, Assert.Single(ticked!.ItmRules).RemainingMs);
+            Assert.Equal(h.T, ticked.ComposedAtMs);
+
+            // And the floor re-arms from the fresh composition.
+            h.T += 100;
+            Assert.Null(h.Tick(SpeedData(0)));
+        }
+
+        [Fact]
+        public void Snapshot_UntimedHold_NeverRecomposesOnTimeAlone()
+        {
+            // A WhileActive winner carries no countdown — the passage of time by itself
+            // must keep publishing nothing (the idle-frame guarantee).
+            var h = Harness.Create(SpeedRuleConfig);
+            h.Control.Land(1);
+            Assert.NotNull(h.Tick(SpeedData(150)));      // fired, WhileActive
+            h.T += 300;
+            Assert.Null(h.Tick(SpeedData(150)));
+            h.T += 5000;
+            Assert.Null(h.Tick(SpeedData(150)));
+        }
+
+        [Fact]
+        public void Snapshot_CarriesItsComposeClock_ForRelativeAges()
+        {
+            // Activity events are stamped with the engine clock; the snapshot exposes
+            // the same clock's value at composition so the UI can render relative ages
+            // without a clock of its own.
+            var h = Harness.Create(SpeedRuleConfig);
+            h.Control.Land(1);
+            h.T = 1000;
+            var first = h.Tick(SpeedData(50));
+            Assert.NotNull(first);
+            Assert.Equal(1000, first!.ComposedAtMs);
+
+            h.T = 5000;
+            var fired = h.Tick(SpeedData(150));
+            Assert.NotNull(fired);
+            Assert.Equal(5000, fired!.ComposedAtMs);
+            DisplayActivityEvent? fireEvent = null;
+            foreach (var e in fired.Activity)
+                if (e.Kind == ActivityKind.RuleFired)
+                    fireEvent = e;
+            Assert.NotNull(fireEvent);
+            Assert.Equal(0, fired.ComposedAtMs - fireEvent!.Value.AtMs);   // fired this tick
+        }
+
+        [Fact]
+        public void Snapshot_StampsWallClockAlongsideTheEngineClock()
+        {
+            // ComposedAtUtc pairs with ComposedAtMs so a UI observing the snapshot
+            // arbitrarily late (composition is change-gated) can estimate the engine
+            // clock's CURRENT value instead of rendering ages as of compose time.
+            var h = Harness.Create(SpeedRuleConfig);
+            h.Control.Land(1);
+
+            var before = DateTime.UtcNow;
+            var snapshot = h.Tick(SpeedData(50));
+            var after = DateTime.UtcNow;
+
+            Assert.NotNull(snapshot);
+            Assert.InRange(snapshot!.ComposedAtUtc, before, after);
+        }
+
+        [Fact]
+        public void Snapshot_CarriesTheStacksBasePageName()
+        {
+            // The base row's one source of truth while a stack is live: the config's
+            // base page when this device offers it...
+            const string basePageConfig =
+                "{ \"schemaVersion\": 1, \"itm\": { \"basePage\": \"lapTimes\", \"rules\": [] } }";
+            var pinned = Harness.Create(basePageConfig, defaultWirePage: 5);
+            pinned.Control.Land(1);
+            Assert.Equal("Lap Times", pinned.Tick(SpeedData(0))!.BasePageName);
+
+            // ...the default-page setting captured at build when the config pins none...
+            var fallback = Harness.Create(SpeedRuleConfig, defaultWirePage: 5);
+            fallback.Control.Land(1);
+            Assert.Equal("Tire Temps", fallback.Tick(SpeedData(0))!.BasePageName);
+
+            // ...and the default-wire fallback when the pinned page doesn't exist on
+            // this device (the Bentley set has no Car Settings) — the snapshot must
+            // name the page the display actually rests on, never the unavailable pin.
+            const string unavailableConfig =
+                "{ \"schemaVersion\": 1, \"itm\": { \"basePage\": \"carSettings\", \"rules\": [] } }";
+            var bentley = Harness.Create(unavailableConfig, itmDeviceId: 4, defaultWirePage: 1);
+            bentley.Control.Land(1);
+            Assert.Equal("Lap Info", bentley.Tick(SpeedData(0))!.BasePageName);
+        }
+
+        [Fact]
         public void Snapshot_IncludesLegacyRules()
         {
             const string config =

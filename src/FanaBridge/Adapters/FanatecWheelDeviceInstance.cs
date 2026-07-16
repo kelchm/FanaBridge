@@ -765,6 +765,25 @@ namespace FanaBridge.Adapters
                 _displayRuleSnapshot = snapshot;
         }
 
+        /// <summary>
+        /// Publishes a UI-built customization document — the Display tab's ONLY write
+        /// path into the config. The document is run through the settings load path
+        /// (serialize → parse → <see cref="DisplayConfigValidator"/> normalization), so a
+        /// UI-built config obeys exactly the invariants a loaded one does. A null or
+        /// empty document publishes null, preserving the empty-config parity fast path.
+        /// Nothing else is synced here: the frame path notices the reference swap and
+        /// rebuilds the rule stack, and SimHub persists via <see cref="GetSettings"/> on
+        /// its own schedule (the same flow a DisplaySettings change rides today).
+        /// </summary>
+        internal void ApplyDisplayConfig(DisplayCustomizationConfig config)
+        {
+            var normalized = config == null
+                ? null
+                : DisplayConfigSerializer.Load(DisplayConfigSerializer.Save(config),
+                    msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg));
+            _displayConfig = normalized != null && !normalized.IsEmpty ? normalized : null;
+        }
+
         public override void End()
         {
             SimHub.Logging.Current.Info(
@@ -798,18 +817,25 @@ namespace FanaBridge.Adapters
                     true);
             }
 
-            // Screen/Tuning tabs are built through the plugin's panel factory so
+            // Display/Tuning tabs are built through the plugin's panel factory so
             // this Adapters class never references FanaBridge.UI. No current
             // plugin generation → tabs omitted, consistent with the LED tab's
             // degradation via EnsureLedModuleInitialized.
             var panels = PluginResolver()?.PanelFactory;
 
-            // Screen settings tab (only for wheels with a display)
+            // Display settings tab (only for wheels with a display)
             if (panels != null && _config.Capabilities.Display != DisplayType.None)
             {
-                var screenPanel = panels.CreateScreenPanel(
-                    _displaySettings, _config.Capabilities.Display, _config.Capabilities.ItmDeviceId,
-                    settingsChanged: () =>
+                var displayPanel = panels.CreateDisplayPanel(new DisplayPanelContext
+                {
+                    DisplaySettings = _displaySettings,
+                    DisplayType = _config.Capabilities.Display,
+                    ItmDeviceId = _config.Capabilities.ItmDeviceId,
+                    GetConfig = () => _displayConfig,
+                    ApplyConfig = ApplyDisplayConfig,
+                    GetSnapshot = () => _displayRuleSnapshot,
+                    GetItmStatus = () => ItmStatusDescription,
+                    SettingsChanged = () =>
                     {
                         // Sync back to JObject for persistence.
                         _customSettings["displayMode"] = _displaySettings.DisplayMode;
@@ -819,12 +845,13 @@ namespace FanaBridge.Adapters
                         _customSettings["itmDefaultPage"] = _displaySettings.ItmDefaultPage;
                         _displayManager?.UpdateSettings(_displaySettings);
                         // ITM driver reads _displaySettings live each frame.
-                    });
+                    },
+                });
 
                 yield return new DeviceSettingControl(
-                    screenPanel,
+                    displayPanel,
                     1,
-                    "Screen",
+                    "Display",
                     DeviceSettingControlKind.None,
                     true);
             }

@@ -434,6 +434,164 @@ namespace FanaBridge.Tests
             Assert.True(driver.GameStartPageRevert);
         }
 
+        // ── ApplyDisplayConfig (the UI write path) ───────────────────────
+
+        [Fact]
+        public void ApplyDisplayConfig_NormalizesThroughTheLoadPath_AndPublishes()
+        {
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            // A UI-built document with defects only the validator fixes: a rule with
+            // no id and an unrenderable legacy screen. Applying must behave exactly
+            // like loading the same document from settings.
+            var config = new DisplayCustomizationConfig();
+            config.Itm.Rules.Add(new DisplayRule
+            {
+                When = new RuleCondition
+                {
+                    Kind = ConditionKind.GreaterThan,
+                    Source = new PropertySpec { Kind = PropertyKind.BuiltIn, Name = BuiltInProperties.Speed },
+                    Value = 100,
+                },
+                Show = new RuleTarget { Kind = TargetKind.Page, Page = ItmPage.TyreTemps },
+                Hold = new HoldSpec { Kind = HoldKind.WhileActive },
+            });
+            config.Legacy.Screens.Add(new LegacyScreen { Id = "bad", Text = "TOOLONG" });
+
+            inst.ApplyDisplayConfig(config);
+
+            var saved = (JObject)inst.GetSettings(false, false);
+            var doc = saved["displayCustomization"];
+            Assert.NotNull(doc);
+            var published = DisplayConfigSerializer.Load(doc!.ToString(), _ => { });
+            var rule = Assert.Single(published.Itm.Rules);
+            Assert.False(string.IsNullOrEmpty(rule.Id));   // the validator assigned one
+            Assert.Empty(published.Legacy.Screens);        // unrenderable screen dropped
+        }
+
+        [Fact]
+        public void ApplyDisplayConfig_EmptyOrNull_PublishesNull()
+        {
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            inst.SetSettings(new JObject { ["displayCustomization"] = RuleDocument() }, false);
+            Assert.NotNull(((JObject)inst.GetSettings(false, false))["displayCustomization"]);
+
+            // Removing the last customization publishes null — the empty-config parity
+            // fast path (and the omitted settings key) come back.
+            inst.ApplyDisplayConfig(new DisplayCustomizationConfig());
+            Assert.Null(((JObject)inst.GetSettings(false, false))["displayCustomization"]);
+
+            inst.SetSettings(new JObject { ["displayCustomization"] = RuleDocument() }, false);
+            inst.ApplyDisplayConfig(null!);
+            Assert.Null(((JObject)inst.GetSettings(false, false))["displayCustomization"]);
+        }
+
+        [Fact]
+        public void ApplyDisplayConfig_ReachesTheFramePath()
+        {
+            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            var running = Data(NewStatus());
+            s.Frame(running);
+            Assert.Null(s.Instance.DisplayStackForTest);
+
+            // The UI applies a config: the frame path notices the reference swap and
+            // builds the rule stack, no settings round-trip involved.
+            s.Instance.ApplyDisplayConfig(
+                DisplayConfigSerializer.Load(RuleDocument().ToString(), _ => { }));
+            s.Frame(running);
+            Assert.NotNull(s.Instance.DisplayStackForTest);
+            Assert.NotNull(s.Instance.DisplayRuleSnapshot);
+
+            // Applying an empty document tears it back down.
+            s.Instance.ApplyDisplayConfig(new DisplayCustomizationConfig());
+            s.Frame(running);
+            Assert.Null(s.Instance.DisplayStackForTest);
+            Assert.Null(s.Instance.DisplayRuleSnapshot);
+        }
+
+        // ── GetSettingsControls (the Display tab) ────────────────────────
+
+        private sealed class FakePanelFactory : IDevicePanelFactory
+        {
+            public DisplayPanelContext? LastContext;
+
+            public System.Windows.Controls.Control CreateDisplayPanel(DisplayPanelContext context)
+            {
+                LastContext = context;
+                return null!;   // no WPF control off the UI thread; the tab only stores it
+            }
+
+            public System.Windows.Controls.Control CreateTuningPanel(JObject customSettings) => null!;
+        }
+
+        // A display-only wheel (no LEDs, no encoders) so GetSettingsControls yields
+        // exactly the display tab and never touches the LED module's WPF surface.
+        private static FanatecWheelDeviceInstance BareDisplayInstance(
+            string display, out FakePanelFactory panels)
+        {
+            var profile = new WheelProfile
+            {
+                Id = "TEST_" + display,
+                Name = "Test " + display + " wheel",
+                Display = display,
+            };
+            var inst = new FanatecWheelDeviceInstance(new DeviceConfig
+            {
+                Profile = profile,
+                Capabilities = new WheelCapabilities(profile),
+            });
+            var factory = new FakePanelFactory();
+            var plugin = new FanatecPlugin { PanelFactory = factory };
+            inst.PluginResolver = () => plugin;
+            panels = factory;
+            return inst;
+        }
+
+        [Theory]
+        [InlineData("Itm", DisplayType.Itm)]
+        [InlineData("Basic", DisplayType.Basic)]
+        public void GetSettingsControls_YieldsTheDisplayTab_ForDisplayWheels(
+            string display, DisplayType expectedType)
+        {
+            var inst = BareDisplayInstance(display, out var panels);
+
+            var tabs = inst.GetSettingsControls().ToList();
+
+            var tab = Assert.Single(tabs);
+            Assert.Equal("Display", tab.Title);   // the old tab said "Screen"
+            Assert.NotNull(panels.LastContext);
+            var context = panels.LastContext!;
+            Assert.Equal(expectedType, context.DisplayType);
+            Assert.NotNull(context.DisplaySettings);
+            Assert.NotNull(context.GetConfig);
+            Assert.NotNull(context.ApplyConfig);
+            Assert.NotNull(context.GetSnapshot);
+            Assert.NotNull(context.GetItmStatus);
+            Assert.NotNull(context.SettingsChanged);
+
+            // The delegates are live windows into the instance: no config yet …
+            Assert.Null(context.GetConfig!());
+            Assert.Null(context.GetSnapshot!());
+            Assert.Null(context.GetItmStatus!());
+
+            // … and ApplyConfig routes through the instance's normalize-and-publish.
+            var config = DisplayConfigSerializer.Load(RuleDocument().ToString(), _ => { });
+            context.ApplyConfig!(config);
+            Assert.NotNull(context.GetConfig!());
+            Assert.NotNull(((JObject)inst.GetSettings(false, false))["displayCustomization"]);
+        }
+
+        [Fact]
+        public void GetSettingsControls_NoDisplay_NoDisplayTab()
+        {
+            var inst = BareDisplayInstance("None", out var panels);
+            Assert.Empty(inst.GetSettingsControls());
+            Assert.Null(panels.LastContext);
+        }
+
         // ── Display-type teardown ────────────────────────────────────────
 
         [Fact]

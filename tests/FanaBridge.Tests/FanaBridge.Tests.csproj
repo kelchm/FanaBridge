@@ -6,6 +6,9 @@
     <!-- Nullable annotations start here (our own code, no unannotated SimHub
          API pressure); production files opt in per-file as they are touched. -->
     <Nullable>enable</Nullable>
+    <!-- The panel-factory fakes implement IDevicePanelFactory, whose methods
+         return WPF Controls (the tests never construct one). -->
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
   <ItemGroup>

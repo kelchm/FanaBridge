@@ -33,25 +33,39 @@ namespace FanaBridge.Adapters
     /// An immutable cross-thread snapshot of the rule stack's live state, published
     /// through a volatile field on the device instance and polled by the (future) UI —
     /// the same hand-off pattern as the ITM status snapshot, kept separate from it.
-    /// Recomposed only when something visible changed (activity version or a rule
-    /// status), so idle frames publish nothing new.
+    /// Recomposed only when something visible changed (activity version, a rule status,
+    /// the intent, or — at a bounded 250 ms cadence — a timed hold's countdown), so idle
+    /// frames publish nothing new.
     /// </summary>
     public sealed class DisplayRuleSnapshot
     {
-        internal DisplayRuleSnapshot(string intentDescription,
+        internal DisplayRuleSnapshot(string intentDescription, string basePageName,
             IReadOnlyList<DisplayRuleRow> itmRules, IReadOnlyList<DisplayRuleRow> legacyRules,
-            IReadOnlyList<DisplayActivityEvent> activity, long activityVersion)
+            IReadOnlyList<DisplayActivityEvent> activity, long activityVersion,
+            long composedAtMs, DateTime composedAtUtc)
         {
             IntentDescription = intentDescription;
+            BasePageName = basePageName;
             ItmRules = itmRules;
             LegacyRules = legacyRules;
             Activity = activity;
             ActivityVersion = activityVersion;
+            ComposedAtMs = composedAtMs;
+            ComposedAtUtc = composedAtUtc;
         }
 
         /// <summary>What the ITM surface should be showing, in row language
         /// (page name, or "screen 'X'").</summary>
         public string IntentDescription { get; }
+
+        /// <summary>
+        /// The display name of the page the stack actually rests on — the stack's own
+        /// resolution (<see cref="DisplayRuleStack.BaseWirePage"/>): the config's base page
+        /// when set AND offered by this device, else the page at the device's default wire.
+        /// The UI's "Always →" row must show THIS while a stack is live, not re-derive it
+        /// from settings the stack captured at build time.
+        /// </summary>
+        public string BasePageName { get; }
 
         /// <summary>ITM rules in priority order.</summary>
         public IReadOnlyList<DisplayRuleRow> ItmRules { get; }
@@ -64,6 +78,23 @@ namespace FanaBridge.Adapters
 
         /// <summary>Combined engine activity version — a cheap "anything new?" check.</summary>
         public long ActivityVersion { get; }
+
+        /// <summary>
+        /// The engine clock's value when this snapshot was composed — the same clock
+        /// <see cref="DisplayActivityEvent.AtMs"/> is stamped with, so the UI can render
+        /// relative ages ("12s ago") as <c>ComposedAtMs - AtMs</c> without ever holding a
+        /// clock of its own.
+        /// </summary>
+        public long ComposedAtMs { get; }
+
+        /// <summary>
+        /// Wall-clock UTC at composition, paired with <see cref="ComposedAtMs"/> so a UI
+        /// observing this snapshot arbitrarily late can estimate the engine clock's CURRENT
+        /// value (<c>ComposedAtMs + (UtcNow - ComposedAtUtc)</c>). Composition is
+        /// change-gated, so the latest snapshot can be minutes old when a settings dialog
+        /// opens — anchoring ages to first observation instead would understate them all.
+        /// </summary>
+        public DateTime ComposedAtUtc { get; }
     }
 
     /// <summary>
@@ -89,12 +120,23 @@ namespace FanaBridge.Adapters
     /// </summary>
     public class DisplayRuleStack
     {
+        /// <summary>Countdown recompose floor: while the on-screen winner carries a timed
+        /// hold, the snapshot refreshes this often so a UI countdown can tick — the only
+        /// visible change with no status/activity/intent edge. Bounded churn: outside a
+        /// timed hold the change gates alone decide.</summary>
+        internal const int CountdownRecomposeMs = 250;
+
         private readonly DisplayRuleEngine _itmEngine;
         private readonly DisplayRuleEngine _legacyEngine;
         private readonly DisplayPageDirector _director;
         private readonly SimHubPropertySource _properties;
         private readonly DisplayActionHub _actions;
         private readonly Action<string> _log;
+
+        // The stack's clock, shared with both engines and the director (one coherent
+        // timeline: event AtMs, the snapshot's ComposedAtMs, and the countdown
+        // recompose floor all read the same milliseconds).
+        private readonly Func<long> _now;
 
         // Rule lookup for snapshot labels (ids are unique across both sets — validator).
         private readonly Dictionary<string, DisplayRule> _rulesById =
@@ -112,8 +154,10 @@ namespace FanaBridge.Adapters
         private string _lastLegacyScreenLogged;
         private long _lastActivityVersion = -1;
         private string _lastIntentDescription;
+        private readonly string _basePageName;
         private RuleStatus[] _lastItmStatuses;
         private RuleStatus[] _lastLegacyStatuses;
+        private long _lastComposedAt = long.MinValue / 2;
 
         /// <summary>Production wiring: the director talks to the driver's lifecycle
         /// through <see cref="ItmLifecyclePageControl"/>.</summary>
@@ -131,6 +175,10 @@ namespace FanaBridge.Adapters
         {
             Config = config ?? throw new ArgumentNullException(nameof(config));
             _log = log ?? (_ => { });
+            // Resolve the clock HERE (not in each engine) so both engines, the director,
+            // and the stack's own composition share one timeline — MergeActivity and the
+            // snapshot's ComposedAtMs rely on that.
+            _now = nowMs ?? DefaultClock();
 
             // The device's page set gates rule availability (a Bentley has no Car
             // Settings page) and resolves the base-page fallback below.
@@ -156,11 +204,16 @@ namespace FanaBridge.Adapters
             // A base page this device doesn't have keeps the caller's default wire.
             BaseWirePage = PageToWire(pages, basePage, defaultWirePage);
 
+            // The snapshot's "Always →" name follows the EFFECTIVE base (the wire the
+            // display actually rests on), so the UI can't claim a pinned page this
+            // device doesn't have, or a default-page setting this stack hasn't latched.
+            _basePageName = WireName(pages, BaseWirePage);
+
             _itmEngine = DisplayRuleEngine.ForItm(config.Itm?.Rules, basePage, available,
-                nowMs, _log);
+                _now, _log);
             _legacyEngine = DisplayRuleEngine.ForLegacy(config.Legacy?.Rules,
-                config.Legacy?.BaseScreenId, nowMs, _log);
-            _director = new DisplayPageDirector(control, itmDeviceId, nowMs, _log);
+                config.Legacy?.BaseScreenId, _now, _log);
+            _director = new DisplayPageDirector(control, itmDeviceId, _now, _log);
             _properties = new SimHubPropertySource(_log);
             _actions = new DisplayActionHub(config, _log);
 
@@ -244,22 +297,48 @@ namespace FanaBridge.Adapters
             // and the published snapshot must follow what the display actually shows.
             string intent = DescribeIntent(itm.Intent);
             bool intentChanged = !string.Equals(intent, _lastIntentDescription, StringComparison.Ordinal);
+            long now = _now();
             if (!versionChanged && !itmChanged && !legacyChanged && !intentChanged)
-                return null;
+            {
+                // Nothing edged — but a timed on-screen hold still counts down, and the
+                // snapshot carries RemainingMs as of composition, so a frozen snapshot
+                // would freeze a UI countdown. Recompose at most every
+                // CountdownRecomposeMs while the current winner carries one (bounded
+                // churn: only during a timed hold).
+                bool counting = WinnerCountsDown(itm.RuleStates)
+                    || WinnerCountsDown(legacy.RuleStates);
+                if (!counting || now - _lastComposedAt < CountdownRecomposeMs)
+                    return null;
+            }
             _lastActivityVersion = version;
             _lastIntentDescription = intent;
+            _lastComposedAt = now;
 
             return new DisplayRuleSnapshot(
                 intent,
+                _basePageName,
                 Rows(itm.RuleStates),
                 Rows(legacy.RuleStates),
                 MergeActivity(),
-                version);
+                version,
+                now,
+                DateTime.UtcNow);
         }
 
-        // Compares (and refreshes) the remembered statuses. RemainingMs ticks down
-        // every frame and deliberately does NOT trigger recomposition — the snapshot
-        // carries the countdown as of its composition.
+        // True when the surface's winning rule is holding the screen on a timer — the
+        // one state whose visible representation (the countdown) changes with no
+        // status or activity edge.
+        private static bool WinnerCountsDown(IReadOnlyList<RuleLiveState> states)
+        {
+            for (int i = 0; i < states.Count; i++)
+                if (states[i].Status == RuleStatus.OnScreen && states[i].RemainingMs != null)
+                    return true;
+            return false;
+        }
+
+        // Compares (and refreshes) the remembered statuses. RemainingMs ticking down is
+        // NOT a status change — the countdown recompose floor above handles it at a
+        // bounded cadence instead of every frame.
         private static bool StatusesChanged(IReadOnlyList<RuleLiveState> states, ref RuleStatus[] last)
         {
             bool changed = last == null || last.Length != states.Count;
@@ -346,6 +425,12 @@ namespace FanaBridge.Adapters
 
         // ── Helpers ──────────────────────────────────────────────────────
 
+        private static Func<long> DefaultClock()
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            return () => sw.ElapsedMilliseconds;
+        }
+
         private void IndexRules(List<DisplayRule> rules)
         {
             if (rules == null)
@@ -373,6 +458,17 @@ namespace FanaBridge.Adapters
                 if (info.Page == page)
                     return info.Number;
             return fallback;
+        }
+
+        // The display name at a wire page number, for the snapshot's base row. The wire
+        // sits outside the table only when a pinned page is unavailable AND the default
+        // wire is itself off-table (corrupted setting) — name that honestly by number.
+        private static string WireName(IReadOnlyList<ItmPageInfo> pages, byte wirePage)
+        {
+            foreach (var info in pages)
+                if (info.Number == wirePage)
+                    return info.Name;
+            return "Page " + wirePage;
         }
     }
 }

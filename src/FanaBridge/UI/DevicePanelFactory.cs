@@ -1,7 +1,5 @@
-using System;
 using System.Windows.Controls;
 using FanaBridge.Adapters;
-using FanaBridge.Profiles;
 using Newtonsoft.Json.Linq;
 
 namespace FanaBridge.UI
@@ -9,12 +7,10 @@ namespace FanaBridge.UI
     /// <summary>UI-side implementation of the device settings-panel factory.</summary>
     internal sealed class DevicePanelFactory : IDevicePanelFactory
     {
-        public Control CreateScreenPanel(DisplaySettings settings, DisplayType display, byte itmDeviceId, Action settingsChanged)
+        public Control CreateDisplayPanel(DisplayPanelContext context)
         {
-            var panel = new ScreenSettingsPanel();
-            panel.Bind(settings, display, itmDeviceId);
-            if (settingsChanged != null)
-                panel.SettingsChanged += () => settingsChanged();
+            var panel = new DisplayTabPanel();
+            panel.Bind(context);
             return panel;
         }
 

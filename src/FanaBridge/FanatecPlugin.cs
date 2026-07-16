@@ -172,9 +172,10 @@ namespace FanaBridge
         /// Factory for the per-device WPF settings panels. Lives here (the
         /// composition root, which legitimately sees both Adapters and UI) so
         /// DeviceInstances can build their tabs without Adapters referencing
-        /// FanaBridge.UI.
+        /// FanaBridge.UI. The setter is a test seam — GetSettingsControls tests
+        /// substitute a fake so no WPF control is constructed off the UI thread.
         /// </summary>
-        internal Adapters.IDevicePanelFactory PanelFactory { get; } = new UI.DevicePanelFactory();
+        internal Adapters.IDevicePanelFactory PanelFactory { get; set; } = new UI.DevicePanelFactory();
 
         /// <summary>Called by each <see cref="Adapters.FanatecWheelDeviceInstance"/> so the
         /// plugin can read the connected wheel's SimHub device name for the Control Mapper

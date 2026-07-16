@@ -1,6 +1,4 @@
-using System;
 using System.Windows.Controls;
-using FanaBridge.Profiles;
 using Newtonsoft.Json.Linq;
 
 namespace FanaBridge.Adapters
@@ -15,8 +13,8 @@ namespace FanaBridge.Adapters
     /// </summary>
     internal interface IDevicePanelFactory
     {
-        /// <summary>A bound Screen settings panel; <paramref name="settingsChanged"/> fires on any user change.</summary>
-        Control CreateScreenPanel(DisplaySettings settings, DisplayType display, byte itmDeviceId, Action settingsChanged);
+        /// <summary>A bound Display settings panel — the per-device Display tab.</summary>
+        Control CreateDisplayPanel(DisplayPanelContext context);
 
         /// <summary>A bound Tuning settings panel.</summary>
         Control CreateTuningPanel(JObject customSettings);
