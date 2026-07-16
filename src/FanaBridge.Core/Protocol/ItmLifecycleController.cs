@@ -101,6 +101,18 @@ namespace FanaBridge.Protocol
         /// navigates from there within a session. Read live.</summary>
         public byte DefaultPage { get; set; } = 1;
 
+        /// <summary>
+        /// Whether a game starting re-establishes <see cref="DefaultPage"/> (the built-in
+        /// behavior, on by default). The display-rules runtime turns this off while it owns
+        /// page policy: its engine performs the same revert through <see cref="RequestPage"/>
+        /// (resting target → base page on the in-game rising edge), and a switch the
+        /// controller initiates on its own is indistinguishable from wheel-button navigation
+        /// to the layers above — they would dismiss their rules over a page change no one
+        /// made. With the revert suppressed, a game start still repaints the current page
+        /// in place (the exit cleared the fields to placeholders). Read live.
+        /// </summary>
+        public bool GameStartPageRevert { get; set; } = true;
+
         // ── Observable state ─────────────────────────────────────────────
         public ItmLifecycleState State { get; private set; } = ItmLifecycleState.Idle;
 
@@ -443,7 +455,7 @@ namespace FanaBridge.Protocol
             if (becameLive && State == ItmLifecycleState.Synced)
             {
                 byte def = EffectiveDefaultPage();
-                if (CurrentPage != def)
+                if (CurrentPage != def && GameStartPageRevert)
                     BeginSwitch(def);
                 else
                     SyncGeneration++;

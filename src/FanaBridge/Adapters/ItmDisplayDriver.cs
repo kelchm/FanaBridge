@@ -71,6 +71,15 @@ namespace FanaBridge.Adapters
         public byte DefaultPage { get; set; } = 1;
 
         /// <summary>
+        /// Whether a game starting re-establishes <see cref="DefaultPage"/> (see
+        /// <see cref="ItmLifecycleController.GameStartPageRevert"/>). The display-rules
+        /// runtime turns this off while it owns page policy — its engine performs the
+        /// revert itself, and a controller-initiated switch would read upstream as
+        /// wheel-button navigation. Read live each frame, like the page.
+        /// </summary>
+        public bool GameStartPageRevert { get; set; } = true;
+
+        /// <summary>
         /// Whether the ITM display is enabled. Set false to turn ITM off (the display is gated
         /// off — the same persistent state the vendor software's ITM switch sets — and the
         /// driver goes dormant); set true to re-enable. Read live each frame; applied to the
@@ -193,6 +202,7 @@ namespace FanaBridge.Adapters
             // user's on/off switch. A settings change of the default page is edge-detected and
             // requested live, so the wheel button isn't fought between changes.
             _lifecycle.DefaultPage = DefaultPage;
+            _lifecycle.GameStartPageRevert = GameStartPageRevert;
             _lifecycle.SetUserEnabled(Enabled);
             if (_lastRequestedPage == null)
                 _lastRequestedPage = DefaultPage;

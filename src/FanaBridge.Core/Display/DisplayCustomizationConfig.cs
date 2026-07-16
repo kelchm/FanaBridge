@@ -46,6 +46,23 @@ namespace FanaBridge.Display
         [JsonProperty("fieldMappings")]
         public Dictionary<ushort, FieldMapping> FieldMappings { get; set; }
             = new Dictionary<ushort, FieldMapping>();
+
+        /// <summary>
+        /// True when the document customizes nothing: no rules on either surface, no
+        /// legacy screens or base screen, no field mappings, and no explicit base page.
+        /// This is the byte-parity gate's switch — an empty config must build NOTHING
+        /// (no engines, no director, no property source, no action hub), leaving the
+        /// device's frame path byte-identical to a build without the feature.
+        /// Null-tolerant so a hand-built document is judged the same as a loaded one.
+        /// </summary>
+        [JsonIgnore]
+        public bool IsEmpty =>
+            (Itm == null || ((Itm.Rules == null || Itm.Rules.Count == 0)
+                && Itm.BasePageRaw == null))
+            && (Legacy == null || ((Legacy.Rules == null || Legacy.Rules.Count == 0)
+                && (Legacy.Screens == null || Legacy.Screens.Count == 0)
+                && Legacy.BaseScreenId == null))
+            && (FieldMappings == null || FieldMappings.Count == 0);
     }
 
     /// <summary>The ITM surface's rule list and base page.</summary>

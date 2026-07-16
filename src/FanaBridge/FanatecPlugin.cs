@@ -150,12 +150,23 @@ namespace FanaBridge
         }
 
         /// <summary>
-        /// Test hook: installs a wheelbase as this plugin's hardware core so
-        /// DeviceInstance state/generation logic can run against an injected
+        /// Test hook: installs a wheelbase (plus the encoders built over its
+        /// transport, mirroring InitializeCore) as this plugin's hardware core so
+        /// DeviceInstance state/generation/driver logic can run against an injected
         /// identity without a SimHub host. Production cores are built only by
         /// InitializeCore.
         /// </summary>
-        internal void InstallWheelbaseForTest(FanatecWheelbase wheelbase) => _wheelbase = wheelbase;
+        internal void InstallWheelbaseForTest(FanatecWheelbase wheelbase)
+        {
+            _wheelbase = wheelbase;
+            var transport = wheelbase?.Transport;
+            if (transport == null)
+                return;
+            _leds = new LedEncoder(transport);
+            _legacyLeds = new LegacyLedEncoder(transport);
+            _display = new DisplayEncoder(transport);
+            _itm = new ItmEncoder(transport);
+        }
 
         /// <summary>
         /// Factory for the per-device WPF settings panels. Lives here (the

@@ -797,6 +797,32 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void Manual_UncatalogedPage_RestsWithoutAPageIntent()
+        {
+            // Wheel navigation to a page outside the device's catalog is adopted with NO
+            // page identity (ManualNavigation with a null page). The engine rests on
+            // "wherever the wheel is" — a Page intent carrying no page, which the
+            // director requests nothing for, so the unnamed page is never fought.
+            var h = Itm(Rule("r", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
+                Page(ItmPage.FuelErsDrs), While()));
+            h.Props.Set(BuiltInProperties.Fuel, 5);
+            Assert.Equal(RuleStatus.OnScreen, StatusOf(h.Tick(), "r"));
+
+            h.Clock.T += 100;
+            var r = h.Engine.Tick(new RuleEngineInput
+            {
+                InGame = true,
+                Properties = h.Props,
+                Manual = new ManualNavigation(null),
+            });
+            Assert.Equal(TargetKind.Page, r.Intent.Kind);
+            Assert.Null(r.Intent.Page);
+            Assert.Equal(RuleStatus.Armed, StatusOf(r, "r"));   // dismissed like any manual
+            Assert.Contains(h.Engine.GetActivityEvents(),
+                e => e.Kind == ActivityKind.ManualNavigation);
+        }
+
+        [Fact]
         public void Manual_LevelStillTrue_NeedsFreshEdgeToReclaim()
         {
             var h = Itm(Rule("r", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),

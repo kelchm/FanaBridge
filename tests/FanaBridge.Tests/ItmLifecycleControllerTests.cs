@@ -887,6 +887,37 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void GameStart_OffStartingPage_RevertSuppressed_RepaintsInPlace()
+        {
+            // While the display-rules runtime owns page policy it suppresses the
+            // controller's game-start revert (GameStartPageRevert = false): the engine
+            // performs the revert itself through RequestPage, and a controller-initiated
+            // switch is indistinguishable from wheel-button navigation to the layers
+            // above — they would dismiss rules over a page change nobody made. The game
+            // start must still repaint the current page in place (over the ---).
+            var c = Make(out var t, out var clock);
+            c.DefaultPage = 1;
+            Sync(c, t, clock);                               // synced on page 1
+
+            // Wheel button moved to page 5 during the last session.
+            c.OnPush(UnsubAll(8).Concat(PushFor(5)).ToList());
+            Tick(c, clock, c.AccumulateWindowMs);
+            Assert.Equal(5, c.CurrentPage);
+
+            Tick(c, clock, 10, live: false);                 // game exits → cleared
+            t.Sent.Clear();
+
+            c.GameStartPageRevert = false;
+            int gen = c.SyncGeneration;
+            Tick(c, clock, 1000, live: true);                // a game starts
+
+            Assert.Equal(ItmLifecycleState.Synced, c.State); // no switch initiated
+            Assert.Equal(5, c.CurrentPage);                  // stays where the wheel left it
+            Assert.DoesNotContain(t.Sent, IsPageSet);
+            Assert.True(c.SyncGeneration > gen);             // repaint forced over the ---
+        }
+
+        [Fact]
         public void GameExit_DuringRecovery_LetsTheProcedureResolve()
         {
             // A mid-transition exit (not Synced) doesn't clear or gate off — the in-flight

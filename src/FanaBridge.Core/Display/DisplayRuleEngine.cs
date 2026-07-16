@@ -220,7 +220,10 @@ namespace FanaBridge.Display
             // condition that was already true does not re-claim the screen.
             if (input.Manual.HasValue && _kind == RuleSetKind.Itm)
             {
-                ItmPage page = input.Manual.Value.Page;
+                // A null page is navigation to a page outside the device's catalog: the
+                // resting target then carries no page at all — the director requests
+                // nothing for it, so the driver's choice is never fought.
+                ItmPage? page = input.Manual.Value.Page;
                 _restingIntent = new RuleIntent(TargetKind.Page, page, null, null);
                 foreach (var rt in _rules)
                 {
@@ -229,7 +232,9 @@ namespace FanaBridge.Display
                 }
                 _prevWinnerId = null;   // dismissed by the driver's own choice, not an expiry
                 AddEvent(now, ActivityKind.ManualNavigation,
-                    "Manual page change — " + ItmTelemetry.NameOf(page), null);
+                    "Manual page change — " + (page == null
+                        ? "a page not in this device's catalog" : ItmTelemetry.NameOf(page.Value)),
+                    null);
                 SetSelection(null, now, logReturn: false);
             }
 
@@ -526,7 +531,9 @@ namespace FanaBridge.Display
 
         private string DescribeResting()
             => _restingIntent.Kind == TargetKind.Page
-                ? DisplayRuleFormatter.PageName(_restingIntent.Page)
+                ? (_restingIntent.Page == null
+                    ? "the current page"   // resting on an uncataloged manual page
+                    : DisplayRuleFormatter.PageName(_restingIntent.Page))
                 : (_restingIntent.ScreenId != null
                     ? "screen '" + _restingIntent.ScreenId + "'" : "blank");
 

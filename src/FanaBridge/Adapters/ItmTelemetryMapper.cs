@@ -242,7 +242,9 @@ namespace FanaBridge.Adapters
         // The nearest on-track gap (seconds) among a set of opponents, or 0 if none / unknown.
         // SimHub gives no scalar gap-to-car-ahead/behind, so take the smallest
         // |RelativeGapToPlayer| from the ahead/behind list (robust to list ordering).
-        private static float NearestGap(IEnumerable<Opponent> opponents)
+        // Internal: SimHubPropertySource reads the same value for the rule engine's
+        // GapAhead/GapBehind built-ins, so both surfaces agree on what "the gap" is.
+        internal static float NearestGap(IEnumerable<Opponent> opponents)
         {
             if (opponents == null) return 0f;
             double best = double.MaxValue;

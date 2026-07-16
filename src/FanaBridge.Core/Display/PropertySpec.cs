@@ -77,6 +77,7 @@ namespace FanaBridge.Display
         public const string BestLapTime = "BestLapTime";
         public const string Fuel = "Fuel";
         public const string MaxFuel = "MaxFuel";
+        public const string FuelPercent = "FuelPercent";
         public const string ErsPercent = "ErsPercent";
         public const string DrsAvailable = "DrsAvailable";
         public const string DrsEnabled = "DrsEnabled";
@@ -88,6 +89,8 @@ namespace FanaBridge.Display
         public const string BrakeBias = "BrakeBias";
         public const string GapAhead = "GapAhead";
         public const string GapBehind = "GapBehind";
+        public const string IsInPitLane = "IsInPitLane";
+        public const string PitLimiterOn = "PitLimiterOn";
         public const string TyreTempFrontLeft = "TyreTempFrontLeft";
         public const string TyreTempFrontRight = "TyreTempFrontRight";
         public const string TyreTempRearLeft = "TyreTempRearLeft";
@@ -98,9 +101,9 @@ namespace FanaBridge.Display
         {
             Speed, Gear, CurrentLap, TotalLaps, Position, OpponentsCount,
             CurrentLapTime, LastLapTime, BestLapTime,
-            Fuel, MaxFuel, ErsPercent, DrsAvailable, DrsEnabled, DeltaToSessionBest,
+            Fuel, MaxFuel, FuelPercent, ErsPercent, DrsAvailable, DrsEnabled, DeltaToSessionBest,
             TcLevel, AbsLevel, EngineMap, OilTemperature, BrakeBias,
-            GapAhead, GapBehind,
+            GapAhead, GapBehind, IsInPitLane, PitLimiterOn,
             TyreTempFrontLeft, TyreTempFrontRight, TyreTempRearLeft, TyreTempRearRight,
         });
 

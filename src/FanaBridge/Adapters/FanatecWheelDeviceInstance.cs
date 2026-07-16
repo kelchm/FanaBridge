@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge;
+using FanaBridge.Display;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
@@ -62,6 +63,14 @@ namespace FanaBridge.Adapters
         // resets the display cold with no trace on the ITM channel, so the ITM
         // lifecycle must restart from bring-up.
         private int _itmWheelChangeCount;
+        // Display customization: the parsed per-device config snapshot (volatile —
+        // written by SetSettings, read on the frame path; a reference swap is the
+        // rebuild signal), the rule stack built from it, and the UI-facing snapshot.
+        // All three stay null on the empty-config fast path — with no customization
+        // the frame path must be byte-identical to a build without the feature.
+        private volatile DisplayCustomizationConfig _displayConfig;
+        private DisplayRuleStack _displayStack;
+        private volatile DisplayRuleSnapshot _displayRuleSnapshot;
         // True once the legacy page has been blanked after switching to mode "None",
         // so it is cleared once on the transition rather than every frame.
         private bool _legacyBlanked;
@@ -125,6 +134,25 @@ namespace FanaBridge.Adapters
         /// instance isn't driving an ITM display. Safe to read from any thread.
         /// </summary>
         internal string ItmStatusDescription => _itmDisplay == null ? null : _itmStatusSnapshot;
+
+        /// <summary>
+        /// The latest display-rules snapshot (intent, per-rule status, recent activity),
+        /// or null while no customization is active. Safe to read from any thread — the
+        /// future Display tab polls it like <see cref="ItmStatusDescription"/>.
+        /// </summary>
+        internal DisplayRuleSnapshot DisplayRuleSnapshot => _displayRuleSnapshot;
+
+        /// <summary>Test hook (parity gate): the rule stack, null when nothing is built.</summary>
+        internal DisplayRuleStack DisplayStackForTest => _displayStack;
+
+        /// <summary>Test hook: the ITM driver, null until an ITM display is driven.</summary>
+        internal ItmDisplayDriver ItmDisplayForTest => _itmDisplay;
+
+        // Test seam: injected clock for the ITM driver, so wiring tests (notably the
+        // byte-parity gate) run fully deterministic scripted sessions instead of pacing
+        // a driver-owned stopwatch with real sleeps. Production keeps the default
+        // (null = the driver starts its own stopwatch).
+        internal Func<long> ItmClockForTest;
 
         public FanatecWheelDeviceInstance(DeviceConfig config)
         {
@@ -245,6 +273,10 @@ namespace FanaBridge.Adapters
             // lazily (DataUpdate builds them on demand from the live plugin).
             _displayManager = null;
             _itmDisplay = null;
+            // The rule stack wraps the driver's lifecycle — same fate (issue #37:
+            // never keep references into a disposed generation).
+            _displayStack = null;
+            _displayRuleSnapshot = null;
             // Clear the status cache the instant the driver is invalidated (not just at the
             // rebuild site) so the Device Status row can never read a disposed generation's
             // description in the window before the new driver publishes (issue #37 path).
@@ -278,6 +310,7 @@ namespace FanaBridge.Adapters
                 ["itmDefaultPage"] = DisplaySettings.DefaultItmDefaultPage,
             };
             _displaySettings = new DisplaySettings();
+            _displayConfig = null;   // no displayCustomization key = no customization
 
             if (_ledModule != null)
             {
@@ -357,6 +390,14 @@ namespace FanaBridge.Adapters
                 }
             }
 
+            // Display customization: serialize the CURRENT snapshot (not the raw
+            // payload) — the EnumText model keeps values a future version wrote
+            // intact through the load/save round-trip.
+            var displayConfig = _displayConfig;
+            if (displayConfig != null)
+                result["displayCustomization"] =
+                    JObject.Parse(DisplayConfigSerializer.Save(displayConfig));
+
             return result;
         }
 
@@ -391,6 +432,12 @@ namespace FanaBridge.Adapters
                 _pendingLedDefaults = false;
             }
 
+            // The display settings must be rebuilt BEFORE the customization snapshot is
+            // published below: the frame path reads the volatile _displayConfig first and
+            // _displaySettings second, so this write order (plain write, then volatile
+            // release) guarantees a frame that sees the new config also sees the settings
+            // that arrived with it. The rule stack captures ItmDefaultPage at build time —
+            // a torn pair would latch a stale base page until the next rebuild.
             _displaySettings = new DisplaySettings
             {
                 DisplayMode = (string)_customSettings["displayMode"] ?? DisplaySettings.DefaultMode,
@@ -399,6 +446,17 @@ namespace FanaBridge.Adapters
                 ItmShowPositionTotal = (bool?)_customSettings["itmShowPositionTotal"] ?? DisplaySettings.DefaultShowPositionTotal,
                 ItmDefaultPage = (byte?)_customSettings["itmDefaultPage"] ?? DisplaySettings.DefaultItmDefaultPage,
             };
+
+            // Display customization document (whitelisted nested key; absent = none).
+            // Parsed leniently on this thread — Load never throws — and published as
+            // an immutable snapshot; the frame path notices the reference change and
+            // rebuilds the rule stack. Settings can arrive before plugin Init: the
+            // snapshot just waits here until the frame path is alive to consume it.
+            var displayCustomization = obj["displayCustomization"];
+            _displayConfig = displayCustomization == null
+                ? null
+                : DisplayConfigSerializer.Load(displayCustomization.ToString(),
+                    msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg));
 
             _displayManager?.UpdateSettings(_displaySettings);
         }
@@ -436,6 +494,8 @@ namespace FanaBridge.Adapters
                 _itmDisplay?.Stop();
                 _itmWasRunning = false;
                 _itmStatusSnapshot = null;   // don't show a stale ITM row while disconnected
+                _displayStack = null;        // rules restart clean with the reconnect
+                _displayRuleSnapshot = null;
                 // Reset one-shot latches so a reconnect starts clean: errors can log again
                 // and the legacy page can re-blank when the mode is "None".
                 _itmErrorLogged = false;
@@ -487,6 +547,10 @@ namespace FanaBridge.Adapters
                 _itmDisplay.Stop();
                 _itmDisplay = null;
                 _itmWasRunning = false;
+                _displayStack = null;         // rules only drive an ITM display
+                _displayRuleSnapshot = null;  // and their published snapshot goes with them
+                                              // (UpdateDisplayRules never runs again on this
+                                              // path, so nothing else would clear it)
             }
 
             if (displayType == DisplayType.Itm)
@@ -506,6 +570,7 @@ namespace FanaBridge.Adapters
                 {
                     _itmDeviceId = displayCaps.ItmDeviceId;
                     _itmDisplay = new ItmDisplayDriver(plugin.Itm,
+                        nowMs: ItmClockForTest,
                         log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
                         deviceId: _itmDeviceId);
                     // Baseline the wheel-change counter at creation — the driver is starting
@@ -529,7 +594,19 @@ namespace FanaBridge.Adapters
                         _itmDisplay.Start();   // idempotent — re-arms bring-up after a disconnect
                     _itmDisplay.ShowLapTotal = _displaySettings.ItmShowLapTotal;
                     _itmDisplay.ShowPositionTotal = _displaySettings.ItmShowPositionTotal;
-                    _itmDisplay.DefaultPage = _displaySettings.ItmDefaultPage;
+                    // While display rules are active they own page policy: the driver's
+                    // default page follows the stack's base page (the config's base page
+                    // when set), and the lifecycle's own game-start revert is suppressed —
+                    // the rule engine performs that revert itself (resting target → base
+                    // on the in-game rising edge, routed through the page director), and
+                    // a lifecycle-initiated switch would read upstream as phantom
+                    // wheel-button navigation, dismissing rules the user never touched.
+                    // _displayStack is last frame's (UpdateDisplayRules runs below);
+                    // one frame of lag on build/teardown is harmless at frame cadence.
+                    var rules = _displayStack;
+                    _itmDisplay.DefaultPage = rules != null
+                        ? rules.BaseWirePage : _displaySettings.ItmDefaultPage;
+                    _itmDisplay.GameStartPageRevert = rules == null;
 
                     // A wheel/hub/module change (identity layer, FF 08) resets the display to
                     // a cold state that is invisible on the ITM channel — restart the ITM
@@ -539,6 +616,9 @@ namespace FanaBridge.Adapters
                     {
                         _itmWheelChangeCount = wheelChanges;
                         _itmDisplay.OnWheelChanged();
+                        // Rule/engine state belongs to the wheel session that produced
+                        // it — rebuild the stack cold alongside the display.
+                        _displayStack = null;
                         // A hot-swap fully cold-restarts the lifecycle — re-arm the one-shot
                         // "ITM enabled" log so the re-sync on the new wheel gets a fresh
                         // confirmation line (swaps are infrequent, so no reconnect-loop noise).
@@ -573,6 +653,11 @@ namespace FanaBridge.Adapters
                         plugin.ProbeItmCoDriver();
 
                     PublishItmStatusSnapshot(itmState);
+
+                    // Display customization rules (after the driver's Update so the
+                    // director observes the lifecycle post-Tick). No-op — and builds
+                    // nothing — unless a non-empty config is loaded (the parity gate).
+                    UpdateDisplayRules(pluginManager, data);
 
                     // Optionally also drive the legacy 7-segment gear/speed over col01. On an
                     // ITM OLED (e.g. PBME) the firmware renders this on its legacy page. This
@@ -634,6 +719,50 @@ namespace FanaBridge.Adapters
             }
 
             _ledModule?.Display();
+        }
+
+        // ── Display customization (rules) ────────────────────────────────
+
+        /// <summary>
+        /// Frame step for the display-rules runtime. The empty-config fast path is the
+        /// feature's safety guarantee: with no customization document (or an explicitly
+        /// empty one) nothing is constructed and nothing runs — the ITM frame path
+        /// above stays byte-identical to a build without the feature. With a config,
+        /// the stack is (re)built whenever its config or driver reference changes
+        /// (settings swap, generation rebind, display-id change) and ticked once per
+        /// frame; rules only drive pages while the user has ITM enabled.
+        /// </summary>
+        private void UpdateDisplayRules(PluginManager pluginManager, GameData data)
+        {
+            var config = _displayConfig;
+            if (config == null || config.IsEmpty || !_displaySettings.ItmEnabled)
+            {
+                // Customization removed (or ITM turned off): drop the runtime and its
+                // published snapshot so nothing stale lingers. Rule state restarts
+                // clean when customization comes back — engines are per-config.
+                if (_displayStack != null)
+                {
+                    _displayStack = null;
+                    _displayRuleSnapshot = null;
+                }
+                return;
+            }
+
+            if (_displayStack == null || !ReferenceEquals(_displayStack.Config, config)
+                || !ReferenceEquals(_displayStack.Driver, _itmDisplay))
+            {
+                _displayStack = new DisplayRuleStack(config, _itmDisplay, _itmDeviceId,
+                    _displaySettings.ItmDefaultPage,
+                    msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
+                SimHub.Logging.Current.Info(
+                    "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                    "]: Display rules active (" + (config.Itm?.Rules?.Count ?? 0) + " ITM, " +
+                    (config.Legacy?.Rules?.Count ?? 0) + " legacy)");
+            }
+
+            var snapshot = _displayStack.Tick(pluginManager, data);
+            if (snapshot != null)
+                _displayRuleSnapshot = snapshot;
         }
 
         public override void End()
