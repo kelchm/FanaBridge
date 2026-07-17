@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using FanaBridge.Display.Session;
+using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using Xunit;

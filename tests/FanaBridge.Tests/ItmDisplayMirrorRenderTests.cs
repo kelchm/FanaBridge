@@ -1,6 +1,8 @@
 using System;
 using System.Linq;
 using FanaBridge.Adapters;
+using FanaBridge.Display.Session;
+using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
 using FanaBridge.UI;
 using Xunit;

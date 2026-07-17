@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using Xunit;

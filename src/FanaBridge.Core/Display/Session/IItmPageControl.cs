@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge.Protocol
+namespace FanaBridge.Display.Session
 {
     /// <summary>
     /// The narrow seam through which the page director sees the ITM lifecycle: enough to

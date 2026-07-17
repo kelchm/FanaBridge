@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using FanaBridge.Adapters;
+using FanaBridge.Display.Session;
+using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
 
 namespace FanaBridge.UI

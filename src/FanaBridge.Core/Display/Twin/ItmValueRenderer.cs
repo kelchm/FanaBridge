@@ -3,7 +3,9 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace FanaBridge.Protocol
+using FanaBridge.Protocol;
+
+namespace FanaBridge.Display.Twin
 {
     /// <summary>
     /// Renders an encoded <see cref="ItmValue"/> (plus the ASCII suffix the driver sent

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using FanaBridge.UI;

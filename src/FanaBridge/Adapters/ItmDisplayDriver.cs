@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
 using GameReaderCommon;
 

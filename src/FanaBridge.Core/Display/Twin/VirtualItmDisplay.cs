@@ -3,7 +3,10 @@ using System.Collections.Generic;
 using System.Text;
 using FanaBridge.Transport;
 
-namespace FanaBridge.Protocol
+using FanaBridge.Display.Session;
+using FanaBridge.Protocol;
+
+namespace FanaBridge.Display.Twin
 {
     /// <summary>
     /// A virtual ITM display panel — the wire-driven digital twin. It consumes exactly

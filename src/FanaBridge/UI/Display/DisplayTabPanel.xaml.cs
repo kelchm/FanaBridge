@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using FanaBridge.Adapters;
+using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 

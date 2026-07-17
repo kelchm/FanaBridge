@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 
-namespace FanaBridge.Protocol
+using FanaBridge.Protocol;
+
+namespace FanaBridge.Display.Twin
 {
     /// <summary>
     /// The kind of col03 OUT frame an <see cref="ItmFrame"/> classified to. Mirrors the

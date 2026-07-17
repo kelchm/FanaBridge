@@ -1,3 +1,4 @@
+using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
 using Xunit;
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.Serialization;
 using FanaBridge.Adapters;
+using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using GameReaderCommon;

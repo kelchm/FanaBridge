@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 
-namespace FanaBridge.Protocol
+using FanaBridge.Display.Session;
+using FanaBridge.Protocol;
+
+namespace FanaBridge.Display.Twin
 {
     /// <summary>One rendered field in a display-values snapshot: the parameter, its
     /// label (when the field carries its own — dual TC/ABS style), and the display

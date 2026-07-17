@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using FanaBridge.Adapters;
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
 
 namespace FanaBridge.UI

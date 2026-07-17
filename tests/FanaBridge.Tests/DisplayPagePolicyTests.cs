@@ -5,6 +5,7 @@ using System.Runtime.Serialization;
 using FanaBridge;
 using FanaBridge.Adapters;
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Session;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;

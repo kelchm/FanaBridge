@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 
-namespace FanaBridge.Protocol
+using FanaBridge.Protocol;
+
+namespace FanaBridge.Display.Session
 {
     /// <summary>The ITM lifecycle states. See <see cref="ItmLifecycleController"/>.</summary>
     public enum ItmLifecycleState

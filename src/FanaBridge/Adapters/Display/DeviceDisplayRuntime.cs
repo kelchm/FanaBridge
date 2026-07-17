@@ -1,6 +1,8 @@
 using System;
 using FanaBridge;
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Session;
+using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using GameReaderCommon;
