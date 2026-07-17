@@ -5,7 +5,7 @@ using System.Threading;
 using FanaBridge.Display.Rules;
 using SimHub.Plugins;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Runtime
 {
     /// <summary>
     /// The mapped-control trigger path: owns the FanaBridge actions a device's display

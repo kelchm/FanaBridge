@@ -1,4 +1,4 @@
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Host
 {
     /// <summary>
     /// Type-safe display configuration.

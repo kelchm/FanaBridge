@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using FanaBridge.Display.Rules;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Runtime
 {
     /// <summary>One rule's row in the UI snapshot: identity, display label, live status.</summary>
     public struct DisplayRuleRow

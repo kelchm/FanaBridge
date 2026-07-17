@@ -1,4 +1,7 @@
 using FanaBridge.Adapters;
+using FanaBridge.Display.Drivers;
+using FanaBridge.Display.Runtime;
+using FanaBridge.Display.Host;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;

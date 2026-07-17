@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using FanaBridge.Adapters;
+using FanaBridge.Display.Drivers;
+using FanaBridge.Display.Runtime;
+using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using Xunit;
 

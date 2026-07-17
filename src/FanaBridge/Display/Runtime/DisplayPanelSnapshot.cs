@@ -2,7 +2,7 @@ using System;
 using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Runtime
 {
     /// <summary>
     /// The ONE immutable cross-thread envelope the per-device Display tab polls: the

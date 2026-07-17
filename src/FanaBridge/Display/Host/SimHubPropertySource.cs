@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Drivers;
 using GameReaderCommon;
 using SimHub.Plugins;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Host
 {
     /// <summary>
     /// The rule engine's window onto live SimHub data — the production

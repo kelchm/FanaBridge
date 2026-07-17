@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Host
 {
     /// <summary>
     /// The property picker's on-demand name source — the one thing the Triggers editor

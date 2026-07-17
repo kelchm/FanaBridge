@@ -1,5 +1,6 @@
 using System.Windows.Controls;
 using Newtonsoft.Json.Linq;
+using FanaBridge.Display.Host;
 
 namespace FanaBridge.Adapters
 {

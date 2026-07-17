@@ -1,4 +1,4 @@
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Host
 {
     /// <summary>
     /// The mapped-control add flow's on-demand role source, split out of

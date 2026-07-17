@@ -1,5 +1,8 @@
 using System.Linq;
 using FanaBridge.Adapters;
+using FanaBridge.Display.Drivers;
+using FanaBridge.Display.Runtime;
+using FanaBridge.Display.Host;
 using FanaBridge.Protocol;
 using Xunit;
 

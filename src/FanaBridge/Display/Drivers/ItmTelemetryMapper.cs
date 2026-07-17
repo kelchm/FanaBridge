@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using GameReaderCommon;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Drivers
 {
     /// <summary>
     /// Maps SimHub <see cref="GameData"/> telemetry to encoded <see cref="ItmValue"/> entries

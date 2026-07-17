@@ -3,9 +3,10 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using FanaBridge.Adapters;
 using static FanaBridge.Adapters.ControlMapperReflection;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Host
 {
     /// <summary>Where <see cref="MappedRoles.Roles"/> came from — lets the mapped-control
     /// add flow hint the user whether the list is what is actually bound on this wheel or

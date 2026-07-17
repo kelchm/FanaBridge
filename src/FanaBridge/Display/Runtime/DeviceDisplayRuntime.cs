@@ -6,9 +6,11 @@ using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using GameReaderCommon;
+using FanaBridge.Display.Drivers;
+using FanaBridge.Display.Host;
 using SimHub.Plugins;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Runtime
 {
     /// <summary>
     /// The device-scoped ITM display session, extracted from

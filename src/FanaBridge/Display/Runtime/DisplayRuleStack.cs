@@ -4,9 +4,11 @@ using FanaBridge.Display.Rules;
 using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
 using GameReaderCommon;
+using FanaBridge.Display.Drivers;
+using FanaBridge.Display.Host;
 using SimHub.Plugins;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Runtime
 {
     /// <summary>
     /// The per-device display-customization runtime: both rule engines (ITM + legacy),

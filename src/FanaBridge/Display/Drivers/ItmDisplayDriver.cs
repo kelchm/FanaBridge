@@ -4,7 +4,7 @@ using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
 using GameReaderCommon;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Drivers
 {
     /// <summary>
     /// Drives a Fanatec ITM telemetry display: maps SimHub telemetry to the parameters the

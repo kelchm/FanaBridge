@@ -1,7 +1,8 @@
 using FanaBridge.Display.Rules;
 using FanaBridge.Profiles;
+using FanaBridge.Display.Runtime;
 
-namespace FanaBridge.Adapters
+namespace FanaBridge.Display.Host
 {
     /// <summary>
     /// Everything the per-device Display tab needs from its device instance, as a
