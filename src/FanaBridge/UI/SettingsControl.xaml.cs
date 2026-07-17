@@ -10,6 +10,7 @@ using System.Windows.Media;
 using System.Windows.Navigation;
 using System.Windows.Threading;
 using FanaBridge.Adapters;
+using FanaBridge.Diagnostics;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;

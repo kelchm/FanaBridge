@@ -1,9 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using FanaBridge.Protocol;
 using FanaBridge.Transport;
 
-namespace FanaBridge.Protocol
+namespace FanaBridge.Diagnostics
 {
     /// <summary>
     /// One-shot, read-only identity capture run at diagnostics time so a SINGLE detection report from

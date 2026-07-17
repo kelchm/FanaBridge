@@ -1,5 +1,3 @@
-using FanaBridge.Protocol;
-
 namespace FanaBridge.Transport
 {
     /// <summary>

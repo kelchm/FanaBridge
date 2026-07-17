@@ -1,4 +1,5 @@
 using FanaBridge.Adapters;
+using FanaBridge.Diagnostics;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;

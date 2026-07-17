@@ -1,4 +1,3 @@
-using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using Xunit;
 
