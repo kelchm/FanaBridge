@@ -12,6 +12,7 @@ using FanaBridge.Display.Host;
 using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
+using FanaBridge.UI.Display.Shared;
 
 namespace FanaBridge.UI.Display
 {
@@ -98,6 +99,16 @@ namespace FanaBridge.UI.Display
             viewTriggers.BackRequested += (s, e) => NavigateTo(TabView.Overview);
             viewTriggers.ConfigApplied += (s, e) => RenderPriority(_lastSnapshot);
 
+            // DISPLAY MODE segments — the ITM/Legacy pair, driven by DisplaySettings.ItmEnabled.
+            // SelectionChanged fires on user activation only; UpdateModeState mirrors the
+            // setting back into SelectedId without re-entering the event.
+            segMode.SetItems(new (string, string)[]
+            {
+                ("itm", "ITM display"),
+                ("legacy", "Legacy only"),
+            });
+            segMode.SelectionChanged += (s, id) => SetItmEnabled(id == "itm");
+
             // Option controls — identical semantics to the old Screen tab. "None"
             // (legacy page off) is an ITM-only display-mode choice.
             cmbItemNone.Visibility = _isItm ? Visibility.Visible : Visibility.Collapsed;
@@ -130,10 +141,6 @@ namespace FanaBridge.UI.Display
 
         // ── DISPLAY MODE toggle (owns DisplaySettings.ItmEnabled) ────────
 
-        private void ModeItm_Click(object sender, RoutedEventArgs e) => SetItmEnabled(true);
-
-        private void ModeLegacy_Click(object sender, RoutedEventArgs e) => SetItmEnabled(false);
-
         private void SetItmEnabled(bool enabled)
         {
             if (_suppressEvents || _settings == null)
@@ -153,10 +160,7 @@ namespace FanaBridge.UI.Display
         {
             bool on = _settings.ItmEnabled;
 
-            btnModeItm.Background = on ? DisplayPalette.AccentBg : Brushes.Transparent;
-            txtModeItm.Foreground = on ? Brushes.White : DisplayPalette.ToggleIdleText;
-            btnModeLegacy.Background = on ? Brushes.Transparent : DisplayPalette.AccentBg;
-            txtModeLegacy.Foreground = on ? DisplayPalette.ToggleIdleText : Brushes.White;
+            segMode.SelectedId = on ? "itm" : "legacy";
             txtModeHint.Text = on
                 ? "Legacy-only hides the ITM pages and shows just the 3-character display."
                 : "ITM pages are off. Switch to ITM display to use them.";
@@ -495,15 +499,12 @@ namespace FanaBridge.UI.Display
 
             if (model.Seconds != null)
             {
-                var seconds = new TextBlock
+                var seconds = new CountdownRing
                 {
-                    Text = model.Seconds,
-                    FontSize = 11,
-                    FontWeight = FontWeights.Bold,
-                    Foreground = DisplayPalette.GreenAccent,
                     Margin = new Thickness(10, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
                 };
+                seconds.Update(double.NaN, model.Seconds);
                 Grid.SetColumn(seconds, 3);
                 grid.Children.Add(seconds);
             }

@@ -12,6 +12,7 @@ using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
+using FanaBridge.UI.Display.Shared;
 
 namespace FanaBridge.UI.Display
 {
@@ -58,7 +59,7 @@ namespace FanaBridge.UI.Display
         {
             public Border Container;
             public TextBlock Chip;
-            public TextBlock Seconds;
+            public CountdownRing Seconds;
             public TextBlock Rank;
             public TextBlock Label;
             public bool Degraded;
@@ -252,11 +253,7 @@ namespace FanaBridge.UI.Display
                 holder.Chip.Foreground = chip.OnScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText;
             }
             if (holder.Seconds != null)
-            {
-                holder.Seconds.Text = chip.Seconds ?? "";
-                holder.Seconds.Visibility = chip.Seconds != null
-                    ? Visibility.Visible : Visibility.Collapsed;
-            }
+                holder.Seconds.Update(double.NaN, chip.Seconds);
             // The on-screen accent spans the WHOLE row, not just the chip — patch the rank,
             // label, and border together so an off→on transition during an in-place poll
             // (which runs while a different row's editor is open) can't leave a green
@@ -383,16 +380,12 @@ namespace FanaBridge.UI.Display
             Grid.SetColumn(chip, 4);
             grid.Children.Add(chip);
 
-            var seconds = new TextBlock
+            var seconds = new CountdownRing
             {
-                Text = row.Seconds ?? "",
-                FontSize = 11,
-                FontWeight = FontWeights.Bold,
-                Foreground = DisplayPalette.GreenAccent,
                 Margin = new Thickness(8, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
-                Visibility = row.Seconds != null ? Visibility.Visible : Visibility.Collapsed,
             };
+            seconds.Update(double.NaN, row.Seconds);
             Grid.SetColumn(seconds, 5);
             grid.Children.Add(seconds);
 
@@ -814,42 +807,21 @@ namespace FanaBridge.UI.Display
 
         private FrameworkElement BuildEligibleSegments(RuleEdit draft, string ruleId)
         {
-            var strip = new Border
-            {
-                Background = DisplayPalette.SegBarBg,
-                BorderBrush = DisplayPalette.SegBorder,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(5),
-                HorizontalAlignment = HorizontalAlignment.Left,
-            };
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            // Shared segmented control at its default ELIGIBLE chrome (padding 13,5; font
+            // 11.5; square segments in the rounded container) — the same look the strip
+            // shipped inline.
+            var seg = new SegmentedControl();
+            var items = new List<(string, string)>();
             foreach (var elig in DisplayTriggersEditModel.Eligibilities)
+                items.Add((elig.ToString(), DisplayTriggersEditModel.EligibilityLabel(elig)));
+            seg.SetItems(items);
+            seg.SelectedId = draft.Eligibility.ToString();
+            seg.SelectionChanged += (s, id) =>
             {
-                bool active = draft.Eligibility == elig;
-                var seg = new Border
-                {
-                    Background = active ? DisplayPalette.AccentBg : Brushes.Transparent,
-                    Padding = new Thickness(13, 5, 13, 5),
-                    Cursor = Cursors.Hand,
-                    Child = new TextBlock
-                    {
-                        Text = DisplayTriggersEditModel.EligibilityLabel(elig),
-                        FontSize = 11.5,
-                        Foreground = active ? Brushes.White : DisplayPalette.ToggleIdleText,
-                    },
-                };
-                var chosen = elig;
-                Action pick = () =>
-                {
-                    draft.Eligibility = chosen;
-                    CommitUpdate(draft, ruleId);
-                };
-                seg.MouseLeftButtonUp += (s, e) => pick();
-                MakeKeyActivatable(seg, pick);
-                row.Children.Add(seg);
-            }
-            strip.Child = row;
-            return strip;
+                draft.Eligibility = (RuleEligibility)Enum.Parse(typeof(RuleEligibility), id);
+                CommitUpdate(draft, ruleId);
+            };
+            return seg;
         }
 
         private FrameworkElement BuildDetailFooter(DisplayRule rule, string ruleId)

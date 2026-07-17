@@ -1,0 +1,76 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Shared Display-tab styles consolidated from the two views that duplicated them
+         verbatim (DisplayTabPanel.xaml + DisplayTriggersView.xaml). Merged into each view's
+         UserControl.Resources so the shell and the editors reference one source and can
+         never drift. Behaviour-preserving: every setter is a verbatim move of the original
+         markup. Brushes stay in DisplayPalette; these styles carry only the literal chrome
+         colours the originals already inlined (no palette token exists for them). -->
+
+    <!-- The design's small uppercase key label ("DISPLAY MODE", "LIVE", …). -->
+    <Style x:Key="KLabel" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="#8F8F8F" />
+    </Style>
+
+    <!-- Card container (current page / recent activity). -->
+    <Style x:Key="Card" TargetType="Border">
+        <Setter Property="Background" Value="#303032" />
+        <Setter Property="BorderBrush" Value="#3D3D3F" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="5" />
+        <Setter Property="Padding" Value="12,10" />
+    </Style>
+
+    <!-- Inline link ("Manage triggers →") — the house's Hyperlink-with-Click affordance
+         (see SettingsControl), in the design's link blue. A real Hyperlink gives click
+         (not press) semantics, keyboard focus, and Enter/Space activation. -->
+    <Style x:Key="Link" TargetType="Hyperlink">
+        <Setter Property="Foreground" Value="#3A9FE0" />
+        <Setter Property="TextDecorations" Value="None" />
+    </Style>
+
+    <!-- The editors' ‹ ghost back button (design's .ghost square) — a real Button
+         (the house's back-navigation primitive, wizard dialog) templated to the
+         design's ghost look. -->
+    <Style x:Key="GhostBack" TargetType="Button">
+        <Setter Property="Width" Value="28" />
+        <Setter Property="Height" Value="28" />
+        <Setter Property="Background" Value="#3A3A3C" />
+        <Setter Property="BorderBrush" Value="#565658" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="ToolTip" Value="Back to Overview" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="5">
+                        <ContentPresenter HorizontalAlignment="Center"
+                                          VerticalAlignment="Center" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="GhostBackGlyph" TargetType="TextBlock">
+        <Setter Property="Text" Value="&#x2039;" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Foreground" Value="#D8D8D8" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Margin" Value="0,-2,0,0" />
+    </Style>
+
+    <Style x:Key="EditorTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="#F0F0F0" />
+        <Setter Property="Margin" Value="11,0,0,0" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+</ResourceDictionary>

@@ -44,6 +44,10 @@ namespace FanaBridge.UI.Display
         internal static readonly SolidColorBrush KLabelBrush = Frozen("#8F8F8F");
         internal static readonly SolidColorBrush ChevronBrush = Frozen("#8A8A8A");
 
+        // ── Property grammar (v9; consumed by the Shared property label in 1b) ──
+        internal static readonly SolidColorBrush NsDim = Frozen("#6F6F74");
+        internal static readonly SolidColorBrush LeafBright = Frozen("#9FD0E6");
+
         internal static readonly FontFamily Mono = new FontFamily("Consolas");
 
         private static SolidColorBrush Frozen(string hex)

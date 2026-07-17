@@ -3,90 +3,14 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:styles="clr-namespace:SimHub.Plugins.Styles;assembly=SimHub.Plugins"
              xmlns:ui="clr-namespace:FanaBridge.UI.Display"
+             xmlns:shared="clr-namespace:FanaBridge.UI.Display.Shared"
              Loaded="OnLoaded" Unloaded="OnUnloaded">
     <UserControl.Resources>
-        <!-- The design's small uppercase key label ("DISPLAY MODE", "LIVE", …). -->
-        <Style x:Key="KLabel" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="10" />
-            <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Foreground" Value="#8F8F8F" />
-        </Style>
-        <!-- Card container (current page / recent activity). -->
-        <Style x:Key="Card" TargetType="Border">
-            <Setter Property="Background" Value="#303032" />
-            <Setter Property="BorderBrush" Value="#3D3D3F" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="5" />
-            <Setter Property="Padding" Value="12,10" />
-        </Style>
-        <!-- Inline link ("Manage triggers →") — the house's Hyperlink-with-Click
-             affordance (see SettingsControl), in the design's link blue. A real
-             Hyperlink gives click (not press) semantics, keyboard focus, and
-             Enter/Space activation. -->
-        <Style x:Key="Link" TargetType="Hyperlink">
-            <Setter Property="Foreground" Value="#3A9FE0" />
-            <Setter Property="TextDecorations" Value="None" />
-        </Style>
-        <!-- The editors' ‹ ghost back button (design's .ghost square) — a real Button
-             (the house's back-navigation primitive, wizard dialog) templated to the
-             design's ghost look. -->
-        <Style x:Key="GhostBack" TargetType="Button">
-            <Setter Property="Width" Value="28" />
-            <Setter Property="Height" Value="28" />
-            <Setter Property="Background" Value="#3A3A3C" />
-            <Setter Property="BorderBrush" Value="#565658" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="ToolTip" Value="Back to Overview" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="5">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center" />
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-        <!-- One segment of the DISPLAY MODE toggle: a real Button (click semantics,
-             keyboard focus, UIAutomation) templated to the design's rounded segment;
-             the per-side corner set rides in Tag so both segments share the style. -->
-        <Style x:Key="SegmentButton" TargetType="Button">
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Padding" Value="14,6" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
-                                Padding="{TemplateBinding Padding}"
-                                CornerRadius="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center" />
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-        <Style x:Key="GhostBackGlyph" TargetType="TextBlock">
-            <Setter Property="Text" Value="&#x2039;" />
-            <Setter Property="FontSize" Value="14" />
-            <Setter Property="Foreground" Value="#D8D8D8" />
-            <Setter Property="HorizontalAlignment" Value="Center" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Margin" Value="0,-2,0,0" />
-        </Style>
-        <Style x:Key="EditorTitle" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="16" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="#F0F0F0" />
-            <Setter Property="Margin" Value="11,0,0,0" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-        </Style>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/FanaBridge;component/UI/Display/Shared/DisplayStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </UserControl.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -97,21 +21,11 @@
                         Visibility="Collapsed">
                 <StackPanel>
                     <TextBlock Text="DISPLAY MODE" Style="{StaticResource KLabel}" Margin="0,0,0,5" />
-                    <Border Background="#1A1A1B" BorderBrush="#45454A" BorderThickness="1"
-                            CornerRadius="5" HorizontalAlignment="Left">
-                        <StackPanel Orientation="Horizontal">
-                            <Button x:Name="btnModeItm" Style="{StaticResource SegmentButton}"
-                                    Click="ModeItm_Click">
-                                <Button.Tag><CornerRadius>4,0,0,4</CornerRadius></Button.Tag>
-                                <TextBlock x:Name="txtModeItm" Text="ITM display" FontSize="12" />
-                            </Button>
-                            <Button x:Name="btnModeLegacy" Style="{StaticResource SegmentButton}"
-                                    Click="ModeLegacy_Click">
-                                <Button.Tag><CornerRadius>0,4,4,0</CornerRadius></Button.Tag>
-                                <TextBlock x:Name="txtModeLegacy" Text="Legacy only" FontSize="12" />
-                            </Button>
-                        </StackPanel>
-                    </Border>
+                    <!-- The segments (ITM display / Legacy only) are set and wired in Bind;
+                         the chrome props reproduce the original SegmentButton look. -->
+                    <shared:SegmentedControl x:Name="segMode" HorizontalAlignment="Left"
+                                             SegmentPadding="14,6" SegmentFontSize="12"
+                                             OuterCornerRadius="4" />
                 </StackPanel>
                 <TextBlock x:Name="txtModeHint" FontSize="11.5" Foreground="#8F8F8F"
                            TextWrapping="Wrap" MaxWidth="280" Margin="16,0,0,2"
