@@ -32,6 +32,8 @@ namespace FanaBridge.UI
         private enum TabView { Overview, Triggers, Pages, Legacy }
 
         private IDisplayPanelHost _host;
+        private IDisplayPropertyCatalog _propertyCatalog;
+        private IMappedRoleCatalog _roleCatalog;
         private DisplaySettings _settings;
         private bool _suppressEvents;
         private bool _isItm;
@@ -78,12 +80,19 @@ namespace FanaBridge.UI
         }
 
         /// <summary>
-        /// Binds the panel to its device host. Call once after construction, before
-        /// the panel is displayed (the old Screen panel's contract).
+        /// Binds the panel to its device host and the two on-demand editor catalogs. Call
+        /// once after construction, before the panel is displayed (the old Screen panel's
+        /// contract). The catalogs are pulled only when a picker/dropdown opens — the
+        /// polling/rendering path uses <paramref name="host"/> alone.
         /// </summary>
-        internal void Bind(IDisplayPanelHost host)
+        internal void Bind(
+            IDisplayPanelHost host,
+            IDisplayPropertyCatalog propertyCatalog,
+            IMappedRoleCatalog roleCatalog)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
+            _propertyCatalog = propertyCatalog ?? throw new ArgumentNullException(nameof(propertyCatalog));
+            _roleCatalog = roleCatalog ?? throw new ArgumentNullException(nameof(roleCatalog));
             _settings = host.DisplaySettings ?? new DisplaySettings();
             _isItm = host.DisplayType == DisplayType.Itm;
             _suppressEvents = true;

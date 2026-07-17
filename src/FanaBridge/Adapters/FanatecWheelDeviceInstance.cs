@@ -28,7 +28,8 @@ namespace FanaBridge.Adapters
     /// for all HID access. Reports Connected only when the singleton's
     /// current wheel identity matches this instance's wheel type.
     /// </summary>
-    public class FanatecWheelDeviceInstance : DeviceInstance, IDisplayPanelHost
+    public class FanatecWheelDeviceInstance : DeviceInstance,
+        IDisplayPanelHost, IDisplayPropertyCatalog, IMappedRoleCatalog
     {
         private readonly DeviceConfig _config;
         private JObject _customSettings = new JObject();
@@ -682,7 +683,12 @@ namespace FanaBridge.Adapters
             // ITM driver reads _displaySettings live each frame.
         }
 
-        IReadOnlyList<string> IDisplayPanelHost.GetAllPropertyNames()
+        // ── IDisplayPropertyCatalog / IMappedRoleCatalog (on-demand editor catalogs) ──
+        // Narrow contracts the Triggers editor pulls when a picker/dropdown opens — never
+        // per frame. Kept on the instance (not the runtime) because both need the live
+        // PluginManager + variant, which only the instance owns.
+
+        IReadOnlyList<string> IDisplayPropertyCatalog.GetAllPropertyNames()
         {
             // On demand only (picker open) — the list can hold thousands of names, so it
             // is never fetched per frame. Defensive: no plugin manager (Init not reached)
@@ -701,7 +707,7 @@ namespace FanaBridge.Adapters
             }
         }
 
-        MappedRoles IDisplayPanelHost.GetMappedRoles()
+        MappedRoles IMappedRoleCatalog.GetMappedRoles()
         {
             // On demand (mapped-control dropdown open). Read-only: the reader never writes
             // to Control Mapper. The rim's own variant is the key FanaBridge already owns
@@ -778,7 +784,7 @@ namespace FanaBridge.Adapters
             if (panels != null && _config.Capabilities.Display != DisplayType.None)
             {
                 yield return new DeviceSettingControl(
-                    panels.CreateDisplayPanel(this),
+                    panels.CreateDisplayPanel(this, this, this),
                     1,
                     "Display",
                     DeviceSettingControlKind.None,

@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using static FanaBridge.Adapters.ControlMapperReflection;
 
 namespace FanaBridge.Adapters
 {
@@ -77,7 +78,7 @@ namespace FanaBridge.Adapters
     }
 
     /// <summary>
-    /// Pure decision layer for <see cref="IDisplayPanelHost.GetMappedRoles"/>: given the
+    /// Pure decision layer for <see cref="IMappedRoleCatalog.GetMappedRoles"/>: given the
     /// Control Mapper source mappings (as plain views), this rim's own identity key, and a
     /// sanctioned catalog fallback, it returns the roles to offer and where they came from.
     /// No SimHub types, no reflection — the reflection lives in
@@ -212,9 +213,6 @@ namespace FanaBridge.Adapters
     /// </summary>
     internal sealed class ControlMapperRoleReader
     {
-        private const string ControlMapperPluginTypeName =
-            "SimHub.Plugins.OutputPlugins.ControlRemapper.ControlMapperPlugin";
-
         /// <summary>Resolve the roles to offer for the rim whose FanaBridge variant is
         /// <paramref name="computedVariant"/> (and, when known, DirectInput
         /// <paramref name="interfacePath"/>). RIW-off is detected from the live settings,
@@ -244,14 +242,15 @@ namespace FanaBridge.Adapters
                 object cm = LiveControlMapper(pm);
                 if (cm == null)
                     return null;
-                object settings = GetField(cm, "controlMapperPluginSettings");
+                object settings = ReadSettings(cm);
                 if (settings == null)
                     return null;
 
                 if (GetProp(settings, "RecognizeIndiviualWheels") is bool riw)
                     riwOn = riw;
 
-                if (!(GetProp(settings, "ControllerMappings") is IEnumerable maps))
+                var maps = ControllerMappingsOf(settings);
+                if (maps == null)
                     return null;
 
                 var views = new List<ControllerMappingView>();
@@ -316,32 +315,19 @@ namespace FanaBridge.Adapters
             }
         }
 
+        // Uncached by design: re-resolves the live plugin every call and silently returns
+        // null on a miss, so a transiently-unloaded Control Mapper degrades to the catalog
+        // rather than sticking off. (The bridge, which mutates provider state, keeps its own
+        // cached resolve + give-up policy instead.)
         private object LiveControlMapper(object pm)
         {
-            Type cmType = pm.GetType().Assembly.GetType(ControlMapperPluginTypeName, throwOnError: false);
+            Type cmType = FindPluginType(pm);
             if (cmType == null)
                 return null;
-            MethodInfo getPluginDef = pm.GetType()
-                .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .FirstOrDefault(m => m.Name == "GetPlugin"
-                                  && m.IsGenericMethodDefinition
-                                  && m.GetParameters().Length == 0
-                                  && m.GetGenericArguments().Length == 1);
+            MethodInfo getPluginDef = FindGetPluginMethod(pm.GetType());
             if (getPluginDef == null)
                 return null;
             return getPluginDef.MakeGenericMethod(cmType).Invoke(pm, null);
-        }
-
-        private static object GetField(object o, string name)
-        {
-            try { return o?.GetType().GetField(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(o); }
-            catch { return null; }
-        }
-
-        private static object GetProp(object o, string name)
-        {
-            try { return o?.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(o); }
-            catch { return null; }
         }
     }
 }

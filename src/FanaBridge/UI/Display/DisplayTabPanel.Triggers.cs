@@ -973,7 +973,7 @@ namespace FanaBridge.UI
 
         private FrameworkElement BuildAddMappedFields()
         {
-            var roles = _host.GetMappedRoles();
+            var roles = _roleCatalog.GetMappedRoles();
             var col = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
             col.Children.Add(KLabel("ROLE"));
 
@@ -1390,7 +1390,7 @@ namespace FanaBridge.UI
         {
             var owner = Window.GetWindow(this);
             var builtIns = BuiltInProperties.All;
-            var all = _host.GetAllPropertyNames();
+            var all = _propertyCatalog.GetAllPropertyNames();
             if (PropertyPickerDialog.TryPick(owner, builtIns, all, draft.SourceName,
                     out string name, out PropertyKind kind))
             {

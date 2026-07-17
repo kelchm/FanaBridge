@@ -560,10 +560,17 @@ namespace FanaBridge.Tests
         private sealed class FakePanelFactory : IDevicePanelFactory
         {
             public IDisplayPanelHost? LastHost;
+            public IDisplayPropertyCatalog? LastPropertyCatalog;
+            public IMappedRoleCatalog? LastRoleCatalog;
 
-            public System.Windows.Controls.Control CreateDisplayPanel(IDisplayPanelHost host)
+            public System.Windows.Controls.Control CreateDisplayPanel(
+                IDisplayPanelHost host,
+                IDisplayPropertyCatalog propertyCatalog,
+                IMappedRoleCatalog roleCatalog)
             {
                 LastHost = host;
+                LastPropertyCatalog = propertyCatalog;
+                LastRoleCatalog = roleCatalog;
                 return null!;   // no WPF control off the UI thread; the tab only stores it
             }
 
@@ -608,6 +615,9 @@ namespace FanaBridge.Tests
             Assert.NotNull(panels.LastHost);
             var host = panels.LastHost!;
             Assert.Same(inst, host);              // the instance IS the panel's host
+            // …and it is also the two on-demand editor catalogs threaded alongside.
+            Assert.Same(inst, panels.LastPropertyCatalog);
+            Assert.Same(inst, panels.LastRoleCatalog);
             Assert.Equal(expectedType, host.DisplayType);
             Assert.NotNull(host.DisplaySettings);
 

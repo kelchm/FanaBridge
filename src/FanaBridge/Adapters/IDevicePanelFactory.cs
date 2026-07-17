@@ -13,8 +13,14 @@ namespace FanaBridge.Adapters
     /// </summary>
     internal interface IDevicePanelFactory
     {
-        /// <summary>A bound Display settings panel — the per-device Display tab.</summary>
-        Control CreateDisplayPanel(IDisplayPanelHost host);
+        /// <summary>A bound Display settings panel — the per-device Display tab. The two
+        /// editor catalogs are threaded alongside the host so the panel hands each view only
+        /// the narrow contract it uses (the picker gets <paramref name="propertyCatalog"/>,
+        /// the mapped-control dropdown gets <paramref name="roleCatalog"/>).</summary>
+        Control CreateDisplayPanel(
+            IDisplayPanelHost host,
+            IDisplayPropertyCatalog propertyCatalog,
+            IMappedRoleCatalog roleCatalog);
 
         /// <summary>A bound Tuning settings panel.</summary>
         Control CreateTuningPanel(JObject customSettings);

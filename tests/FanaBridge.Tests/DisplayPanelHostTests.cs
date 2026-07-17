@@ -100,6 +100,8 @@ namespace FanaBridge.Tests
             public FanatecWheelDeviceInstance Instance = null!;
 
             public IDisplayPanelHost Host => Instance;
+            public IDisplayPropertyCatalog PropertyCatalog => Instance;
+            public IMappedRoleCatalog RoleCatalog => Instance;
 
             public void Frame(GameData d)
             {
@@ -477,10 +479,9 @@ namespace FanaBridge.Tests
             // Init is never called in this harness, so PluginManager is null — the
             // on-demand picker surfaces must return empties, never throw.
             var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
-            var host = s.Host;
 
-            Assert.Empty(host.GetAllPropertyNames());
-            var roles = host.GetMappedRoles();
+            Assert.Empty(s.PropertyCatalog.GetAllPropertyNames());
+            var roles = s.RoleCatalog.GetMappedRoles();
             Assert.Equal(MappedRolesSource.None, roles.Source);
             Assert.Empty(roles.Roles);
         }

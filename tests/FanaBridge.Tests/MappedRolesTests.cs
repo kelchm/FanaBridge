@@ -7,7 +7,7 @@ using Xunit;
 namespace FanaBridge.Tests
 {
     /// <summary>
-    /// The mapped-control role resolution behind <see cref="IDisplayPanelHost.GetMappedRoles"/>:
+    /// The mapped-control role resolution behind <see cref="IMappedRoleCatalog.GetMappedRoles"/>:
     /// the pure <see cref="MappedRoleResolver"/> decision layer (match key, RIW-off
     /// fallback, vendor guard, catalog fallback, distinctness) and the defensive
     /// <see cref="ControlMapperRoleReader"/> reflecting the same Control Mapper shape the

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using SimHub.Plugins.OutputPlugins.ControlRemapper.Variants;
+using static FanaBridge.Adapters.ControlMapperReflection;
 
 namespace FanaBridge.Adapters
 {
@@ -68,9 +69,6 @@ namespace FanaBridge.Adapters
     /// </summary>
     public class ControlMapperBridge
     {
-        private const string ControlMapperPluginTypeName =
-            "SimHub.Plugins.OutputPlugins.ControlRemapper.ControlMapperPlugin";
-
         private readonly object _sync = new object();
         private readonly FanaBridgeVariantProvider _provider = new FanaBridgeVariantProvider();
 
@@ -308,7 +306,8 @@ namespace FanaBridge.Adapters
                 {
                     object cm = LiveControlMapper();
                     object settings = cm != null ? ReadSettings(cm) : null;
-                    if (!(GetProp(settings, "ControllerMappings") is IEnumerable maps)) return;
+                    var maps = ControllerMappingsOf(settings);
+                    if (maps == null) return;
 
                     foreach (object csm in maps)
                     {
@@ -489,15 +488,10 @@ namespace FanaBridge.Adapters
             try
             {
                 Assembly asm = pm.GetType().Assembly;
-                Type cmType = asm.GetType(ControlMapperPluginTypeName, throwOnError: false);
+                Type cmType = FindPluginType(pm);
                 if (cmType == null) { LogGiveUp("ControlMapperPlugin type not found in " + asm.GetName().Name); return false; }
 
-                MethodInfo getPluginDef = pm.GetType()
-                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                    .FirstOrDefault(m => m.Name == "GetPlugin"
-                                      && m.IsGenericMethodDefinition
-                                      && m.GetParameters().Length == 0
-                                      && m.GetGenericArguments().Length == 1);
+                MethodInfo getPluginDef = FindGetPluginMethod(pm.GetType());
                 if (getPluginDef == null) { LogGiveUp("PluginManager.GetPlugin<T>() not found"); return false; }
 
                 FieldInfo rwField = cmType.GetField("remapperWorker", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -640,7 +634,8 @@ namespace FanaBridge.Adapters
             try
             {
                 object settings = ReadSettings(cm);
-                if (!(GetProp(settings, "ControllerMappings") is IEnumerable maps))
+                var maps = ControllerMappingsOf(settings);
+                if (maps == null)
                 {
                     sb.AppendLine("    (unavailable)");
                     return 0;
@@ -702,14 +697,6 @@ namespace FanaBridge.Adapters
             return false;
         }
 
-        /// <summary>ControlMapperPlugin.controlMapperPluginSettings (public field).</summary>
-        private static object ReadSettings(object cm)
-        {
-            return cm?.GetType()
-                .GetField("controlMapperPluginSettings", BindingFlags.Public | BindingFlags.Instance)
-                ?.GetValue(cm);
-        }
-
         /// <summary>Yields every ControllerDescription reachable from the settings —
         /// both AvailableControllers (live) and ControllerMappings[].ControllerDescription
         /// (configured) — without referencing the SimHub model types at compile time.</summary>
@@ -721,19 +708,14 @@ namespace FanaBridge.Adapters
                 foreach (var d in avail)
                     if (d != null) yield return d;
 
-            if (GetProp(settings, "ControllerMappings") is IEnumerable maps)
+            var maps = ControllerMappingsOf(settings);
+            if (maps != null)
                 foreach (var m in maps)
                 {
                     if (m == null) continue;
                     object d = GetProp(m, "ControllerDescription");
                     if (d != null) yield return d;
                 }
-        }
-
-        private static object GetProp(object o, string name)
-        {
-            try { return o?.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(o); }
-            catch { return null; }
         }
 
         private static int AsInt(object o, string prop)
