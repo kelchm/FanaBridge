@@ -199,15 +199,30 @@ namespace FanaBridge.Adapters
                 plugin.AttachItmObserver(_itmTwin);
                 // A display-id hot-swap rebuilds the driver UNDER a still-live rule stack
                 // (UpdateDisplayRules below replaces the stack after the driver's first
-                // Update this same frame). Carry the stack's page policy across the rebuild
-                // so that first Update's cold bring-up targets the stack's base — not the
-                // dormant ItmDefaultPage setting — and the lifecycle's game-start revert
-                // stays suppressed for the stack's uninterrupted tenure. Edge-triggered:
-                // this rebuild IS the edge. Every other path through this block (first
-                // build, reconnect, generation rebind) has already dropped the stack, so
-                // the fresh driver correctly starts under built-in policy.
+                // Update this same frame). Keep page policy continuously external across the
+                // rebuild so that first Update's cold bring-up targets the stack's base — not
+                // the dormant ItmDefaultPage setting — and the lifecycle's game-start revert
+                // stays suppressed for the stack's uninterrupted tenure. Edge-triggered: this
+                // rebuild IS the edge. Every other path through this block (first build,
+                // reconnect, generation rebind) has already dropped the stack, so the fresh
+                // driver correctly starts under built-in policy.
+                //
+                // Re-RESOLVE the base against the NEW device's page table rather than carrying
+                // the old stack's BaseWirePage: a wire page number is valid only with the
+                // device id/table that produced it (invariant — never carry a raw wire across
+                // the device-id boundary). On a cross-catalog change the same wire is a
+                // different page (Tyre Temps is wire 5 on device 3 but wire 4 on device 4,
+                // where wire 5 is Legacy), so the old wire would cold-start the new driver on
+                // the wrong page. ResolveBase maps the configured base identity onto this
+                // device's wire (and falls to the default wire's identity when this device
+                // lacks the configured base). The rebuilt stack re-takes policy later this
+                // frame; this keeps the boundary coherent until it does.
                 if (_displayStack != null)
-                    _itmDisplay.SetPagePolicy(_displayStack.BaseWirePage);
+                {
+                    var resolved = ItmPageTable.ForDevice(_itmDeviceId)
+                        .ResolveBase(_displayStack.ConfiguredBase, _displayStack.DefaultWirePage);
+                    _itmDisplay.SetPagePolicy(resolved.Wire);
+                }
                 // Baseline the wheel-change counter at creation — the driver is starting
                 // cold anyway, so changes before this point are already accounted for.
                 _itmWheelChangeCount = plugin.Wheelbase?.WheelChangeCount ?? 0;

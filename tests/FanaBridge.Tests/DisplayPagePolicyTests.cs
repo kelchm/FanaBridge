@@ -418,6 +418,111 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void ItmDisplayIdHotSwap_CrossCatalog_ReResolvesBaseOnTheNewDeviceTable()
+        {
+            // The renumbering case the fuelErsDrs test above can't see: Tyre Temps is wire 5
+            // on device 3 but wire 4 on device 4 (where wire 5 is Legacy — see
+            // ItmPageTableTests). Carrying the raw device-3 wire (5) across the rebuild would
+            // cold-start the Bentley on Legacy; the base must re-resolve against the NEW
+            // device's table to wire 4.
+            var running = Data(NewStatus());
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = ConfigWithBase("tyreTemps"),
+            });
+            s.Frame(running);   // driver + stack built on device 3
+            s.Frame(running);   // the stack's base reaches the lifecycle
+            Assert.True(s.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
+            int before = s.Transport.Sent.Count;
+
+            var bentley = WheelProfileStore.FindByWheelType("PSWBENT");
+            Assert.NotNull(bentley);
+            s.Wheelbase.ProfileOverrideResolver = _ => bentley!.Id;
+            s.Wheelbase.RefreshCapabilities();
+            s.Frame(running);   // rebuild + cold bring-up, all this one frame
+
+            var pageSets = s.Transport.Sent.Skip(before)
+                .Where(f => f[1] == 0x05 && f[2] == 0x04 && f[3] == 4).ToList();
+            Assert.NotEmpty(pageSets);
+            Assert.Equal(4, pageSets[0][4]);   // Tyre Temps re-resolved onto device 4, not 5
+            // Legacy (device 4 wire 5) is never requested — the raw carried wire would.
+            Assert.DoesNotContain((byte)5, pageSets.Select(f => f[4]));
+        }
+
+        [Fact]
+        public void ItmDisplayIdHotSwap_ConfiguredBaseAbsentOnNewDevice_FallsToDefaultWireIdentity()
+        {
+            // Car Settings (wire 3 on device 3) does not exist on device 4. The rebuild must
+            // fall to the effective base — the identity at the stack's default wire (the
+            // ItmDefaultPage setting default, wire 1 = Lap Info on device 4) — not carry the
+            // stranded device-3 wire 3 (which is Lap Times on device 4).
+            var running = Data(NewStatus());
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = ConfigWithBase("carSettings"),
+            });
+            s.Frame(running);   // driver + stack built on device 3 (base = Car Settings, wire 3)
+            s.Frame(running);
+            Assert.True(s.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
+            int before = s.Transport.Sent.Count;
+
+            var bentley = WheelProfileStore.FindByWheelType("PSWBENT");
+            Assert.NotNull(bentley);
+            s.Wheelbase.ProfileOverrideResolver = _ => bentley!.Id;
+            s.Wheelbase.RefreshCapabilities();
+            s.Frame(running);   // rebuild + cold bring-up
+
+            var pageSets = s.Transport.Sent.Skip(before)
+                .Where(f => f[1] == 0x05 && f[2] == 0x04 && f[3] == 4).ToList();
+            Assert.NotEmpty(pageSets);
+            // The effective fallback: device 4's default-wire identity (wire 1), not the
+            // stranded device-3 Car Settings wire (3, which is Lap Times on device 4).
+            Assert.Equal(DisplaySettings.DefaultItmDefaultPage, pageSets[0][4]);
+            Assert.DoesNotContain((byte)3, pageSets.Select(f => f[4]));
+        }
+
+        [Fact]
+        public void ItmDisplayIdHotSwap_ReverseCrossCatalog_ReResolvesBaseOnTheNewDeviceTable()
+        {
+            // The reverse direction, for a renumbered page: established on device 4 (Tyre
+            // Temps = wire 4), then swapped back to device 3 where Tyre Temps is wire 5. The
+            // base must re-resolve to wire 5, not carry the device-4 wire 4 (Lap Times on
+            // device 3).
+            var running = Data(NewStatus());
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = ConfigWithBase("tyreTemps"),
+            });
+            var bentley = WheelProfileStore.FindByWheelType("PSWBENT");
+            Assert.NotNull(bentley);
+            // Establish the session on device 4 first (its stack latches base = Tyre Temps).
+            s.Wheelbase.ProfileOverrideResolver = _ => bentley!.Id;
+            s.Wheelbase.RefreshCapabilities();
+            s.Frame(running);   // driver + stack built on device 4
+            s.Frame(running);   // the stack's base reaches the lifecycle
+            var mid = s.Transport.Sent
+                .Where(f => f[1] == 0x05 && f[2] == 0x04).ToList();
+            Assert.NotEmpty(mid);
+            Assert.Equal(4, mid.Last()[3]);   // confirm we are on device 4 before reversing
+            int before = s.Transport.Sent.Count;
+
+            // Clear the override → back to the committed CSSWFORMV3 identity (device 3).
+            s.Wheelbase.ProfileOverrideResolver = _ => null;
+            s.Wheelbase.RefreshCapabilities();
+            s.Frame(running);   // rebuild + cold bring-up on device 3
+
+            var pageSets = s.Transport.Sent.Skip(before)
+                .Where(f => f[1] == 0x05 && f[2] == 0x04 && f[3] == 3).ToList();
+            Assert.NotEmpty(pageSets);
+            Assert.Equal(WireFor(ItmPage.TyreTemps), pageSets[0][4]);  // wire 5 on device 3
+            // The device-4 wire (4 = Lap Times on device 3) is never requested.
+            Assert.DoesNotContain((byte)4, pageSets.Select(f => f[4]));
+        }
+
+        [Fact]
         public void SettingChange_WhileTheStackOwnsPolicy_DoesNotMoveThePage()
         {
             var running = Data(NewStatus());

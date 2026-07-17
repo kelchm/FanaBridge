@@ -104,6 +104,12 @@ namespace FanaBridge.Adapters
             ItmPage? configuredBase = config.Itm != null && config.Itm.BasePageRaw != null
                 ? config.Itm.BasePage
                 : (ItmPage?)null;
+            // Latch the two resolution inputs so a later cross-device rebuild can
+            // re-resolve the base against the NEW device's table (a wire page number is
+            // valid only with the device id/table that produced it). Values are stored as
+            // computed here — never mutated.
+            ConfiguredBase = configuredBase;
+            DefaultWirePage = defaultWirePage;
 
             // The effective base — the wire the display actually rests on, that wire's
             // identity, and its name — through the ONE table: the config's base when this
@@ -155,6 +161,17 @@ namespace FanaBridge.Adapters
         /// <summary>The engine's base page as this device's wire number — the effective
         /// default page while this stack owns page policy (see the ctor note).</summary>
         internal byte BaseWirePage { get; }
+
+        /// <summary>The configured base page identity this stack latched at build time (null
+        /// when the config pins none). A wire number is device-specific, so a cross-device
+        /// driver rebuild re-resolves this identity against the NEW device's table rather
+        /// than carrying <see cref="BaseWirePage"/> — which is valid only on the old table.</summary>
+        internal ItmPage? ConfiguredBase { get; }
+
+        /// <summary>The default wire page this stack latched at build time (the fallback the
+        /// effective base resolves against when the configured base is absent). Paired with
+        /// <see cref="ConfiguredBase"/> to re-resolve the base on a new device's table.</summary>
+        internal byte DefaultWirePage { get; }
 
         /// <summary>Test access to the action hub (production handlers reach it via
         /// the registered SimHub actions).</summary>
