@@ -70,6 +70,9 @@ namespace FanaBridge.Tests
         private static byte WheelWire(string code) =>
             FanatecDeviceTables.Wheels.First(kv => kv.Value == code).Key;
 
+        private static byte HubWire(string code) =>
+            FanatecDeviceTables.Hubs.First(kv => kv.Value == code).Key;
+
         private static byte[] Ff08(byte baseType, byte wire)
         {
             var b = new byte[64];
@@ -113,6 +116,13 @@ namespace FanaBridge.Tests
         }
 
         private static Session StartSession(JObject settings)
+            => StartSession(settings, WheelWire("CSSWFORMV3"), "CSSWFORMV3");
+
+        // Starts a session on an arbitrary attachment: the wire byte drives the
+        // wheelbase identity, and the profile wheel-type builds the registration caps
+        // (DeviceConfig.Capabilities) — so a session can register as any wheel/hub the
+        // resolved-caps tests need (e.g. a display-less PHUB base).
+        private static Session StartSession(JObject settings, byte wheelWire, string profileWheelType)
         {
             var s = new Session
             {
@@ -122,8 +132,8 @@ namespace FanaBridge.Tests
             s.Wheelbase = new FanatecWheelbase(s.Transport, new FakeBus(), s.Clock.Now);
             Assert.True(s.Wheelbase.AutoConnect());
 
-            // Commit the CSSWFORMV3 identity (an ITM wheel, display device 3).
-            s.Transport.Identity.Enqueue(Ff08(0x0C, WheelWire("CSSWFORMV3")));
+            // Commit the requested identity (default: CSSWFORMV3 — an ITM wheel, display device 3).
+            s.Transport.Identity.Enqueue(Ff08(0x0C, wheelWire));
             s.Clock.T += 10;
             s.Wheelbase.UpdateIdentity();
             s.Clock.T += 250;
@@ -132,7 +142,7 @@ namespace FanaBridge.Tests
             s.Plugin = new FanatecPlugin();
             s.Plugin.InstallWheelbaseForTest(s.Wheelbase);
 
-            var profile = WheelProfileStore.FindByWheelType("CSSWFORMV3");
+            var profile = WheelProfileStore.FindByWheelType(profileWheelType);
             Assert.NotNull(profile);
             s.Instance = new FanatecWheelDeviceInstance(new DeviceConfig
             {
@@ -471,6 +481,46 @@ namespace FanaBridge.Tests
 
             Assert.Equal(4, s.Host.ItmDeviceId);                 // resolved override, not 3
             Assert.Equal(DisplayType.Itm, s.Host.DisplayType);   // same resolved source
+        }
+
+        [Fact]
+        public void ShouldOfferDisplayTab_FollowsResolvedCaps_InBothDirections()
+        {
+            var running = Data(NewStatus());
+
+            // OFF direction: an ITM wheel (registration ITM) overridden onto a display-
+            // less profile must STOP offering the Display tab. The tab-creation gate now
+            // reads the resolved caps; pre-fix it read the frozen registration caps
+            // (still ITM here) and kept offering the tab.
+            var s = SyncedSession(new JObject { ["wheelType"] = "CSSWFORMV3" }, running);
+            Assert.Equal(DisplayType.Itm, s.Host.DisplayType);
+            Assert.True(s.Instance.ShouldOfferDisplayTab);
+
+            var hub = WheelProfileStore.FindByWheelType("PHUB");           // display: none
+            Assert.NotNull(hub);
+            Assert.Equal(DisplayType.None, new WheelCapabilities(hub!).Display);
+            s.Wheelbase.ProfileOverrideResolver = _ => hub!.Id;
+            s.Wheelbase.RefreshCapabilities();
+            s.Frame(running);
+
+            Assert.Equal(DisplayType.None, s.Host.DisplayType);   // resolved caps lost the display…
+            Assert.False(s.Instance.ShouldOfferDisplayTab);       // …so the tab is no longer offered
+
+            // ON direction: a display-less base (registration None) overridden onto an ITM
+            // profile must START offering the tab. Registration caps are None here, so
+            // ONLY the resolved-caps gate can turn the tab on — the pre-fix registration
+            // gate would leave it off.
+            var h = StartSession(new JObject { ["wheelType"] = "PHUB" }, HubWire("PHUB"), "PHUB");
+            Assert.Equal(DisplayType.None, h.Host.DisplayType);
+            Assert.False(h.Instance.ShouldOfferDisplayTab);
+
+            var bentley = WheelProfileStore.FindByWheelType("PSWBENT");    // display: itm (device 4)
+            Assert.NotNull(bentley);
+            h.Wheelbase.ProfileOverrideResolver = _ => bentley!.Id;
+            h.Wheelbase.RefreshCapabilities();
+
+            Assert.Equal(DisplayType.Itm, h.Host.DisplayType);    // resolved caps gained a display…
+            Assert.True(h.Instance.ShouldOfferDisplayTab);        // …so the tab is now offered
         }
 
         [Fact]

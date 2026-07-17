@@ -38,6 +38,12 @@ namespace FanaBridge.UI
         private bool _suppressEvents;
         private bool _isItm;
 
+        // The resolved caps this panel's cap-dependent layout was last built for. The
+        // poll loop compares the live host values against these and rebuilds atomically
+        // when they change (a profile override applied while the tab stays open).
+        private DisplayType _boundDisplayType;
+        private byte _boundItmDeviceId;
+
         private Dictionary<TabView, UIElement> _views;
         private TabView _currentView = TabView.Overview;
 
@@ -68,6 +74,8 @@ namespace FanaBridge.UI
             _roleCatalog = roleCatalog ?? throw new ArgumentNullException(nameof(roleCatalog));
             _settings = host.DisplaySettings ?? new DisplaySettings();
             _isItm = host.DisplayType == DisplayType.Itm;
+            _boundDisplayType = host.DisplayType;
+            _boundItmDeviceId = host.ItmDeviceId;
             _suppressEvents = true;
 
             _views = new Dictionary<TabView, UIElement>
@@ -197,7 +205,17 @@ namespace FanaBridge.UI
 
             // The DISPLAY MODE header belongs to the hub — it shows on Overview only
             // (and only on ITM wheels), never inside an editor.
-            var headerVisibility = _isItm && view == TabView.Overview
+            RefreshModeHeader();
+        }
+
+        // The DISPLAY MODE header (segmented ITM/Legacy toggle + divider) shows on the
+        // Overview of an ITM wheel only. Its visibility depends on both _isItm and the
+        // current view, so it must be re-derived whenever either changes — NavigateTo
+        // covers view changes; SyncResolvedCaps covers a live basic↔ITM caps rebind that
+        // doesn't renavigate.
+        private void RefreshModeHeader()
+        {
+            var headerVisibility = _isItm && _currentView == TabView.Overview
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             panelModeHeader.Visibility = headerVisibility;
@@ -311,9 +329,47 @@ namespace FanaBridge.UI
             _timer?.Stop();
         }
 
+        // Re-derive the cap-dependent layout when the host's resolved caps change while
+        // the tab stays open (a profile override after a reconnect, or a generation
+        // rebind). Steady state — caps unchanged — is a two-compare no-op, so the normal
+        // polling path is untouched. The combo repopulate is wrapped in _suppressEvents
+        // exactly as Bind does, so the rebuild never fires a spurious commit.
+        private void SyncResolvedCaps()
+        {
+            if (_host == null) return;
+            var dt = _host.DisplayType;
+            var id = _host.ItmDeviceId;
+            if (dt == _boundDisplayType && id == _boundItmDeviceId) return;   // steady state: no-op
+            _boundDisplayType = dt;
+            _boundItmDeviceId = id;
+            _isItm = dt == DisplayType.Itm;
+            _suppressEvents = true;
+            cmbItemNone.Visibility = _isItm ? Visibility.Visible : Visibility.Collapsed;
+            var itmOnly = _isItm ? Visibility.Visible : Visibility.Collapsed;
+            borderItmInfo.Visibility = itmOnly;
+            sectionItmOptions.Visibility = itmOnly;
+            sectionDisplayMode.Title = _isItm ? "Legacy Display Mode" : "Display Mode";
+            PopulateDefaultPages(id);
+            SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
+            _suppressEvents = false;
+            UpdateModeState();               // recomputes panelItmLive visibility; navigates to Overview if no longer ITM
+            RefreshModeHeader();             // basic→ITM live rebind reveals the DISPLAY MODE toggle without a renavigate
+            RenderPriority(_lastSnapshot);   // Overview base-name/rows for the new device
+            if (_currentView == TabView.Triggers)
+                viewTriggers.Enter(_lastSnapshot);   // rebuild the editor for the new device; drops any open draft
+        }
+
         private void Poll(bool force = false)
         {
-            if (_host == null || panelItmLive.Visibility != Visibility.Visible)
+            if (_host == null)
+                return;
+
+            // Re-derive the cap-dependent layout FIRST — before the ITM-live early-return
+            // — so a basic→ITM (or ITM→basic) override is detected even while the ITM live
+            // panel is collapsed. A no-op in steady state (two compares).
+            SyncResolvedCaps();
+
+            if (panelItmLive.Visibility != Visibility.Visible)
                 return;
 
             // ONE volatile read — the envelope; the parts gate their own re-renders

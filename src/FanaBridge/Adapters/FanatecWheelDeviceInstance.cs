@@ -659,6 +659,13 @@ namespace FanaBridge.Adapters
         private WheelCapabilities ResolvedDisplayCaps =>
             PluginResolver()?.ResolveCapsFor(_config) ?? _config.Capabilities ?? WheelCapabilities.None;
 
+        // Whether this device should surface a Display tab. Reads the RESOLVED caps
+        // (not the frozen registration caps) so a profile override that retargets the
+        // display — a base whose override gains an ITM display, or an ITM wheel
+        // overridden onto a display-less profile — is honored: the tab appears or
+        // disappears with the display the runtime actually drives.
+        internal bool ShouldOfferDisplayTab => ResolvedDisplayCaps.Display != DisplayType.None;
+
         DisplayType IDisplayPanelHost.DisplayType => ResolvedDisplayCaps.Display;
 
         byte IDisplayPanelHost.ItmDeviceId => ResolvedDisplayCaps.ItmDeviceId;
@@ -781,7 +788,7 @@ namespace FanaBridge.Adapters
 
             // Display settings tab (only for wheels with a display). The instance IS
             // the panel's host — the IDisplayPanelHost members above are its window.
-            if (panels != null && _config.Capabilities.Display != DisplayType.None)
+            if (panels != null && ShouldOfferDisplayTab)
             {
                 yield return new DeviceSettingControl(
                     panels.CreateDisplayPanel(this, this, this),
