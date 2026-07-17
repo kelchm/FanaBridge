@@ -13,7 +13,7 @@ using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.UI
+namespace FanaBridge.UI.Display
 {
     /// <summary>
     /// The per-device Display tab: a DISPLAY MODE header (ITM display / Legacy only)

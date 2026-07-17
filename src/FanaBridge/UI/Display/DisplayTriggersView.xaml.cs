@@ -13,7 +13,7 @@ using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.UI
+namespace FanaBridge.UI.Display
 {
     /// <summary>
     /// The Triggers editor of the Display tab (design's ITM Triggers editor): the

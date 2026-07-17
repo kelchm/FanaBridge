@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge.Display.Rules;
-using FanaBridge.UI;
+using FanaBridge.UI.Display;
 using Xunit;
 
 namespace FanaBridge.Tests

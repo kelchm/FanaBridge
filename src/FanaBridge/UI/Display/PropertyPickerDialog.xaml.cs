@@ -6,7 +6,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using FanaBridge.Display.Rules;
 
-namespace FanaBridge.UI
+namespace FanaBridge.UI.Display
 {
     /// <summary>
     /// The SimHub property picker modal (design's picker): a focus-on-open filter box over a

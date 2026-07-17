@@ -12,7 +12,7 @@ using FanaBridge.Display.Host;
 using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.UI
+namespace FanaBridge.UI.Display
 {
     /// <summary>
     /// A digital twin of the ITM OLED: a fixed-aspect (4:1) black panel that renders a

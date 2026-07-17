@@ -1,6 +1,6 @@
 using System.Windows.Media;
 
-namespace FanaBridge.UI
+namespace FanaBridge.UI.Display
 {
     /// <summary>
     /// The Display tab's shared brush + font palette (the design mock's SimHub-dark

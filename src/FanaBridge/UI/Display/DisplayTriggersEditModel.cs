@@ -7,7 +7,7 @@ using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.UI
+namespace FanaBridge.UI.Display
 {
     /// <summary>
     /// The editable form of one trigger rule, the shape the expanded editor binds to and

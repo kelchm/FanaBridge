@@ -7,7 +7,7 @@ using FanaBridge.Display.Session;
 using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.UI
+namespace FanaBridge.UI.Display
 {
     /// <summary>What the mirror panel shows for the current snapshot state.</summary>
     internal enum MirrorPanelState

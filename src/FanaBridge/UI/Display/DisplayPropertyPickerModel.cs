@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using FanaBridge.Display.Rules;
 
-namespace FanaBridge.UI
+namespace FanaBridge.UI.Display
 {
     /// <summary>What one row in the property picker's list represents — a group heading
     /// (non-selectable) or a pickable property.</summary>

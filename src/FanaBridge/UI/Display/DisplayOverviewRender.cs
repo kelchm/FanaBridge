@@ -8,7 +8,7 @@ using FanaBridge.Display.Rules;
 using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.UI
+namespace FanaBridge.UI.Display
 {
     /// <summary>One priority-list row, ready to draw: rank, label, and state styling.</summary>
     internal sealed class PriorityRowModel

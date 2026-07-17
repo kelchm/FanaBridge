@@ -3,6 +3,7 @@ using FanaBridge.Adapters;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;
+using FanaBridge.UI.Display;
 using Newtonsoft.Json.Linq;
 
 namespace FanaBridge.UI

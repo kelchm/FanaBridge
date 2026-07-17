@@ -4,7 +4,7 @@ using System.Linq;
 using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
-using FanaBridge.UI;
+using FanaBridge.UI.Display;
 using Xunit;
 
 namespace FanaBridge.Tests

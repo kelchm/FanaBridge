@@ -7,7 +7,7 @@ using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
-using FanaBridge.UI;
+using FanaBridge.UI.Display;
 using Xunit;
 
 namespace FanaBridge.Tests
