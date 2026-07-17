@@ -946,9 +946,21 @@ namespace FanaBridge.Adapters
 
         DisplaySettings IDisplayPanelHost.DisplaySettings => _displaySettings;
 
-        DisplayType IDisplayPanelHost.DisplayType => _config.Capabilities.Display;
+        // The Display tab picks its ITM-vs-basic layout and which page table to populate
+        // from DisplayType/ItmDeviceId, so both must report the caps the RUNTIME actually
+        // drives: override-resolved via the current plugin (ResolveCapsFor), exactly as the
+        // DataUpdate loop resolves them — not the frozen registration caps. Returning
+        // registration caps let a profile override retarget the display for the driver
+        // while the tab kept rendering the built-in layout / wrong page table. Resolved
+        // live on each read, so it stays correct across a generation rebind (PluginResolver
+        // returns the current plugin); degrades to the registration caps only when no
+        // plugin is live yet, matching ResolveCapsFor's own fallback.
+        private WheelCapabilities ResolvedDisplayCaps =>
+            PluginResolver()?.ResolveCapsFor(_config) ?? _config.Capabilities ?? WheelCapabilities.None;
 
-        byte IDisplayPanelHost.ItmDeviceId => _config.Capabilities.ItmDeviceId;
+        DisplayType IDisplayPanelHost.DisplayType => ResolvedDisplayCaps.Display;
+
+        byte IDisplayPanelHost.ItmDeviceId => ResolvedDisplayCaps.ItmDeviceId;
 
         DisplayCustomizationConfig IDisplayPanelHost.GetDisplayConfig() => _displayConfig;
 
@@ -1002,9 +1014,13 @@ namespace FanaBridge.Adapters
                 if (pm == null)
                     return MappedRoles.None;
                 string variant = FanaBridgeVariantProvider.ComputeCurrentVariant();
-                // DirectInput InterfacePath resolution for the RIW-off narrowing is
-                // deferred (it needs a device enumeration); the reader still matches the
-                // single no-variant base row, and the catalog is the honest fallback.
+                // No DirectInput InterfacePath here: resolving THIS device's path needs a
+                // device enumeration (and the live/inert collection can't even be told
+                // apart at that layer), so it is disproportionate plumbing for R1. Passing
+                // null keeps the RIW-on and single-base RIW-off cases exact; when RIW is
+                // off and more than one Fanatec base is mapped, the resolver reports an
+                // honest aggregate rather than claiming another base's roles are mapped on
+                // this wheel. Full interface-path disambiguation lands in R2.
                 return new ControlMapperRoleReader().Read(pm, variant, interfacePath: null);
             }
             catch (Exception ex)

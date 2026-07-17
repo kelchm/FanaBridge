@@ -80,6 +80,27 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void Resolve_RiwOff_MultipleFanatecBases_UnionsButReportsAggregated()
+        {
+            // Two Fanatec bases, RIW off (no variant), no interface path to tell them apart.
+            // The roles are real and get unioned — but they span MORE THAN ONE base, so the
+            // result must NOT claim to be the roles mapped on THIS wheel; it's an honest
+            // aggregate (full interface-path disambiguation lands in R2). Pre-fix this union
+            // was mislabeled MappedOnThisWheel.
+            var mappings = new[]
+            {
+                Mapping(Fanatec, null, @"\\?\hid#baseA", ("Up Shift", true)),
+                Mapping(Fanatec, null, @"\\?\hid#baseB", ("Brake Bias +", true)),
+            };
+
+            var result = MappedRoleResolver.Resolve(mappings, variant: null,
+                interfacePath: null, catalog: () => new[] { "Everything" });
+
+            Assert.Equal(MappedRolesSource.AggregatedAcrossBases, result.Source);
+            Assert.Equal(new[] { "Up Shift", "Brake Bias +" }, result.Roles.ToArray());
+        }
+
+        [Fact]
         public void Resolve_InterfacePath_NarrowsWhenBothKnown_ButFallsBackWhenNothingMatches()
         {
             var mappings = new[]

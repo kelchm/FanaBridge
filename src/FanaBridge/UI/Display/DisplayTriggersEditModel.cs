@@ -111,6 +111,7 @@ namespace FanaBridge.UI
     internal sealed class DisplayTriggersEditModel
     {
         private readonly byte _itmDeviceId;
+        private readonly ItmPageTable _pageTable;      // this device's page set, one source of truth
         private DisplayCustomizationConfig _config;   // working copy; never mutated in place
 
         /// <summary>Starts from the host's current config (null / empty is an empty rule
@@ -119,6 +120,7 @@ namespace FanaBridge.UI
         {
             _config = current;
             _itmDeviceId = itmDeviceId;
+            _pageTable = ItmPageTable.ForDevice(itmDeviceId);
         }
 
         /// <summary>The current working document (null until the first rule is added to an
@@ -447,9 +449,8 @@ namespace FanaBridge.UI
         /// at the edge.</summary>
         public IReadOnlyList<ItmPage> PageOptions()
         {
-            var pages = ItmDeviceCatalog.PagesFor(_itmDeviceId);
             var result = new List<ItmPage>();
-            foreach (var p in pages)
+            foreach (var p in _pageTable.Pages)
                 if (p.Page != ItmPage.Legacy)
                     result.Add(p.Page);
             return result;
@@ -597,13 +598,12 @@ namespace FanaBridge.UI
         // else the first page.
         private ItmPage DefaultTargetPage()
         {
-            var pages = ItmDeviceCatalog.PagesFor(_itmDeviceId);
             ItmPage basePage = _config?.Itm != null && _config.Itm.BasePageRaw != null
                 ? _config.Itm.BasePage
                 : ItmPage.LapInfo;
             ItmPage first = ItmPage.LapInfo;
             bool haveFirst = false;
-            foreach (var p in pages)
+            foreach (var p in _pageTable.Pages)
             {
                 if (p.Page == ItmPage.Legacy)
                     continue;

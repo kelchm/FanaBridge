@@ -85,21 +85,14 @@ namespace FanaBridge.UI
         {
             if (snapshot?.BasePageName != null)
                 return snapshot.BasePageName;
-            var pages = ItmDeviceCatalog.PagesFor(itmDeviceId);
-            if (config?.Itm != null && config.Itm.BasePageRaw != null)
-            {
-                var basePage = config.Itm.BasePage;
-                foreach (var page in pages)
-                    if (page.Page == basePage)
-                        return page.Name;
-                // Pinned page this device doesn't have: the stack silently keeps the
-                // default wire (PageToWire fallback) — mirror it rather than claim a
-                // page the display can never rest on.
-            }
-            foreach (var page in pages)
-                if (page.Number == defaultWirePage)
-                    return page.Name;
-            return ItmTelemetry.NameOf(ItmPage.LapInfo);
+            // No stack live: re-derive the SAME base resolution the stack would, through
+            // the one page table — the config's base page when this device offers it, else
+            // the default-page setting's wire, else the off-table Lap Info fallback.
+            ItmPage? configuredBase = config?.Itm != null && config.Itm.BasePageRaw != null
+                ? config.Itm.BasePage
+                : (ItmPage?)null;
+            return ItmPageTable.ForDevice(itmDeviceId)
+                .ResolveBase(configuredBase, defaultWirePage).Name;
         }
 
         /// <summary>True when the config has ITM trigger rules — gates the priority list's
@@ -232,10 +225,10 @@ namespace FanaBridge.UI
                     : itmStatus.Substring(synced.Length, end - synced.Length);
                 if (byte.TryParse(token, out byte wire))
                 {
-                    foreach (var page in ItmDeviceCatalog.PagesFor(itmDeviceId))
-                        if (page.Number == wire)
-                            return "Page " + wire + " · " + page.Name;
-                    return "Page " + wire;
+                    var table = ItmPageTable.ForDevice(itmDeviceId);
+                    return table.TryGetPage(wire, out _)
+                        ? "Page " + wire + " · " + table.NameAtWire(wire)
+                        : "Page " + wire;
                 }
                 return "Synced";   // "page ?" — synced before a page number is adopted
             }

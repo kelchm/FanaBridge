@@ -37,7 +37,7 @@ namespace FanaBridge.Customization
     /// (wheel-button) navigation for the engine's manual-override policy. Sits strictly
     /// between the two: the engine knows content identities (<see cref="ItmPage"/>, screen
     /// ids), the lifecycle knows wire page numbers — the director resolves between them via
-    /// <see cref="ItmDeviceCatalog.PagesFor"/> for its display device, both directions.
+    /// the <see cref="ItmPageTable"/> for its display device, both directions.
     ///
     /// The model, and why:
     /// - <b>One request per intent change, never per frame.</b> A request is issued only
@@ -69,11 +69,9 @@ namespace FanaBridge.Customization
         private readonly IItmPageControl _control;
         private readonly Action<string> _log;
 
-        // The device's page table, resolved once: identity → wire and wire → identity,
-        // plus the legacy page's wire number (0 = this display has none).
-        private readonly Dictionary<ItmPage, byte> _wireByPage = new Dictionary<ItmPage, byte>();
-        private readonly Dictionary<byte, ItmPage> _pageByWire = new Dictionary<byte, ItmPage>();
-        private readonly byte _legacyWire;
+        // The device's page table: identity ↔ wire both directions plus the legacy page's
+        // wire number (0 = this display has none) — the one page-mapping source of truth.
+        private readonly ItmPageTable _pages;
 
         // ── Landing/request bookkeeping ──────────────────────────────────
         private byte _lastRequestedWire;    // last issued request (0 = none outstanding)
@@ -94,14 +92,7 @@ namespace FanaBridge.Customization
         {
             _control = control ?? throw new ArgumentNullException(nameof(control));
             _log = log ?? (_ => { });
-
-            foreach (var info in ItmDeviceCatalog.PagesFor(itmDeviceId))
-            {
-                _wireByPage[info.Page] = info.Number;
-                _pageByWire[info.Number] = info.Page;
-                if (info.IsLegacy)
-                    _legacyWire = info.Number;
-            }
+            _pages = ItmPageTable.ForDevice(itmDeviceId);
         }
 
         /// <summary>
@@ -152,7 +143,7 @@ namespace FanaBridge.Customization
                     && landed != _lastSyncedWire)
                 {
                     // The display moved somewhere the director did not send it.
-                    if (_pageByWire.TryGetValue(landed, out var identity))
+                    if (_pages.TryGetPage(landed, out var identity))
                     {
                         // Wheel-button navigation (a landed legacy page reports as the
                         // legacy page identity). The engine adopts it on its next tick;
@@ -212,9 +203,9 @@ namespace FanaBridge.Customization
             byte desired = 0;
             if (intent.Kind == TargetKind.LegacyScreen)
             {
-                if (_legacyWire != 0)
+                if (_pages.LegacyWire != 0)
                 {
-                    desired = _legacyWire;
+                    desired = _pages.LegacyWire;
                     legacyScreenId = intent.ScreenId;
                 }
                 else if (!_warnedNoLegacyPage)
@@ -227,7 +218,7 @@ namespace FanaBridge.Customization
                         + " has no legacy page — leaving the current page");
                 }
             }
-            else if (intent.Page.HasValue && !_wireByPage.TryGetValue(intent.Page.Value, out desired))
+            else if (intent.Page.HasValue && !_pages.TryGetWire(intent.Page.Value, out desired))
             {
                 // Engine-side availability gating should prevent this (rules targeting a
                 // missing page are Unavailable); the base page can still slip through.

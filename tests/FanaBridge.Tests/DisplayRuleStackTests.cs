@@ -188,6 +188,30 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void UnavailableConfiguredBase_RuleReleases_ReturnsToTheEffectiveFallback()
+        {
+            // Bentley (device 4) has no Car Settings, yet the config pins it as the base.
+            // The engine must rest on the EFFECTIVE base (the identity at the default wire),
+            // not the raw unavailable pin — else an expired rule strands the display: the
+            // director can't resolve Car Settings to a wire, so nothing returns to the base.
+            const string config =
+                "{ \"schemaVersion\": 1, \"itm\": { \"basePage\": \"carSettings\", \"rules\": [ "
+                + "{ \"id\": \"r1\", \"name\": \"Fast\", "
+                + "\"when\": { \"kind\": \"greaterThan\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Speed\" }, \"value\": 100 }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
+            var h = Harness.Create(config, itmDeviceId: 4, defaultWirePage: 1);
+            h.Control.Land(1);                 // came up on Lap Info (the effective base)
+            h.Tick(SpeedData(150));            // fires → Tyre Temps (Bentley wire 4)
+            h.Control.Land(4);                 // the switch confirmed
+            h.T += 5000;                       // past the dwell floor
+            h.Tick(SpeedData(50));             // released → returns to the effective base
+            // Pre-fix the engine rested on the unresolvable Car Settings and the display
+            // stranded on wire 4 (no return request). It must return to wire 1.
+            Assert.Equal(new byte[] { 4, 1 }, h.Control.Requests);
+        }
+
+        [Fact]
         public void BaseWirePage_ExposesTheEngineBase_ForTheDriverHandoff()
         {
             // The device instance feeds this to the ITM driver as the effective default

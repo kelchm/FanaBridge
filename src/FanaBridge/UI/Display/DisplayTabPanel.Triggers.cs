@@ -1012,7 +1012,10 @@ namespace FanaBridge.UI
             {
                 Text = roles.Source == MappedRolesSource.MappedOnThisWheel
                     ? "Roles mapped on this wheel."
-                    : "All assignable roles (none mapped on this wheel yet).",
+                    : roles.Source == MappedRolesSource.AggregatedAcrossBases
+                        ? "Roles mapped across your Fanatec bases (turn on “Recognize "
+                            + "Individual Wheels” in Control Mapper to tell them apart)."
+                        : "All assignable roles (none mapped on this wheel yet).",
                 FontSize = 11,
                 Foreground = KLabelBrush,
                 Margin = new Thickness(0, 5, 0, 0),

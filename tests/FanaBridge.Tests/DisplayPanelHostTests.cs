@@ -448,6 +448,30 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void HostCaps_ReportTheResolvedOverride_NotFrozenRegistration()
+        {
+            var running = Data(NewStatus());
+            var s = SyncedSession(new JObject { ["wheelType"] = "CSSWFORMV3" }, running);
+
+            // Registration caps: CSSWFORMV3 is an ITM wheel on display device 3.
+            Assert.Equal(DisplayType.Itm, s.Host.DisplayType);
+            Assert.Equal(3, s.Host.ItmDeviceId);
+
+            // A profile override retargets the ITM display id (device 3 → 4). The driver
+            // runtime already follows ResolveCapsFor; the panel host must report the SAME
+            // override-resolved id so the Display tab can't populate the wrong page table.
+            // Pre-fix the host returned the frozen registration id (3).
+            var bentley = WheelProfileStore.FindByWheelType("PSWBENT");
+            Assert.NotNull(bentley);
+            s.Wheelbase.ProfileOverrideResolver = _ => bentley!.Id;
+            s.Wheelbase.RefreshCapabilities();
+            s.Frame(running);
+
+            Assert.Equal(4, s.Host.ItmDeviceId);                 // resolved override, not 3
+            Assert.Equal(DisplayType.Itm, s.Host.DisplayType);   // same resolved source
+        }
+
+        [Fact]
         public void Host_PickerSurfaces_DegradeToEmpty_WithNoPluginManager()
         {
             // Init is never called in this harness, so PluginManager is null — the

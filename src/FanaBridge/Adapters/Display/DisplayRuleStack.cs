@@ -7,96 +7,6 @@ using SimHub.Plugins;
 
 namespace FanaBridge.Adapters
 {
-    /// <summary>One rule's row in the UI snapshot: identity, display label, live status.</summary>
-    public struct DisplayRuleRow
-    {
-        public DisplayRuleRow(string ruleId, string label, RuleStatus status, int? remainingMs)
-        {
-            RuleId = ruleId;
-            Label = label;
-            Status = status;
-            RemainingMs = remainingMs;
-        }
-
-        public string RuleId { get; }
-
-        /// <summary>Display text (<see cref="DisplayRuleFormatter.Label"/>).</summary>
-        public string Label { get; }
-
-        public RuleStatus Status { get; }
-
-        /// <summary>Hold countdown at composition time (OnScreen + ForDuration only).</summary>
-        public int? RemainingMs { get; }
-    }
-
-    /// <summary>
-    /// An immutable cross-thread snapshot of the rule stack's live state, published
-    /// through a volatile field on the device instance and polled by the (future) UI —
-    /// the same hand-off pattern as the ITM status snapshot, kept separate from it.
-    /// Recomposed only when something visible changed (activity version, a rule status,
-    /// the intent, or — at a bounded 250 ms cadence — a timed hold's countdown), so idle
-    /// frames publish nothing new.
-    /// </summary>
-    public sealed class DisplayRuleSnapshot
-    {
-        internal DisplayRuleSnapshot(string intentDescription, string basePageName,
-            IReadOnlyList<DisplayRuleRow> itmRules, IReadOnlyList<DisplayRuleRow> legacyRules,
-            IReadOnlyList<DisplayActivityEvent> activity, long activityVersion,
-            long composedAtMs, DateTime composedAtUtc)
-        {
-            IntentDescription = intentDescription;
-            BasePageName = basePageName;
-            ItmRules = itmRules;
-            LegacyRules = legacyRules;
-            Activity = activity;
-            ActivityVersion = activityVersion;
-            ComposedAtMs = composedAtMs;
-            ComposedAtUtc = composedAtUtc;
-        }
-
-        /// <summary>What the ITM surface should be showing, in row language
-        /// (page name, or "screen 'X'").</summary>
-        public string IntentDescription { get; }
-
-        /// <summary>
-        /// The display name of the page the stack actually rests on — the stack's own
-        /// resolution (<see cref="DisplayRuleStack.BaseWirePage"/>): the config's base page
-        /// when set AND offered by this device, else the page at the device's default wire.
-        /// The UI's "Always →" row must show THIS while a stack is live, not re-derive it
-        /// from settings the stack captured at build time.
-        /// </summary>
-        public string BasePageName { get; }
-
-        /// <summary>ITM rules in priority order.</summary>
-        public IReadOnlyList<DisplayRuleRow> ItmRules { get; }
-
-        /// <summary>Legacy rules in priority order.</summary>
-        public IReadOnlyList<DisplayRuleRow> LegacyRules { get; }
-
-        /// <summary>Recent activity, oldest first (both engines merged by time).</summary>
-        public IReadOnlyList<DisplayActivityEvent> Activity { get; }
-
-        /// <summary>Combined engine activity version — a cheap "anything new?" check.</summary>
-        public long ActivityVersion { get; }
-
-        /// <summary>
-        /// The engine clock's value when this snapshot was composed — the same clock
-        /// <see cref="DisplayActivityEvent.AtMs"/> is stamped with, so the UI can render
-        /// relative ages ("12s ago") as <c>ComposedAtMs - AtMs</c> without ever holding a
-        /// clock of its own.
-        /// </summary>
-        public long ComposedAtMs { get; }
-
-        /// <summary>
-        /// Wall-clock UTC at composition, paired with <see cref="ComposedAtMs"/> so a UI
-        /// observing this snapshot arbitrarily late can estimate the engine clock's CURRENT
-        /// value (<c>ComposedAtMs + (UtcNow - ComposedAtUtc)</c>). Composition is
-        /// change-gated, so the latest snapshot can be minutes old when a settings dialog
-        /// opens — anchoring ages to first observation instead would understate them all.
-        /// </summary>
-        public DateTime ComposedAtUtc { get; }
-    }
-
     /// <summary>
     /// The per-device display-customization runtime: both rule engines (ITM + legacy),
     /// the page director, the property source, and the action hub, composed for exactly
@@ -181,36 +91,49 @@ namespace FanaBridge.Adapters
             _now = nowMs ?? DefaultClock();
 
             // The device's page set gates rule availability (a Bentley has no Car
-            // Settings page) and resolves the base-page fallback below.
-            var pages = ItmDeviceCatalog.PagesFor(itmDeviceId);
+            // Settings page) and resolves the base page — one table, both directions.
+            var table = ItmPageTable.ForDevice(itmDeviceId);
             var available = new HashSet<ItmPage>();
-            foreach (var page in pages)
+            foreach (var page in table.Pages)
                 available.Add(page.Page);
 
-            // Base page: the config's own when set, else the device's ITM default page
-            // setting mapped from wire number to identity — one effective source of
-            // truth (the UI phase merges the two settings surfaces). Read at build
-            // time: a default-page change alone doesn't rebuild the stack, so it takes
-            // effect on the next rebuild (config edit, reconnect, wheel change).
-            ItmPage basePage = config.Itm != null && config.Itm.BasePageRaw != null
+            // The config's own base page when set, else null (the effective base falls to
+            // the device's default wire below). Read at build time: a default-page change
+            // alone doesn't rebuild the stack, so it takes effect on the next rebuild
+            // (config edit, reconnect, wheel change).
+            ItmPage? configuredBase = config.Itm != null && config.Itm.BasePageRaw != null
                 ? config.Itm.BasePage
-                : WireToPage(pages, defaultWirePage);
+                : (ItmPage?)null;
 
-            // The base page as this device's wire number. The device instance feeds it
-            // to the ITM driver as the effective default page while this stack is live,
-            // so the lifecycle (cold bring-up target) and the engine (resting target)
-            // agree on ONE base-page authority — otherwise a config base page and the
-            // ItmDefaultPage setting would fight at every bring-up and game start.
-            // A base page this device doesn't have keeps the caller's default wire.
-            BaseWirePage = PageToWire(pages, basePage, defaultWirePage);
+            // The effective base — the wire the display actually rests on, that wire's
+            // identity, and its name — through the ONE table: the config's base when this
+            // device offers it, else the default wire's identity. The device instance feeds
+            // BaseWirePage to the ITM driver as the effective default page while this stack
+            // is live, so the lifecycle (cold bring-up target) and the engine (resting
+            // target) agree on ONE base-page authority. The snapshot's "Always →" name
+            // follows the same resolution, so the UI can't claim a pinned page this device
+            // doesn't have, or a default-page setting this stack hasn't latched.
+            var baseResolution = table.ResolveBase(configuredBase, defaultWirePage);
+            BaseWirePage = baseResolution.Wire;
+            _basePageName = baseResolution.Name;
 
-            // The snapshot's "Always →" name follows the EFFECTIVE base (the wire the
-            // display actually rests on), so the UI can't claim a pinned page this
-            // device doesn't have, or a default-page setting this stack hasn't latched.
-            _basePageName = WireName(pages, BaseWirePage);
+            // A configured base this device lacks (a Bentley pinned to Car Settings) is a
+            // real misconfiguration: the config document keeps the user's value untouched,
+            // but this stack rests on the fallback resolved above. Say so once so the pinned
+            // page's absence is visible in the log.
+            if (configuredBase.HasValue && !table.Offers(configuredBase.Value))
+                _log("DisplayRules: configured base page "
+                    + ItmTelemetry.NameOf(configuredBase.Value)
+                    + " is not available on this display — resting on " + _basePageName);
 
-            _itmEngine = DisplayRuleEngine.ForItm(config.Itm?.Rules, basePage, available,
-                _now, _log);
+            // The engine rests on the EFFECTIVE base IDENTITY — the one sitting at
+            // BaseWirePage — not the raw configured page. Resting on a page this device
+            // lacks would strand the display: the director cannot resolve it to a wire, so
+            // once a rule expired nothing would return the display to the base. Passing the
+            // resolved identity makes the engine's rest-intent, BaseWirePage, and
+            // BasePageName all name the ONE page the director can actually request.
+            _itmEngine = DisplayRuleEngine.ForItm(config.Itm?.Rules, baseResolution.Identity,
+                available, _now, _log);
             _legacyEngine = DisplayRuleEngine.ForLegacy(config.Legacy?.Rules,
                 config.Legacy?.BaseScreenId, _now, _log);
             _director = new DisplayPageDirector(control, itmDeviceId, _now, _log);
@@ -438,37 +361,6 @@ namespace FanaBridge.Adapters
             foreach (var rule in rules)
                 if (rule?.Id != null)
                     _rulesById[rule.Id] = rule;
-        }
-
-        // The identity sitting at a wire page number, for the base-page fallback.
-        // An out-of-table default (misconfigured setting) falls back to Lap Info.
-        private static ItmPage WireToPage(IReadOnlyList<ItmPageInfo> pages, byte wirePage)
-        {
-            foreach (var page in pages)
-                if (page.Number == wirePage)
-                    return page.Page;
-            return ItmPage.LapInfo;
-        }
-
-        // The wire number a page identity sits at on this device, for the driver-facing
-        // base page. A page the device doesn't have keeps the caller's fallback wire.
-        private static byte PageToWire(IReadOnlyList<ItmPageInfo> pages, ItmPage page, byte fallback)
-        {
-            foreach (var info in pages)
-                if (info.Page == page)
-                    return info.Number;
-            return fallback;
-        }
-
-        // The display name at a wire page number, for the snapshot's base row. The wire
-        // sits outside the table only when a pinned page is unavailable AND the default
-        // wire is itself off-table (corrupted setting) — name that honestly by number.
-        private static string WireName(IReadOnlyList<ItmPageInfo> pages, byte wirePage)
-        {
-            foreach (var info in pages)
-                if (info.Number == wirePage)
-                    return info.Name;
-            return "Page " + wirePage;
         }
     }
 }

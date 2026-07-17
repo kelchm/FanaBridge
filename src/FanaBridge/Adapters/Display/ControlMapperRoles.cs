@@ -15,6 +15,12 @@ namespace FanaBridge.Adapters
         None,
         /// <summary>The distinct roles bound to this rim's buttons in Control Mapper.</summary>
         MappedOnThisWheel,
+        /// <summary>The roles bound across MORE THAN ONE Fanatec base, unioned because
+        /// "Recognize Individual Wheels" is off and no interface path was available to tell
+        /// the active base apart. The roles are real, but they cannot be claimed as the ones
+        /// mapped on THIS wheel specifically — an honest aggregate. (Full interface-path
+        /// disambiguation lands in R2.)</summary>
+        AggregatedAcrossBases,
         /// <summary>The sanctioned role catalog — this rim has no mappings of its own
         /// (or they were unreadable), so every assignable role is offered.</summary>
         AllRoles,
@@ -101,9 +107,23 @@ namespace FanaBridge.Adapters
             string interfacePath,
             Func<IReadOnlyList<string>> catalog)
         {
-            var mine = RolesForThisRim(mappings, variant, interfacePath);
+            var candidates = MatchingCandidates(mappings, variant, interfacePath);
+            var mine = DistinctRoles(candidates);
             if (mine.Count > 0)
-                return new MappedRoles(mine, MappedRolesSource.MappedOnThisWheel);
+            {
+                // RIW off with no interface path leaves us unable to tell which physical
+                // base is active, so the candidates can span SEVERAL Fanatec bases and
+                // `mine` is their union. Don't pass that off as "mapped on this wheel" —
+                // surface the aggregation honestly instead. RIW on (a variant narrows to
+                // one rim) and the single-base case are unambiguous. (Full interface-path
+                // disambiguation lands in R2.)
+                bool ambiguous = string.IsNullOrEmpty(variant)
+                    && string.IsNullOrEmpty(interfacePath)
+                    && candidates.Count > 1;
+                return new MappedRoles(mine,
+                    ambiguous ? MappedRolesSource.AggregatedAcrossBases
+                              : MappedRolesSource.MappedOnThisWheel);
+            }
 
             IReadOnlyList<string> cat = null;
             try { cat = catalog?.Invoke(); }
@@ -115,16 +135,18 @@ namespace FanaBridge.Adapters
             return MappedRoles.None;
         }
 
-        private static IReadOnlyList<string> RolesForThisRim(
+        // The Fanatec source mappings that match this rim's key (the variant when RIW is
+        // on, else the no-variant base rows), narrowed to a known InterfacePath when that
+        // leaves anything — so a rim we can't path-match still resolves by variant/RIW-off.
+        private static List<ControllerMappingView> MatchingCandidates(
             IReadOnlyList<ControllerMappingView> mappings, string variant, string interfacePath)
         {
+            var candidates = new List<ControllerMappingView>();
             if (mappings == null || mappings.Count == 0)
-                return Array.Empty<string>();
+                return candidates;
 
             bool riwOn = !string.IsNullOrEmpty(variant);
 
-            // The Fanatec mappings that match this rim's key.
-            var candidates = new List<ControllerMappingView>();
             foreach (var m in mappings)
             {
                 if (m.VendorId != FanatecVendorId)
@@ -145,7 +167,12 @@ namespace FanaBridge.Adapters
                     candidates = narrowed;
             }
 
-            // Distinct TargetRole across the matched mappings, first-seen order.
+            return candidates;
+        }
+
+        // Distinct TargetRole across the matched mappings, first-seen order.
+        private static IReadOnlyList<string> DistinctRoles(IReadOnlyList<ControllerMappingView> candidates)
+        {
             var roles = new List<string>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var m in candidates)

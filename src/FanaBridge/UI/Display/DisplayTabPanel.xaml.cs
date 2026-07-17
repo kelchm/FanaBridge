@@ -102,6 +102,11 @@ namespace FanaBridge.UI
             SelectByTag(cmbDisplayMode, _settings.DisplayMode ?? DisplaySettings.DefaultMode);
             chkShowLapTotal.IsChecked = _settings.ItmShowLapTotal;
             chkShowPositionTotal.IsChecked = _settings.ItmShowPositionTotal;
+            // _isItm and the default-page table below are read once, at bind, from the host's
+            // override-resolved caps. Per-poll consumers (mirror, labels) re-read the live host
+            // values each frame; this bind-time layout is NOT re-derived if the resolved caps
+            // change while the tab stays open (an override applied after a reconnect) — a known
+            // limitation until the Display tab is split into per-view controls.
             PopulateDefaultPages(host.ItmDeviceId);
             SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
 
