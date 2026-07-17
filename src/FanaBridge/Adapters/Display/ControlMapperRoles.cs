@@ -113,14 +113,27 @@ namespace FanaBridge.Adapters
             if (mine.Count > 0)
             {
                 // RIW off with no interface path leaves us unable to tell which physical
-                // base is active, so the candidates can span SEVERAL Fanatec bases and
-                // `mine` is their union. Don't pass that off as "mapped on this wheel" —
-                // surface the aggregation honestly instead. RIW on (a variant narrows to
-                // one rim) and the single-base case are unambiguous. (Full interface-path
-                // disambiguation lands in R2.)
-                bool ambiguous = string.IsNullOrEmpty(variant)
-                    && string.IsNullOrEmpty(interfacePath)
-                    && candidates.Count > 1;
+                // base is active, so the candidates COULD span SEVERAL Fanatec bases and
+                // `mine` would be their union. But the settings can also hold stale/duplicate
+                // rows (two rows for the same controller, or a real row plus an empty-path
+                // duplicate) — raw row count alone can't tell "several bases" from "one base,
+                // several rows". Decide from distinct contributing controller identities
+                // instead: how many DIFFERENT non-empty InterfacePath values appear among the
+                // candidates that actually contributed a role. Two or more distinct paths is a
+                // genuine multi-base union — surface that honestly. Exactly one distinct path
+                // collapses back to a single base ONLY when every path-less contributor is a
+                // stale duplicate of that base — i.e. carries no role the pathed base didn't
+                // already have. A path-less contributor that adds a DISTINCT role is a second,
+                // unattributable base, so keep the aggregate honest. Zero distinct paths (every
+                // contributing candidate lacks a path) is the true attribution-impossible case —
+                // an aggregate too. RIW on (a variant narrows to one rim) and the single-row
+                // case are unambiguous regardless of path. (Full path disambiguation lands in R2.)
+                bool ambiguous = false;
+                if (string.IsNullOrEmpty(variant) && string.IsNullOrEmpty(interfacePath)
+                    && candidates.Count > 1)
+                {
+                    ambiguous = ContributingBasesAreAmbiguous(candidates);
+                }
                 return new MappedRoles(mine,
                     ambiguous ? MappedRolesSource.AggregatedAcrossBases
                               : MappedRolesSource.MappedOnThisWheel);
@@ -181,6 +194,51 @@ namespace FanaBridge.Adapters
                     if (b.HasRoleAssigned && !string.IsNullOrEmpty(b.TargetRole) && seen.Add(b.TargetRole))
                         roles.Add(b.TargetRole);
             return roles;
+        }
+
+        // Whether the union of assigned roles cannot honestly be attributed to a single
+        // physical base. We look at the DIFFERENT non-empty InterfacePath values among the
+        // candidates that actually contributed a role, plus the roles carried by path-less
+        // contributors (a genuine base whose path was simply unreadable yields a null path):
+        //   • two or more distinct paths → a genuine multi-base union → ambiguous;
+        //   • exactly one distinct path  → one base, UNLESS a path-less contributor adds a
+        //     role that pathed base lacks (a second, unattributable base) → ambiguous then;
+        //   • zero distinct paths        → nothing is attributable → ambiguous.
+        // A path-less contributor whose roles the single pathed base already carries is a
+        // stale/duplicate row and does not force ambiguity.
+        private static bool ContributingBasesAreAmbiguous(IReadOnlyList<ControllerMappingView> candidates)
+        {
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pathedRoles = new HashSet<string>(StringComparer.Ordinal);
+            var pathlessRoles = new List<string>();
+            foreach (var m in candidates)
+            {
+                bool pathless = string.IsNullOrEmpty(m.InterfacePath);
+                foreach (var b in m.Buttons)
+                {
+                    if (!b.HasRoleAssigned || string.IsNullOrEmpty(b.TargetRole))
+                        continue;
+                    if (pathless)
+                        pathlessRoles.Add(b.TargetRole);
+                    else
+                    {
+                        paths.Add(m.InterfacePath);
+                        pathedRoles.Add(b.TargetRole);
+                    }
+                }
+            }
+
+            // A genuine multi-base union across distinct pathed controllers.
+            if (paths.Count >= 2)
+                return true;
+
+            // With no pathed base (paths.Count == 0) every contributed role is unattributable;
+            // with exactly one, a path-less role that base doesn't carry is a second base.
+            foreach (var role in pathlessRoles)
+                if (!pathedRoles.Contains(role))
+                    return true;
+
+            return false;
         }
 
         private static IReadOnlyList<string> Distinct(IReadOnlyList<string> values)

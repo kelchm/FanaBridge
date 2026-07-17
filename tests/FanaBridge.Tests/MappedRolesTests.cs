@@ -101,6 +101,103 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void Resolve_RiwOff_MultipleRowsAllMissingInterfacePath_StaysAggregated()
+        {
+            // Multiple contributing rows, none of them carrying an InterfacePath at all —
+            // the true "cannot tell bases apart" case. Zero distinct paths must still mean
+            // AggregatedAcrossBases (guard against a regression that would treat "no path
+            // info" as automatically single-base).
+            var mappings = new[]
+            {
+                Mapping(Fanatec, null, null, ("Up Shift", true)),
+                Mapping(Fanatec, null, null, ("Brake Bias +", true)),
+            };
+
+            var result = MappedRoleResolver.Resolve(mappings, variant: null,
+                interfacePath: null, catalog: () => new[] { "Everything" });
+
+            Assert.Equal(MappedRolesSource.AggregatedAcrossBases, result.Source);
+            Assert.Equal(new[] { "Up Shift", "Brake Bias +" }, result.Roles.ToArray());
+        }
+
+        [Fact]
+        public void Resolve_RiwOff_TwoRowsSameInterfacePath_IsOneBase_NotAggregated()
+        {
+            // Two candidate rows but the SAME non-empty InterfacePath, both contributing
+            // roles — a stale duplicate row for one physical base, not two bases. Pre-fix,
+            // raw candidates.Count (2) alone would mislabel this AggregatedAcrossBases.
+            var mappings = new[]
+            {
+                Mapping(Fanatec, null, @"\\?\hid#base", ("Up Shift", true)),
+                Mapping(Fanatec, null, @"\\?\hid#base", ("Brake Bias +", true)),
+            };
+
+            var result = MappedRoleResolver.Resolve(mappings, variant: null,
+                interfacePath: null, catalog: () => new[] { "Everything" });
+
+            Assert.Equal(MappedRolesSource.MappedOnThisWheel, result.Source);
+            Assert.Equal(new[] { "Up Shift", "Brake Bias +" }, result.Roles.ToArray());
+        }
+
+        [Fact]
+        public void Resolve_RiwOff_RealRowPlusEmptyPathDuplicate_IsOneBase_NotAggregated()
+        {
+            // One real row (with a path) plus a stale duplicate that carries no path at
+            // all. Only one distinct non-empty InterfacePath contributes — still one base.
+            var mappings = new[]
+            {
+                Mapping(Fanatec, null, @"\\?\hid#base", ("Up Shift", true)),
+                Mapping(Fanatec, null, null, ("Up Shift", true)),
+            };
+
+            var result = MappedRoleResolver.Resolve(mappings, variant: null,
+                interfacePath: null, catalog: () => new[] { "Everything" });
+
+            Assert.Equal(MappedRolesSource.MappedOnThisWheel, result.Source);
+            Assert.Equal(new[] { "Up Shift" }, result.Roles.ToArray());
+        }
+
+        [Fact]
+        public void Resolve_RiwOff_RealRowPlusEmptyPathBaseWithDistinctRole_IsAggregated()
+        {
+            // One real base (with a path) plus a SECOND genuine base whose InterfacePath was
+            // unreadable, so the reader legitimately yields null — and it contributes a role
+            // the pathed base does NOT carry. Only one distinct non-empty path exists, but the
+            // union spans two bases, so the honest label is AggregatedAcrossBases. Pre-fix,
+            // counting only non-empty paths saw one path and mislabeled this MappedOnThisWheel
+            // — a false "mapped on this wheel" claim over a two-base union.
+            var mappings = new[]
+            {
+                Mapping(Fanatec, null, @"\\?\hid#base", ("Up Shift", true)),
+                Mapping(Fanatec, null, null, ("Brake Bias +", true)),
+            };
+
+            var result = MappedRoleResolver.Resolve(mappings, variant: null,
+                interfacePath: null, catalog: () => new[] { "Everything" });
+
+            Assert.Equal(MappedRolesSource.AggregatedAcrossBases, result.Source);
+            Assert.Equal(new[] { "Up Shift", "Brake Bias +" }, result.Roles.ToArray());
+        }
+
+        [Fact]
+        public void Resolve_RiwOff_TwoDifferentInterfacePaths_IsGenuinelyAggregated()
+        {
+            // Two rows with DIFFERENT non-empty InterfacePaths — genuinely two distinct
+            // Fanatec bases contributing, so the aggregate label is honest here.
+            var mappings = new[]
+            {
+                Mapping(Fanatec, null, @"\\?\hid#baseA", ("Up Shift", true)),
+                Mapping(Fanatec, null, @"\\?\hid#baseB", ("Brake Bias +", true)),
+            };
+
+            var result = MappedRoleResolver.Resolve(mappings, variant: null,
+                interfacePath: null, catalog: () => new[] { "Everything" });
+
+            Assert.Equal(MappedRolesSource.AggregatedAcrossBases, result.Source);
+            Assert.Equal(new[] { "Up Shift", "Brake Bias +" }, result.Roles.ToArray());
+        }
+
+        [Fact]
         public void Resolve_InterfacePath_NarrowsWhenBothKnown_ButFallsBackWhenNothingMatches()
         {
             var mappings = new[]
