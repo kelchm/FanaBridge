@@ -272,34 +272,12 @@
                     </styles:SHSubSection>
                 </StackPanel>
 
+                <!-- Triggers editor (its own UserControl; the shell binds it and routes
+                     navigation/poll snapshots in — see DisplayTriggersView). -->
+                <ui:DisplayTriggersView x:Name="viewTriggers" Visibility="Collapsed" />
+
                 <!-- Placeholder editor views: honest navigation, no fake UI. Each keeps
                      the design's editor header — ‹ ghost back button + title. -->
-                <StackPanel x:Name="viewTriggers" Visibility="Collapsed">
-                    <Grid Margin="0,0,0,12">
-                        <StackPanel Orientation="Horizontal">
-                            <Button Style="{StaticResource GhostBack}" Click="Back_Click">
-                                <TextBlock Style="{StaticResource GhostBackGlyph}" />
-                            </Button>
-                            <TextBlock Text="Triggers" Style="{StaticResource EditorTitle}" />
-                            <TextBlock Text="drag ⠿ to reorder priority" FontSize="12"
-                                       Foreground="#8F8F8F" Margin="12,0,0,0"
-                                       VerticalAlignment="Center" />
-                        </StackPanel>
-                        <Button x:Name="btnTriggersAdd" Content="＋ Add trigger"
-                                Click="TriggersAdd_Click" Padding="12,5"
-                                HorizontalAlignment="Right" VerticalAlignment="Center" />
-                    </Grid>
-
-                    <!-- Add-trigger card (built in code-behind; collapsed until opened) -->
-                    <StackPanel x:Name="panelAddCard" Visibility="Collapsed" Margin="0,0,0,12" />
-
-                    <!-- Priority-ordered rule rows + the pinned base row (code-behind) -->
-                    <StackPanel x:Name="panelTriggerRows" />
-
-                    <TextBlock x:Name="txtTriggersEmpty" Visibility="Collapsed"
-                               Text="No triggers yet — use ＋ Add trigger to create one."
-                               FontSize="12" Foreground="#8F8F8F" Margin="0,2,0,0" />
-                </StackPanel>
                 <StackPanel x:Name="viewPages" Visibility="Collapsed">
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                         <Button Style="{StaticResource GhostBack}" Click="Back_Click">

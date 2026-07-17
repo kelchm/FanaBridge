@@ -13,18 +13,32 @@ using FanaBridge.Protocol;
 namespace FanaBridge.UI
 {
     /// <summary>
-    /// The Triggers editor half of the Display tab (design's ITM Triggers editor): the
+    /// The Triggers editor of the Display tab (design's ITM Triggers editor): the
     /// add-trigger card, the priority-ordered expandable rule rows with the full
     /// WHEN/IS/VALUE/SHOW/HOLD/ELIGIBLE detail, drag + keyboard/context-menu reorder, the
     /// pinned base row, and the live-state merge that patches chips in place without ever
     /// disturbing an open editor row. Every committed edit flows through the SimHub-free
-    /// <see cref="DisplayTriggersEditModel"/> into <c>host.ApplyDisplayConfig</c> — this file
-    /// is only the WPF that builds and commits, exactly the pattern the collapsed Overview
-    /// rows already use.
+    /// <see cref="DisplayTriggersEditModel"/> into <c>host.ApplyDisplayConfig</c> — this
+    /// view is only the WPF that builds and commits, exactly the pattern the collapsed
+    /// Overview rows already use.
+    ///
+    /// The Display tab shell owns navigation and polling: it calls <see cref="Bind"/> once,
+    /// <see cref="Enter"/> when this view becomes active, <see cref="Poll"/> each tick while
+    /// it is, and <see cref="BeginAdd"/> from the Overview empty-state. The view signals back
+    /// through <see cref="BackRequested"/> (the ‹ ghost back button) and
+    /// <see cref="ConfigApplied"/> (after a committed edit republishes the config, so the
+    /// shell can refresh its Overview priority list).
     /// </summary>
-    public partial class DisplayTabPanel
+    public partial class DisplayTriggersView : UserControl
     {
         private enum AddTriggerType { Telemetry, MappedControl }
+
+        // ── Bound members (the shell's own instances, wired in Bind) ───────
+        private IDisplayPanelHost _host;
+        private IDisplayPropertyCatalog _propertyCatalog;
+        private IMappedRoleCatalog _roleCatalog;
+        private DisplaySettings _settings;
+        private DisplayRuleSnapshot _lastSnapshot;
 
         // ── Editor state ──────────────────────────────────────────────────
         private DisplayTriggersEditModel _editModel;
@@ -61,27 +75,58 @@ namespace FanaBridge.UI
         private UIElement _dragHandle;
         private Rectangle _dropIndicator;
 
-        // ── Palette additions (design mock values) ───────────────────────
-        private static readonly SolidColorBrush RemoveText = Frozen("#E88F6A");
-        private static readonly SolidColorBrush AddCardBg = Frozen("#1E2833");
-        private static readonly SolidColorBrush AddCardBorder = Frozen("#2F6D9E");
-        private static readonly SolidColorBrush AddTitle = Frozen("#CFE0EC");
-        private static readonly SolidColorBrush SegBarBg = Frozen("#1A1A1B");
-        private static readonly SolidColorBrush SegBorder = Frozen("#45454A");
-        private static readonly SolidColorBrush HandColor = Frozen("#6A6A6A");
-        private static readonly SolidColorBrush PropMono = Frozen("#9FB4C4");
-        private static readonly SolidColorBrush EligChip = Frozen("#7AA88A");
-        private static readonly SolidColorBrush DetailBg = Frozen("#2A2A2B");
-        private static readonly SolidColorBrush KLabelBrush = Frozen("#8F8F8F");
-        private static readonly SolidColorBrush ChevronBrush = Frozen("#8A8A8A");
+        // ── Seam events (the shell subscribes once in its Bind) ────────────
+        internal event EventHandler BackRequested;
+        internal event EventHandler ConfigApplied;
 
-        private static readonly FontFamily Mono = new FontFamily("Consolas");
+        public DisplayTriggersView()
+        {
+            InitializeComponent();
+        }
+
+        // ── The bind/input surface (the seam) ──────────────────────────────
+
+        // Wires the view to the shell's device host, the two on-demand editor catalogs, and
+        // the SAME mutable DisplaySettings reference the shell holds (the view reads
+        // ItmDefaultPage live at model-build/render time). Call once after construction.
+        internal void Bind(
+            IDisplayPanelHost host,
+            IDisplayPropertyCatalog propertyCatalog,
+            IMappedRoleCatalog roleCatalog,
+            DisplaySettings settings)
+        {
+            _host = host;
+            _propertyCatalog = propertyCatalog;
+            _roleCatalog = roleCatalog;
+            _settings = settings;
+        }
+
+        // Called when the Triggers view becomes active: cache the current snapshot, build a
+        // fresh edit model from the host's current config, and render. Resets any prior
+        // editing state (a re-entry is a clean slate).
+        internal void Enter(DisplayRuleSnapshot snapshot)
+        {
+            _lastSnapshot = snapshot;
+            EnterTriggersEditor();
+        }
+
+        // The Overview empty-state "＋ Add trigger" path: open the add card straight away with
+        // a fresh telemetry draft. The shell has already navigated here (rebuilding the model).
+        internal void BeginAdd()
+        {
+            _addOpen = true;
+            _addType = AddTriggerType.Telemetry;
+            _addDraft = _editModel.NewTelemetryDraft();
+            RenderAddCard();
+        }
+
+        private void Back_Click(object sender, RoutedEventArgs e)
+            => BackRequested?.Invoke(this, EventArgs.Empty);
 
         // ── Entry / navigation ────────────────────────────────────────────
 
-        // Called from NavigateTo when the Triggers view becomes active: builds a fresh edit
-        // model from the host's current config and renders the rows. Resets any prior
-        // editing state (a re-entry is a clean slate).
+        // Builds a fresh edit model from the host's current config and renders the rows.
+        // Resets any prior editing state.
         private void EnterTriggersEditor()
         {
             _expandedRuleId = null;
@@ -93,17 +138,6 @@ namespace FanaBridge.UI
                 _settings?.ItmDefaultPage ?? (byte)1);
             RenderAddCard();
             RenderTriggerRows(_lastSnapshot);
-        }
-
-        // The Overview empty-state "＋ Add trigger" button: jump to the editor and open the
-        // add card straight away.
-        private void OverviewAddTrigger_Click(object sender, RoutedEventArgs e)
-        {
-            NavigateTo(TabView.Triggers);
-            _addOpen = true;
-            _addType = AddTriggerType.Telemetry;
-            _addDraft = _editModel.NewTelemetryDraft();
-            RenderAddCard();
         }
 
         private void TriggersAdd_Click(object sender, RoutedEventArgs e)
@@ -121,10 +155,11 @@ namespace FanaBridge.UI
             RenderAddCard();
         }
 
-        // ── Poll integration (called from Poll while on the Triggers view) ─
+        // ── Poll integration (called from the shell's Poll while active) ───
 
-        private void TriggersPoll(DisplayRuleSnapshot snapshot)
+        internal void Poll(DisplayRuleSnapshot snapshot)
         {
+            _lastSnapshot = snapshot;
             if (_editModel == null || _host == null)
                 return;
             // A drag in progress must never be interrupted by a rebuild: it holds mouse
@@ -211,7 +246,7 @@ namespace FanaBridge.UI
                 holder.Chip.Text = chip.Chip ?? "";
                 holder.Chip.Visibility = string.IsNullOrEmpty(chip.Chip)
                     ? Visibility.Collapsed : Visibility.Visible;
-                holder.Chip.Foreground = chip.OnScreen ? GreenAccent : ChipText;
+                holder.Chip.Foreground = chip.OnScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText;
             }
             if (holder.Seconds != null)
             {
@@ -236,13 +271,13 @@ namespace FanaBridge.UI
         private static void ApplyRowAccent(RowChips holder, bool onScreen)
         {
             if (holder.Rank != null)
-                holder.Rank.Foreground = onScreen ? GreenRank : MutedRank;
+                holder.Rank.Foreground = onScreen ? DisplayPalette.GreenRank : DisplayPalette.MutedRank;
             if (holder.Label != null)
-                holder.Label.Foreground = onScreen ? OnScreenText : RowText;
+                holder.Label.Foreground = onScreen ? DisplayPalette.OnScreenText : DisplayPalette.RowText;
             if (holder.Container != null)
             {
-                holder.Container.Background = onScreen ? OnScreenBg : RowBg;
-                holder.Container.BorderBrush = onScreen ? OnScreenBorder : RowBorder;
+                holder.Container.Background = onScreen ? DisplayPalette.OnScreenBg : DisplayPalette.RowBg;
+                holder.Container.BorderBrush = onScreen ? DisplayPalette.OnScreenBorder : DisplayPalette.RowBorder;
                 holder.Container.BorderThickness = onScreen ? new Thickness(3, 1, 1, 1) : new Thickness(1);
             }
         }
@@ -284,7 +319,7 @@ namespace FanaBridge.UI
             {
                 Text = "⠿",
                 FontSize = 13,
-                Foreground = HandColor,
+                Foreground = DisplayPalette.HandColor,
                 Cursor = Cursors.SizeAll,
                 ToolTip = "Drag to reorder priority",
                 Margin = new Thickness(0, 0, 9, 0),
@@ -299,7 +334,7 @@ namespace FanaBridge.UI
                 Text = row.Rank,
                 FontSize = 11,
                 FontWeight = FontWeights.Bold,
-                Foreground = MutedRank,   // on-screen accent applied via ApplyRowAccent below
+                Foreground = DisplayPalette.MutedRank,   // on-screen accent applied via ApplyRowAccent below
                 Width = 16,
                 TextAlignment = TextAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
@@ -312,7 +347,7 @@ namespace FanaBridge.UI
             {
                 Text = row.Label,
                 FontSize = 12.5,
-                Foreground = RowText,   // on-screen accent applied via ApplyRowAccent below
+                Foreground = DisplayPalette.RowText,   // on-screen accent applied via ApplyRowAccent below
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -325,7 +360,7 @@ namespace FanaBridge.UI
                 {
                     Text = row.Eligibility,
                     FontSize = 10.5,
-                    Foreground = EligChip,
+                    Foreground = DisplayPalette.EligChip,
                     Margin = new Thickness(10, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
                 };
@@ -337,7 +372,7 @@ namespace FanaBridge.UI
             {
                 Text = row.Chip ?? "",
                 FontSize = 10.5,
-                Foreground = row.OnScreen ? GreenAccent : ChipText,
+                Foreground = row.OnScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText,
                 Margin = new Thickness(10, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 Visibility = string.IsNullOrEmpty(row.Chip) ? Visibility.Collapsed : Visibility.Visible,
@@ -350,7 +385,7 @@ namespace FanaBridge.UI
                 Text = row.Seconds ?? "",
                 FontSize = 11,
                 FontWeight = FontWeights.Bold,
-                Foreground = GreenAccent,
+                Foreground = DisplayPalette.GreenAccent,
                 Margin = new Thickness(8, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 Visibility = row.Seconds != null ? Visibility.Visible : Visibility.Collapsed,
@@ -362,7 +397,7 @@ namespace FanaBridge.UI
             {
                 Text = expanded ? "▾" : "▸",
                 FontSize = 12,
-                Foreground = ChevronBrush,
+                Foreground = DisplayPalette.ChevronBrush,
                 Margin = new Thickness(11, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -371,8 +406,8 @@ namespace FanaBridge.UI
 
             var border = new Border
             {
-                Background = RowBg,           // on-screen accent applied via ApplyRowAccent below
-                BorderBrush = RowBorder,
+                Background = DisplayPalette.RowBg,           // on-screen accent applied via ApplyRowAccent below
+                BorderBrush = DisplayPalette.RowBorder,
                 BorderThickness = new Thickness(1),
                 CornerRadius = expanded ? new CornerRadius(4, 4, 0, 0) : new CornerRadius(4),
                 Padding = new Thickness(10, 8, 10, 8),
@@ -409,7 +444,7 @@ namespace FanaBridge.UI
             {
                 Text = "⠿",
                 FontSize = 13,
-                Foreground = HandColor,
+                Foreground = DisplayPalette.HandColor,
                 Cursor = Cursors.SizeAll,
                 ToolTip = "Drag to reorder priority",
                 Margin = new Thickness(0, 0, 9, 0),
@@ -424,7 +459,7 @@ namespace FanaBridge.UI
                 Text = row.Rank,
                 FontSize = 11,
                 FontWeight = FontWeights.Bold,
-                Foreground = MutedRank,
+                Foreground = DisplayPalette.MutedRank,
                 Width = 16,
                 TextAlignment = TextAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
@@ -438,14 +473,14 @@ namespace FanaBridge.UI
             {
                 Text = row.Label,
                 FontSize = 12.5,
-                Foreground = RowText,
+                Foreground = DisplayPalette.RowText,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
             text.Children.Add(new TextBlock
             {
                 Text = "created by a newer version — not editable here",
                 FontSize = 10.5,
-                Foreground = KLabelBrush,
+                Foreground = DisplayPalette.KLabelBrush,
                 Margin = new Thickness(0, 2, 0, 0),
             });
             Grid.SetColumn(text, 2);
@@ -453,8 +488,8 @@ namespace FanaBridge.UI
 
             var border = new Border
             {
-                Background = RowBg,
-                BorderBrush = RowBorder,
+                Background = DisplayPalette.RowBg,
+                BorderBrush = DisplayPalette.RowBorder,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(10, 8, 10, 8),
@@ -486,7 +521,7 @@ namespace FanaBridge.UI
                 Text = row.Rank,
                 FontSize = 11,
                 FontWeight = FontWeights.Bold,
-                Foreground = BaseRank,
+                Foreground = DisplayPalette.BaseRank,
                 Width = 16,
                 TextAlignment = TextAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
@@ -499,7 +534,7 @@ namespace FanaBridge.UI
             {
                 Text = row.Label,
                 FontSize = 12.5,
-                Foreground = BaseText,
+                Foreground = DisplayPalette.BaseText,
                 VerticalAlignment = VerticalAlignment.Center,
             };
             Grid.SetColumn(label, 1);
@@ -509,7 +544,7 @@ namespace FanaBridge.UI
             {
                 Text = "edit on Overview",
                 FontSize = 10.5,
-                Foreground = KLabelBrush,
+                Foreground = DisplayPalette.KLabelBrush,
                 Margin = new Thickness(10, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -519,12 +554,12 @@ namespace FanaBridge.UI
             var host = new Grid { Margin = new Thickness(0, 0, 0, 6) };
             host.Children.Add(new Rectangle
             {
-                Stroke = BaseDash,
+                Stroke = DisplayPalette.BaseDash,
                 StrokeThickness = 1,
                 StrokeDashArray = new DoubleCollection { 3, 2 },
                 RadiusX = 4,
                 RadiusY = 4,
-                Fill = BaseBg,
+                Fill = DisplayPalette.BaseBg,
             });
             host.Children.Add(new Border { Padding = new Thickness(10, 8, 10, 8), Child = grid });
             return host;
@@ -573,8 +608,8 @@ namespace FanaBridge.UI
 
             return new Border
             {
-                Background = DetailBg,
-                BorderBrush = RowBorder,
+                Background = DisplayPalette.DetailBg,
+                BorderBrush = DisplayPalette.RowBorder,
                 BorderThickness = new Thickness(1, 0, 1, 1),
                 CornerRadius = new CornerRadius(0, 0, 4, 4),
                 Padding = new Thickness(14, 13, 15, 15),
@@ -588,9 +623,9 @@ namespace FanaBridge.UI
             var btn = new Button
             {
                 Content = string.IsNullOrEmpty(draft.SourceName) ? "(pick property)" : draft.SourceName,
-                FontFamily = Mono,
+                FontFamily = DisplayPalette.Mono,
                 FontSize = 11,
-                Foreground = PropMono,
+                Foreground = DisplayPalette.PropMono,
                 Padding = new Thickness(8, 5, 8, 5),
                 HorizontalContentAlignment = HorizontalAlignment.Left,
                 Cursor = Cursors.Hand,
@@ -747,7 +782,7 @@ namespace FanaBridge.UI
             var secondsSuffix = new TextBlock
             {
                 Text = "s",
-                Foreground = KLabelBrush,
+                Foreground = DisplayPalette.KLabelBrush,
                 Margin = new Thickness(4, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 Visibility = effective == HoldKind.ForDuration ? Visibility.Visible : Visibility.Collapsed,
@@ -778,8 +813,8 @@ namespace FanaBridge.UI
         {
             var strip = new Border
             {
-                Background = SegBarBg,
-                BorderBrush = SegBorder,
+                Background = DisplayPalette.SegBarBg,
+                BorderBrush = DisplayPalette.SegBorder,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(5),
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -790,14 +825,14 @@ namespace FanaBridge.UI
                 bool active = draft.Eligibility == elig;
                 var seg = new Border
                 {
-                    Background = active ? AccentBg : Brushes.Transparent,
+                    Background = active ? DisplayPalette.AccentBg : Brushes.Transparent,
                     Padding = new Thickness(13, 5, 13, 5),
                     Cursor = Cursors.Hand,
                     Child = new TextBlock
                     {
                         Text = DisplayTriggersEditModel.EligibilityLabel(elig),
                         FontSize = 11.5,
-                        Foreground = active ? Brushes.White : ToggleIdleText,
+                        Foreground = active ? Brushes.White : DisplayPalette.ToggleIdleText,
                     },
                 };
                 var chosen = elig;
@@ -824,7 +859,7 @@ namespace FanaBridge.UI
 
             var top = new Border
             {
-                BorderBrush = RowBorder,
+                BorderBrush = DisplayPalette.RowBorder,
                 BorderThickness = new Thickness(0, 1, 0, 0),
                 Padding = new Thickness(0, 11, 0, 0),
             };
@@ -835,7 +870,7 @@ namespace FanaBridge.UI
             {
                 Text = "Remove",
                 FontSize = 12,
-                Foreground = RemoveText,
+                Foreground = DisplayPalette.RemoveText,
                 Cursor = Cursors.Hand,
                 Margin = new Thickness(0, 11, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -861,7 +896,7 @@ namespace FanaBridge.UI
             {
                 Text = "Close",
                 FontSize = 12,
-                Foreground = ToggleIdleText,
+                Foreground = DisplayPalette.ToggleIdleText,
                 Cursor = Cursors.Hand,
                 Margin = new Thickness(0, 11, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -889,7 +924,7 @@ namespace FanaBridge.UI
                 Text = "New trigger",
                 FontSize = 13,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = AddTitle,
+                Foreground = DisplayPalette.AddTitle,
                 Margin = new Thickness(0, 0, 0, 12),
             });
 
@@ -909,8 +944,8 @@ namespace FanaBridge.UI
 
             panelAddCard.Children.Add(new Border
             {
-                Background = AddCardBg,
-                BorderBrush = AddCardBorder,
+                Background = DisplayPalette.AddCardBg,
+                BorderBrush = DisplayPalette.AddCardBorder,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(5),
                 Padding = new Thickness(14, 13, 15, 13),
@@ -923,8 +958,8 @@ namespace FanaBridge.UI
             bool active = _addType == type;
             var chip = new Border
             {
-                Background = active ? AccentBg : Brushes.Transparent,
-                BorderBrush = active ? AccentBg : SegBorder,
+                Background = active ? DisplayPalette.AccentBg : Brushes.Transparent,
+                BorderBrush = active ? DisplayPalette.AccentBg : DisplayPalette.SegBorder,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(12, 5, 12, 5),
@@ -934,7 +969,7 @@ namespace FanaBridge.UI
                 {
                     Text = text,
                     FontSize = 12,
-                    Foreground = active ? Brushes.White : ToggleIdleText,
+                    Foreground = active ? Brushes.White : DisplayPalette.ToggleIdleText,
                 },
             };
             Action choose = () =>
@@ -1011,7 +1046,7 @@ namespace FanaBridge.UI
                 {
                     Text = "No Control Mapper roles available for this wheel.",
                     FontSize = 12,
-                    Foreground = KLabelBrush,
+                    Foreground = DisplayPalette.KLabelBrush,
                     Margin = new Thickness(0, 4, 0, 0),
                 });
                 return col;
@@ -1045,7 +1080,7 @@ namespace FanaBridge.UI
                             + "Individual Wheels” in Control Mapper to tell them apart)."
                         : "All assignable roles (none mapped on this wheel yet).",
                 FontSize = 11,
-                Foreground = KLabelBrush,
+                Foreground = DisplayPalette.KLabelBrush,
                 Margin = new Thickness(0, 5, 0, 0),
             });
             return col;
@@ -1060,7 +1095,7 @@ namespace FanaBridge.UI
 
             var top = new Border
             {
-                BorderBrush = SegBorder,
+                BorderBrush = DisplayPalette.SegBorder,
                 BorderThickness = new Thickness(0, 1, 0, 0),
                 Padding = new Thickness(0, 11, 0, 0),
             };
@@ -1071,7 +1106,7 @@ namespace FanaBridge.UI
             {
                 Text = "Cancel",
                 FontSize = 12,
-                Foreground = ToggleIdleText,
+                Foreground = DisplayPalette.ToggleIdleText,
                 Cursor = Cursors.Hand,
                 Margin = new Thickness(0, 11, 14, 0),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1198,15 +1233,15 @@ namespace FanaBridge.UI
         }
 
         // Publish the edit, then rebuild the model from the normalized, republished config
-        // (ids survive normalization, so the expanded row and the snapshot agree), and keep
-        // the Overview's empty-state/priority list consistent.
+        // (ids survive normalization, so the expanded row and the snapshot agree), and signal
+        // the shell so it can keep the Overview's empty-state/priority list consistent.
         private void ApplyAndReload(DisplayCustomizationConfig cfg)
         {
             _host.ApplyDisplayConfig(cfg);
             _editModelSource = _host.GetDisplayConfig();
             _editModel = new DisplayTriggersEditModel(_editModelSource, _host.ItmDeviceId,
                 _settings?.ItmDefaultPage ?? (byte)1);
-            RenderPriority(_lastSnapshot);
+            ConfigApplied?.Invoke(this, EventArgs.Empty);
         }
 
         private void ToggleExpanded(string ruleId)
@@ -1363,7 +1398,7 @@ namespace FanaBridge.UI
             _dropIndicator = new Rectangle
             {
                 Height = 2,
-                Fill = AccentBg,
+                Fill = DisplayPalette.AccentBg,
                 Margin = new Thickness(2, 0, 2, 0),
             };
             int at = Math.Max(0, Math.Min(slot, _ruleRowOrder.Count));
@@ -1463,7 +1498,7 @@ namespace FanaBridge.UI
                 Text = text,
                 FontSize = 10,
                 FontWeight = FontWeights.Bold,
-                Foreground = KLabelBrush,
+                Foreground = DisplayPalette.KLabelBrush,
             };
 
         private static void SelectByTagValue<T>(ComboBox combo, T value)

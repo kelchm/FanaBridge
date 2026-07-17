@@ -47,33 +47,6 @@ namespace FanaBridge.UI
         private DisplayValuesSnapshot _lastValues;
         private string _lastStatus;
 
-        // ── Palette (the design mock's SimHub-dark values) ───────────────
-        private static readonly SolidColorBrush AccentBg = Frozen("#1E8FD5");
-        private static readonly SolidColorBrush ToggleIdleText = Frozen("#B6B6B6");
-        private static readonly SolidColorBrush RowBg = Frozen("#303032");
-        private static readonly SolidColorBrush RowBorder = Frozen("#3D3D3F");
-        private static readonly SolidColorBrush RowText = Frozen("#EAEAEA");
-        private static readonly SolidColorBrush OnScreenBg = Frozen("#22321F");
-        private static readonly SolidColorBrush OnScreenBorder = Frozen("#3F7A4A");
-        private static readonly SolidColorBrush OnScreenText = Frozen("#FFFFFF");
-        private static readonly SolidColorBrush GreenAccent = Frozen("#8FE0A8");
-        private static readonly SolidColorBrush GreenRank = Frozen("#7FCE9A");
-        private static readonly SolidColorBrush MutedRank = Frozen("#7A7A7A");
-        private static readonly SolidColorBrush ChipText = Frozen("#8F8F8F");
-        private static readonly SolidColorBrush BaseRank = Frozen("#C9A24A");
-        private static readonly SolidColorBrush BaseText = Frozen("#C8C8C8");
-        private static readonly SolidColorBrush BaseBg = Frozen("#2A2A2B");
-        private static readonly SolidColorBrush BaseDash = Frozen("#4A4A4A");
-        private static readonly SolidColorBrush AgeText = Frozen("#7A7A7A");
-        private static readonly SolidColorBrush ActivityText = Frozen("#E6E6E6");
-
-        private static SolidColorBrush Frozen(string hex)
-        {
-            var brush = (SolidColorBrush)new BrushConverter().ConvertFrom(hex);
-            brush.Freeze();
-            return brush;
-        }
-
         public DisplayTabPanel()
         {
             InitializeComponent();
@@ -104,6 +77,14 @@ namespace FanaBridge.UI
                 { TabView.Pages,    viewPages },
                 { TabView.Legacy,   viewLegacy },
             };
+
+            // The Triggers editor is its own control now — bind it to the same host, catalogs,
+            // and mutable settings, and wire its two seam events: ‹ back returns to Overview,
+            // and a committed edit refreshes the Overview priority list (the immediacy the old
+            // in-shell RenderPriority gave).
+            viewTriggers.Bind(_host, _propertyCatalog, _roleCatalog, _settings);
+            viewTriggers.BackRequested += (s, e) => NavigateTo(TabView.Overview);
+            viewTriggers.ConfigApplied += (s, e) => RenderPriority(_lastSnapshot);
 
             // Option controls — identical semantics to the old Screen tab. "None"
             // (legacy page off) is an ITM-only display-mode choice.
@@ -160,10 +141,10 @@ namespace FanaBridge.UI
         {
             bool on = _settings.ItmEnabled;
 
-            btnModeItm.Background = on ? AccentBg : Brushes.Transparent;
-            txtModeItm.Foreground = on ? Brushes.White : ToggleIdleText;
-            btnModeLegacy.Background = on ? Brushes.Transparent : AccentBg;
-            txtModeLegacy.Foreground = on ? ToggleIdleText : Brushes.White;
+            btnModeItm.Background = on ? DisplayPalette.AccentBg : Brushes.Transparent;
+            txtModeItm.Foreground = on ? Brushes.White : DisplayPalette.ToggleIdleText;
+            btnModeLegacy.Background = on ? Brushes.Transparent : DisplayPalette.AccentBg;
+            txtModeLegacy.Foreground = on ? DisplayPalette.ToggleIdleText : Brushes.White;
             txtModeHint.Text = on
                 ? "Legacy-only hides the ITM pages and shows just the 3-character display."
                 : "ITM pages are off. Switch to ITM display to use them.";
@@ -195,6 +176,14 @@ namespace FanaBridge.UI
 
         private void Back_Click(object sender, RoutedEventArgs e) => NavigateTo(TabView.Overview);
 
+        // The Overview empty-state "＋ Add trigger" button: jump to the Triggers editor and
+        // open its add card straight away (the editor rebuilds on Enter first).
+        private void OverviewAddTrigger_Click(object sender, RoutedEventArgs e)
+        {
+            NavigateTo(TabView.Triggers);
+            viewTriggers.BeginAdd();
+        }
+
         private void NavigateTo(TabView view)
         {
             _currentView = view;
@@ -204,7 +193,7 @@ namespace FanaBridge.UI
             // Build (or rebuild) the Triggers editor from the current config each time it
             // becomes the active view — a clean slate, snapshot-driven from there.
             if (view == TabView.Triggers && _host != null)
-                EnterTriggersEditor();
+                viewTriggers.Enter(_lastSnapshot);
 
             // The DISPLAY MODE header belongs to the hub — it shows on Overview only
             // (and only on ITM wheels), never inside an editor.
@@ -358,7 +347,7 @@ namespace FanaBridge.UI
                 // The Triggers editor merges the same live state into its rows — patched in
                 // place while an editor is open so poll re-renders never disturb it.
                 if (_currentView == TabView.Triggers)
-                    TriggersPoll(snapshot);
+                    viewTriggers.Poll(snapshot);
             }
         }
 
@@ -410,7 +399,7 @@ namespace FanaBridge.UI
                 Text = model.Rank,
                 FontSize = 11,
                 FontWeight = FontWeights.Bold,
-                Foreground = model.OnScreen ? GreenRank : (model.IsBase ? BaseRank : MutedRank),
+                Foreground = model.OnScreen ? DisplayPalette.GreenRank : (model.IsBase ? DisplayPalette.BaseRank : DisplayPalette.MutedRank),
                 Width = 18,
                 TextAlignment = TextAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
@@ -423,7 +412,7 @@ namespace FanaBridge.UI
             {
                 Text = model.Label,
                 FontSize = 12.5,
-                Foreground = model.OnScreen ? OnScreenText : (model.IsBase ? BaseText : RowText),
+                Foreground = model.OnScreen ? DisplayPalette.OnScreenText : (model.IsBase ? DisplayPalette.BaseText : DisplayPalette.RowText),
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -436,7 +425,7 @@ namespace FanaBridge.UI
                 {
                     Text = model.Chip,
                     FontSize = 10.5,
-                    Foreground = model.OnScreen ? GreenAccent : ChipText,
+                    Foreground = model.OnScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText,
                     Margin = new Thickness(10, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
                 };
@@ -451,7 +440,7 @@ namespace FanaBridge.UI
                     Text = model.Seconds,
                     FontSize = 11,
                     FontWeight = FontWeights.Bold,
-                    Foreground = GreenAccent,
+                    Foreground = DisplayPalette.GreenAccent,
                     Margin = new Thickness(10, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
                 };
@@ -466,12 +455,12 @@ namespace FanaBridge.UI
                 var host = new Grid { Margin = new Thickness(0, 0, 0, 6) };
                 host.Children.Add(new Rectangle
                 {
-                    Stroke = BaseDash,
+                    Stroke = DisplayPalette.BaseDash,
                     StrokeThickness = 1,
                     StrokeDashArray = new DoubleCollection { 3, 2 },
                     RadiusX = 4,
                     RadiusY = 4,
-                    Fill = BaseBg,
+                    Fill = DisplayPalette.BaseBg,
                 });
                 host.Children.Add(new Border
                 {
@@ -483,8 +472,8 @@ namespace FanaBridge.UI
 
             var border = new Border
             {
-                Background = model.OnScreen ? OnScreenBg : RowBg,
-                BorderBrush = model.OnScreen ? OnScreenBorder : RowBorder,
+                Background = model.OnScreen ? DisplayPalette.OnScreenBg : DisplayPalette.RowBg,
+                BorderBrush = model.OnScreen ? DisplayPalette.OnScreenBorder : DisplayPalette.RowBorder,
                 BorderThickness = model.OnScreen ? new Thickness(3, 1, 1, 1) : new Thickness(1),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(10, 8, 10, 8),
@@ -508,7 +497,7 @@ namespace FanaBridge.UI
                 Text = model.Time,
                 FontFamily = new FontFamily("Consolas"),
                 FontSize = 11.5,
-                Foreground = AgeText,
+                Foreground = DisplayPalette.AgeText,
                 Margin = new Thickness(0, 1, 10, 0),
             };
             Grid.SetColumn(age, 0);
@@ -518,7 +507,7 @@ namespace FanaBridge.UI
             {
                 Text = model.Text,
                 FontSize = 12,
-                Foreground = ActivityText,
+                Foreground = DisplayPalette.ActivityText,
                 TextWrapping = TextWrapping.Wrap,
             };
             Grid.SetColumn(text, 1);

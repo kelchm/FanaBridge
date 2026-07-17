@@ -1,0 +1,73 @@
+<UserControl x:Class="FanaBridge.UI.DisplayTriggersView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <!-- The editor's ‹ ghost back button (design's .ghost square) — a real Button
+             (the house's back-navigation primitive) templated to the design's ghost
+             look. Duplicated from the Display tab shell so this view is self-contained. -->
+        <Style x:Key="GhostBack" TargetType="Button">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Background" Value="#3A3A3C" />
+            <Setter Property="BorderBrush" Value="#565658" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="ToolTip" Value="Back to Overview" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="GhostBackGlyph" TargetType="TextBlock">
+            <Setter Property="Text" Value="&#x2039;" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Foreground" Value="#D8D8D8" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,-2,0,0" />
+        </Style>
+        <Style x:Key="EditorTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#F0F0F0" />
+            <Setter Property="Margin" Value="11,0,0,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </UserControl.Resources>
+
+    <StackPanel>
+        <Grid Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <Button Style="{StaticResource GhostBack}" Click="Back_Click">
+                    <TextBlock Style="{StaticResource GhostBackGlyph}" />
+                </Button>
+                <TextBlock Text="Triggers" Style="{StaticResource EditorTitle}" />
+                <TextBlock Text="drag ⠿ to reorder priority" FontSize="12"
+                           Foreground="#8F8F8F" Margin="12,0,0,0"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+            <Button x:Name="btnTriggersAdd" Content="＋ Add trigger"
+                    Click="TriggersAdd_Click" Padding="12,5"
+                    HorizontalAlignment="Right" VerticalAlignment="Center" />
+        </Grid>
+
+        <!-- Add-trigger card (built in code-behind; collapsed until opened) -->
+        <StackPanel x:Name="panelAddCard" Visibility="Collapsed" Margin="0,0,0,12" />
+
+        <!-- Priority-ordered rule rows + the pinned base row (code-behind) -->
+        <StackPanel x:Name="panelTriggerRows" />
+
+        <TextBlock x:Name="txtTriggersEmpty" Visibility="Collapsed"
+                   Text="No triggers yet — use ＋ Add trigger to create one."
+                   FontSize="12" Foreground="#8F8F8F" Margin="0,2,0,0" />
+    </StackPanel>
+</UserControl>
