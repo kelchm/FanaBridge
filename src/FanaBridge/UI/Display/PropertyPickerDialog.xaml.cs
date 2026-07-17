@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using FanaBridge.Customization;
 
 namespace FanaBridge.UI
@@ -19,7 +19,12 @@ namespace FanaBridge.UI
     public partial class PropertyPickerDialog : Window
     {
         private readonly DisplayPropertyPickerModel _model;
-        private readonly ObservableCollection<PickerRow> _rows = new ObservableCollection<PickerRow>();
+        // The current filtered rows, reassigned whole each rebuild and handed to the list as
+        // ONE ItemsSource swap — one reset instead of a Clear() + thousands of per-item Add()
+        // notifications on a multi-thousand-property catalog.
+        private IReadOnlyList<PickerRow> _rows = Array.Empty<PickerRow>();
+        // Coalesces rapid typing: a keystroke restarts this; only the pause rebuilds.
+        private readonly DispatcherTimer _filterDebounce;
         private readonly string _current;
 
         private string _resultName;
@@ -31,6 +36,8 @@ namespace FanaBridge.UI
             _model = model;
             _current = current;
             lstProps.ItemsSource = _rows;
+            _filterDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+            _filterDebounce.Tick += (s, e) => { _filterDebounce.Stop(); Rebuild(SelectCurrent: false); };
             Loaded += OnLoaded;
         }
 
@@ -57,8 +64,24 @@ namespace FanaBridge.UI
             txtFilter.Focus();
         }
 
+        // Debounced: restart the timer; the pause (or an explicit navigate/commit, which
+        // flushes first) does the rebuild — so typing never pays a full re-scan per keystroke.
         private void Filter_TextChanged(object sender, TextChangedEventArgs e)
-            => Rebuild(SelectCurrent: false);
+        {
+            _filterDebounce.Stop();
+            _filterDebounce.Start();
+        }
+
+        // Apply a pending filter immediately, so keyboard navigation and commit act on the
+        // rows the user is actually looking at (not the pre-keystroke list).
+        private void FlushPendingFilter()
+        {
+            if (_filterDebounce.IsEnabled)
+            {
+                _filterDebounce.Stop();
+                Rebuild(SelectCurrent: false);
+            }
+        }
 
         // The list follows the filter; from the filter box Up/Down walk the selection and
         // Enter commits, so the user never has to leave the box to navigate.
@@ -67,14 +90,17 @@ namespace FanaBridge.UI
             switch (e.Key)
             {
                 case Key.Down:
+                    FlushPendingFilter();
                     MoveSelection(+1);
                     e.Handled = true;
                     break;
                 case Key.Up:
+                    FlushPendingFilter();
                     MoveSelection(-1);
                     e.Handled = true;
                     break;
                 case Key.Enter:
+                    FlushPendingFilter();
                     CommitSelected();
                     e.Handled = true;
                     break;
@@ -96,10 +122,8 @@ namespace FanaBridge.UI
 
         private void Rebuild(bool SelectCurrent)
         {
-            var rows = _model.Rows(txtFilter.Text);
-            _rows.Clear();
-            foreach (var row in rows)
-                _rows.Add(row);
+            _rows = _model.Rows(txtFilter.Text);
+            lstProps.ItemsSource = _rows;
 
             int selectable = 0;
             foreach (var row in _rows)

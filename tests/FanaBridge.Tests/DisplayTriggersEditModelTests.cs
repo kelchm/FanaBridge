@@ -60,6 +60,18 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void NewDraft_DefaultTarget_AvoidsTheEffectiveBase_FromItmDefaultPage()
+        {
+            // No config base pinned, but ItmDefaultPage points at Fuel/ERS/DRS (wire 2 on the
+            // standard set) — that IS the effective base the display rests on, so a new rule
+            // must not default to it. Pre-fix DefaultTargetPage assumed Lap Info was the base
+            // and returned Fuel/ERS/DRS (the base itself); the effective-base resolution fixes it.
+            var model = new DisplayTriggersEditModel(null, Device3, defaultWirePage: 2);
+            Assert.NotEqual(ItmPage.FuelErsDrs, model.NewTelemetryDraft().Page);
+            Assert.NotEqual(ItmPage.FuelErsDrs, model.NewMappedControlDraft("Up Shift").Page);
+        }
+
+        [Fact]
         public void AddMappedControlRule_PinsTheRolePropertyExactly()
         {
             var model = new DisplayTriggersEditModel(null, Device3);

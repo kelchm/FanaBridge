@@ -42,6 +42,8 @@ namespace FanaBridge.UI
             public Border Container;
             public TextBlock Chip;
             public TextBlock Seconds;
+            public TextBlock Rank;
+            public TextBlock Label;
             public bool Degraded;
         }
         private readonly Dictionary<string, RowChips> _rowChips =
@@ -87,7 +89,8 @@ namespace FanaBridge.UI
             _addOpen = false;
             _addDraft = null;
             _editModelSource = _host?.GetDisplayConfig();
-            _editModel = new DisplayTriggersEditModel(_editModelSource, _host?.ItmDeviceId ?? 0);
+            _editModel = new DisplayTriggersEditModel(_editModelSource, _host?.ItmDeviceId ?? 0,
+                _settings?.ItmDefaultPage ?? (byte)1);
             RenderAddCard();
             RenderTriggerRows(_lastSnapshot);
         }
@@ -216,8 +219,32 @@ namespace FanaBridge.UI
                 holder.Seconds.Visibility = chip.Seconds != null
                     ? Visibility.Visible : Visibility.Collapsed;
             }
+            // The on-screen accent spans the WHOLE row, not just the chip — patch the rank,
+            // label, and border together so an off→on transition during an in-place poll
+            // (which runs while a different row's editor is open) can't leave a green
+            // "on screen" chip on an otherwise-inactive row body. Degraded rows never go
+            // on-screen, so they keep their fixed styling.
+            if (!holder.Degraded)
+                ApplyRowAccent(holder, chip.OnScreen);
             if (holder.Container != null)
                 holder.Container.Opacity = (chip.Muted || holder.Degraded) ? 0.5 : 1.0;
+        }
+
+        // The single definition of a rule row's on-screen accent — rank + label colour and
+        // the border's background / brush / left accent bar — shared by first build and every
+        // in-place patch so the two can't drift.
+        private static void ApplyRowAccent(RowChips holder, bool onScreen)
+        {
+            if (holder.Rank != null)
+                holder.Rank.Foreground = onScreen ? GreenRank : MutedRank;
+            if (holder.Label != null)
+                holder.Label.Foreground = onScreen ? OnScreenText : RowText;
+            if (holder.Container != null)
+            {
+                holder.Container.Background = onScreen ? OnScreenBg : RowBg;
+                holder.Container.BorderBrush = onScreen ? OnScreenBorder : RowBorder;
+                holder.Container.BorderThickness = onScreen ? new Thickness(3, 1, 1, 1) : new Thickness(1);
+            }
         }
 
         // One editable rule row: a clickable collapsed header, plus the detail panel when
@@ -272,7 +299,7 @@ namespace FanaBridge.UI
                 Text = row.Rank,
                 FontSize = 11,
                 FontWeight = FontWeights.Bold,
-                Foreground = row.OnScreen ? GreenRank : MutedRank,
+                Foreground = MutedRank,   // on-screen accent applied via ApplyRowAccent below
                 Width = 16,
                 TextAlignment = TextAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
@@ -285,7 +312,7 @@ namespace FanaBridge.UI
             {
                 Text = row.Label,
                 FontSize = 12.5,
-                Foreground = row.OnScreen ? OnScreenText : RowText,
+                Foreground = RowText,   // on-screen accent applied via ApplyRowAccent below
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -344,9 +371,9 @@ namespace FanaBridge.UI
 
             var border = new Border
             {
-                Background = row.OnScreen ? OnScreenBg : RowBg,
-                BorderBrush = row.OnScreen ? OnScreenBorder : RowBorder,
-                BorderThickness = row.OnScreen ? new Thickness(3, 1, 1, 1) : new Thickness(1),
+                Background = RowBg,           // on-screen accent applied via ApplyRowAccent below
+                BorderBrush = RowBorder,
+                BorderThickness = new Thickness(1),
                 CornerRadius = expanded ? new CornerRadius(4, 4, 0, 0) : new CornerRadius(4),
                 Padding = new Thickness(10, 8, 10, 8),
                 Cursor = Cursors.Hand,
@@ -363,7 +390,8 @@ namespace FanaBridge.UI
             border.KeyDown += (s, e) => RowKeyDown(ruleId, e);
             border.ContextMenu = BuildRowContextMenu(ruleId, canRemove: true);
 
-            chips = new RowChips { Container = border, Chip = chip, Seconds = seconds };
+            chips = new RowChips { Container = border, Chip = chip, Seconds = seconds, Rank = rank, Label = label };
+            ApplyRowAccent(chips, row.OnScreen);
             return border;
         }
 
@@ -1176,7 +1204,8 @@ namespace FanaBridge.UI
         {
             _host.ApplyDisplayConfig(cfg);
             _editModelSource = _host.GetDisplayConfig();
-            _editModel = new DisplayTriggersEditModel(_editModelSource, _host.ItmDeviceId);
+            _editModel = new DisplayTriggersEditModel(_editModelSource, _host.ItmDeviceId,
+                _settings?.ItmDefaultPage ?? (byte)1);
             RenderPriority(_lastSnapshot);
         }
 

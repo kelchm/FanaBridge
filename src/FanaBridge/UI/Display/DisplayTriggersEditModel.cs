@@ -114,13 +114,23 @@ namespace FanaBridge.UI
         private readonly ItmPageTable _pageTable;      // this device's page set, one source of truth
         private DisplayCustomizationConfig _config;   // working copy; never mutated in place
 
+        // The device's default-page wire (DisplaySettings.ItmDefaultPage). Used only to
+        // resolve the EFFECTIVE base a new rule's default target must avoid, so a new rule
+        // doesn't default to the page the display already rests on when the config pins no
+        // base of its own. 1 (Lap Info, the settings default) for callers that don't supply it.
+        private readonly byte _defaultWirePage;
+
         /// <summary>Starts from the host's current config (null / empty is an empty rule
-        /// list — creating the first rule creates the document).</summary>
-        public DisplayTriggersEditModel(DisplayCustomizationConfig current, byte itmDeviceId)
+        /// list — creating the first rule creates the document). <paramref name="defaultWirePage"/>
+        /// is the device's ItmDefaultPage setting, letting the new-rule default target avoid the
+        /// effective base even when the config pins none.</summary>
+        public DisplayTriggersEditModel(DisplayCustomizationConfig current, byte itmDeviceId,
+            byte defaultWirePage = 1)
         {
             _config = current;
             _itmDeviceId = itmDeviceId;
             _pageTable = ItmPageTable.ForDevice(itmDeviceId);
+            _defaultWirePage = defaultWirePage;
         }
 
         /// <summary>The current working document (null until the first rule is added to an
@@ -598,9 +608,14 @@ namespace FanaBridge.UI
         // else the first page.
         private ItmPage DefaultTargetPage()
         {
-            ItmPage basePage = _config?.Itm != null && _config.Itm.BasePageRaw != null
+            // Avoid the EFFECTIVE base — the page the display actually rests on. When the
+            // config pins no base, that is the identity at the device's default-page wire
+            // (ItmDefaultPage), not an assumed Lap Info; resolving through the page table
+            // matches what the running stack and the "Always →" row show.
+            ItmPage? configuredBase = _config?.Itm != null && _config.Itm.BasePageRaw != null
                 ? _config.Itm.BasePage
-                : ItmPage.LapInfo;
+                : (ItmPage?)null;
+            ItmPage effectiveBase = _pageTable.ResolveBase(configuredBase, _defaultWirePage).Identity;
             ItmPage first = ItmPage.LapInfo;
             bool haveFirst = false;
             foreach (var p in _pageTable.Pages)
@@ -608,7 +623,7 @@ namespace FanaBridge.UI
                 if (p.Page == ItmPage.Legacy)
                     continue;
                 if (!haveFirst) { first = p.Page; haveFirst = true; }
-                if (p.Page != basePage)
+                if (p.Page != effectiveBase)
                     return p.Page;
             }
             return first;
