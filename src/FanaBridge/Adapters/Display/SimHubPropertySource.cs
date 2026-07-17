@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using FanaBridge.Customization;
+using FanaBridge.Display.Rules;
 using GameReaderCommon;
 using SimHub.Plugins;
 

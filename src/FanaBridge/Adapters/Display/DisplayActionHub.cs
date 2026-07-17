@@ -2,7 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
-using FanaBridge.Customization;
+using FanaBridge.Display.Rules;
 using SimHub.Plugins;
 
 namespace FanaBridge.Adapters

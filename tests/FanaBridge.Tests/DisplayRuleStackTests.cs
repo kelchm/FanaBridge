@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
 using FanaBridge.Adapters;
-using FanaBridge.Customization;
+using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 using GameReaderCommon;
 using Xunit;

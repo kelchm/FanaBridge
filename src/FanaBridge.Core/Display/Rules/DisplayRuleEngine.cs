@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.Customization
+namespace FanaBridge.Display.Rules
 {
     /// <summary>Which surface an engine instance drives (each device wires one of each).</summary>
     public enum RuleSetKind

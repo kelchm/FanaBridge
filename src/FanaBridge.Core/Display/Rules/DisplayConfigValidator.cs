@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.Customization
+namespace FanaBridge.Display.Rules
 {
     /// <summary>
     /// Load-time validation and normalization for <see cref="DisplayCustomizationConfig"/>.

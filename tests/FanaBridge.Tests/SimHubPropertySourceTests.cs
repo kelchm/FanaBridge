@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
 using FanaBridge.Adapters;
-using FanaBridge.Customization;
+using FanaBridge.Display.Rules;
 using GameReaderCommon;
 using Xunit;
 

@@ -2,7 +2,7 @@ using System.ComponentModel;
 using Newtonsoft.Json;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.Customization
+namespace FanaBridge.Display.Rules
 {
     /// <summary>
     /// How a rule's condition decides it is met. The kinds fall into three families with

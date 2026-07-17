@@ -1,4 +1,4 @@
-namespace FanaBridge.Customization
+namespace FanaBridge.Display.Rules
 {
     /// <summary>
     /// Resolves <see cref="PropertySpec"/>s to live values for the rule engine. This is the

@@ -1,4 +1,4 @@
-using FanaBridge.Customization;
+using FanaBridge.Display.Rules;
 using FanaBridge.Profiles;
 
 namespace FanaBridge.Adapters

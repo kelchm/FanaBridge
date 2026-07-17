@@ -1,6 +1,6 @@
 using System;
 using FanaBridge;
-using FanaBridge.Customization;
+using FanaBridge.Display.Rules;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using GameReaderCommon;

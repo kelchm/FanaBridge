@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
-using FanaBridge.Customization;
+using FanaBridge.Display.Rules;
 using FanaBridge.UI;
 using Xunit;
 

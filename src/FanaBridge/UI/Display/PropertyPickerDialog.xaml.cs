@@ -4,7 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
-using FanaBridge.Customization;
+using FanaBridge.Display.Rules;
 
 namespace FanaBridge.UI
 {

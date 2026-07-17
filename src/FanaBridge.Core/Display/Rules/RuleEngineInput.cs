@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.Customization
+namespace FanaBridge.Display.Rules
 {
     /// <summary>
     /// A wheel-button page change the lifecycle adopted this tick. The engine never sees

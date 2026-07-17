@@ -1,4 +1,4 @@
-namespace FanaBridge.Customization
+namespace FanaBridge.Display.Rules
 {
     /// <summary>What happened, for the activity log's row language.</summary>
     public enum ActivityKind

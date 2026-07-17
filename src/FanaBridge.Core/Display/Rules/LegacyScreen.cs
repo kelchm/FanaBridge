@@ -1,7 +1,7 @@
 using Newtonsoft.Json;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.Customization
+namespace FanaBridge.Display.Rules
 {
     /// <summary>
     /// A named screen for the legacy 7-segment surface: up to three characters shown

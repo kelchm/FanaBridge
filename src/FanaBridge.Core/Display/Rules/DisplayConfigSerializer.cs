@@ -1,7 +1,7 @@
 using System;
 using Newtonsoft.Json;
 
-namespace FanaBridge.Customization
+namespace FanaBridge.Display.Rules
 {
     /// <summary>
     /// JSON persistence for <see cref="DisplayCustomizationConfig"/>, following the wheel

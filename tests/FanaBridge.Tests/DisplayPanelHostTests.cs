@@ -4,7 +4,7 @@ using System.Linq;
 using System.Runtime.Serialization;
 using FanaBridge;
 using FanaBridge.Adapters;
-using FanaBridge.Customization;
+using FanaBridge.Display.Rules;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;

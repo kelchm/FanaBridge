@@ -1,7 +1,7 @@
 using System.Globalization;
 using FanaBridge.Protocol;
 
-namespace FanaBridge.Customization
+namespace FanaBridge.Display.Rules
 {
     /// <summary>
     /// Builds the design's rule row language ("Fuel &lt; 10 → Fuel / ERS / DRS") from a
