@@ -51,38 +51,31 @@ namespace FanaBridge.Adapters
         private FanatecDisplayDriver _displayManager;
         private DisplaySettings _displaySettings = new DisplaySettings();
 
-        // ITM display driver — null until a wheel with an ITM display is driven.
-        private ItmDisplayDriver _itmDisplay;
-        // The wire-driven digital twin for the live Overview mirror: a virtual panel that
-        // consumes the exact col03 frames the driver+lifecycle send (via the plugin's
-        // outbound tap) plus the same firmware pushes, and publishes the screen-state
-        // snapshot the UI reads. Built and torn down on the SAME lifetime edges as the
-        // driver (it models the same device), attached to the shared ITM tap for the
-        // instance's whole ITM tenure and detached (identity-guarded) at teardown.
-        private VirtualItmDisplay _itmTwin;
-        // The display id the ITM driver was built against; an override changing
-        // it hot-swaps the driver (deviceId is a ctor-fixed value).
-        private byte _itmDeviceId;
-        private bool _itmWasRunning;
-        private bool _itmErrorLogged;
-        // Wheel-change edge detection (polled — no event subscription that could
-        // outlive a plugin generation, see issue #37). A wheel/hub/module change
-        // resets the display cold with no trace on the ITM channel, so the ITM
-        // lifecycle must restart from bring-up.
-        private int _itmWheelChangeCount;
-        // Display customization: the parsed per-device config snapshot (volatile —
-        // written by SetSettings, read on the frame path; a reference swap is the
-        // rebuild signal), the rule stack built from it, and the stack's latest
-        // snapshot (a PART of the published envelope below — DataUpdate-thread only,
-        // the UI never reads it directly). All three stay null on the empty-config
-        // fast path — with no customization the frame path must be byte-identical to
-        // a build without the feature.
-        private volatile DisplayCustomizationConfig _displayConfig;
-        private DisplayRuleStack _displayStack;
-        private DisplayRuleSnapshot _displayRuleSnapshot;
+        // Late accessor over _displaySettings, handed to the runtime's per-frame Tick so the
+        // settings read happens INSIDE the runtime AFTER its volatile _displayConfig acquire
+        // (see SetSettings). A pre-evaluated argument at the Tick call site would read the
+        // plain _displaySettings BEFORE the acquire and reintroduce the torn base-page pair.
+        // One cached delegate — it reads the current field on each invocation.
+        private Func<DisplaySettings> _displaySettingsAccessor;
+
+        // The device-scoped ITM display session: the col03 ITM driver, its wire-driven
+        // digital twin, the display-customization rule stack + volatile config snapshot,
+        // page-policy sequencing, the ITM status line, and the ONE UI-facing envelope all
+        // live here now. This device shell keeps LEDs, identity, connection, the settings
+        // bag, and the legacy col01 driver, and delegates the ITM session to the runtime
+        // (one Tick per connected ITM frame plus the lifecycle edges). Built once in the
+        // ctor — cheap until Tick constructs a driver.
+        private readonly DeviceDisplayRuntime _displayRuntime;
+
         // True once the legacy page has been blanked after switching to mode "None",
         // so it is cleared once on the transition rather than every frame.
         private bool _legacyBlanked;
+        // One-shot guard for the legacy col01 drive: this instance-side drive used to sit
+        // inside the runtime's ITM try/catch (sharing its _itmErrorLogged latch) and must
+        // keep the same contract now that it runs on the instance — a firmware/transport
+        // hiccup logs once and MUST NOT skip the LED update further down this DataUpdate.
+        // Reset on the same edges the runtime resets its own latch: disconnect and rebind.
+        private bool _legacyErrorLogged;
         // Tracks the settings page's display test so the handback edge (test just
         // ended) can blank the residue and reset the driver's value latches.
         private bool _displayTestWasActive;
@@ -112,114 +105,48 @@ namespace FanaBridge.Adapters
         /// <summary>Test hook: the generation the cached drivers were built against.</summary>
         internal FanatecPlugin BoundPluginForTest => _boundPlugin;
 
-        // ITM status line for the Device Status panel / diagnostics. Composed on the
-        // DataUpdate thread (the only thread that mutates the lifecycle) — a PART of
-        // the published envelope below, never read cross-thread itself. Refreshed on
-        // state/sync changes plus a coarse 1 s tick (the Unavailable line carries a
-        // retry countdown).
-        private string _itmStatus;
-        private ItmLifecycleState _itmSnapState;
-        private int _itmSnapGen;
-        private int _itmSnapTick;
-
-        // The ONE UI-facing volatile channel: the envelope over the three display
-        // parts (ITM status line, rule-stack snapshot, values snapshot). Recomposed by
-        // MaybePublishPanelSnapshot only when a part actually changed; the teardown
-        // edges are enumerated on DisplayPanelSnapshot.
-        private volatile DisplayPanelSnapshot _panelSnapshot;
-
-        private void PublishItmStatusSnapshot(ItmLifecycleState state)
-        {
-            int gen = _itmDisplay.Lifecycle.SyncGeneration;
-            int tick = Environment.TickCount;
-            // Wrap-safe elapsed check: Environment.TickCount rolls to int.MinValue every ~24.9
-            // days (and net48 has no TickCount64), so measure the delta as an unsigned difference
-            // — correct across the wrap, and it never throws even under a checked-arithmetic build.
-            if (_itmStatus != null && state == _itmSnapState && gen == _itmSnapGen
-                && unchecked((uint)(tick - _itmSnapTick)) < 1000)
-                return;
-            _itmSnapState = state;
-            _itmSnapGen = gen;
-            _itmSnapTick = tick;
-            _itmStatus = _itmDisplay.Lifecycle.Describe();
-        }
-
-        /// <summary>
-        /// Recomposes the published envelope when a part's reference (or the status
-        /// string) changed since the last composition — zero allocation otherwise.
-        /// Called once per connected frame after all display work, and at every
-        /// teardown edge that can't reach that call (the disconnect edge and End run
-        /// it directly; a generation rebind nulls the envelope outright). All parts
-        /// null composes null, so "nothing to show" and "never showed anything" are
-        /// the same observable state.
-        /// </summary>
-        private void MaybePublishPanelSnapshot()
-        {
-            // The status part is gated on the driver exactly like the old per-channel
-            // accessor was, so a stale line can never describe a dropped driver.
-            string status = _itmDisplay == null ? null : _itmStatus;
-            var rules = _displayRuleSnapshot;
-            var values = _itmTwin?.Snapshot;
-
-            var current = _panelSnapshot;
-            if (current == null)
-            {
-                if (status == null && rules == null && values == null)
-                    return;
-            }
-            else if (ReferenceEquals(current.Rules, rules)
-                && ReferenceEquals(current.Values, values)
-                && string.Equals(current.ItmStatus, status, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            _panelSnapshot = status == null && rules == null && values == null
-                ? null
-                : new DisplayPanelSnapshot(status, rules, values, DateTime.UtcNow);
-        }
-
         /// <summary>
         /// The ITM lifecycle status line for the Device Status panel, or null when this
-        /// instance isn't driving an ITM display. Routed through the published envelope,
-        /// so it is safe to read from any thread and always consistent with what the
-        /// Display tab shows.
+        /// instance isn't driving an ITM display. Forwards to the display runtime's
+        /// published envelope (FanatecPlugin.ItmStatus reads this off the registered
+        /// instance), so it is safe to read from any thread and always consistent with
+        /// what the Display tab shows.
         /// </summary>
-        internal string ItmStatusDescription => _panelSnapshot?.ItmStatus;
+        internal string ItmStatusDescription => _displayRuntime.ItmStatusDescription;
 
-        /// <summary>
-        /// Test seam: the rule-part of the display envelope (the latest display-rules
-        /// snapshot), or null while no customization is active. The UI reads the
-        /// envelope (<see cref="IDisplayPanelHost.Snapshot"/>), never this.
-        /// </summary>
-        internal DisplayRuleSnapshot DisplayRuleSnapshot => _displayRuleSnapshot;
+        /// <summary>Test seam: forwards to the runtime's rule-part of the display
+        /// envelope, or null while no customization is active.</summary>
+        internal DisplayRuleSnapshot DisplayRuleSnapshot => _displayRuntime.RuleSnapshot;
 
-        /// <summary>
-        /// Test seam: the values-part of the display envelope (what the ITM display is
-        /// showing, rendered by the wire-driven twin from the frames that actually went
-        /// out), or null while this instance isn't driving an ITM display. The twin is
-        /// cold-started (snapshot cleared) on disconnect / wheel change / End and its
-        /// reference dropped on a generation rebind, display-id change, or display-type
-        /// switch. The UI reads the envelope (<see cref="IDisplayPanelHost.Snapshot"/>),
-        /// never this.
-        /// </summary>
-        internal DisplayValuesSnapshot DisplayValuesSnapshot => _itmTwin?.Snapshot;
+        /// <summary>Test seam: forwards to the runtime's values-part of the display
+        /// envelope (what the ITM display is showing), or null while not driving ITM.</summary>
+        internal DisplayValuesSnapshot DisplayValuesSnapshot => _displayRuntime.ValuesSnapshot;
 
         /// <summary>Test hook (parity gate): the rule stack, null when nothing is built.</summary>
-        internal DisplayRuleStack DisplayStackForTest => _displayStack;
+        internal DisplayRuleStack DisplayStackForTest => _displayRuntime.Stack;
 
         /// <summary>Test hook: the ITM driver, null until an ITM display is driven.</summary>
-        internal ItmDisplayDriver ItmDisplayForTest => _itmDisplay;
+        internal ItmDisplayDriver ItmDisplayForTest => _displayRuntime.ItmDriver;
+
+        /// <summary>Test/R2b seam: the display runtime this device shell delegates the
+        /// ITM session to.</summary>
+        internal DeviceDisplayRuntime DisplayRuntimeForTest => _displayRuntime;
 
         // Test seam: injected clock for the ITM driver, so wiring tests (notably the
         // byte-parity gate) run fully deterministic scripted sessions instead of pacing
         // a driver-owned stopwatch with real sleeps. Production keeps the default
-        // (null = the driver starts its own stopwatch).
+        // (null = the driver starts its own stopwatch). The runtime reads it late through
+        // a Func<long> accessor supplied at construction, so a test's post-construction
+        // assignment is honored.
         internal Func<long> ItmClockForTest;
 
         public FanatecWheelDeviceInstance(DeviceConfig config)
         {
             _config = config;
+            _displaySettingsAccessor = () => _displaySettings;
+            _displayRuntime = new DeviceDisplayRuntime(_config,
+                itmClock: () => ItmClockForTest,
+                log: msg => SimHub.Logging.Current.Info(msg));
         }
 
         // ── LED module setup ─────────────────────────────────────────────
@@ -332,28 +259,19 @@ namespace FanaBridge.Adapters
 
             _manager?.Close();
 
-            // Display/ITM drivers hold their encoder for life — recreate them
-            // lazily (DataUpdate builds them on demand from the live plugin).
+            // The legacy col01 display driver holds its encoder for life — recreate it
+            // lazily (DataUpdate builds it on demand from the live plugin).
             _displayManager = null;
-            _itmDisplay = null;
-            // The twin observed the OLD generation's tap (which dies with the disposed
-            // transport); drop the reference so the rebuilt driver constructs a fresh
-            // twin and attaches it to the new generation's tap. No detach needed — the
-            // old tap is gone (issue #37: never keep references into a disposed generation).
-            _itmTwin = null;
-            // The rule stack wraps the driver's lifecycle — same fate (issue #37:
-            // never keep references into a disposed generation).
-            _displayStack = null;
-            _displayRuleSnapshot = null;
-            // Clear the status part and the published envelope the instant the driver
-            // is invalidated (not just at the rebuild site) so the UI can never read a
-            // disposed generation's parts in the window before the new driver
-            // publishes (issue #37 path; teardown edge on DisplayPanelSnapshot).
-            _itmStatus = null;
-            _panelSnapshot = null;
-            _itmWasRunning = false;
-            _itmErrorLogged = false;
+            // The ITM session's driver-adjacent objects (driver, twin, rule stack, status
+            // line, published envelope) are all invalidated by the generation swap — the
+            // runtime drops them and nulls the envelope the instant the driver is
+            // invalidated so the UI can never read a disposed generation's parts (issue #37;
+            // the twin is dropped WITHOUT a detach — the old tap is already gone).
+            _displayRuntime.OnGenerationRebind();
             _legacyBlanked = false;
+            // The col01 driver is dropped/rebuilt against the new generation below — re-arm
+            // its one-shot failure latch too, matching the runtime's _itmErrorLogged reset.
+            _legacyErrorLogged = false;
 
             // Re-register with the new plugin's instance list (used by the
             // Control Mapper integration to read display names).
@@ -380,7 +298,7 @@ namespace FanaBridge.Adapters
                 ["itmDefaultPage"] = DisplaySettings.DefaultItmDefaultPage,
             };
             _displaySettings = new DisplaySettings();
-            _displayConfig = null;   // no displayCustomization key = no customization
+            _displayRuntime.ClearConfig();   // no displayCustomization key = no customization
 
             if (_ledModule != null)
             {
@@ -463,7 +381,7 @@ namespace FanaBridge.Adapters
             // Display customization: serialize the CURRENT snapshot (not the raw
             // payload) — the EnumText model keeps values a future version wrote
             // intact through the load/save round-trip.
-            var displayConfig = _displayConfig;
+            var displayConfig = _displayRuntime.CurrentConfig;
             if (displayConfig != null)
                 result["displayCustomization"] =
                     JObject.Parse(DisplayConfigSerializer.Save(displayConfig));
@@ -503,11 +421,14 @@ namespace FanaBridge.Adapters
             }
 
             // The display settings must be rebuilt BEFORE the customization snapshot is
-            // published below: the frame path reads the volatile _displayConfig first and
-            // _displaySettings second, so this write order (plain write, then volatile
-            // release) guarantees a frame that sees the new config also sees the settings
-            // that arrived with it. The rule stack captures ItmDefaultPage at build time —
-            // a torn pair would latch a stale base page until the next rebuild.
+            // handed to the runtime below. Write order here: plain-write _displaySettings,
+            // THEN the runtime's volatile config release. The frame path honors the matching
+            // read order INSIDE the runtime — it volatile-acquires the config first and only
+            // then reads _displaySettings through _displaySettingsAccessor (never a value
+            // pre-evaluated at the Tick call site). That acquire-before-settings pairing
+            // guarantees a frame that sees the new config also sees the settings that arrived
+            // with it. The rule stack captures ItmDefaultPage at build time — a torn pair
+            // would latch a stale base page until the next rebuild.
             _displaySettings = new DisplaySettings
             {
                 DisplayMode = (string)_customSettings["displayMode"] ?? DisplaySettings.DefaultMode,
@@ -518,15 +439,19 @@ namespace FanaBridge.Adapters
             };
 
             // Display customization document (whitelisted nested key; absent = none).
-            // Parsed leniently on this thread — Load never throws — and published as
-            // an immutable snapshot; the frame path notices the reference change and
-            // rebuilds the rule stack. Settings can arrive before plugin Init: the
-            // snapshot just waits here until the frame path is alive to consume it.
+            // Parsed leniently on this thread — Load never throws — and handed to the
+            // runtime as an immutable snapshot (its volatile release); the frame path
+            // notices the reference change and rebuilds the rule stack. Released AFTER the
+            // plain _displaySettings write above, and paired with the runtime's
+            // acquire-before-settings read order, so a frame that sees the new config also
+            // sees the settings that arrived with it (the runtime's volatile is the fence).
+            // Settings can arrive before plugin Init: the snapshot just waits until the
+            // frame path is alive to consume it.
             var displayCustomization = obj["displayCustomization"];
-            _displayConfig = displayCustomization == null
+            _displayRuntime.SetConfig(displayCustomization == null
                 ? null
                 : DisplayConfigSerializer.Load(displayCustomization.ToString(),
-                    msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg));
+                    msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg)));
 
             _displayManager?.UpdateSettings(_displaySettings);
         }
@@ -561,25 +486,15 @@ namespace FanaBridge.Adapters
                     "]: Lost connection");
 
                 _displayManager?.Clear();
-                _itmDisplay?.Stop();
-                // Cold-start the twin so its published screen goes blank with the driver
-                // (a stale mirror must never outlive the session). It stays attached to
-                // the tap — no ITM frames flow while disconnected — and re-grounds itself
-                // from the fresh bring-up frames on reconnect.
-                _itmTwin?.OnColdStart();
-                _itmWasRunning = false;
-                _itmStatus = null;           // don't show a stale ITM row while disconnected
-                _displayStack = null;        // rules restart clean with the reconnect
-                _displayRuleSnapshot = null;
-                // Reset one-shot latches so a reconnect starts clean: errors can log again
-                // and the legacy page can re-blank when the mode is "None".
-                _itmErrorLogged = false;
+                // The ITM session went cold: stop the driver, cold-start the twin, drop
+                // the rule stack + status line, and republish the (now null) envelope —
+                // the per-frame Tick below is unreachable while disconnected.
+                _displayRuntime.OnDisconnected();
+                // Reset the legacy col01 one-shot latches so a reconnect can re-blank the
+                // legacy page when the mode is "None" and can log a fresh col01 failure
+                // (mirrors the runtime clearing its own _itmErrorLogged on disconnect).
                 _legacyBlanked = false;
-                // All parts are gone (Stop dropped the driver's values snapshot too) —
-                // republish so the envelope goes null with them; the per-frame publish
-                // below is unreachable while disconnected (teardown edge on
-                // DisplayPanelSnapshot).
-                MaybePublishPanelSnapshot();
+                _legacyErrorLogged = false;
             }
 
             _wasConnected = isConnected;
@@ -620,200 +535,66 @@ namespace FanaBridge.Adapters
             var displayCaps = plugin.ResolveCapsFor(_config);
             var displayType = displayCaps.Display;
 
-            // Switched away from ITM (e.g. override to a basic-display profile):
-            // stop the session so the next Itm selection re-runs bring-up.
-            if (displayType != DisplayType.Itm && _itmDisplay != null)
-            {
-                _itmDisplay.Stop();
-                _itmDisplay = null;
-                // The twin models the ITM panel — it goes with the driver. Detach it from
-                // the shared tap (identity-guarded) so a later ITM device doesn't inherit
-                // a dead observer, and drop the reference (nothing on the non-ITM path
-                // would ever clear its snapshot otherwise).
-                plugin.DetachItmObserver(_itmTwin);
-                _itmTwin = null;
-                _itmWasRunning = false;
-                _displayStack = null;         // rules only drive an ITM display
-                _displayRuleSnapshot = null;  // and their published snapshot goes with them
-                                              // (UpdateDisplayRules never runs again on this
-                                              // path, so nothing else would clear it)
-            }
+            // Switched away from ITM (e.g. override to a basic-display profile): the
+            // runtime stops the session (a no-op when it holds no driver) so the next Itm
+            // selection re-runs bring-up, and republishes the now-null envelope.
+            if (displayType != DisplayType.Itm)
+                _displayRuntime.OnDisplayTypeLeftItm(plugin);
 
             if (displayType == DisplayType.Itm)
             {
-                // Override retargeted the ITM display id — the driver's deviceId
-                // is ctor-fixed, so hot-swap it like the LED pipeline does.
-                if (_itmDisplay != null && _itmDeviceId != displayCaps.ItmDeviceId)
+                // The runtime owns the whole ITM frame (driver/twin build + hot-swap, the
+                // settings apply, wheel-change cold restart, subscription drain, driver +
+                // twin tick, co-driver probe, status snapshot, rules, and the envelope
+                // publish) under its own try/catch. It reads the settings live through the
+                // accessor (AFTER its volatile config acquire — see SetSettings). It returns
+                // false if the ITM update threw — in which case we skip the legacy col01
+                // drive below exactly as the old shared try/catch did, keeping the LED update
+                // (further down) unaffected.
+                bool itmOk = _displayRuntime.Tick(
+                    plugin, displayCaps, pluginManager, data, _displaySettingsAccessor);
+
+                if (itmOk)
                 {
-                    _itmDisplay.Stop();
-                    _itmDisplay = null;
-                    // The twin is keyed to the display id (its constructor fixes it) —
-                    // drop it with the driver so the rebuild below constructs one for the
-                    // new id and re-attaches. Detach the old one from the shared tap.
-                    plugin.DetachItmObserver(_itmTwin);
-                    _itmTwin = null;
-                    SimHub.Logging.Current.Info(
-                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                        "]: ITM display id changed (" + _itmDeviceId + " → " +
-                        displayCaps.ItmDeviceId + ") — rebuilding ITM driver");
-                }
-                if (_itmDisplay == null)
-                {
-                    _itmDeviceId = displayCaps.ItmDeviceId;
-                    _itmDisplay = new ItmDisplayDriver(plugin.Itm,
-                        nowMs: ItmClockForTest,
-                        log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
-                        deviceId: _itmDeviceId);
-                    // The wire-driven twin for the same display device, on the same clock
-                    // as the driver so their snapshot throttles stay in step. Attached to
-                    // the shared ITM outbound tap the instant it exists — bootstrap by
-                    // construction (research R2): the tap is live from encoder creation,
-                    // so the twin observes the whole session from the first bring-up frame
-                    // with no mid-stream attach. A replace-on-attach tap means a wheel
-                    // swap re-points cleanly to this instance's twin.
-                    _itmTwin = new VirtualItmDisplay(deviceId: _itmDeviceId, nowMs: ItmClockForTest);
-                    plugin.AttachItmObserver(_itmTwin);
-                    // A display-id hot-swap rebuilds the driver UNDER a still-live rule
-                    // stack (UpdateDisplayRules below replaces the stack after the
-                    // driver's first Update this same frame). Carry the stack's page
-                    // policy across the rebuild so that first Update's cold bring-up
-                    // targets the stack's base — not the dormant ItmDefaultPage
-                    // setting — and the lifecycle's game-start revert stays suppressed
-                    // for the stack's uninterrupted tenure. Edge-triggered: this
-                    // rebuild IS the edge. Every other path through this block (first
-                    // build, reconnect, generation rebind) has already dropped the
-                    // stack, so the fresh driver correctly starts under built-in policy.
-                    if (_displayStack != null)
-                        _itmDisplay.SetPagePolicy(_displayStack.BaseWirePage);
-                    // Baseline the wheel-change counter at creation — the driver is starting
-                    // cold anyway, so changes before this point are already accounted for.
-                    _itmWheelChangeCount = plugin.Wheelbase?.WheelChangeCount ?? 0;
-                    // Drop any status line cached from a disposed generation's controller,
-                    // so the Device Status row never shows the old controller's description
-                    // (a plugin-generation rebind or a display-id change rebuilds the driver
-                    // here; the envelope republishes at the end of this frame).
-                    _itmStatus = null;
-                    SimHub.Logging.Current.Info(
-                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created ITM display driver");
-                }
-
-                // Guard the ITM/legacy display work: an exception here (firmware quirk,
-                // transport hiccup) must not skip the LED update further down this same
-                // DataUpdate call. Log the first failure, then stay quiet to avoid spam.
-                try
-                {
-                    _itmDisplay.Enabled = _displaySettings.ItmEnabled;
-                    if (_displaySettings.ItmEnabled)
-                        _itmDisplay.Start();   // idempotent — re-arms bring-up after a disconnect
-                    _itmDisplay.ShowLapTotal = _displaySettings.ItmShowLapTotal;
-                    _itmDisplay.ShowPositionTotal = _displaySettings.ItmShowPositionTotal;
-                    // The built-in page policy's base page: the user's default-page
-                    // setting, read live each frame like the toggles above (the driver
-                    // edge-detects a change and switches the display live). WHO owns
-                    // page policy is a separate, edge-triggered contract on the driver:
-                    // UpdateDisplayRules below hands policy to the rule stack on build
-                    // (SetPagePolicy — this setting goes dormant) and back on teardown
-                    // (RestoreBuiltInPagePolicy); disconnect/driver-teardown edges
-                    // restore it through ItmDisplayDriver.Stop.
-                    _itmDisplay.DefaultPage = _displaySettings.ItmDefaultPage;
-
-                    // A wheel/hub/module change (identity layer, FF 08) resets the display to
-                    // a cold state that is invisible on the ITM channel — restart the ITM
-                    // lifecycle from bring-up. Polled via the monotonic counter.
-                    int wheelChanges = plugin.Wheelbase?.WheelChangeCount ?? 0;
-                    if (wheelChanges != _itmWheelChangeCount)
-                    {
-                        _itmWheelChangeCount = wheelChanges;
-                        _itmDisplay.OnWheelChanged();
-                        // The twin gets the same cold-start signal the lifecycle does: the
-                        // new wheel is a different device, so every observed frame so far
-                        // described one that no longer exists. It re-grounds from the fresh
-                        // bring-up frames (research R2 — re-ground on the caller's cold edge).
-                        _itmTwin?.OnColdStart();
-                        // Rule/engine state belongs to the wheel session that produced
-                        // it — rebuild the stack cold alongside the display. Page policy
-                        // deliberately stays external across this null: the cold entry
-                        // above targeted the stack's base, and UpdateDisplayRules
-                        // rebuilds from the same config this frame and re-takes policy
-                        // (or, if customization vanished too, restores the built-in).
-                        _displayStack = null;
-                        // A hot-swap fully cold-restarts the lifecycle — re-arm the one-shot
-                        // "ITM enabled" log so the re-sync on the new wheel gets a fresh
-                        // confirmation line (swaps are infrequent, so no reconnect-loop noise).
-                        _itmWasRunning = false;
-                    }
-
-                    // Feed the firmware's pushed ITM subscription reports (col03-IN) to the
-                    // driver so it follows the page the wheel button selects — and to the
-                    // twin, which needs the SAME pushes to build its handle table and infer
-                    // wheel-button page changes (the OUT wire carries no PageSet for those).
-                    plugin.Wheelbase?.DrainItmReports(FeedItmSubscriptionReport);
-
-                    _itmDisplay.Update(data);
-                    // Stamp the host lifecycle state onto the twin's snapshot (the wire does
-                    // not carry it) and expire its grace/throttle windows. Runs after the
-                    // driver's Update so the twin has already observed this frame's OUT
-                    // frames through the tap; nothing here sends.
-                    _itmTwin?.Tick(_itmDisplay.Lifecycle.State);
-
-                    // Log the FIRST bring-up completing per connection, so hardware
-                    // verification can confirm from the SimHub log that ITM went live.
-                    // Sticky until disconnect: IsRunning legitimately flaps through page
-                    // switches, game exits, and recoveries (the controller logs those
-                    // itself), and re-firing here would read as a reconnect loop.
-                    if (_itmDisplay.IsRunning && !_itmWasRunning)
-                    {
-                        _itmWasRunning = true;
-                        SimHub.Logging.Current.Info(
-                            "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                            "]: ITM enabled — following firmware subscriptions");
-                    }
-
-                    // While the display is failing (recovery ladder / unavailable), run the
-                    // TTL-cached co-driver probe so its detection edge lands in the session
-                    // log next to the failure it may explain — not only while the settings
-                    // tab happens to be open.
-                    var itmState = _itmDisplay.Lifecycle.State;
-                    if (itmState == ItmLifecycleState.Recovery || itmState == ItmLifecycleState.Unavailable)
-                        plugin.ProbeItmCoDriver();
-
-                    PublishItmStatusSnapshot(itmState);
-
-                    // Display customization rules (after the driver's Update so the
-                    // director observes the lifecycle post-Tick). No-op — and builds
-                    // nothing — unless a non-empty config is loaded (the parity gate).
-                    UpdateDisplayRules(pluginManager, data);
-
                     // Optionally also drive the legacy 7-segment gear/speed over col01. On an
                     // ITM OLED (e.g. PBME) the firmware renders this on its legacy page. This
                     // adds col01 traffic interleaved with col03 ITM, which can destabilise the
                     // firmware under load, so it is opt-in — the "Legacy Display Mode" dropdown,
                     // where "None" leaves it off.
-                    if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+                    //
+                    // Guarded exactly as this drive was before the ITM body moved into the
+                    // runtime: it shared the runtime's ITM try/catch then, so a col01
+                    // firmware/transport hiccup must still log once and MUST NOT skip the LED
+                    // update further down this same DataUpdate. The one-shot _legacyErrorLogged
+                    // latch mirrors the runtime's _itmErrorLogged (reset on disconnect/rebind).
+                    try
                     {
-                        if (_displayManager == null)
-                            _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
-                        if (!displayTest)
-                            _displayManager.Update(data);
-                        _legacyBlanked = false;
+                        if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+                        {
+                            if (_displayManager == null)
+                                _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
+                            if (!displayTest)
+                                _displayManager.Update(data);
+                            _legacyBlanked = false;
+                        }
+                        else if (_displayManager != null && !_legacyBlanked && !displayTest)
+                        {
+                            // Switched to None — blank the legacy page once. Only latch
+                            // when the blanking write was accepted, so a transient
+                            // transport failure gets retried instead of leaving the
+                            // page frozen on its last value.
+                            _legacyBlanked = _displayManager.Clear();
+                        }
                     }
-                    else if (_displayManager != null && !_legacyBlanked && !displayTest)
+                    catch (Exception ex)
                     {
-                        // Switched to None — blank the legacy page once. Only latch
-                        // when the blanking write was accepted, so a transient
-                        // transport failure gets retried instead of leaving the
-                        // page frozen on its last value.
-                        _legacyBlanked = _displayManager.Clear();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    if (!_itmErrorLogged)
-                    {
-                        _itmErrorLogged = true;
-                        SimHub.Logging.Current.Error(
-                            "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                            "]: ITM display update failed (LEDs unaffected): " + ex);
+                        if (!_legacyErrorLogged)
+                        {
+                            _legacyErrorLogged = true;
+                            SimHub.Logging.Current.Error(
+                                "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                                "]: ITM display update failed (LEDs unaffected): " + ex);
+                        }
                     }
                 }
             }
@@ -829,12 +610,6 @@ namespace FanaBridge.Adapters
                 if (!displayTest)
                     _displayManager.Update(data);
             }
-
-            // Publish the display envelope for the UI — after ALL display work (and
-            // outside the ITM try/catch, so a mid-frame failure still publishes a
-            // consistent view of whatever the parts say now). Change-gated: composes
-            // nothing when no part moved this frame.
-            MaybePublishPanelSnapshot();
 
             // ── LEDs ─────────────────────────────────────────────────────
             // Hot-swap the driver if the active profile changed (e.g. user
@@ -852,92 +627,17 @@ namespace FanaBridge.Adapters
             _ledModule?.Display();
         }
 
-        // Hands one firmware subscription report to both consumers of the push stream:
-        // the driver (whose lifecycle adopts the entries and paces the sends) and the
-        // twin (whose handle table and page inference are built from the same reports).
-        // A named method keeps the per-frame drain callback a single cached delegate.
-        private void FeedItmSubscriptionReport(byte[] report)
-        {
-            _itmDisplay.OnSubscriptionReport(report);
-            _itmTwin?.OnSubscriptionReport(report);
-        }
-
         // ── Display customization (rules) ────────────────────────────────
 
         /// <summary>
-        /// Frame step for the display-rules runtime. The empty-config fast path is the
-        /// feature's safety guarantee: with no customization document (or an explicitly
-        /// empty one) nothing is constructed and nothing runs — the ITM frame path
-        /// above stays byte-identical to a build without the feature. With a config,
-        /// the stack is (re)built whenever its config or driver reference changes
-        /// (settings swap, generation rebind, display-id change) and ticked once per
-        /// frame; rules only drive pages while the user has ITM enabled.
-        /// </summary>
-        private void UpdateDisplayRules(PluginManager pluginManager, GameData data)
-        {
-            var config = _displayConfig;
-            if (config == null || config.IsEmpty || !_displaySettings.ItmEnabled)
-            {
-                // Customization removed (or ITM turned off): drop the runtime and its
-                // published snapshot so nothing stale lingers, and hand page policy
-                // back to the built-in owner — the driver returns to the default-page
-                // setting live and re-enables its game-start revert. The policy check
-                // covers the corner where the stack was already dropped this same
-                // frame (a wheel change) while the driver still holds the external
-                // policy; the dead stack's published rule snapshot drops there too,
-                // so the Display tab never keeps rendering rows for a customization
-                // that no longer exists. Rule state restarts clean when customization
-                // comes back — engines are per-config.
-                if (_displayStack != null || _itmDisplay.HasExternalPagePolicy)
-                {
-                    _displayStack = null;
-                    _displayRuleSnapshot = null;
-                    _itmDisplay.RestoreBuiltInPagePolicy();
-                }
-                return;
-            }
-
-            if (_displayStack == null || !ReferenceEquals(_displayStack.Config, config)
-                || !ReferenceEquals(_displayStack.Driver, _itmDisplay))
-            {
-                _displayStack = new DisplayRuleStack(config, _itmDisplay, _itmDeviceId,
-                    _displaySettings.ItmDefaultPage,
-                    msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
-                // The stack takes page policy the moment it exists (and re-takes it on
-                // every rebuild, which is also how a base-page change within a live
-                // stack lands): edge-triggered — the driver rests on the stack's base
-                // from its next Update and suppresses the lifecycle's game-start
-                // revert for the stack's whole tenure.
-                _itmDisplay.SetPagePolicy(_displayStack.BaseWirePage);
-                SimHub.Logging.Current.Info(
-                    "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                    "]: Display rules active (" + (config.Itm?.Rules?.Count ?? 0) + " ITM, " +
-                    (config.Legacy?.Rules?.Count ?? 0) + " legacy)");
-            }
-
-            var snapshot = _displayStack.Tick(pluginManager, data);
-            if (snapshot != null)
-                _displayRuleSnapshot = snapshot;
-        }
-
-        /// <summary>
-        /// Publishes a UI-built customization document — the Display tab's ONLY write
-        /// path into the config. The document is run through the settings load path
-        /// (serialize → parse → <see cref="DisplayConfigValidator"/> normalization), so a
-        /// UI-built config obeys exactly the invariants a loaded one does. A null or
-        /// empty document publishes null, preserving the empty-config parity fast path.
-        /// Nothing else is synced here: the frame path notices the reference swap and
-        /// rebuilds the rule stack, and SimHub persists via <see cref="GetSettings"/> on
-        /// its own schedule (the same flow a DisplaySettings change rides today).
+        /// Publishes a UI-built customization document — the Display tab's ONLY write path
+        /// into the config, forwarded to the display runtime (which normalizes through the
+        /// settings load path and publishes; the frame path rebuilds the rule stack, and
+        /// SimHub persists via <see cref="GetSettings"/> on its own schedule). Tests call
+        /// this on the instance and the IDisplayPanelHost member routes here.
         /// </summary>
         internal void ApplyDisplayConfig(DisplayCustomizationConfig config)
-        {
-            var normalized = config == null
-                ? null
-                : DisplayConfigSerializer.Load(DisplayConfigSerializer.Save(config),
-                    msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg));
-            _displayConfig = normalized != null && !normalized.IsEmpty ? normalized : null;
-        }
+            => _displayRuntime.ApplyDisplayConfig(config);
 
         // ── IDisplayPanelHost (the Display tab's typed window into this instance) ──
         // Explicit implementation: nothing here belongs on the class's public surface
@@ -962,12 +662,12 @@ namespace FanaBridge.Adapters
 
         byte IDisplayPanelHost.ItmDeviceId => ResolvedDisplayCaps.ItmDeviceId;
 
-        DisplayCustomizationConfig IDisplayPanelHost.GetDisplayConfig() => _displayConfig;
+        DisplayCustomizationConfig IDisplayPanelHost.GetDisplayConfig() => _displayRuntime.CurrentConfig;
 
         void IDisplayPanelHost.ApplyDisplayConfig(DisplayCustomizationConfig config)
             => ApplyDisplayConfig(config);
 
-        DisplayPanelSnapshot IDisplayPanelHost.Snapshot => _panelSnapshot;
+        DisplayPanelSnapshot IDisplayPanelHost.Snapshot => _displayRuntime.Snapshot;
 
         void IDisplayPanelHost.NotifySettingsChanged()
         {
@@ -1038,14 +738,10 @@ namespace FanaBridge.Adapters
 
             PluginResolver()?.UnregisterDeviceInstance(this);
             _displayManager?.Clear();
-            _itmDisplay?.Stop();
-            // The twin's screen goes with the session: detach it from the shared tap
-            // (identity-guarded) and drop the reference so the republish below composes
-            // a null values part (teardown edge on DisplayPanelSnapshot; DataUpdate won't
-            // run again for this instance).
-            PluginResolver()?.DetachItmObserver(_itmTwin);
-            _itmTwin = null;
-            MaybePublishPanelSnapshot();
+            // The ITM session ends: the runtime stops the driver, detaches + drops the
+            // twin, and republishes so the envelope composes a null values part (DataUpdate
+            // won't run again for this instance).
+            _displayRuntime.OnEnd(PluginResolver());
             _ledModule?.FinalizeModule();
         }
 
