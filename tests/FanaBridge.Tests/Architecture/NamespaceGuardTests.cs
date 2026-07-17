@@ -14,9 +14,13 @@ namespace FanaBridge.Tests.Architecture
     ///      with an explicit shrinking allowlist of known, documented exceptions;
     ///   2. the retired namespace FanaBridge.Customization exists nowhere;
     ///   3. the flat FanaBridge.Adapters namespace is a ratchet — its file set may only
-    ///      shrink; any ADDITION fails and is named.
-    /// Pure source scan, no compiled reflection: it reads the .cs files on disk so it
-    /// stays honest even for types that never load in the net48 test host.
+    ///      shrink; any ADDITION fails and is named;
+    ///   4. every tests/**/*.cs declares FanaBridge.Tests.&lt;path segments&gt;, mirroring
+    ///      the production tree the 0g test-suite move established (own allowlist);
+    ///   5. every src/**/*.xaml x:Class sits in FanaBridge.&lt;folder path&gt; (markup is
+    ///      outside the .cs scan; this keeps moved UserControls/Windows honest).
+    /// Pure source scan, no compiled reflection: it reads the .cs/.xaml files on disk so
+    /// it stays honest even for types that never load in the net48 test host.
     /// </summary>
     public class NamespaceGuardTests
     {
@@ -34,6 +38,21 @@ namespace FanaBridge.Tests.Architecture
             // (mirrors the core seam it forwards) plus a System.Runtime.CompilerServices
             // shim for the net48-missing ModuleInitializerAttribute. Rides the same §6.5 pass.
             "src/FanaBridge/Logging/SimHubLogSink.cs",
+        };
+
+        // Test files whose declared namespace legitimately does NOT match their folder.
+        // Same rules as the src allowlist: may only SHRINK, documented, intentional-only.
+        // TestDoubles/ deliberately mirrors the code under test rather than the folder.
+        private static readonly HashSet<string> TestPathNamespaceAllowlist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            // Control Mapper fakes: declare FanaBridge.Tests.CmFakes plus a shadow of the
+            // real SimHub.Plugins.OutputPlugins.ControlRemapper namespace so the doubles bind
+            // where the production types would. Mirrors the code under test, not the folder.
+            "tests/FanaBridge.Tests/TestDoubles/ControlMapperFakes.cs",
+
+            // Shared fake report stream kept in the root FanaBridge.Tests namespace so every
+            // test folder consumes it without an extra using. Intentional shared-double seam.
+            "tests/FanaBridge.Tests/TestDoubles/FakeReportStream.cs",
         };
 
         // Ratchet baseline pinned post-0c: the files still declaring the flat
@@ -59,6 +78,11 @@ namespace FanaBridge.Tests.Architecture
         private static readonly Regex NamespaceLine =
             new Regex(@"^namespace\s+([A-Za-z_][A-Za-z0-9_.]*)\s*[;{]?\s*$", RegexOptions.Compiled);
 
+        // x:Class attribute in XAML markup, e.g. x:Class="FanaBridge.UI.Display.DisplayTabPanel".
+        // Captures the fully-qualified type; the namespace is everything before the last dot.
+        private static readonly Regex XamlClass =
+            new Regex("x:Class\\s*=\\s*\"([A-Za-z_][A-Za-z0-9_.]*)\"", RegexOptions.Compiled);
+
         [Fact]
         public void EveryFile_DeclaresNamespaceMatchingItsFolder()
         {
@@ -70,7 +94,7 @@ namespace FanaBridge.Tests.Architecture
                 if (PathNamespaceAllowlist.Contains(rel))
                     continue;
 
-                var expected = ExpectedNamespace(rel);
+                var expected = ExpectedNamespace(rel, "FanaBridge");
                 foreach (var declared in DeclaredNamespaces(file))
                 {
                     if (!string.Equals(declared, expected, StringComparison.Ordinal))
@@ -125,6 +149,60 @@ namespace FanaBridge.Tests.Architecture
                     + string.Join("\n", additions));
         }
 
+        [Fact]
+        public void EveryTestFile_DeclaresNamespaceMatchingItsFolder()
+        {
+            var violations = new List<string>();
+
+            foreach (var file in EnumerateTestFiles())
+            {
+                var rel = RepoRelative(file);
+                if (TestPathNamespaceAllowlist.Contains(rel))
+                    continue;
+
+                var expected = ExpectedNamespace(rel, "FanaBridge.Tests");
+                foreach (var declared in DeclaredNamespaces(file))
+                {
+                    if (!string.Equals(declared, expected, StringComparison.Ordinal))
+                        violations.Add($"{rel}: declares '{declared}', expected '{expected}'");
+                }
+            }
+
+            Assert.True(
+                violations.Count == 0,
+                "Test namespace must equal FanaBridge.Tests.<folder path> (mirrors the "
+                    + "production tree — 0g). Offenders (fix the namespace, move the file, or "
+                    + "— only if truly intentional — add to the test allowlist with a comment):\n"
+                    + string.Join("\n", violations));
+        }
+
+        [Fact]
+        public void EveryXamlClass_SitsInNamespaceMatchingItsFolder()
+        {
+            var violations = new List<string>();
+
+            foreach (var file in EnumerateXamlFiles())
+            {
+                var rel = RepoRelative(file);
+                var m = XamlClass.Match(File.ReadAllText(file));
+                if (!m.Success)
+                    continue; // resource dictionaries etc. carry no x:Class
+
+                var fqn = m.Groups[1].Value;
+                var lastDot = fqn.LastIndexOf('.');
+                var declaredNs = lastDot > 0 ? fqn.Substring(0, lastDot) : string.Empty;
+
+                var expected = ExpectedNamespace(rel, "FanaBridge");
+                if (!string.Equals(declaredNs, expected, StringComparison.Ordinal))
+                    violations.Add($"{rel}: x:Class '{fqn}' sits in '{declaredNs}', expected '{expected}'");
+            }
+
+            Assert.True(
+                violations.Count == 0,
+                "XAML x:Class namespace must equal FanaBridge.<folder path> (path==namespace "
+                    + "for markup too). Offenders:\n" + string.Join("\n", violations));
+        }
+
         // --- helpers ---------------------------------------------------------
 
         private static IEnumerable<string> EnumerateSourceFiles()
@@ -132,6 +210,22 @@ namespace FanaBridge.Tests.Architecture
             var srcRoot = Path.Combine(RepoRoot(), "src");
             return Directory
                 .EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
+                .Where(p => !IsGenerated(p));
+        }
+
+        private static IEnumerable<string> EnumerateTestFiles()
+        {
+            var testsRoot = Path.Combine(RepoRoot(), "tests");
+            return Directory
+                .EnumerateFiles(testsRoot, "*.cs", SearchOption.AllDirectories)
+                .Where(p => !IsGenerated(p));
+        }
+
+        private static IEnumerable<string> EnumerateXamlFiles()
+        {
+            var srcRoot = Path.Combine(RepoRoot(), "src");
+            return Directory
+                .EnumerateFiles(srcRoot, "*.xaml", SearchOption.AllDirectories)
                 .Where(p => !IsGenerated(p));
         }
 
@@ -161,15 +255,16 @@ namespace FanaBridge.Tests.Architecture
                 : norm;
         }
 
-        // Expected namespace: "FanaBridge" + the directory segments below the project
-        // folder. Both projects (FanaBridge.Core and FanaBridge) map to the FanaBridge
-        // root, so src/<project>/A/B/File.cs => FanaBridge.A.B.
-        private static string ExpectedNamespace(string repoRelative)
+        // Expected namespace: rootNamespace + the directory segments below the project
+        // folder. Both source projects (FanaBridge.Core and FanaBridge) map to the
+        // FanaBridge root, so src/<project>/A/B/File.cs => FanaBridge.A.B; the single test
+        // project maps to FanaBridge.Tests, so tests/<project>/A/B/File.cs => FanaBridge.Tests.A.B.
+        private static string ExpectedNamespace(string repoRelative, string rootNamespace)
         {
             var segments = repoRelative.Split('/');
-            // segments: [ "src", "<project>", dir..., "File.cs" ]
-            var dirs = segments.Skip(2).Take(segments.Length - 3); // drop src, project, filename
-            return string.Join(".", new[] { "FanaBridge" }.Concat(dirs));
+            // segments: [ "<top>", "<project>", dir..., "File.ext" ]
+            var dirs = segments.Skip(2).Take(segments.Length - 3); // drop top, project, filename
+            return string.Join(".", new[] { rootNamespace }.Concat(dirs));
         }
 
         private static string RepoRoot()
