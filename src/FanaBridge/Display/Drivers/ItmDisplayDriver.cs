@@ -153,6 +153,9 @@ namespace FanaBridge.Display.Drivers
         private readonly List<ItmValue> _valueBuf = new List<ItmValue>();
         // Subscribed paramIds we've already warned have no encoder — log each once.
         private readonly HashSet<ushort> _unencodableWarned = new HashSet<ushort>();
+        // Per-device mapper (built-in default encoder registry). Shared helpers that do not
+        // need instance state (e.g. NearestGap) stay static on the mapper type.
+        private readonly ItmTelemetryMapper _mapper;
 
         public ItmDisplayDriver(ItmEncoder encoder, Func<long> nowMs = null, Action<string> log = null,
             byte deviceId = ItmEncoder.DefaultDeviceId)
@@ -162,6 +165,7 @@ namespace FanaBridge.Display.Drivers
             _log = log ?? (_ => { });
             _deviceId = deviceId;
             _lifecycle = new ItmLifecycleController(encoder, deviceId, _now, _log);
+            _mapper = new ItmTelemetryMapper();
         }
 
         private static Func<long> DefaultClock()
@@ -359,11 +363,11 @@ namespace FanaBridge.Display.Drivers
                 var kv = subs[i];
                 ushort paramId = kv.Value.ParamId;
                 string suffix;
-                if (ItmTelemetryMapper.TryGetUnitSuffix(paramId, data, out suffix))
+                if (_mapper.TryGetUnitSuffix(paramId, data, out suffix))
                 {
                     // Static unit label (e.g. "C").
                 }
-                else if (ItmTelemetryMapper.IsTotalParam(paramId))
+                else if (_mapper.IsTotalParam(paramId))
                 {
                     // Lap/position/fuel: always emit an entry so a total that disappears is
                     // actively cleared — a zero-length suffix does NOT overwrite the firmware's
@@ -371,9 +375,9 @@ namespace FanaBridge.Display.Drivers
                     // tank capacity it falls back to the unit label ("L"/"G") rather than a blank,
                     // so a bare fuel value still reads as fuel.
                     suffix = ShowTotalFor(paramId)
-                          && ItmTelemetryMapper.TryGetTotalSuffix(paramId, data, out var total)
+                          && _mapper.TryGetTotalSuffix(paramId, data, out var total)
                         ? total
-                        : (paramId == ItmParam.Fuel ? ItmTelemetryMapper.FuelUnitLabel(data) : " ");
+                        : (paramId == ItmParam.Fuel ? _mapper.FuelUnitLabel(data) : " ");
                 }
                 else
                 {
@@ -425,7 +429,7 @@ namespace FanaBridge.Display.Drivers
             for (int i = 0; i < subs.Count; i++)
             {
                 var kv = subs[i];
-                if (ItmTelemetryMapper.TryEncodeParam(kv.Value.ParamId, kv.Key, data, kv.Value.DataType, out var v))
+                if (_mapper.TryEncodeParam(kv.Value.ParamId, kv.Key, data, kv.Value.DataType, out var v))
                 {
                     _valueBuf.Add(v);
                 }

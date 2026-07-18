@@ -51,11 +51,12 @@ namespace FanaBridge.Tests.Protocol
         {
             // Every param any device can show must be encodable (generalizes the Phase-1 guard
             // across all device page sets). All device sets are subsets of BME's, so this holds.
+            var mapper = new ItmTelemetryMapper();
             byte[] devices = { (byte)1, (byte)3, (byte)4 };
             foreach (var dev in devices)
                 foreach (var page in ItmDeviceCatalog.PagesFor(dev))
                     foreach (var id in page.Params)
-                        Assert.True(ItmTelemetryMapper.HasEncoder(id),
+                        Assert.True(mapper.HasEncoder(id),
                             $"paramId {id} on device {dev} page {page.Number} ({page.Page}) has no mapper encoder");
         }
     }

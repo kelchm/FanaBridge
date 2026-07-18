@@ -11,13 +11,15 @@ namespace FanaBridge.Display.Drivers
     /// a parameter encodes from the telemetry frame the same way regardless of which display
     /// shows it, so a single flat <c>paramId → encoder</c> registry serves every device.
     ///
-    /// The wire-side vocabulary — the page catalog (which params a page carries) and
-    /// subscription-report parsing — lives in <see cref="ItmTelemetry"/> (Protocol, no SimHub).
-    /// This class knows both sides (wire <c>paramId</c> + SimHub <c>GameData</c>), which is why
-    /// it belongs in Adapters, not Protocol. It holds no wire framing and no state — the pure,
-    /// per-frame translation step, the ITM analogue of <c>LegacyDisplayDriver</c>'s reads.
+    /// Constructed once per display device by <see cref="ItmDisplayDriver"/>; the built-in
+    /// encoder registry is the instance's default layer. The wire-side vocabulary — the page
+    /// catalog (which params a page carries) and subscription-report parsing — lives in
+    /// <see cref="ItmTelemetry"/> (Protocol, no SimHub). This class knows both sides (wire
+    /// <c>paramId</c> + SimHub <c>GameData</c>), which is why it belongs in Adapters, not
+    /// Protocol. It holds no wire framing — the pure, per-frame translation step, the ITM
+    /// analogue of <c>LegacyDisplayDriver</c>'s reads.
     /// </summary>
-    public static class ItmTelemetryMapper
+    public class ItmTelemetryMapper
     {
         // ── Typed encoder builders ───────────────────────────────────────
         // Each returns an encoder: read + encode one parameter from a frame at a handle.
@@ -36,11 +38,18 @@ namespace FanaBridge.Display.Drivers
         private static Func<StatusDataBase, byte, ItmValue> Str(ushort id, Func<StatusDataBase, string> sel)
             => (d, h) => ItmValue.Ascii(h, id, sel(d));
 
-        // Flat paramId -> encoder registry. Device-agnostic: any subscribed parameter, on any
-        // display, encodes from the same frame the same way. The Protocol page catalog
-        // (ItmTelemetry.ParamsFor) says which params a page carries; this says how to encode one.
-        // A guard test asserts every catalog param has an entry here (see HasEncoder).
-        private static readonly Dictionary<ushort, Func<StatusDataBase, byte, ItmValue>> Registry = BuildRegistry();
+        // Flat paramId -> encoder registry (default layer). Device-agnostic: any subscribed
+        // parameter, on any display, encodes from the same frame the same way. The Protocol
+        // page catalog (ItmTelemetry.ParamsFor) says which params a page carries; this says
+        // how to encode one. Built once per instance. A guard test asserts every catalog
+        // param has an entry here (see HasEncoder).
+        private readonly Dictionary<ushort, Func<StatusDataBase, byte, ItmValue>> _registry;
+
+        /// <summary>Builds a mapper with the built-in default encoder registry.</summary>
+        public ItmTelemetryMapper()
+        {
+            _registry = BuildRegistry();
+        }
 
         private static Dictionary<ushort, Func<StatusDataBase, byte, ItmValue>> BuildRegistry()
             => new Dictionary<ushort, Func<StatusDataBase, byte, ItmValue>>
@@ -95,7 +104,7 @@ namespace FanaBridge.Display.Drivers
         /// Whether this parameter has a value encoder. Used by the catalog guard test to prove
         /// every param a page can carry (<see cref="ItmTelemetry.ParamsFor"/>) is encodable.
         /// </summary>
-        public static bool HasEncoder(ushort paramId) => Registry.ContainsKey(paramId);
+        public bool HasEncoder(ushort paramId) => _registry.ContainsKey(paramId);
 
         // ── Suffixes ─────────────────────────────────────────────────────
 
@@ -115,7 +124,7 @@ namespace FanaBridge.Display.Drivers
         /// or false if the parameter isn't a temperature. Read from the frame's
         /// <c>TemperatureUnit</c> so it stays consistent with the already-converted value.
         /// </summary>
-        public static bool TryGetUnitSuffix(ushort paramId, GameData data, out string suffix)
+        public bool TryGetUnitSuffix(ushort paramId, GameData data, out string suffix)
         {
             if (TempParams.Contains(paramId)) { suffix = UnitLabel(data?.NewData?.TemperatureUnit, "C"); return true; }
             suffix = null;
@@ -124,7 +133,7 @@ namespace FanaBridge.Display.Drivers
 
         /// <summary>The fuel unit as a single-char label (e.g. "L"/"G"), from the frame's
         /// <c>FuelUnit</c>. Used only as a fallback when no tank capacity is available.</summary>
-        public static string FuelUnitLabel(GameData data) => UnitLabel(data?.NewData?.FuelUnit, "L");
+        public string FuelUnitLabel(GameData data) => UnitLabel(data?.NewData?.FuelUnit, "L");
 
         // A unit string's first letter, uppercased — a single char for the display's tight space,
         // robust to formats like "C" / "°C" / "Celsius" / "gal". Falls back when empty.
@@ -137,7 +146,7 @@ namespace FanaBridge.Display.Drivers
         }
 
         /// <summary>Whether a parameter carries a "/total" suffix (lap, position, or fuel/capacity).</summary>
-        public static bool IsTotalParam(ushort paramId)
+        public bool IsTotalParam(ushort paramId)
             => paramId == ItmParam.Lap || paramId == ItmParam.Position || paramId == ItmParam.Fuel;
 
         /// <summary>
@@ -151,7 +160,7 @@ namespace FanaBridge.Display.Drivers
         /// (e.g. Forza Horizon) that don't expose a race structure, while real races still show
         /// the total.
         /// </summary>
-        public static bool TryGetTotalSuffix(ushort paramId, GameData data, out string suffix)
+        public bool TryGetTotalSuffix(ushort paramId, GameData data, out string suffix)
         {
             suffix = null;
             var s = data?.NewData;
@@ -186,7 +195,7 @@ namespace FanaBridge.Display.Drivers
         /// for the firmware-driven path. Returns false when there is no telemetry frame or the
         /// parameter has no known encoder.
         /// </summary>
-        public static bool TryEncodeParam(ushort paramId, byte handle, GameData data, out ItmValue value)
+        public bool TryEncodeParam(ushort paramId, byte handle, GameData data, out ItmValue value)
             => TryEncodeParam(paramId, handle, data, 0, out value);
 
         /// <summary>
@@ -197,7 +206,7 @@ namespace FanaBridge.Display.Drivers
         /// hardware/capture-verified against the official software. Other parameters encode
         /// the same regardless.
         /// </summary>
-        public static bool TryEncodeParam(ushort paramId, byte handle, GameData data, byte dataType, out ItmValue value)
+        public bool TryEncodeParam(ushort paramId, byte handle, GameData data, byte dataType, out ItmValue value)
         {
             value = default;
             var status = data?.NewData;
@@ -210,7 +219,7 @@ namespace FanaBridge.Display.Drivers
                 return true;
             }
 
-            if (!Registry.TryGetValue(paramId, out var encode))
+            if (!_registry.TryGetValue(paramId, out var encode))
                 return false;
             value = encode(status, handle);
             return true;
@@ -222,7 +231,7 @@ namespace FanaBridge.Display.Drivers
         /// (<see cref="ItmTelemetry.ParamsFor"/>). Returns an empty list when there is no
         /// telemetry frame or the page carries no parameters.
         /// </summary>
-        public static IReadOnlyList<ItmValue> BuildValues(ItmPage page, GameData data, byte handleBase = 0)
+        public IReadOnlyList<ItmValue> BuildValues(ItmPage page, GameData data, byte handleBase = 0)
         {
             var status = data?.NewData;
             var ids = ItmTelemetry.ParamsFor(page);
@@ -231,7 +240,7 @@ namespace FanaBridge.Display.Drivers
 
             var values = new ItmValue[ids.Count];
             for (int i = 0; i < ids.Count; i++)
-                values[i] = Registry[ids[i]](status, (byte)(handleBase + i));
+                values[i] = _registry[ids[i]](status, (byte)(handleBase + i));
             return values;
         }
 
@@ -244,6 +253,7 @@ namespace FanaBridge.Display.Drivers
         // |RelativeGapToPlayer| from the ahead/behind list (robust to list ordering).
         // Internal: SimHubPropertySource reads the same value for the rule engine's
         // GapAhead/GapBehind built-ins, so both surfaces agree on what "the gap" is.
+        // Static: pure helper, shared by the built-in registry and SimHubPropertySource.
         internal static float NearestGap(IEnumerable<Opponent> opponents)
         {
             if (opponents == null) return 0f;
