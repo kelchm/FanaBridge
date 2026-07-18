@@ -199,6 +199,85 @@
                         </StackPanel>
                     </styles:SHSubSection>
 
+                    <!-- Basic-wheel Overview: LIVE 3-char mirror + priority list + links
+                         into Virtual pages / Triggers (legacy mode). Hidden on ITM wheels. -->
+                    <StackPanel x:Name="panelLegacyLive" Visibility="Collapsed">
+                        <Grid Margin="0,0,0,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="5*" />
+                                <ColumnDefinition Width="14" />
+                                <ColumnDefinition Width="4*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <Grid>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="LIVE MIRROR" Style="{StaticResource KLabel}" />
+                                            <TextBlock Text="legacy · 3-char" FontSize="10.5"
+                                                       Foreground="#8F8F8F" Margin="8,0,0,0"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <TextBlock FontSize="11.5" HorizontalAlignment="Right"
+                                                   VerticalAlignment="Center">
+                                            <Hyperlink x:Name="btnEditVirtualPages" Style="{StaticResource Link}"
+                                                       Click="EditLegacy_Click">Edit virtual pages →</Hyperlink>
+                                        </TextBlock>
+                                    </Grid>
+                                    <Border Background="#0B0D0F" BorderBrush="#262C31" BorderThickness="1"
+                                            CornerRadius="6" Padding="9" Margin="0,9,0,8"
+                                            HorizontalAlignment="Center">
+                                        <ContentControl x:Name="hostLegacyFace" HorizontalAlignment="Center" />
+                                    </Border>
+                                    <TextBlock x:Name="txtLegacyCaption" FontSize="12.5"
+                                               Foreground="#B0B0B0" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Column="2" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="RECENT ACTIVITY" Style="{StaticResource KLabel}"
+                                               Margin="0,0,0,9" />
+                                    <StackPanel x:Name="panelLegacyActivity" />
+                                    <TextBlock x:Name="txtLegacyNoActivity" Text="No activity yet."
+                                               FontSize="12" Foreground="#7A7A7A" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <Grid>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="Display priority" FontSize="13.5"
+                                           FontWeight="SemiBold" />
+                                <TextBlock Text="— top eligible trigger wins" FontSize="12"
+                                           Foreground="#8F8F8F" Margin="8,0,0,0"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                            <TextBlock FontSize="11.5" HorizontalAlignment="Right"
+                                       VerticalAlignment="Center">
+                                <Hyperlink x:Name="btnLegacyManageTriggers" Style="{StaticResource Link}"
+                                           Click="ManageTriggers_Click">Edit triggers →</Hyperlink>
+                            </TextBlock>
+                        </Grid>
+                        <Rectangle Height="1" Fill="#3D3D3F" Margin="0,7,0,10" />
+                        <shared:TriggerTableControl x:Name="legacyMonitorTable" />
+                        <StackPanel x:Name="panelLegacyNoTriggers" Visibility="Collapsed" Margin="0,2,0,4">
+                            <TextBlock Text="No triggers configured yet." FontSize="12"
+                                       Foreground="#8F8F8F" Margin="0,0,0,8" />
+                            <Button Content="＋ Add trigger" Click="OverviewAddTrigger_Click"
+                                    Padding="12,4" HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <Rectangle Height="1" Fill="#333333" Margin="0,10,0,0" />
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,12">
+                            <TextBlock Text="Also edit:" FontSize="12" Foreground="#8F8F8F" />
+                            <TextBlock FontSize="12" Margin="14,0,0,0">
+                                <Hyperlink Style="{StaticResource Link}" Click="ManageTriggers_Click">All triggers</Hyperlink>
+                            </TextBlock>
+                            <TextBlock Text="·" FontSize="12" Foreground="#8F8F8F" Margin="10,0" />
+                            <TextBlock FontSize="12">
+                                <Hyperlink Style="{StaticResource Link}" Click="EditLegacy_Click">Virtual pages</Hyperlink>
+                            </TextBlock>
+                        </StackPanel>
+                    </StackPanel>
+
                     <!-- 7-segment display mode. Titled "Legacy Display Mode" (with a "None"
                          option) on ITM wheels; plain "Display Mode" on basic wheels. -->
                     <styles:SHSubSection x:Name="sectionDisplayMode" Title="Display Mode">
@@ -222,18 +301,8 @@
                      Triggers). EditPages and EditUnits both land here. -->
                 <ui:DisplayPagesView x:Name="viewPages" Visibility="Collapsed" />
 
-                <!-- Placeholder editor views: honest navigation, no fake UI. Each keeps
-                     the design's editor header — ‹ ghost back button + title. -->
-                <StackPanel x:Name="viewLegacy" Visibility="Collapsed">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                        <Button Style="{StaticResource GhostBack}" Click="Back_Click">
-                            <TextBlock Style="{StaticResource GhostBackGlyph}" />
-                        </Button>
-                        <TextBlock Text="Legacy screens (Page 6)" Style="{StaticResource EditorTitle}" />
-                    </StackPanel>
-                    <TextBlock Text="The Legacy screens editor is coming in a later update."
-                               FontSize="12" Foreground="#8F8F8F" Margin="0,4,0,0" />
-                </StackPanel>
+                <!-- Virtual pages editor (legacy 3-char screen library). -->
+                <ui:DisplayVirtualPagesView x:Name="viewLegacy" Visibility="Collapsed" />
             </Grid>
 
         </StackPanel>

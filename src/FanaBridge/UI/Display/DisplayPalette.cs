@@ -97,8 +97,12 @@ namespace FanaBridge.UI.Display
         internal static readonly SolidColorBrush PagePillIdleBg = Frozen("#2A2A2B");
         /// <summary>Page pill idle border.</summary>
         internal static readonly SolidColorBrush PagePillIdleBorder = Frozen("#3D3D3F");
-        /// <summary>Dark face placeholder for the Page-6 mini 3-char surface (Phase 7).</summary>
+        /// <summary>Dark face chrome around the 3-char surface (mock #0B0D0F).</summary>
         internal static readonly SolidColorBrush LegacyFacePlaceholder = Frozen("#0B0D0F");
+        /// <summary>Seven-segment face background (hardware black).</summary>
+        internal static readonly SolidColorBrush LegacyFaceBg = Frozen("#000000");
+        /// <summary>Seven-segment face lit segments (mock green #35E06A).</summary>
+        internal static readonly SolidColorBrush LegacyFaceGreen = Frozen("#35E06A");
 
         internal static readonly FontFamily Mono = new FontFamily("Consolas");
 

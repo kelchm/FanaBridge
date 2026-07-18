@@ -241,67 +241,13 @@ namespace FanaBridge.UI.Display
                     continue;
                 var polygon = new Polygon
                 {
-                    Points = SegmentPoints(segment, x0, y0,
+                    Points = SevenSegmentFace.SegmentPoints(segment, x0, y0,
                         GearGlyphWidth, GearGlyphHeight, GearSegmentThickness),
                     Fill = Brushes.White,
                 };
                 canvas.Children.Add(polygon);
                 _dynamic.Add(polygon);
             }
-        }
-
-        private static PointCollection SegmentPoints(int segment, double x0, double y0,
-            double w, double h, double t)
-        {
-            double half = t / 2;
-            const double gap = 3;   // small notch between segments, like the hardware
-            double yTop = y0 + half, yMid = y0 + h / 2, yBottom = y0 + h - half;
-            double xLeft = x0 + half, xRight = x0 + w - half;
-            switch (segment)
-            {
-                case 0: return Horizontal(yTop, xLeft, xRight, half, gap);
-                case 1: return Vertical(xRight, yTop, yMid, half, gap);
-                case 2: return Vertical(xRight, yMid, yBottom, half, gap);
-                case 3: return Horizontal(yBottom, xLeft, xRight, half, gap);
-                case 4: return Vertical(xLeft, yMid, yBottom, half, gap);
-                case 5: return Vertical(xLeft, yTop, yMid, half, gap);
-                default: return Horizontal(yMid, xLeft, xRight, half, gap);
-            }
-        }
-
-        // A horizontal segment: a hexagon with mitred (pointed) ends, centered on cy,
-        // spanning between the vertical segments' center lines minus the notch gap.
-        private static PointCollection Horizontal(double cy, double x1, double x2,
-            double half, double gap)
-        {
-            x1 += gap;
-            x2 -= gap;
-            return new PointCollection
-            {
-                new Point(x1, cy),
-                new Point(x1 + half, cy - half),
-                new Point(x2 - half, cy - half),
-                new Point(x2, cy),
-                new Point(x2 - half, cy + half),
-                new Point(x1 + half, cy + half),
-            };
-        }
-
-        // A vertical segment between two row center lines, mitred the same way.
-        private static PointCollection Vertical(double cx, double y1, double y2,
-            double half, double gap)
-        {
-            y1 += gap;
-            y2 -= gap;
-            return new PointCollection
-            {
-                new Point(cx, y1),
-                new Point(cx + half, y1 + half),
-                new Point(cx + half, y2 - half),
-                new Point(cx, y2),
-                new Point(cx - half, y2 - half),
-                new Point(cx - half, y1 + half),
-            };
         }
 
         // ── Element helpers ──────────────────────────────────────────────

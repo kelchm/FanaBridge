@@ -74,10 +74,16 @@ namespace FanaBridge.UI.Display
                 .ResolveBase(configuredBase, defaultWirePage).Name;
         }
 
-        /// <summary>True when the config has ITM trigger rules — gates the priority list's
-        /// "No triggers configured yet." empty state.</summary>
-        public static bool HasConfiguredTriggers(DisplayCustomizationConfig config)
-            => config?.Itm?.Rules != null && config.Itm.Rules.Count > 0;
+        /// <summary>True when the config has rules on the surface the Overview is showing —
+        /// ITM by default, legacy when <paramref name="legacyMode"/> is set. Gates the
+        /// priority list's "No triggers configured yet." empty state.</summary>
+        public static bool HasConfiguredTriggers(DisplayCustomizationConfig config,
+            bool legacyMode = false)
+        {
+            if (legacyMode)
+                return config?.Legacy?.Rules != null && config.Legacy.Rules.Count > 0;
+            return config?.Itm?.Rules != null && config.Itm.Rules.Count > 0;
+        }
 
         /// <summary>
         /// The Overview's Monitor rows (the v9 converged "what's in play" list) for the shared
@@ -87,10 +93,14 @@ namespace FanaBridge.UI.Display
         /// single-sourced with the Triggers editor. Disabled/degraded and session-ineligible
         /// rules drop, the survivors renumber 1..n, and the base row is pinned last — the same
         /// filter the mock applies. A null config yields just the base row.
+        /// <paramref name="legacyMode"/> switches the model onto <c>config.Legacy.Rules</c>
+        /// (basic-wheel Overview / virtual-page priority list).
         /// </summary>
         public static IReadOnlyList<Shared.TriggerTableRow> MonitorRows(DisplayRuleSnapshot snapshot,
-            DisplayCustomizationConfig config, byte itmDeviceId, byte defaultWirePage)
-            => new DisplayTriggersEditModel(config, itmDeviceId, defaultWirePage)
+            DisplayCustomizationConfig config, byte itmDeviceId, byte defaultWirePage,
+            bool legacyMode = false)
+            => new DisplayTriggersEditModel(config, itmDeviceId, defaultWirePage,
+                    legacyMode ? TriggerRuleSet.Legacy : TriggerRuleSet.Itm)
                 .Rows(snapshot, defaultWirePage, TriggerTableMode.Monitor);
 
         /// <summary>The live-state chip for one rule, shared by the Overview priority list

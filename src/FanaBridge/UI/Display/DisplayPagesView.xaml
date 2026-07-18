@@ -46,8 +46,7 @@
             </Border>
         </Grid>
 
-        <!-- Page 6 / Legacy delegation: explanatory copy + Open Virtual pages.
-             Mini 3-char face is Phase 7 — plain dark panel placeholder (deliberate). -->
+        <!-- Page 6 / Legacy delegation: mini 3-char face + Open Virtual pages. -->
         <Grid x:Name="panelLegacy" Visibility="Collapsed">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
@@ -58,11 +57,10 @@
             <StackPanel Grid.Column="0">
                 <Border Background="#0B0D0F" BorderBrush="#262C31" BorderThickness="1"
                         CornerRadius="8" Padding="11">
-                    <!-- Placeholder where the mini 3-char face will go (Phase 7). -->
                     <Border Background="#000000" CornerRadius="5" MinHeight="90"
                             HorizontalAlignment="Stretch">
-                        <TextBlock Text="3-char face" FontSize="13" Foreground="#4A4A4A"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <ContentControl x:Name="hostPage6Face" HorizontalAlignment="Center"
+                                        VerticalAlignment="Center" />
                     </Border>
                 </Border>
                 <TextBlock FontSize="11.5" Foreground="#7C7C7C" Margin="0,9,0,0"

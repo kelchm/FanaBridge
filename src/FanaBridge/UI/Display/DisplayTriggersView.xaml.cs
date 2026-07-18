@@ -55,6 +55,7 @@ namespace FanaBridge.UI.Display
         // ── Editor state ──────────────────────────────────────────────────
         private DisplayTriggersEditModel _editModel;
         private DisplayCustomizationConfig _editModelSource;   // the config the model was built from
+        private TriggerRuleSet _ruleSet = TriggerRuleSet.Itm;  // which list Enter builds for
         private string _expandedRuleId;                        // the one open drawer's rule, or null
         private RuleEdit _expandedDraft;                       // the open row's working draft (survives re-renders)
         private bool _addOpen;                                 // the draft-at-top add flow is active
@@ -98,19 +99,23 @@ namespace FanaBridge.UI.Display
 
         // Called when the Triggers view becomes active: cache the current snapshot, build a
         // fresh edit model from the host's current config, and render. Resets any prior
-        // editing state (a re-entry is a clean slate).
-        internal void Enter(DisplayRuleSnapshot snapshot)
+        // editing state (a re-entry is a clean slate). <paramref name="ruleSet"/> selects
+        // ITM pages vs legacy virtual pages (basic wheels always open Legacy).
+        internal void Enter(DisplayRuleSnapshot snapshot, TriggerRuleSet ruleSet = TriggerRuleSet.Itm)
         {
             _lastSnapshot = snapshot;
+            _ruleSet = ruleSet;
             EnterTriggersEditor();
         }
 
         // The Overview Monitor row-click path: enter the editor (a clean slate, as
         // <see cref="Enter"/> does) and immediately expand the clicked rule so the drawer is
         // open on arrival. An unknown or degraded id simply enters with nothing expanded.
-        internal void EnterAndSelect(DisplayRuleSnapshot snapshot, string ruleId)
+        internal void EnterAndSelect(DisplayRuleSnapshot snapshot, string ruleId,
+            TriggerRuleSet ruleSet = TriggerRuleSet.Itm)
         {
             _lastSnapshot = snapshot;
+            _ruleSet = ruleSet;
             EnterTriggersEditor();
             var rule = FindRule(ruleId);
             if (rule != null && !rule.DegradedAtLoad)
@@ -141,7 +146,7 @@ namespace FanaBridge.UI.Display
             _baseFooterSelected = null;   // force a footer rebuild for the (possibly new) device
             _editModelSource = _host?.GetDisplayConfig();
             _editModel = new DisplayTriggersEditModel(_editModelSource, _host?.ItmDeviceId ?? 0,
-                _settings?.ItmDefaultPage ?? (byte)1);
+                _settings?.ItmDefaultPage ?? (byte)1, _ruleSet);
             RenderTriggerRows(_lastSnapshot);
         }
 
@@ -293,7 +298,9 @@ namespace FanaBridge.UI.Display
             // Rebuild only when the resting base actually changes (a config edit / device
             // switch) — never on a plain live poll tick, so an open base-page dropdown the
             // user is interacting with is not yanked out from under them mid-selection.
-            string selected = _editModel.EffectiveBasePage(wire).ToString();
+            string selected = _editModel.IsLegacyMode
+                ? ("L:" + (_editModel.EffectiveBaseScreenId ?? DisplayVirtualPagesEditModel.BaseBlankId))
+                : _editModel.EffectiveBasePage(wire).ToString();
             if (panelBaseFooter.Children.Count > 0
                 && string.Equals(selected, _baseFooterSelected, StringComparison.Ordinal))
                 return;
@@ -301,9 +308,10 @@ namespace FanaBridge.UI.Display
 
             panelBaseFooter.Children.Clear();
 
+            bool legacy = _editModel.IsLegacyMode;
             panelBaseFooter.Children.Add(new TextBlock
             {
-                Text = "BASE PAGE",
+                Text = legacy ? "BASE SCREEN" : "BASE PAGE",
                 FontSize = 11,
                 FontWeight = FontWeights.Bold,
                 Foreground = DisplayPalette.ThLabel,
@@ -331,15 +339,25 @@ namespace FanaBridge.UI.Display
                 VerticalAlignment = VerticalAlignment.Center,
             });
             var pageCell = new DropDownCell { Width = 210, VerticalAlignment = VerticalAlignment.Center };
-            pageCell.SetChoices(BasePageChoices(wire));
-            pageCell.SelectionCommitted += (s, id) => OnBasePageChosen(id);
+            if (legacy)
+            {
+                pageCell.SetChoices(_editModel.BaseScreenChoices());
+                pageCell.SelectionCommitted += (s, id) => OnBaseScreenChosen(id);
+            }
+            else
+            {
+                pageCell.SetChoices(BasePageChoices(wire));
+                pageCell.SelectionCommitted += (s, id) => OnBasePageChosen(id);
+            }
             line.Children.Add(pageCell);
             panelBaseFooter.Children.Add(line);
 
             panelBaseFooter.Children.Add(new TextBlock
             {
-                Text = "Where the display rests between triggers. Idle behavior is just a "
-                    + "trigger with Run = ☾ Idle.",
+                Text = legacy
+                    ? "What the 3-character display rests on between triggers. Blank clears the face."
+                    : "Where the display rests between triggers. Idle behavior is just a "
+                        + "trigger with Run = ☾ Idle.",
                 FontSize = 11,
                 Foreground = DisplayPalette.KLabelBrush,
                 TextWrapping = TextWrapping.Wrap,
@@ -365,6 +383,15 @@ namespace FanaBridge.UI.Display
             if (ReconcileIfExternallyChanged())
                 return;
             var cfg = _editModel.SetBasePage(page);
+            ApplyAndReload(cfg);
+            RenderTriggerRows(_lastSnapshot);
+        }
+
+        private void OnBaseScreenChosen(string id)
+        {
+            if (ReconcileIfExternallyChanged())
+                return;
+            var cfg = _editModel.SetBaseScreenId(id);
             ApplyAndReload(cfg);
             RenderTriggerRows(_lastSnapshot);
         }
@@ -509,7 +536,14 @@ namespace FanaBridge.UI.Display
             inner.Children.Add(FieldLabel("Action"));
             inner.Children.Add(BuildActionCell(draft, commit));
 
-            if (draft.TargetKind == TargetKind.Cycle)
+            if (_editModel.IsLegacyMode || draft.TargetKind == TargetKind.LegacyScreen)
+            {
+                // Legacy vocabulary: only "Show a virtual page" + screen DropDownCell.
+                var screen = BuildScreenCell(draft, commit);
+                screen.Margin = new Thickness(0, 7, 0, 0);
+                inner.Children.Add(screen);
+            }
+            else if (draft.TargetKind == TargetKind.Cycle)
             {
                 // Chips row (⠿ · mono page · ✕) + "＋ Add ITM page" + period seconds field.
                 inner.Children.Add(BuildCyclePagesPanel(draft, commit));
@@ -666,11 +700,31 @@ namespace FanaBridge.UI.Display
                 RuleEligibility.InGame;
         }
 
-        // The Action dropdown: "Show an ITM page" / "Cycle ITM pages" (mock vocabulary).
-        // Special command is deferred past this phase.
+        // The Action dropdown: ITM vocabulary is "Show an ITM page" / "Cycle ITM pages";
+        // legacy vocabulary is "Show a virtual page" only (special commands deferred).
         private DropDownCell BuildActionCell(RuleEdit draft, Action commit)
         {
             var cell = new DropDownCell { Width = 200, HorizontalAlignment = HorizontalAlignment.Left };
+            if (_editModel.IsLegacyMode)
+            {
+                cell.SetChoices(ChoiceList.Build()
+                    .Add("legacy", "Show a virtual page")
+                    .Selected("legacy"));
+                // Single choice — SelectionCommitted is a no-op but keeps the cell honest.
+                cell.SelectionCommitted += (s, id) =>
+                {
+                    if (draft.TargetKind != TargetKind.LegacyScreen)
+                    {
+                        draft.TargetKind = TargetKind.LegacyScreen;
+                        if (string.IsNullOrEmpty(draft.ScreenId)
+                            && _editModel.ScreenOptions().Count > 0)
+                            draft.ScreenId = _editModel.ScreenOptions()[0].Id;
+                        commit();
+                    }
+                };
+                return cell;
+            }
+
             var choices = ChoiceList.Build()
                 .Add("page", "Show an ITM page")
                 .Add("cycle", "Cycle ITM pages")
@@ -703,6 +757,21 @@ namespace FanaBridge.UI.Display
                         ? draft.CyclePages[0]
                         : DefaultPage();
                 }
+                commit();
+            };
+            return cell;
+        }
+
+        private DropDownCell BuildScreenCell(RuleEdit draft, Action commit)
+        {
+            var cell = new DropDownCell { Width = 220, HorizontalAlignment = HorizontalAlignment.Left };
+            cell.SetChoices(_editModel.ScreenChoices(draft.ScreenId));
+            cell.SelectionCommitted += (s, id) =>
+            {
+                if (string.Equals(draft.ScreenId, id, StringComparison.Ordinal))
+                    return;
+                draft.TargetKind = TargetKind.LegacyScreen;
+                draft.ScreenId = id;
                 commit();
             };
             return cell;

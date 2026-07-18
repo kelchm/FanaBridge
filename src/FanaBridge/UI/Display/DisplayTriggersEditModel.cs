@@ -44,9 +44,9 @@ namespace FanaBridge.UI.Display
         public List<ItmPage> CyclePages = new List<ItmPage>();
         public int CyclePeriodMs = RuleTarget.DefaultCyclePeriodMs;
 
-        /// <summary>A legacy-screen target's screen id, carried through untouched. The v1
-        /// SHOW dropdown does not author legacy targets (P3 owns that), but a rule that
-        /// already targets a legacy screen must keep its id across an unrelated field edit.</summary>
+        /// <summary>A legacy-screen target's screen id. In ITM mode this is carried through
+        /// when a loaded rule already targets a legacy screen; in legacy mode the SHOW
+        /// dropdown authors it from the virtual-page survivors list.</summary>
         public string ScreenId;
 
         // HOLD (Unknown means "let the model pick the condition family's default")
@@ -71,8 +71,13 @@ namespace FanaBridge.UI.Display
     /// </summary>
     internal sealed class DisplayTriggersEditModel
     {
+        /// <summary>Mock half-block glyph prefixing a virtual-page name in the Show cell
+        /// ("◧ PIT"). Shared by the workbench, Monitor, and base footer in legacy mode.</summary>
+        public const string LegacyShowGlyph = "\u25E7";
+
         private readonly byte _itmDeviceId;
         private readonly ItmPageTable _pageTable;      // this device's page set, one source of truth
+        private readonly TriggerRuleSet _ruleSet;
         private DisplayCustomizationConfig _config;   // working copy; never mutated in place
 
         // The device's default-page wire (DisplaySettings.ItmDefaultPage). Used only to
@@ -84,23 +89,33 @@ namespace FanaBridge.UI.Display
         /// <summary>Starts from the host's current config (null / empty is an empty rule
         /// list — creating the first rule creates the document). <paramref name="defaultWirePage"/>
         /// is the device's ItmDefaultPage setting, letting the new-rule default target avoid the
-        /// effective base even when the config pins none.</summary>
+        /// effective base even when the config pins none. <paramref name="ruleSet"/> selects
+        /// which prioritized list mutations touch (ITM pages vs legacy virtual pages).</summary>
         public DisplayTriggersEditModel(DisplayCustomizationConfig current, byte itmDeviceId,
-            byte defaultWirePage = 1)
+            byte defaultWirePage = 1, TriggerRuleSet ruleSet = TriggerRuleSet.Itm)
         {
             _config = current;
             _itmDeviceId = itmDeviceId;
             _pageTable = ItmPageTable.ForDevice(itmDeviceId);
             _defaultWirePage = defaultWirePage;
+            _ruleSet = ruleSet;
         }
 
         /// <summary>The current working document (null until the first rule is added to an
         /// empty start).</summary>
         public DisplayCustomizationConfig Config => _config;
 
-        /// <summary>The ITM rules in priority order (empty when there is no document yet).</summary>
+        /// <summary>Which rule list this model edits.</summary>
+        public TriggerRuleSet RuleSet => _ruleSet;
+
+        /// <summary>True when editing <c>config.Legacy.Rules</c> (virtual-page targets).</summary>
+        public bool IsLegacyMode => _ruleSet == TriggerRuleSet.Legacy;
+
+        /// <summary>The active rule set in priority order (empty when there is no document yet).</summary>
         public IReadOnlyList<DisplayRule> Rules
-            => _config?.Itm?.Rules ?? (IReadOnlyList<DisplayRule>)Array.Empty<DisplayRule>();
+            => IsLegacyMode
+                ? (_config?.Legacy?.Rules ?? (IReadOnlyList<DisplayRule>)Array.Empty<DisplayRule>())
+                : (_config?.Itm?.Rules ?? (IReadOnlyList<DisplayRule>)Array.Empty<DisplayRule>());
 
         // ── The mapped-control mapping (hardware-verified) ────────────────
 
@@ -113,14 +128,16 @@ namespace FanaBridge.UI.Display
         // ── Draft factories (the two add-trigger flows) ───────────────────
 
         /// <summary>A blank telemetry draft: the caller fills WHEN (property/operator/value)
-        /// and SHOW. Defaults to a greater-than level test against a page target.</summary>
+        /// and SHOW. Defaults to a greater-than level test against a page target (ITM) or
+        /// the first survivor virtual page (legacy).</summary>
         public RuleEdit NewTelemetryDraft()
             => new RuleEdit
             {
                 SourceKind = PropertyKind.SimHubProperty,
                 Operator = ConditionKind.GreaterThan,
-                TargetKind = TargetKind.Page,
-                Page = DefaultTargetPage(),
+                TargetKind = IsLegacyMode ? TargetKind.LegacyScreen : TargetKind.Page,
+                Page = IsLegacyMode ? (ItmPage?)null : DefaultTargetPage(),
+                ScreenId = IsLegacyMode ? DefaultScreenId() : null,
                 Eligibility = RuleEligibility.InGame,
             };
 
@@ -135,8 +152,9 @@ namespace FanaBridge.UI.Display
                 SourceName = MappedControlPropertyName(role),
                 Operator = ConditionKind.IsTrue,
                 Hold = HoldKind.WhileActive,
-                TargetKind = TargetKind.Page,
-                Page = DefaultTargetPage(),
+                TargetKind = IsLegacyMode ? TargetKind.LegacyScreen : TargetKind.Page,
+                Page = IsLegacyMode ? (ItmPage?)null : DefaultTargetPage(),
+                ScreenId = IsLegacyMode ? DefaultScreenId() : null,
                 Eligibility = RuleEligibility.Any,
             };
 
@@ -290,15 +308,33 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>Sets the ITM base ("Always") page, editing <see cref="ItmRuleSet.BasePage"/>
-        /// while carrying every rule and the rest of the document through unchanged.</summary>
+        /// while carrying every rule and the rest of the document through unchanged.
+        /// No-op (returns current config) in legacy mode — use <see cref="SetBaseScreenId"/>.</summary>
         public DisplayCustomizationConfig SetBasePage(ItmPage page)
-            => Commit(CurrentRules(), EnumText.Write(page));
+        {
+            if (IsLegacyMode)
+                return _config;
+            return Commit(CurrentRules(), EnumText.Write(page));
+        }
+
+        /// <summary>Sets the legacy base screen ("When nothing's firing → …"). Null / empty
+        /// clears to Blank. No-op in ITM mode.</summary>
+        public DisplayCustomizationConfig SetBaseScreenId(string screenId)
+        {
+            if (!IsLegacyMode)
+                return _config;
+            if (string.IsNullOrEmpty(screenId)
+                || string.Equals(screenId, DisplayVirtualPagesEditModel.BaseBlankId,
+                    StringComparison.Ordinal))
+                screenId = null;
+            return CommitLegacy(CurrentRules(), screenId);
+        }
 
         /// <summary>
         /// The base page currently in effect for this device — the configured base when the
         /// config pins one AND this device offers it, else the identity at the device's
         /// default-page wire. Drives the footer page dropdown's selection so it agrees with
-        /// the "Always →" row.
+        /// the "Always →" row. ITM mode only.
         /// </summary>
         public ItmPage EffectiveBasePage(byte defaultWirePage)
         {
@@ -306,6 +342,18 @@ namespace FanaBridge.UI.Display
                 ? _config.Itm.BasePage
                 : (ItmPage?)null;
             return _pageTable.ResolveBase(configuredBase, defaultWirePage).Identity;
+        }
+
+        /// <summary>The configured legacy base screen id, or null for Blank.</summary>
+        public string EffectiveBaseScreenId => _config?.Legacy?.BaseScreenId;
+
+        /// <summary>Display name for the legacy base (Blank / screen name).</summary>
+        public string EffectiveBaseScreenName()
+        {
+            string id = EffectiveBaseScreenId;
+            if (string.IsNullOrEmpty(id))
+                return "Blank";
+            return ScreenDisplayName(id);
         }
 
         /// <summary>
@@ -393,10 +441,11 @@ namespace FanaBridge.UI.Display
             bool monitor = mode == TriggerTableMode.Monitor;
 
             Dictionary<string, DisplayRuleRow> live = null;
-            if (snapshot?.ItmRules != null)
+            var liveRows = IsLegacyMode ? snapshot?.LegacyRules : snapshot?.ItmRules;
+            if (liveRows != null)
             {
                 live = new Dictionary<string, DisplayRuleRow>(StringComparer.Ordinal);
-                foreach (var r in snapshot.ItmRules)
+                foreach (var r in liveRows)
                     if (r.RuleId != null)
                         live[r.RuleId] = r;
             }
@@ -457,17 +506,30 @@ namespace FanaBridge.UI.Display
             // The pinned base row: shown as the last stack row in Monitor (the Overview's
             // "what's in play" list) but pulled OUT of the Workbench stack — the editor
             // renders it as a dedicated BASE PAGE footer instead (spec 2b §5). Label keeps the
-            // "Always → <page>" form for the plain consumers/tests; ShowText carries the bare
-            // page name so the Monitor footer can render its "→ <page>" Show cell.
+            // "Always → <page|screen>" form for the plain consumers/tests; ShowText carries
+            // the Show-cell text so the Monitor footer can render its glyph/name.
             if (monitor)
             {
-                string baseName = DisplayOverviewRender.BasePageName(
-                    snapshot, _config, _itmDeviceId, defaultWirePage);
+                string baseName;
+                string showText;
+                if (IsLegacyMode)
+                {
+                    baseName = EffectiveBaseScreenName();
+                    showText = string.IsNullOrEmpty(EffectiveBaseScreenId)
+                        ? "Blank"
+                        : LegacyShowGlyph + " " + baseName;
+                }
+                else
+                {
+                    baseName = DisplayOverviewRender.BasePageName(
+                        snapshot, _config, _itmDeviceId, defaultWirePage);
+                    showText = baseName;
+                }
                 rows.Add(new TriggerTableRow
                 {
                     Rank = "★",
                     Label = "Always → " + baseName,
-                    ShowText = baseName,
+                    ShowText = showText,
                     Chip = "base",
                     IsBase = true,
                     Draggable = false,
@@ -494,8 +556,9 @@ namespace FanaBridge.UI.Display
 
         /// <summary>The Show column text for a target: "Page N · Name" (single page, wire
         /// number from this device's page table), "P2 ⇄ P5" (alternate / cycle short labels
-        /// joined with " ⇄ "), "screen 'X'" (legacy), or "" when the target is
-        /// missing/unresolved.</summary>
+        /// joined with " ⇄ "), "◧ Name" (legacy virtual page — mock half-block glyph), or
+        /// "" when the target is missing/unresolved. The legacy form upgrades the prior
+        /// "screen 'X'" wording (raw id) to the library display name.</summary>
         public string ShowTextFor(RuleTarget show)
         {
             if (show == null)
@@ -516,10 +579,28 @@ namespace FanaBridge.UI.Display
                     return string.Join(" ⇄ ", parts);
                 }
                 case TargetKind.LegacyScreen:
-                    return "screen '" + (show.ScreenId ?? "?") + "'";
+                    return LegacyShowGlyph + " " + ScreenDisplayName(show.ScreenId);
                 default:
                     return "";
             }
+        }
+
+        /// <summary>Library display name for a screen id, or the id itself when missing.</summary>
+        public string ScreenDisplayName(string screenId)
+        {
+            if (string.IsNullOrEmpty(screenId))
+                return "?";
+            var screens = _config?.Legacy?.Screens;
+            if (screens != null)
+            {
+                for (int i = 0; i < screens.Count; i++)
+                {
+                    var s = screens[i];
+                    if (s != null && string.Equals(s.Id, screenId, StringComparison.Ordinal))
+                        return DisplayVirtualPagesEditModel.DisplayName(s);
+                }
+            }
+            return screenId;
         }
 
         private string PageLabel(ItmPage page)
@@ -742,8 +823,8 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>The single-page SHOW options this device offers (legacy page excluded —
-        /// legacy targets are a later phase). Content identities, resolved to wire numbers
-        /// at the edge.</summary>
+        /// virtual pages are authored on the legacy rule set). Content identities, resolved
+        /// to wire numbers at the edge. ITM mode only.</summary>
         public IReadOnlyList<ItmPage> PageOptions()
         {
             var result = new List<ItmPage>();
@@ -751,6 +832,63 @@ namespace FanaBridge.UI.Display
                 if (p.Page != ItmPage.Legacy)
                     result.Add(p.Page);
             return result;
+        }
+
+        /// <summary>Virtual-page survivors the legacy SHOW dropdown may target (known
+        /// content kinds only — unknown-kind screens stay in the document for EnumText
+        /// survival but are not offered, matching the validator).</summary>
+        public IReadOnlyList<LegacyScreen> ScreenOptions()
+        {
+            var result = new List<LegacyScreen>();
+            var screens = _config?.Legacy?.Screens;
+            if (screens == null)
+                return result;
+            for (int i = 0; i < screens.Count; i++)
+            {
+                var s = screens[i];
+                if (s != null && s.ContentKind != LegacyContentKind.Unknown)
+                    result.Add(s);
+            }
+            return result;
+        }
+
+        /// <summary>SHOW choices for a legacy-mode draft: one entry per survivor screen.</summary>
+        public ChoiceList ScreenChoices(string selectedScreenId)
+        {
+            var b = ChoiceList.Build();
+            var options = ScreenOptions();
+            foreach (var s in options)
+                b.Add(s.Id, DisplayVirtualPagesEditModel.DisplayName(s));
+            string selected = selectedScreenId;
+            if (string.IsNullOrEmpty(selected) && options.Count > 0)
+                selected = options[0].Id;
+            return b.Selected(selected);
+        }
+
+        /// <summary>Base-screen footer choices in legacy mode (Blank + survivors).</summary>
+        public ChoiceList BaseScreenChoices()
+        {
+            var b = ChoiceList.Build();
+            b.Add(DisplayVirtualPagesEditModel.BaseBlankId, "Blank");
+            foreach (var s in ScreenOptions())
+                b.Add(s.Id, DisplayVirtualPagesEditModel.DisplayName(s));
+            string selected = string.IsNullOrEmpty(EffectiveBaseScreenId)
+                ? DisplayVirtualPagesEditModel.BaseBlankId
+                : EffectiveBaseScreenId;
+            bool known = string.Equals(selected, DisplayVirtualPagesEditModel.BaseBlankId,
+                StringComparison.Ordinal);
+            if (!known)
+            {
+                foreach (var s in ScreenOptions())
+                    if (string.Equals(s.Id, selected, StringComparison.Ordinal))
+                    {
+                        known = true;
+                        break;
+                    }
+            }
+            if (!known)
+                selected = DisplayVirtualPagesEditModel.BaseBlankId;
+            return b.Selected(selected);
         }
 
         // ── Internals ─────────────────────────────────────────────────────
@@ -766,7 +904,9 @@ namespace FanaBridge.UI.Display
         // (schema, profile hook, base page, the whole legacy set, field mappings) forward
         // by reference. The caller applies it; ApplyDisplayConfig re-normalizes.
         private DisplayCustomizationConfig Commit(List<DisplayRule> rules)
-            => Commit(rules, _config?.Itm?.BasePageRaw);
+            => IsLegacyMode
+                ? CommitLegacy(rules, _config?.Legacy?.BaseScreenId)
+                : Commit(rules, _config?.Itm?.BasePageRaw);
 
         private DisplayCustomizationConfig Commit(List<DisplayRule> rules, string basePageRaw)
         {
@@ -785,6 +925,32 @@ namespace FanaBridge.UI.Display
             };
             _config = cfg;
             return cfg;
+        }
+
+        private DisplayCustomizationConfig CommitLegacy(List<DisplayRule> rules, string baseScreenId)
+        {
+            var src = _config;
+            var cfg = new DisplayCustomizationConfig
+            {
+                SchemaVersion = src?.SchemaVersion ?? DisplayCustomizationConfig.CurrentSchemaVersion,
+                ProfileId = src?.ProfileId,
+                Itm = src?.Itm ?? new ItmRuleSet(),
+                Legacy = new LegacyRuleSet
+                {
+                    Rules = rules,
+                    Screens = src?.Legacy?.Screens ?? new List<LegacyScreen>(),
+                    BaseScreenId = baseScreenId,
+                },
+                FieldMappings = src?.FieldMappings ?? new Dictionary<ushort, FieldMapping>(),
+            };
+            _config = cfg;
+            return cfg;
+        }
+
+        private string DefaultScreenId()
+        {
+            var options = ScreenOptions();
+            return options.Count > 0 ? options[0].Id : null;
         }
 
         private static int IndexOf(List<DisplayRule> rules, string id)
@@ -829,9 +995,8 @@ namespace FanaBridge.UI.Display
                     show.PeriodMs = e.CyclePeriodMs;
                     break;
                 case TargetKind.LegacyScreen:
-                    // The v1 SHOW dropdown does not author legacy targets (P3 owns that),
-                    // but a rule loaded targeting a legacy screen keeps its id through an
-                    // edit of any other field.
+                    // Legacy mode authors virtual-page targets; ITM mode still carries a
+                    // loaded legacy-screen id through an unrelated field edit.
                     show.ScreenId = e.ScreenId;
                     break;
             }

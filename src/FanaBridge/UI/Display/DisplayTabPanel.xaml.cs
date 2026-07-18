@@ -54,6 +54,7 @@ namespace FanaBridge.UI.Display
 
         private Dictionary<TabView, UIElement> _views;
         private TabView _currentView = TabView.Overview;
+        private readonly SevenSegmentFace _legacyFace = new SevenSegmentFace();
 
         // ── Polling state ────────────────────────────────────────────────
         private DispatcherTimer _timer;
@@ -64,6 +65,7 @@ namespace FanaBridge.UI.Display
         public DisplayTabPanel()
         {
             InitializeComponent();
+            hostLegacyFace.Content = _legacyFace;
         }
 
         /// <summary>
@@ -108,17 +110,29 @@ namespace FanaBridge.UI.Display
             // Pages & fields editor — same Bind/Enter/Poll/BackRequested seam. ConfigApplied
             // is a no-op for Overview chrome today (field mappings don't change the priority
             // list); wired for symmetry / future live-mirror refresh. LegacyRequested lands
-            // on the Virtual pages placeholder (Page 6 delegation card).
+            // on the Virtual pages editor (Page 6 delegation card).
             viewPages.Bind(_host, _propertyCatalog, _roleCatalog, _settings, _pickerStore);
             viewPages.BackRequested += (s, e) => NavigateTo(TabView.Overview);
             viewPages.ConfigApplied += (s, e) => { /* field mappings — Overview rows unchanged */ };
             viewPages.LegacyRequested += (s, e) => NavigateTo(TabView.Legacy);
+
+            // Virtual pages editor — Bind/Enter/Poll/BackRequested; ConfigApplied refreshes
+            // the legacy Overview monitor (screens/base change the Show cells).
+            viewLegacy.Bind(_host, _propertyCatalog, _roleCatalog, _settings, _pickerStore);
+            viewLegacy.BackRequested += (s, e) => NavigateTo(TabView.Overview);
+            viewLegacy.ConfigApplied += (s, e) =>
+            {
+                RenderMonitor(_lastSnapshot);
+                RenderLegacyOverview(_lastSnapshot);
+            };
 
             // The Overview priority list IS the shared trigger table in Monitor mode: a
             // read-only "what's in play" list. A row click lands in the Triggers editor with
             // that rule expanded (the EnterAndSelect seam).
             monitorTable.Mode = TriggerTableMode.Monitor;
             monitorTable.RowActivated += id => NavigateTo(TabView.Triggers, id);
+            legacyMonitorTable.Mode = TriggerTableMode.Monitor;
+            legacyMonitorTable.RowActivated += id => NavigateTo(TabView.Triggers, id);
 
             // DISPLAY MODE segments — tri-state ITM / Legacy / Off, driven by
             // DisplaySettings.DisplayControl. Off's selected fill is amber; the others
@@ -214,17 +228,24 @@ namespace FanaBridge.UI.Display
                 // (and with it every link into an editor), show only the Off card + header.
                 NavigateTo(TabView.Overview);
                 panelItmLive.Visibility = Visibility.Collapsed;
+                panelLegacyLive.Visibility = Visibility.Collapsed;
                 borderItmInfo.Visibility = Visibility.Collapsed;
                 sectionItmOptions.Visibility = Visibility.Collapsed;
                 sectionDisplayMode.Visibility = Visibility.Collapsed;
             }
             else
             {
-                // Itm/Legacy: Off card already collapsed; live cards only while ITM is active.
-                bool on = _settings.ItmActive;
-                bool itmUi = _isItm && on;
+                // Itm/Legacy: Off card already collapsed; live cards only while ITM is active
+                // (ITM wheels) or the basic-wheel legacy Overview is showing.
+                bool itmUi = DisplayShellRouting.ShowItmOverview(
+                    _isItm ? DisplayType.Itm : DisplayType.Basic, control);
+                bool legacyUi = DisplayShellRouting.ShowLegacyOverview(
+                    _isItm ? DisplayType.Itm : DisplayType.Basic, control);
                 panelItmLive.Visibility = itmUi ? Visibility.Visible : Visibility.Collapsed;
-                if (!itmUi)
+                panelLegacyLive.Visibility = legacyUi ? Visibility.Visible : Visibility.Collapsed;
+                // When an ITM wheel leaves ITM-active, drop out of the Pages editor (its
+                // twin is ITM-only). Virtual pages / Triggers stay reachable.
+                if (_isItm && !itmUi && _currentView == TabView.Pages)
                     NavigateTo(TabView.Overview);
 
                 // Restore the cap-dependent chrome Bind/SyncResolvedCaps also set.
@@ -233,7 +254,7 @@ namespace FanaBridge.UI.Display
                 sectionItmOptions.Visibility = itmOnly;
                 sectionDisplayMode.Visibility = Visibility.Visible;
 
-                panelDefaultPage.IsEnabled = on;
+                panelDefaultPage.IsEnabled = _settings.ItmActive;
             }
 
             // Header visibility depends on control as well as view/_isItm.
@@ -268,26 +289,37 @@ namespace FanaBridge.UI.Display
             foreach (var kv in _views)
                 kv.Value.Visibility = kv.Key == view ? Visibility.Visible : Visibility.Collapsed;
 
+            var ruleSet = TriggersRuleSet();
+
             // Build (or rebuild) the Triggers editor from the current config each time it
             // becomes the active view — a clean slate, snapshot-driven from there. A row-click
-            // from the Overview Monitor list carries the rule to expand on arrival.
+            // from the Overview Monitor list carries the rule to expand on arrival. Basic
+            // wheels open the legacy rule set (virtual-page targets).
             if (view == TabView.Triggers && _host != null)
             {
                 if (expandRuleId != null)
-                    viewTriggers.EnterAndSelect(_lastSnapshot, expandRuleId);
+                    viewTriggers.EnterAndSelect(_lastSnapshot, expandRuleId, ruleSet);
                 else
-                    viewTriggers.Enter(_lastSnapshot);
+                    viewTriggers.Enter(_lastSnapshot, ruleSet);
             }
 
             // Pages editor: same clean-slate Enter on activation (uses the values snapshot
             // the Overview mirror already holds).
             if (view == TabView.Pages && _host != null)
-                viewPages.Enter(_lastValues);
+                viewPages.Enter(_lastValues, _lastSnapshot);
+
+            // Virtual pages editor.
+            if (view == TabView.Legacy && _host != null)
+                viewLegacy.Enter();
 
             // The DISPLAY MODE header belongs to the hub — it shows on Overview (ITM) and
             // whenever control is Off, never inside an editor unless Off keeps it up.
             RefreshModeHeader();
         }
+
+        private TriggerRuleSet TriggersRuleSet()
+            => DisplayShellRouting.TriggersRuleSetFor(
+                _isItm ? DisplayType.Itm : DisplayType.Basic);
 
         // The DISPLAY MODE header (segmented ITM/Legacy/Off toggle + divider) shows on the
         // Overview of an ITM wheel, and on any wheel while control is Off (Off-trap guard
@@ -432,9 +464,11 @@ namespace FanaBridge.UI.Display
             RefreshModeHeader();             // basic↔ITM live rebind + Off-trap header visibility
             RenderMonitor(_lastSnapshot);    // Overview base-name/rows for the new device
             if (_currentView == TabView.Triggers)
-                viewTriggers.Enter(_lastSnapshot);   // rebuild the editor for the new device; drops any open draft
+                viewTriggers.Enter(_lastSnapshot, TriggersRuleSet());   // rebuild for new device
             if (_currentView == TabView.Pages)
-                viewPages.Enter(_lastValues);        // rebuild pills/inspector for the new device
+                viewPages.Enter(_lastValues, _lastSnapshot);
+            if (_currentView == TabView.Legacy)
+                viewLegacy.Enter();
         }
 
         private void Poll(bool force = false)
@@ -442,12 +476,17 @@ namespace FanaBridge.UI.Display
             if (_host == null)
                 return;
 
-            // Re-derive the cap-dependent layout FIRST — before the ITM-live early-return
+            // Re-derive the cap-dependent layout FIRST — before the live early-return
             // — so a basic→ITM (or ITM→basic) override is detected even while the ITM live
             // panel is collapsed. A no-op in steady state (two compares).
             SyncResolvedCaps();
 
-            if (panelItmLive.Visibility != Visibility.Visible)
+            bool itmLive = panelItmLive.Visibility == Visibility.Visible;
+            bool legacyLive = panelLegacyLive.Visibility == Visibility.Visible;
+            bool editorActive = _currentView == TabView.Triggers
+                || _currentView == TabView.Pages
+                || _currentView == TabView.Legacy;
+            if (!itmLive && !legacyLive && !editorActive)
                 return;
 
             // ONE volatile read — the envelope; the parts gate their own re-renders
@@ -466,23 +505,35 @@ namespace FanaBridge.UI.Display
             // The LIVE card: the mirror redraws only on a values-snapshot reference
             // change; the captions also follow the status line (their fallback path).
             // Overview mirror stays read-only (IsInteractive defaults false).
-            if (force || valuesChanged)
-                displayMirror.Render(values);
-            if (force || valuesChanged || statusChanged)
+            if (itmLive)
             {
-                txtCurrentPage.Text = ItmDisplayMirrorRender.PageCaption(
-                    values, status, _host.ItmDeviceId);
-                txtMirrorState.Text = ItmDisplayMirrorRender.StateCaption(values) ?? "";
+                if (force || valuesChanged)
+                    displayMirror.Render(values);
+                if (force || valuesChanged || statusChanged)
+                {
+                    txtCurrentPage.Text = ItmDisplayMirrorRender.PageCaption(
+                        values, status, _host.ItmDeviceId);
+                    txtMirrorState.Text = ItmDisplayMirrorRender.StateCaption(values) ?? "";
+                }
             }
 
+            if (legacyLive && (force || snapshotChanged || statusChanged))
+                RenderLegacyOverview(snapshot);
+
             // Pages editor twin: same values snapshot, selection chrome on its own mirror.
-            if (_currentView == TabView.Pages && (force || valuesChanged))
-                viewPages.Poll(values);
+            if (_currentView == TabView.Pages && (force || valuesChanged || snapshotChanged))
+                viewPages.Poll(values, snapshot);
+
+            if (_currentView == TabView.Legacy && (force || snapshotChanged))
+                viewLegacy.Poll();
 
             if (force || snapshotChanged || statusChanged)
             {
-                RenderMonitor(snapshot);
-                RenderActivity(snapshot);
+                if (itmLive)
+                {
+                    RenderMonitor(snapshot);
+                    RenderActivity(snapshot);
+                }
                 // The Triggers editor merges the same live state into its rows — patched in
                 // place while an editor is open so poll re-renders never disturb it.
                 if (_currentView == TabView.Triggers)
@@ -499,7 +550,7 @@ namespace FanaBridge.UI.Display
         // handles rows appearing/leaving the filter that an in-place patch could not.
         private void RenderMonitor(DisplayRuleSnapshot snapshot)
         {
-            if (_host == null)
+            if (_host == null || panelItmLive.Visibility != Visibility.Visible)
                 return;
             var config = _host.GetDisplayConfig();
             monitorTable.SetRows(DisplayOverviewRender.MonitorRows(
@@ -509,6 +560,42 @@ namespace FanaBridge.UI.Display
             panelNoTriggers.Visibility = DisplayOverviewRender.HasConfiguredTriggers(config)
                 ? Visibility.Collapsed
                 : Visibility.Visible;
+        }
+
+        // Basic-wheel Overview: 3-char face from last-sent segments (rule path) or caption
+        // fallback (mode-based face), plus the legacy Monitor priority list.
+        private void RenderLegacyOverview(DisplayRuleSnapshot snapshot)
+        {
+            if (_host == null || panelLegacyLive.Visibility != Visibility.Visible)
+                return;
+            var config = _host.GetDisplayConfig();
+            if (DisplayShellRouting.UseRuleDrivenSegments(snapshot?.LegacySegments))
+                _legacyFace.Render(snapshot.LegacySegments);
+            else
+                _legacyFace.Render(SevenSegmentFaceRender.BlankFrame());
+
+            txtLegacyCaption.Text = DisplayShellRouting.LegacyMirrorCaption(
+                snapshot?.LegacyScreenName, _settings?.DisplayMode);
+
+            legacyMonitorTable.SetRows(DisplayOverviewRender.MonitorRows(
+                snapshot, config, _host.ItmDeviceId, _settings?.ItmDefaultPage ?? 1,
+                legacyMode: true));
+            panelLegacyNoTriggers.Visibility =
+                DisplayOverviewRender.HasConfiguredTriggers(config, legacyMode: true)
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+
+            // Activity reuses the same snapshot stream (legacy + ITM events merged).
+            panelLegacyActivity.Children.Clear();
+            int count = 0;
+            if (snapshot != null)
+            {
+                var rows = DisplayOverviewRender.ActivityRows(snapshot);
+                foreach (var row in rows)
+                    panelLegacyActivity.Children.Add(BuildActivityRow(row));
+                count = rows.Count;
+            }
+            txtLegacyNoActivity.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
 
         // The section header's situation caption ("in game" / "idle"), derived from the ITM

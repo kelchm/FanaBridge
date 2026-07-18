@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Session;
 using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
@@ -38,13 +39,15 @@ namespace FanaBridge.UI.Display
         private DisplayPagesEditModel _editModel;
         private DisplayCustomizationConfig _editModelSource;
         private DisplayValuesSnapshot _lastValues;
+        private DisplayRuleSnapshot _lastRules;
         private ushort? _lastRenderedParam;
         private ItmPage? _lastRenderedPage;
         private bool _lastWasLiveMatch;
+        private readonly SevenSegmentFace _page6Face = new SevenSegmentFace();
 
         internal event EventHandler BackRequested;
         internal event EventHandler ConfigApplied;
-        /// <summary>Raised when the Page-6 card asks to open Virtual pages (Legacy placeholder).</summary>
+        /// <summary>Raised when the Page-6 card asks to open Virtual pages.</summary>
         internal event EventHandler LegacyRequested;
 
         public DisplayPagesView()
@@ -52,6 +55,7 @@ namespace FanaBridge.UI.Display
             InitializeComponent();
             pagesMirror.IsInteractive = true;
             pagesMirror.SlotClicked += OnSlotClicked;
+            hostPage6Face.Content = _page6Face;
         }
 
         // ── The bind/input surface (the seam) ──────────────────────────────
@@ -71,18 +75,22 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>Called when the Pages view becomes active: build a fresh edit model
-        /// from the host's config and render. Clean-slate on re-entry.</summary>
-        internal void Enter(DisplayValuesSnapshot values)
+        /// from the host's config and render. Clean-slate on re-entry.
+        /// <paramref name="rules"/> feeds the Page-6 mini face when the rule path drives.</summary>
+        internal void Enter(DisplayValuesSnapshot values, DisplayRuleSnapshot rules = null)
         {
             _lastValues = values;
+            _lastRules = rules;
             EnterPagesEditor();
         }
 
         /// <summary>Poll while active: refresh the twin from the latest values snapshot
         /// and rebuild the editor when the host's document changed out from under us.</summary>
-        internal void Poll(DisplayValuesSnapshot values)
+        internal void Poll(DisplayValuesSnapshot values, DisplayRuleSnapshot rules = null)
         {
             _lastValues = values;
+            if (rules != null)
+                _lastRules = rules;
             if (_editModel == null || _host == null)
                 return;
             if (!ReferenceEquals(_host.GetDisplayConfig(), _editModelSource))
@@ -90,7 +98,10 @@ namespace FanaBridge.UI.Display
                 EnterPagesEditor();
                 return;
             }
-            RenderTwin();
+            if (_editModel.IsLegacyPage)
+                RenderPage6Face();
+            else
+                RenderTwin();
         }
 
         private void Back_Click(object sender, RoutedEventArgs e)
@@ -126,11 +137,23 @@ namespace FanaBridge.UI.Display
             bool legacy = _editModel.IsLegacyPage;
             panelLegacy.Visibility = legacy ? Visibility.Visible : Visibility.Collapsed;
             panelTelemetry.Visibility = legacy ? Visibility.Collapsed : Visibility.Visible;
-            if (!legacy)
+            if (legacy)
+                RenderPage6Face();
+            else
             {
                 RenderTwin(force: true);
                 RenderInspector();
             }
+        }
+
+        // Page-6 mini face: last-sent segments when the rule path drives; blank otherwise
+        // (caption/fallback lives in the Virtual pages editor — twin doctrine).
+        private void RenderPage6Face()
+        {
+            if (DisplayShellRouting.UseRuleDrivenSegments(_lastRules?.LegacySegments))
+                _page6Face.Render(_lastRules.LegacySegments);
+            else
+                _page6Face.Render(SevenSegmentFaceRender.BlankFrame());
         }
 
         private void RenderPills()
