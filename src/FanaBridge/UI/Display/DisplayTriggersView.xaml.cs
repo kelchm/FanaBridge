@@ -58,8 +58,8 @@ namespace FanaBridge.UI.Display
         private TriggerRuleSet _ruleSet = TriggerRuleSet.Itm;  // which list Enter builds for
         private string _expandedRuleId;                        // the one open drawer's rule, or null
         private RuleEdit _expandedDraft;                       // the open row's working draft (survives re-renders)
-        private bool _addOpen;                                 // the draft-at-top add flow is active
-        private RuleEdit _addDraft;                            // the pending, uncommitted draft
+        private bool _draftExpanded;                           // the pending draft row is the expanded one
+        private RuleEdit _addDraft;                            // the pending, uncommitted draft (survives collapse)
         private string _baseFooterSelected;                    // the base-footer cell's built selection (rebuild gate)
 
         // ── Seam events (the shell subscribes once in its Bind) ────────────
@@ -101,7 +101,7 @@ namespace FanaBridge.UI.Display
         // fresh edit model from the host's current config, and render. Resets any prior
         // editing state (a re-entry is a clean slate). <paramref name="ruleSet"/> selects
         // ITM pages vs legacy virtual pages (basic wheels always open Legacy).
-        internal void Enter(DisplayRuleSnapshot snapshot, TriggerRuleSet ruleSet = TriggerRuleSet.Itm)
+        internal void Enter(DisplayRuleSnapshot snapshot, TriggerRuleSet ruleSet)
         {
             _lastSnapshot = snapshot;
             _ruleSet = ruleSet;
@@ -112,7 +112,7 @@ namespace FanaBridge.UI.Display
         // <see cref="Enter"/> does) and immediately expand the clicked rule so the drawer is
         // open on arrival. An unknown or degraded id simply enters with nothing expanded.
         internal void EnterAndSelect(DisplayRuleSnapshot snapshot, string ruleId,
-            TriggerRuleSet ruleSet = TriggerRuleSet.Itm)
+            TriggerRuleSet ruleSet)
         {
             _lastSnapshot = snapshot;
             _ruleSet = ruleSet;
@@ -141,7 +141,7 @@ namespace FanaBridge.UI.Display
         {
             _expandedRuleId = null;
             _expandedDraft = null;
-            _addOpen = false;
+            _draftExpanded = false;
             _addDraft = null;
             _baseFooterSelected = null;   // force a footer rebuild for the (possibly new) device
             _editModelSource = _host?.GetDisplayConfig();
@@ -154,15 +154,22 @@ namespace FanaBridge.UI.Display
 
         // The v9 add flow: a fresh telemetry draft becomes the expanded top row and the
         // property picker opens immediately (mock addTrigger). Picking a property completes
-        // (mapped controls) or reveals the value field; cancelling leaves the empty draft open
-        // (collapsing it discards it). Any abandoned incomplete draft never commits.
+        // (mapped controls) or reveals the value field. An incomplete draft never commits,
+        // but it also never silently disappears: collapsing it / clicking away keeps it as
+        // a pending top row, and only its ⋯ remove (or leaving the editor) discards it.
         private void StartAddDraft()
         {
             if (_editModel == null)
                 return;
             _expandedRuleId = null;
             _expandedDraft = null;
-            _addOpen = true;
+            _draftExpanded = true;
+            // ＋ with a pending draft re-expands it rather than silently replacing it.
+            if (_addDraft != null)
+            {
+                RenderTriggerRows(_lastSnapshot);
+                return;
+            }
             _addDraft = _editModel.NewTelemetryDraft();
             if (PickProperty(_addDraft))
                 CommitField(_addDraft, DraftRowId, isDraft: true);   // may promote (mapped) or reveal the value box
@@ -172,7 +179,7 @@ namespace FanaBridge.UI.Display
 
         private void DiscardDraft()
         {
-            _addOpen = false;
+            _draftExpanded = false;
             _addDraft = null;
             RenderTriggerRows(_lastSnapshot);
         }
@@ -200,7 +207,7 @@ namespace FanaBridge.UI.Display
             // Editing (an open drawer or the add draft) or mid-drag: only patch the State
             // cells, so the open controls, focus, text-in-progress, and the drag gesture are
             // never disturbed.
-            if (!dragInProgress && _expandedRuleId == null && !_addOpen)
+            if (!dragInProgress && _expandedRuleId == null && !_draftExpanded)
                 RenderTriggerRows(snapshot);
             else
                 PatchTriggerChips(snapshot);
@@ -211,15 +218,16 @@ namespace FanaBridge.UI.Display
         private void RenderTriggerRows(DisplayRuleSnapshot snapshot)
         {
             byte wire = _settings != null ? _settings.ItmDefaultPage : (byte)1;
-            triggerTable.ExpandedRuleId = _addOpen ? DraftRowId : _expandedRuleId;
+            triggerTable.ExpandedRuleId = _draftExpanded && _addDraft != null
+                ? DraftRowId : _expandedRuleId;
 
             var rows = new List<TriggerTableRow>();
-            if (_addOpen && _addDraft != null)
-                rows.Add(BuildDraftRow(_addDraft));
+            if (_addDraft != null)
+                rows.Add(BuildDraftRow(_addDraft));   // pending draft persists, even collapsed
             rows.AddRange(_editModel.Rows(snapshot, wire, TriggerTableMode.Workbench));
             triggerTable.SetRows(rows);
 
-            txtTriggersEmpty.Visibility = (_editModel.Rules.Count == 0 && !_addOpen)
+            txtTriggersEmpty.Visibility = (_editModel.Rules.Count == 0 && _addDraft == null)
                 ? Visibility.Visible : Visibility.Collapsed;
             UpdateBaseFooter(wire);
         }
@@ -402,7 +410,15 @@ namespace FanaBridge.UI.Display
         {
             if (string.Equals(ruleId, DraftRowId, StringComparison.Ordinal))
             {
-                DiscardDraft();   // collapsing an incomplete draft discards it
+                // Collapse/expand toggles only — a pending draft is never discarded by a
+                // stray click (explicit ⋯ remove is the discard path).
+                _draftExpanded = !_draftExpanded;
+                if (_draftExpanded)
+                {
+                    _expandedRuleId = null;
+                    _expandedDraft = null;
+                }
+                RenderTriggerRows(_lastSnapshot);
                 return;
             }
             ToggleExpanded(ruleId);
@@ -1063,7 +1079,7 @@ namespace FanaBridge.UI.Display
             if (ReconcileIfExternallyChanged())
                 return;
             var cfg = _editModel.InsertRuleAtTop(_addDraft, out string newId);
-            _addOpen = false;
+            _draftExpanded = false;
             _addDraft = null;
             ApplyAndReload(cfg);
             _expandedRuleId = newId;
@@ -1125,9 +1141,8 @@ namespace FanaBridge.UI.Display
                 return;
             var cfg = _editModel.DuplicateRule(ruleId, out string newId);
             ApplyAndReload(cfg);
-            // The copy opens, selected (spec) — drop any pending draft.
-            _addOpen = false;
-            _addDraft = null;
+            // The copy opens, selected (spec) — the pending draft collapses but survives.
+            _draftExpanded = false;
             if (newId != null)
             {
                 _expandedRuleId = newId;
@@ -1170,10 +1185,9 @@ namespace FanaBridge.UI.Display
 
         private void ToggleExpanded(string ruleId)
         {
-            // Opening (or toggling) a committed row discards a pending draft — clicking away
-            // from the add draft is a form of collapse, and the draft never commits.
-            _addOpen = false;
-            _addDraft = null;
+            // Opening a committed row collapses a pending draft but keeps it — clicking
+            // away must never silently lose in-progress work (only ⋯ remove discards).
+            _draftExpanded = false;
             if (string.Equals(ruleId, _expandedRuleId, StringComparison.Ordinal))
             {
                 _expandedRuleId = null;

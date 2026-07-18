@@ -371,10 +371,13 @@ namespace FanaBridge.UI.Display
             RefreshModeHeader();
         }
 
+        // Reads the control from the host LIVE (not the bind-time _settings capture): the
+        // rule set the editor opens on must always match the control actually in force, or
+        // an ITM wheel in Legacy control could briefly open on the ITM rule list.
         private TriggerRuleSet TriggersRuleSet()
             => DisplayShellRouting.TriggersRuleSetFor(
                 _isItm ? DisplayType.Itm : DisplayType.Basic,
-                _settings?.DisplayControl);
+                (_host?.DisplaySettings ?? _settings)?.DisplayControl);
 
         // The DISPLAY MODE header (segmented ITM/Legacy/Off toggle + divider) shows on the
         // Overview of an ITM wheel, and on any wheel while control is Off (Off-trap guard
