@@ -161,27 +161,57 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void SetFormat_CreatesMappingWithDefaultSource()
         {
+            // Fuel has no Show*Total mirror — bare is a real non-default format and
+            // must persist as a mapping with the built-in default source.
             var model = new DisplayPagesEditModel(null, Device3);
-            var cfg = model.SetFormat(ItmParam.Lap, FieldFormats.Bare);
+            var cfg = model.SetFormat(ItmParam.Fuel, FieldFormats.Bare);
 
             Assert.NotNull(cfg);
-            var m = cfg.FieldMappings[ItmParam.Lap];
+            var m = cfg.FieldMappings[ItmParam.Fuel];
             Assert.Equal(FieldFormats.Bare, m.Format);
             Assert.Equal(PropertyKind.BuiltIn, m.Source.Kind);
-            Assert.Equal(BuiltInProperties.CurrentLap, m.Source.Name);
-            Assert.Equal(FieldProvenance.ThisWheel, model.ProvenanceOf(ItmParam.Lap));
+            Assert.Equal(BuiltInProperties.Fuel, m.Source.Name);
+            Assert.Equal(FieldProvenance.ThisWheel, model.ProvenanceOf(ItmParam.Fuel));
         }
 
         [Fact]
         public void SetFormat_FamilyDefault_WithNoSourceOverride_DropsMapping()
         {
             var model = new DisplayPagesEditModel(null, Device3);
-            model.SetFormat(ItmParam.Lap, FieldFormats.Bare);
-            Assert.True(model.HasMapping(ItmParam.Lap));
+            model.SetFormat(ItmParam.Fuel, FieldFormats.Bare);
+            Assert.True(model.HasMapping(ItmParam.Fuel));
 
-            var cfg = model.SetFormat(ItmParam.Lap, FieldFormats.WithTotal);
-            Assert.False(cfg.FieldMappings.ContainsKey(ItmParam.Lap));
-            Assert.Equal(FieldProvenance.Default, model.ProvenanceOf(ItmParam.Lap));
+            var cfg = model.SetFormat(ItmParam.Fuel, FieldFormats.WithTotal);
+            Assert.False(cfg.FieldMappings.ContainsKey(ItmParam.Fuel));
+            Assert.Equal(FieldProvenance.Default, model.ProvenanceOf(ItmParam.Fuel));
+        }
+
+        [Fact]
+        public void SetSource_DefaultSource_NoNonDefaultFormat_PrunesMapping()
+        {
+            var model = new DisplayPagesEditModel(null, Device3);
+            model.SetSource(ItmParam.Fuel, PropertyKind.SimHubProperty, "Custom.Fuel");
+            Assert.True(model.HasMapping(ItmParam.Fuel));
+
+            // Re-pick the exact built-in default with no format override → drop.
+            var cfg = model.SetSource(ItmParam.Fuel, PropertyKind.BuiltIn,
+                BuiltInProperties.Fuel);
+            Assert.False(cfg.FieldMappings.ContainsKey(ItmParam.Fuel));
+            Assert.Equal(FieldProvenance.Default, model.ProvenanceOf(ItmParam.Fuel));
+        }
+
+        [Fact]
+        public void SetSource_DefaultSource_KeepsNonDefaultFormat()
+        {
+            var model = new DisplayPagesEditModel(null, Device3);
+            model.SetFormat(ItmParam.Fuel, FieldFormats.Bare);
+            Assert.True(model.HasMapping(ItmParam.Fuel));
+
+            // Source already default; re-setting it must keep the bare format mapping.
+            var cfg = model.SetSource(ItmParam.Fuel, PropertyKind.BuiltIn,
+                BuiltInProperties.Fuel);
+            Assert.True(cfg.FieldMappings.ContainsKey(ItmParam.Fuel));
+            Assert.Equal(FieldFormats.Bare, cfg.FieldMappings[ItmParam.Fuel].Format);
         }
 
         [Fact]
@@ -249,6 +279,61 @@ namespace FanaBridge.Tests.Display
             model.SetSource(ItmParam.Fuel, PropertyKind.SimHubProperty, "Custom.Fuel");
             // No explicit format → bare (mapper rule mirrored in the UI).
             Assert.Equal(FieldFormats.Bare, model.EffectiveFormatId(ItmParam.Fuel));
+        }
+
+        [Fact]
+        public void EffectiveFormat_ShowLapTotalFalse_NoMapping_ShowsBare()
+        {
+            var model = new DisplayPagesEditModel(null, Device3,
+                showLapTotal: false, showPositionTotal: true);
+            Assert.Equal(FieldFormats.Bare, model.EffectiveFormatId(ItmParam.Lap));
+            Assert.Equal(FieldFormats.WithTotal, model.EffectiveFormatId(ItmParam.Position));
+            Assert.Equal(FieldFormats.WithTotal, model.EffectiveFormatId(ItmParam.Fuel));
+        }
+
+        [Fact]
+        public void SetFormat_LapWithTotal_WhenShowLapTotalFalse_Prunes_PostMirrorResolvesWithTotal()
+        {
+            // Choosing "With total" while the migrated toggle is false must not leave
+            // an unrecoverable bare state: SetFormat anticipates the view's Show*Total
+            // mirror and prunes; after the mirror (toggle=true) the default is withTotal.
+            var model = new DisplayPagesEditModel(null, Device3,
+                showLapTotal: false, showPositionTotal: true);
+            Assert.Equal(FieldFormats.Bare, model.EffectiveFormatId(ItmParam.Lap));
+
+            var cfg = model.SetFormat(ItmParam.Lap, FieldFormats.WithTotal);
+            Assert.False(cfg?.FieldMappings?.ContainsKey(ItmParam.Lap) ?? true);
+            Assert.Equal(FieldProvenance.Default, model.ProvenanceOf(ItmParam.Lap));
+
+            // Simulate the view's boolean mirror + rebuild.
+            var after = new DisplayPagesEditModel(cfg, Device3,
+                showLapTotal: true, showPositionTotal: true);
+            Assert.Equal(FieldFormats.WithTotal, after.EffectiveFormatId(ItmParam.Lap));
+        }
+
+        [Fact]
+        public void SetFormat_LapBare_Prunes_PostMirrorResolvesBare()
+        {
+            var model = new DisplayPagesEditModel(null, Device3,
+                showLapTotal: true, showPositionTotal: true);
+            var cfg = model.SetFormat(ItmParam.Lap, FieldFormats.Bare);
+            // Lap/Position format lives in the toggle after mirror — no mapping.
+            Assert.False(cfg?.FieldMappings?.ContainsKey(ItmParam.Lap) ?? true);
+
+            var after = new DisplayPagesEditModel(cfg, Device3,
+                showLapTotal: false, showPositionTotal: true);
+            Assert.Equal(FieldFormats.Bare, after.EffectiveFormatId(ItmParam.Lap));
+        }
+
+        [Fact]
+        public void FormatMirrorsShowTotal_OnlyLapAndPosition()
+        {
+            Assert.True(DisplayPagesEditModel.FormatMirrorsShowTotal(ItmParam.Lap));
+            Assert.True(DisplayPagesEditModel.FormatMirrorsShowTotal(ItmParam.Position));
+            Assert.False(DisplayPagesEditModel.FormatMirrorsShowTotal(ItmParam.Fuel));
+            Assert.False(DisplayPagesEditModel.FormatMirrorsShowTotal(ItmParam.OilTemp));
+            Assert.True(DisplayPagesEditModel.ShowTotalFromFormat(FieldFormats.WithTotal));
+            Assert.False(DisplayPagesEditModel.ShowTotalFromFormat(FieldFormats.Bare));
         }
 
         [Fact]

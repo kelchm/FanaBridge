@@ -157,6 +157,25 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(a.Size, b.Size);
         }
 
+        [Fact]
+        public void CarAhead_Override_NegatesGap_Float32()
+        {
+            // GapAhead / override scalars are unsigned +gap; the wire convention for
+            // CarAhead is negative (you're behind them) — same as the built-in registry.
+            var mapper = new ItmTelemetryMapper();
+            var reader = new FakeReader();
+            reader.Numbers[BuiltInProperties.GapAhead] = 1.234;
+            mapper.Configure(
+                new Dictionary<ushort, FieldMapping>
+                {
+                    [ItmParam.CarAhead] = BuiltIn(BuiltInProperties.GapAhead),
+                },
+                reader);
+
+            Assert.True(mapper.TryEncodeParam(ItmParam.CarAhead, 4, Wrap(NewStatus()), out var v));
+            Assert.Equal(-1.23f, AsF32(v), 3);
+        }
+
         // ── Format / suffix ──────────────────────────────────────────────
 
         [Theory]

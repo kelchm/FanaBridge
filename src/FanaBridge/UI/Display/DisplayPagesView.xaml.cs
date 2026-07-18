@@ -104,12 +104,19 @@ namespace FanaBridge.UI.Display
         private void EnterPagesEditor()
         {
             _editModelSource = _host?.GetDisplayConfig();
-            _editModel = new DisplayPagesEditModel(_editModelSource, _host?.ItmDeviceId ?? 0);
+            _editModel = NewEditModel(_editModelSource);
             _lastRenderedParam = null;
             _lastRenderedPage = null;
             _lastWasLiveMatch = false;
             RenderAll();
         }
+
+        private DisplayPagesEditModel NewEditModel(DisplayCustomizationConfig config)
+            => new DisplayPagesEditModel(
+                config,
+                _host?.ItmDeviceId ?? 0,
+                _settings?.ItmShowLapTotal ?? true,
+                _settings?.ItmShowPositionTotal ?? true);
 
         private void RenderAll()
         {
@@ -495,6 +502,19 @@ namespace FanaBridge.UI.Display
                 return;
             if (ReconcileIfExternallyChanged())
                 return;
+
+            // One-release downgrade mirror: Lap/Position format also writes the retired
+            // Show*Total toggles so a pre-6b build still sees the chosen total state.
+            if (DisplayPagesEditModel.FormatMirrorsShowTotal(paramId) && _settings != null)
+            {
+                bool withTotal = DisplayPagesEditModel.ShowTotalFromFormat(formatId);
+                if (paramId == ItmParam.Lap)
+                    _settings.ItmShowLapTotal = withTotal;
+                else
+                    _settings.ItmShowPositionTotal = withTotal;
+                _host.NotifySettingsChanged();
+            }
+
             var cfg = _editModel.SetFormat(paramId, formatId);
             ApplyAndReload(cfg);
             _editModel.SelectParam(paramId);
@@ -530,7 +550,7 @@ namespace FanaBridge.UI.Display
             // selection across the reload.
             var page = _editModel.SelectedPage;
             var param = _editModel.SelectedParamId;
-            _editModel = new DisplayPagesEditModel(_editModelSource, _host.ItmDeviceId);
+            _editModel = NewEditModel(_editModelSource);
             _editModel.SelectPage(page);
             if (param.HasValue)
                 _editModel.SelectParam(param.Value);

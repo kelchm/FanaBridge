@@ -49,20 +49,29 @@ namespace FanaBridge.UI.Display
     /// <see cref="DisplayCustomizationConfig"/> and turns every field remap / format /
     /// reset into a NEW document (immutable-after-load — FieldMappings dict copied
     /// fresh; everything else carried by reference). No SimHub or WPF — sibling of
-    /// <see cref="DisplayTriggersEditModel"/>.
+    /// <see cref="DisplayTriggersEditModel"/>. Toggle booleans are plain primitives so
+    /// the model stays free of DisplaySettings / host types.
     /// </summary>
     internal sealed class DisplayPagesEditModel
     {
         private readonly byte _itmDeviceId;
         private readonly ItmPageTable _pageTable;
+        private readonly bool _showLapTotal;
+        private readonly bool _showPositionTotal;
         private DisplayCustomizationConfig _config;
         private ItmPage _selectedPage;
         private ushort? _selectedParamId;
 
-        public DisplayPagesEditModel(DisplayCustomizationConfig current, byte itmDeviceId)
+        public DisplayPagesEditModel(
+            DisplayCustomizationConfig current,
+            byte itmDeviceId,
+            bool showLapTotal = true,
+            bool showPositionTotal = true)
         {
             _config = current;
             _itmDeviceId = itmDeviceId;
+            _showLapTotal = showLapTotal;
+            _showPositionTotal = showPositionTotal;
             _pageTable = ItmPageTable.ForDevice(itmDeviceId);
             // Land on the first non-legacy page when the table has one; else the first
             // entry (a device with only Legacy is theoretical but stay honest).
@@ -168,28 +177,44 @@ namespace FanaBridge.UI.Display
             return list;
         }
 
-        /// <summary>The effective format id to show as selected: the mapping's format
-        /// when set, else the family's default (index 0 of AllowedFor). Null when the
-        /// param has no format options.</summary>
+        /// <summary>The effective format id to show as selected — same precedence as
+        /// the ITM mapper (explicit &gt; override-bare &gt; Show*Total toggle &gt;
+        /// family default). Null when the param has no format options.</summary>
         public string EffectiveFormatId(ushort paramId)
         {
-            var allowed = FieldFormats.AllowedFor(paramId);
-            if (allowed.Count == 0)
+            if (FieldFormats.AllowedFor(paramId).Count == 0)
                 return null;
+            string explicitFormat = null;
+            bool hasMapping = false;
             if (_config?.FieldMappings != null
-                && _config.FieldMappings.TryGetValue(paramId, out var mapping)
-                && !string.IsNullOrEmpty(mapping?.Format)
-                && FieldFormats.IsAllowed(paramId, mapping.Format))
+                && _config.FieldMappings.TryGetValue(paramId, out var mapping))
             {
-                return mapping.Format;
+                hasMapping = true;
+                explicitFormat = mapping?.Format;
+                // Drop unknown format text the same way the validator would — fall
+                // through to the rest of the chain rather than surfacing junk.
+                if (!string.IsNullOrEmpty(explicitFormat)
+                    && !FieldFormats.IsAllowed(paramId, explicitFormat))
+                    explicitFormat = null;
             }
-            // Source override with no explicit format defaults bare for total/temp
-            // (mapper rule); the UI mirrors that so the dropdown matches wire behavior.
-            if (HasSourceOverride(paramId)
-                && (FieldFormats.IsTotalParam(paramId) || FieldFormats.IsTempParam(paramId)))
-                return FieldFormats.Bare;
-            return allowed[0];
+            return FieldFormats.EffectiveFormat(
+                paramId,
+                explicitFormat,
+                hasMapping,
+                _showLapTotal,
+                _showPositionTotal);
         }
+
+        /// <summary>Whether a format choice for <paramref name="paramId"/> should also
+        /// write <c>ItmShowLapTotal</c> / <c>ItmShowPositionTotal</c> (one-release
+        /// downgrade mirror — same pattern as the retired itmEnabled checkbox).</summary>
+        public static bool FormatMirrorsShowTotal(ushort paramId)
+            => paramId == ItmParam.Lap || paramId == ItmParam.Position;
+
+        /// <summary>Post-mirror Show*Total value for a Lap/Position format choice
+        /// (<c>true</c> when <paramref name="format"/> is <see cref="FieldFormats.WithTotal"/>).</summary>
+        public static bool ShowTotalFromFormat(string format)
+            => string.Equals(format, FieldFormats.WithTotal, StringComparison.Ordinal);
 
         /// <summary>The built-in default source for a param (what DEFAULT shows), or
         /// null when unknown / locked.</summary>
@@ -215,8 +240,10 @@ namespace FanaBridge.UI.Display
 
         /// <summary>Sets the source for a param (SimHub pick or built-in). Rejects
         /// Gear/EngineMapping. Creates a FieldMapping when none exists; keeps an
-        /// existing Format when present. Fresh FieldMappings dict; other document
-        /// members by reference.</summary>
+        /// existing Format when present. When the picked source is the param's
+        /// exact default and there is no non-default format, the mapping is dropped
+        /// (no-op override — registry path, byte-identical by construction). Fresh
+        /// FieldMappings dict; other document members by reference.</summary>
         public DisplayCustomizationConfig SetSource(ushort paramId, PropertyKind kind,
             string name)
         {
@@ -227,10 +254,21 @@ namespace FanaBridge.UI.Display
 
             var mappings = CopyMappings();
             mappings.TryGetValue(paramId, out var existing);
+            var source = new PropertySpec { Kind = kind, Name = name };
+            string format = existing?.Format;
+
+            // Default source + no non-default format → drop (same prune as SetFormat).
+            if (IsDefaultSource(paramId, source)
+                && (string.IsNullOrEmpty(format) || IsToggleAwareDefaultFormat(paramId, format)))
+            {
+                mappings.Remove(paramId);
+                return Commit(mappings);
+            }
+
             mappings[paramId] = new FieldMapping
             {
-                Source = new PropertySpec { Kind = kind, Name = name },
-                Format = existing?.Format,
+                Source = source,
+                Format = format,
             };
             return Commit(mappings);
         }
@@ -238,8 +276,11 @@ namespace FanaBridge.UI.Display
         /// <summary>Sets the format key for a param. Rejects unknown / disallowed
         /// formats and excluded params. A format-only override still carries the
         /// built-in default source (validator requires a source body); when the
-        /// format is the family's default and the source is still the built-in,
-        /// the mapping is dropped entirely (back to DEFAULT provenance).</summary>
+        /// format equals the toggle-aware default and the source is still the
+        /// built-in, the mapping is dropped entirely (back to DEFAULT provenance).
+        /// Lap/Position format choices are mirrored to Show*Total by the view — the
+        /// prune anticipates that post-mirror default so a chosen format always
+        /// equals the new toggle default and prunes.</summary>
         public DisplayCustomizationConfig SetFormat(ushort paramId, string format)
         {
             if (FieldFormats.IsOverrideExcluded(paramId))
@@ -252,8 +293,10 @@ namespace FanaBridge.UI.Display
             var source = existing?.Source ?? DefaultSource(paramId);
             bool sourceIsDefault = IsDefaultSource(paramId, source);
 
-            // Format-only at the family default with no real source override → drop.
-            if (sourceIsDefault && IsFamilyDefaultFormat(paramId, format))
+            // Format-only at the toggle-aware default with no real source override → drop.
+            // Lap/Position: view will mirror format → Show*Total, so compare against the
+            // post-mirror default (chosen format becomes the toggle default by construction).
+            if (sourceIsDefault && IsToggleAwareDefaultFormat(paramId, format, anticipateMirror: true))
             {
                 mappings.Remove(paramId);
                 return Commit(mappings);
@@ -414,11 +457,27 @@ namespace FanaBridge.UI.Display
         private static bool IsCenterParam(ushort paramId)
             => paramId == ItmParam.Speed || paramId == ItmParam.Gear;
 
-        private static bool IsFamilyDefaultFormat(ushort paramId, string format)
+        /// <summary>Whether <paramref name="format"/> equals the no-mapping default
+        /// for <paramref name="paramId"/> (toggle-aware for Lap/Position; family
+        /// default for Fuel/temps). When <paramref name="anticipateMirror"/> is true
+        /// and the param is Lap/Position, uses the post-mirror Show*Total that the
+        /// view will write for this format choice.</summary>
+        private bool IsToggleAwareDefaultFormat(ushort paramId, string format,
+            bool anticipateMirror = false)
         {
-            var allowed = FieldFormats.AllowedFor(paramId);
-            return allowed.Count > 0
-                && string.Equals(allowed[0], format, StringComparison.Ordinal);
+            bool showLap = _showLapTotal;
+            bool showPos = _showPositionTotal;
+            if (anticipateMirror && FormatMirrorsShowTotal(paramId))
+            {
+                bool withTotal = ShowTotalFromFormat(format);
+                if (paramId == ItmParam.Lap)
+                    showLap = withTotal;
+                else if (paramId == ItmParam.Position)
+                    showPos = withTotal;
+            }
+            string defaultsTo = FieldFormats.EffectiveFormat(
+                paramId, null, false, showLap, showPos);
+            return string.Equals(defaultsTo, format, StringComparison.Ordinal);
         }
 
         private static bool IsDefaultSource(ushort paramId, PropertySpec source)

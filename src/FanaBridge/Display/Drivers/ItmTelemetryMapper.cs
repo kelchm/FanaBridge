@@ -165,9 +165,10 @@ namespace FanaBridge.Display.Drivers
                 [ItmParam.OilTemp] = (n, h) => ItmValue.UInt8(h, ItmParam.OilTemp, ClampByte(n)),
                 [ItmParam.BrakeBias] = (n, h) => ItmValue.Int32(h, ItmParam.BrakeBias, BrakeBiasTenths(n)),
                 [ItmParam.BestLapTime] = (n, h) => ItmValue.Float32(h, ItmParam.BestLapTime, (float)n),
-                // Sign is the caller's: built-in path negates CarAhead in the selector; an
-                // override supplies the wire scalar directly (Round 2dp only).
-                [ItmParam.CarAhead] = (n, h) => ItmValue.Float32(h, ItmParam.CarAhead, (float)Math.Round(n, 2)),
+                // Car ahead reads negative on the wire (you're behind them). GapAhead /
+                // override scalars resolve as unsigned +gap — negate for any path so the
+                // wire convention holds for built-in and overrides alike (Round 2dp).
+                [ItmParam.CarAhead] = (n, h) => ItmValue.Float32(h, ItmParam.CarAhead, -(float)Math.Round(n, 2)),
                 [ItmParam.CarBehind] = (n, h) => ItmValue.Float32(h, ItmParam.CarBehind, (float)Math.Round(n, 2)),
                 [ItmParam.TyreFlTemp] = (n, h) => ItmValue.UInt8(h, ItmParam.TyreFlTemp, ClampByte(n)),
                 [ItmParam.TyreRlTemp] = (n, h) => ItmValue.UInt8(h, ItmParam.TyreRlTemp, ClampByte(n)),
@@ -316,35 +317,18 @@ namespace FanaBridge.Display.Drivers
         /// <summary>
         /// Effective format for <paramref name="paramId"/> after explicit Format, the
         /// overridden-source default-bare rule, and the Show*Total toggle migration.
-        /// Null when the param has no format family.
+        /// Null when the param has no format family. Delegates to the shared
+        /// <see cref="FieldFormats.EffectiveFormat"/> helper.
         /// </summary>
         internal string EffectiveFormat(ushort paramId)
         {
             bool hasOverride = _fieldMappings.TryGetValue(paramId, out var mapping);
-            string explicitFormat = hasOverride ? mapping?.Format : null;
-            if (!string.IsNullOrEmpty(explicitFormat))
-                return explicitFormat;
-
-            // A Source override keeps total/unit suffixes only when the format explicitly
-            // asks for them — otherwise default to bare (suffixes come from GameData, not
-            // the override source, so they rarely make sense on a remapped field).
-            if (hasOverride)
-            {
-                if (IsTotalParam(paramId) || TempParams.Contains(paramId))
-                    return FieldFormats.Bare;
-                return null;
-            }
-
-            // Toggle migration: settings toggle=false with no explicit format → bare.
-            if (paramId == ItmParam.Lap)
-                return ShowLapTotal ? FieldFormats.WithTotal : FieldFormats.Bare;
-            if (paramId == ItmParam.Position)
-                return ShowPositionTotal ? FieldFormats.WithTotal : FieldFormats.Bare;
-            if (paramId == ItmParam.Fuel)
-                return FieldFormats.WithTotal;
-            if (TempParams.Contains(paramId))
-                return FieldFormats.Unit;
-            return null;
+            return FieldFormats.EffectiveFormat(
+                paramId,
+                hasOverride ? mapping?.Format : null,
+                hasOverride,
+                ShowLapTotal,
+                ShowPositionTotal);
         }
 
         // ── Value encoding ───────────────────────────────────────────────
