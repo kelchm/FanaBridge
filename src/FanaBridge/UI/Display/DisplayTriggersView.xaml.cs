@@ -152,11 +152,12 @@ namespace FanaBridge.UI.Display
 
         private void TriggersAdd_Click(object sender, RoutedEventArgs e) => StartAddDraft();
 
-        // The v9 add flow: a fresh telemetry draft becomes the expanded top row and the
-        // property picker opens immediately (mock addTrigger). Picking a property completes
-        // (mapped controls) or reveals the value field. An incomplete draft never commits,
-        // but it also never silently disappears: collapsing it / clicking away keeps it as
-        // a pending top row, and only its ⋯ remove (or leaving the editor) discards it.
+        // The v9 add flow: a fresh telemetry draft becomes the expanded top row with its
+        // drawer open — the user picks the property from the drawer's WHEN cell when
+        // ready (no modal jumps out at them; kelchm: the auto-opening picker was
+        // disorienting). An incomplete draft never commits, but it also never silently
+        // disappears: collapsing it / clicking away keeps it as a pending top row, and
+        // only its ⋯ remove (or leaving the editor) discards it.
         private void StartAddDraft()
         {
             if (_editModel == null)
@@ -165,16 +166,9 @@ namespace FanaBridge.UI.Display
             _expandedDraft = null;
             _draftExpanded = true;
             // ＋ with a pending draft re-expands it rather than silently replacing it.
-            if (_addDraft != null)
-            {
-                RenderTriggerRows(_lastSnapshot);
-                return;
-            }
-            _addDraft = _editModel.NewTelemetryDraft();
-            if (PickProperty(_addDraft))
-                CommitField(_addDraft, DraftRowId, isDraft: true);   // may promote (mapped) or reveal the value box
-            else
-                RenderTriggerRows(_lastSnapshot);                    // keep the empty draft open
+            if (_addDraft == null)
+                _addDraft = _editModel.NewTelemetryDraft();
+            RenderTriggerRows(_lastSnapshot);
         }
 
         private void DiscardDraft()
