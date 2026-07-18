@@ -34,6 +34,13 @@ namespace FanaBridge.Display.Rules
         /// <summary>col01 sub-command for the OLED screen selector.</summary>
         public const byte Subcommand = 0x50;
 
+        /// <summary>
+        /// Re-send interval for a HELD screen: the firmware reverts a selected screen
+        /// after roughly 60 s without a refresh (hardware-observed), so a latched
+        /// command re-sends this often — comfortably inside the revert window.
+        /// </summary>
+        public const int KeepaliveMs = 15000;
+
         /// <summary>Document spelling for <paramref name="command"/>, or null for Unknown.</summary>
         public static string Write(SpecialCommand command)
         {

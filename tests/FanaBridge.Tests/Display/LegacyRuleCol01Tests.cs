@@ -833,6 +833,102 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void Special_NullSink_DoesNotLatch_SendsWhenSinkRebinds()
+        {
+            // The display-test / Off gates unbind the sink: a special winning during
+            // that window must NOT latch as "sent" — when the gate reopens, the held
+            // winner still gets its frame.
+            var h = Harness.Create(LogoSpecialConfig);
+            h.Control.Land(1);
+
+            h.Stack.TryShowSpecialScreen = null;
+            h.Tick(Live(isInPit: 1));
+            Assert.Empty(h.Transport.SentCol01Reports);
+
+            h.Stack.TryShowSpecialScreen = p => h.Driver.ShowSpecialScreen(p);
+            h.T += 16;
+            h.Tick(Live(isInPit: 1));
+            Assert.Single(h.Transport.SentCol01Reports);
+            Assert.Equal(SpecialFrame(SpecialCommands.PatternLogo), h.Transport.SentCol01Reports[0]);
+        }
+
+        [Fact]
+        public void Special_FlagOffReleasesLatch_FlagOnResends()
+        {
+            // Flag-off mid-hold releases the latch (the classic path may repaint over
+            // the screen); flag-on re-sends from a clean win edge.
+            var h = Harness.Create(LogoSpecialConfig);
+            h.Control.Land(1);
+            h.Tick(Live(isInPit: 1));
+            Assert.Single(h.Transport.SentCol01Reports);
+
+            DisplayRuleStack.LegacyRuleWrites = false;
+            h.T += 16;
+            h.Tick(Live(isInPit: 1));   // release fires; log-only, no writes
+            Assert.Single(h.Transport.SentCol01Reports);
+
+            DisplayRuleStack.LegacyRuleWrites = true;
+            h.T += 16;
+            h.Tick(Live(isInPit: 1));   // fresh win edge → re-send
+            Assert.Equal(2, h.Transport.SentCol01Reports.Count);
+            Assert.Equal(SpecialFrame(SpecialCommands.PatternLogo),
+                h.Transport.SentCol01Reports[1]);
+        }
+
+        [Fact]
+        public void Special_Keepalive_ResendsHeldScreen_InsideRevertWindow()
+        {
+            // Firmware reverts a selected screen after ~60s without a refresh — a held
+            // command re-sends every KeepaliveMs.
+            var h = Harness.Create(LogoSpecialConfig);
+            h.Control.Land(1);
+            h.Tick(Live(isInPit: 1));
+            Assert.Single(h.Transport.SentCol01Reports);
+
+            h.T += SpecialCommands.KeepaliveMs - 16;
+            h.Tick(Live(isInPit: 1));
+            Assert.Single(h.Transport.SentCol01Reports);   // not yet due
+
+            h.T += 16;
+            h.Tick(Live(isInPit: 1));                       // due → re-send
+            Assert.Equal(2, h.Transport.SentCol01Reports.Count);
+            Assert.Equal(SpecialFrame(SpecialCommands.PatternLogo),
+                h.Transport.SentCol01Reports[1]);
+        }
+
+        private const string TwoSpecialConfig =
+            "{ \"schemaVersion\": 1, \"legacy\": { "
+            + "\"rules\": [ { \"id\": \"w1\", "
+            + "\"when\": { \"kind\": \"lessThan\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+            + "\"show\": { \"kind\": \"special\", \"command\": \"white\" }, "
+            + "\"hold\": { \"kind\": \"whileActive\" } }, "
+            + "{ \"id\": \"s1\", "
+            + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
+            + "\"show\": { \"kind\": \"special\", \"command\": \"logo\" }, "
+            + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
+
+        [Fact]
+        public void Special_DeclinedTransition_CaptionKeepsAcceptedScreen()
+        {
+            // Mirror truth: during declined retries of a NEW screen, the caption keeps
+            // the last ACCEPTED screen (the hardware still shows it).
+            var h = Harness.Create(TwoSpecialConfig);
+            h.Control.Land(1);
+            var snap = h.Tick(Live(isInPit: 1, fuel: 50));
+            Assert.Equal("Fanatec logo", snap.LegacyScreenName);
+
+            h.Transport.SendReturns = false;
+            h.T += 600;                                     // past the dwell floor
+            snap = h.Tick(Live(isInPit: 1, fuel: 5)) ?? snap;   // white wins, send declined
+            Assert.Equal("Fanatec logo", snap.LegacyScreenName);
+
+            h.Transport.SendReturns = true;
+            h.T += 16;
+            snap = h.Tick(Live(isInPit: 1, fuel: 5)) ?? snap;   // retry accepted
+            Assert.Equal("White screen", snap.LegacyScreenName);
+        }
+
+        [Fact]
         public void Special_IdleEligible_FiresAtIdle()
         {
             var h = Harness.Create(LogoSpecialIdleConfig);

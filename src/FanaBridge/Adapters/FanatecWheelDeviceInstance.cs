@@ -75,6 +75,11 @@ namespace FanaBridge.Adapters
         // True once the legacy page has been blanked after switching to mode "None"/Off,
         // so it is cleared once on the transition rather than every frame.
         private bool _legacyBlanked;
+        // Reclaim debt carried across a generation rebind: the OLD driver's exit-blank
+        // latch state, re-armed on the replacement driver at creation so content the old
+        // generation left on the page (segments or a firmware special screen) is still
+        // reclaimed despite the fresh driver's first-blank guard.
+        private bool _legacyReclaimPending;
         // Last itmCapable snapshot used for resolve-on-read when displayControl is absent
         // from the blob. Avoids allocating a DisplaySettings every frame; only re-Reads
         // when live caps flip while migration is still open.
@@ -269,7 +274,12 @@ namespace FanaBridge.Adapters
             _manager?.Close();
 
             // The legacy col01 display driver holds its encoder for life — recreate it
-            // lazily (DataUpdate builds it on demand from the live plugin).
+            // lazily (DataUpdate builds it on demand from the live plugin). If the old
+            // generation left content on the page (segments OR a firmware special
+            // screen — both arm the exit-blank latch), carry that reclaim debt to the
+            // NEW driver: its fresh first-blank guard would otherwise suppress the
+            // reclaim and an orphaned firmware screen could persist indefinitely.
+            _legacyReclaimPending = _legacyDriver != null && _legacyDriver.NeedsExitBlank;
             _legacyDriver = null;
             // The ITM session's driver-adjacent objects (driver, twin, rule stack, status
             // line, published envelope) are all invalidated by the generation swap — the
@@ -715,6 +725,11 @@ namespace FanaBridge.Adapters
             if (!_displaySettings.LegacyPageActive)
                 return;
             _legacyDriver = new LegacyDisplayDriver(plugin.Display, _displaySettings);
+            if (_legacyReclaimPending)
+            {
+                _legacyDriver.ArmExitBlank();   // carry the old generation's reclaim debt
+                _legacyReclaimPending = false;
+            }
             if (logCreate)
             {
                 SimHub.Logging.Current.Info(
@@ -763,6 +778,11 @@ namespace FanaBridge.Adapters
                     if (plugin?.Display == null)
                         return;
                     _legacyDriver = new LegacyDisplayDriver(plugin.Display, _displaySettings);
+                    if (_legacyReclaimPending)
+                    {
+                        _legacyDriver.ArmExitBlank();   // old generation's reclaim debt
+                        _legacyReclaimPending = false;
+                    }
                     if (logCreate)
                     {
                         SimHub.Logging.Current.Info(

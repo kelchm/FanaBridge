@@ -107,6 +107,7 @@ namespace FanaBridge.Display.Runtime
         private SpecialCommand _latchedSpecialCommand = SpecialCommand.Unknown;
         private string _latchedSpecialRuleId;
         private string _lastSpecialLogged;
+        private long _specialSentAtMs;   // last ACCEPTED send (keepalive origin)
 
         // GearAndSpeed overlay state (clock-injected; matches formatter contract).
         private int _overlayGear = int.MinValue;
@@ -347,6 +348,10 @@ namespace FanaBridge.Display.Runtime
             }
             else
             {
+                // Flag-off is log-only — but a special screen latched while the flag was
+                // ON is physically showing; release it so the classic path can reclaim
+                // and a later flag-on re-sends from a clean win edge.
+                ReleaseSpecialIfLatched();
                 LogSpecialIntentChange(itm.Intent, legacy.Intent);
                 LogLegacyIntentChange(legacy.Intent);
             }
@@ -557,31 +562,45 @@ namespace FanaBridge.Display.Runtime
         /// </summary>
         private void DriveSpecialCommand(RuleIntent intent)
         {
-            string label = SpecialCommands.Label(intent.Command);
-            _tickSeg0 = SevenSegment.Blank;
-            _tickSeg1 = SevenSegment.Blank;
-            _tickSeg2 = SevenSegment.Blank;
-            _tickHasSegs = true;
-            _tickLegacyScreenName = label;
-
+            long now = _now();
             bool winEdge = !_specialLatched
                 || _latchedSpecialCommand != intent.Command
                 || !string.Equals(_latchedSpecialRuleId, intent.SourceRuleId, StringComparison.Ordinal);
+            // Keepalive: the firmware reverts a selected screen after ~60 s without a
+            // refresh, so a held command re-sends inside that window. A declined
+            // keepalive leaves the stamp old and retries every tick until accepted.
+            bool keepaliveDue = _specialLatched
+                && now - _specialSentAtMs >= SpecialCommands.KeepaliveMs;
 
-            if (winEdge)
+            if (winEdge || keepaliveDue)
             {
                 byte pattern = SpecialCommands.PatternOf(intent.Command);
-                bool accepted = TryShowSpecialScreen == null
-                    || TryShowSpecialScreen(pattern);
+                // A missing sink (display test / Off gate unbinds it) is NOT an accepted
+                // send — leave unlatched so the win retries every tick until the gate
+                // reopens and the frame actually reaches hardware.
+                bool accepted = TryShowSpecialScreen != null && TryShowSpecialScreen(pattern);
                 if (accepted)
                 {
                     _specialLatched = true;
                     _latchedSpecialCommand = intent.Command;
                     _latchedSpecialRuleId = intent.SourceRuleId;
-                    LogSpecialWriteTransition(intent.Command, label);
+                    _specialSentAtMs = now;
+                    LogSpecialWriteTransition(intent.Command, SpecialCommands.Label(intent.Command));
                 }
-                // Declined: leave unlatched so the next tick retries.
+                // Declined: leave unlatched (win edge) / stamp old (keepalive) so the
+                // next tick retries.
             }
+
+            // Mirror truth: the face/caption reflect the last ACCEPTED screen, not the
+            // desired one — during declined retries the hardware still shows the old
+            // screen (or nothing), and the caption must not get ahead of the wire.
+            _tickSeg0 = SevenSegment.Blank;
+            _tickSeg1 = SevenSegment.Blank;
+            _tickSeg2 = SevenSegment.Blank;
+            _tickHasSegs = true;
+            _tickLegacyScreenName = _specialLatched
+                ? SpecialCommands.Label(_latchedSpecialCommand)
+                : null;
         }
 
         private void ReleaseSpecialIfLatched()
