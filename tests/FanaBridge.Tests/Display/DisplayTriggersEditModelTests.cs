@@ -498,6 +498,34 @@ namespace FanaBridge.Tests.Display
             Assert.True(degradedRow.Draggable);            // but reorderable
             Assert.Equal("", degradedRow.Eligibility);     // no eligibility chip
             Assert.Null(degradedRow.PropertyName);         // no structured grammar — uses Label
+
+            // The dense-grid columns stay at their empty defaults: a degraded rule skips
+            // ApplyWorkbenchColumns (spec 2b §1 — don't fabricate presentations the editor
+            // can't honor). Route a degraded row through ApplyWorkbenchColumns and these would
+            // read "While active" / "In game" / "waiting" for an unhonorable rule — pinned here.
+            Assert.Equal("", degradedRow.Timeout);
+            Assert.Equal("", degradedRow.RunGlyph);
+            Assert.Equal("", degradedRow.RunLabel);
+            Assert.Equal("", degradedRow.StateText);
+        }
+
+        [Fact]
+        public void Rows_Monitor_DropsDegradedRule_EvenWhenEnabledWithNoLiveState()
+        {
+            // Monitor is "what's in play": a rule degraded at load can never fire, so it must
+            // not leak into the Overview list. The degraded "future" rule is Enabled (default)
+            // and, with a null snapshot, has no live status (Armed) — so ONLY the
+            // `rule.DegradedAtLoad ||` drop-arm keeps it out. Remove that clause and "future"
+            // survives as rank 1, failing this test.
+            var model = new DisplayTriggersEditModel(WithDegradedRule(), Device3);
+
+            var rows = model.Rows(null, defaultWirePage: 1, TriggerTableMode.Monitor);
+
+            Assert.DoesNotContain(rows, r => r.RuleId == "future");   // degraded → dropped
+            Assert.Equal(2, rows.Count);                              // only r1 + the base row
+            Assert.Equal("r1", rows[0].RuleId);
+            Assert.Equal("1", rows[0].Rank);                          // renumbered contiguously
+            Assert.True(rows[1].IsBase);
         }
 
         [Fact]

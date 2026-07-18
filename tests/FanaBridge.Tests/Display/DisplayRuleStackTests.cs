@@ -539,6 +539,31 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void Snapshot_LiveText_FractionalNumericSource_UsesInvariantSeparator()
+        {
+            // ComposeLiveText formats numeric reads with CultureInfo.InvariantCulture. The
+            // whole-number 150 cases above can't catch a dropped InvariantCulture — "150" is
+            // identical under any culture. Force a comma-decimal culture and feed a fractional
+            // value: the invariant round-trip must still read "8.4", not de-DE's "8,4". Drop the
+            // InvariantCulture argument in ComposeLiveText and this fails on ANY host.
+            var prior = System.Threading.Thread.CurrentThread.CurrentCulture;
+            System.Threading.Thread.CurrentThread.CurrentCulture =
+                new System.Globalization.CultureInfo("de-DE");
+            try
+            {
+                var h = Harness.Create(NamedRuleConfig, rawLookup: name =>
+                    name == "Watched" ? (object)8.4 : null);
+                h.Control.Land(1);
+                var s = h.Tick(SpeedData(0));
+                Assert.Equal("8.4", Assert.Single(s!.ItmRules).LiveText);
+            }
+            finally
+            {
+                System.Threading.Thread.CurrentThread.CurrentCulture = prior;
+            }
+        }
+
+        [Fact]
         public void Snapshot_IncludesLegacyRules()
         {
             const string config =
