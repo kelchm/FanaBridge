@@ -49,11 +49,13 @@ namespace FanaBridge.Display.Rules
     /// </summary>
     public class DisplayRuleEngine
     {
-        /// <summary>Minimum residency of an emitted intent before it may change again.</summary>
-        internal const int MinDwellMs = 1500;
+        /// <summary>Minimum residency of an emitted intent before it may change again.
+        /// Dialed 1500 → 500 (kelchm 2026-07-18): the long dwell was invasive during
+        /// testing and release-latency feel; 500 still bounds flapping.</summary>
+        internal const int MinDwellMs = 500;
 
         /// <summary>Earlier change allowed when a strictly-higher-priority activation preempts.</summary>
-        internal const int PreemptFloorMs = 500;
+        internal const int PreemptFloorMs = 250;
 
         /// <summary>Activity ring capacity — oldest entries drop beyond this.</summary>
         internal const int ActivityCapacity = 50;

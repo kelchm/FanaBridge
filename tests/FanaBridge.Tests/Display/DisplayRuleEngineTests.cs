@@ -702,8 +702,9 @@ namespace FanaBridge.Tests.Display
             h.Props.Set(BuiltInProperties.Fuel, 5);
             AssertPage(h.Tick(advance: 100), ItmPage.FuelErsDrs, "r");   // intent change at t=100
 
-            // The value flaps every 100ms — the intent must not.
-            for (int i = 0; i < 10; i++)
+            // The value flaps every 100ms — within the dwell window the intent must not
+            // move (iterations stay strictly inside MinDwellMs of residency).
+            for (int i = 0; i < DisplayRuleEngine.MinDwellMs / 100 - 1; i++)
             {
                 h.Props.Set(BuiltInProperties.Fuel, i % 2 == 0 ? 50 : 5);
                 var r = h.Tick(advance: 100);
@@ -754,15 +755,16 @@ namespace FanaBridge.Tests.Display
 
             // hi's window ends at t=400; lo is now the logical winner (OnScreen), but the
             // emitted intent keeps hi's page until MinDwellMs of residency has passed —
-            // a lower-priority target never gets the preempt shortcut.
-            var r = h.Tick(advance: 200);                // t=400
+            // a lower-priority target never gets the PreemptFloorMs shortcut (held 300ms
+            // here, past the preempt floor, still blocked).
+            var r = h.Tick(advance: 200);                // t=400: held 300ms
             Assert.Equal(RuleStatus.OnScreen, StatusOf(r, "lo"));
             Assert.Equal(ItmPage.TyreTemps, r.Intent.Page);
 
-            r = h.Tick(advance: 1100);                   // t=1500: held 1400ms — still blocked
+            r = h.Tick(advance: 199);                    // t=599: held 499ms — still blocked
             Assert.Equal(ItmPage.TyreTemps, r.Intent.Page);
 
-            r = h.Tick(advance: 100);                    // t=1600 = MinDwellMs since the change
+            r = h.Tick(advance: 1);                      // t=600 = MinDwellMs since the change
             AssertPage(r, ItmPage.FuelErsDrs, "lo");
         }
 
