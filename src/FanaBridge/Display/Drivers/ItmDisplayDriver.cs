@@ -59,11 +59,30 @@ namespace FanaBridge.Display.Drivers
         /// </summary>
         public int DefDoubleTapMs { get; set; } = 50;
 
-        /// <summary>Whether to show the "/total laps" suffix on the lap field.</summary>
-        public bool ShowLapTotal { get; set; } = true;
+        /// <summary>
+        /// Whether to show the "/total laps" suffix on the lap field. Migrating into the
+        /// format layer: the mapper owns suffix decisions; this property is the settings
+        /// toggle mirror (honored + written for one release — same pattern as itmEnabled
+        /// in P3). Toggle=false with no explicit format acts as Format=bare.
+        /// </summary>
+        public bool ShowLapTotal
+        {
+            get => _mapper.ShowLapTotal;
+            set => _mapper.ShowLapTotal = value;
+        }
 
-        /// <summary>Whether to show the "/field size" suffix on the position field.</summary>
-        public bool ShowPositionTotal { get; set; } = true;
+        /// <summary>
+        /// Whether to show the "/field size" suffix on the position field. See
+        /// <see cref="ShowLapTotal"/> — same format-layer migration.
+        /// </summary>
+        public bool ShowPositionTotal
+        {
+            get => _mapper.ShowPositionTotal;
+            set => _mapper.ShowPositionTotal = value;
+        }
+
+        /// <summary>The per-device telemetry mapper (built-in registry + field overrides).</summary>
+        public ItmTelemetryMapper Mapper => _mapper;
 
         /// <summary>
         /// The built-in page policy's base page (the user's ItmDefaultPage setting, as a
@@ -363,21 +382,17 @@ namespace FanaBridge.Display.Drivers
                 var kv = subs[i];
                 ushort paramId = kv.Value.ParamId;
                 string suffix;
+                // Mapper owns the format layer (withTotal|bare / unit|bare, overridden-
+                // source default-bare, Show*Total toggle migration). Always emit for
+                // temps and totals so a suffix that disappears is actively cleared —
+                // a zero-length suffix does NOT overwrite the firmware's default "/0".
                 if (_mapper.TryGetUnitSuffix(paramId, data, out suffix))
                 {
-                    // Static unit label (e.g. "C").
+                    // Temperature unit label (or blank when format=bare).
                 }
-                else if (_mapper.IsTotalParam(paramId))
+                else if (_mapper.TryResolveTotalSuffix(paramId, data, out suffix))
                 {
-                    // Lap/position/fuel: always emit an entry so a total that disappears is
-                    // actively cleared — a zero-length suffix does NOT overwrite the firmware's
-                    // default "/0", so we write a blank " " to clear it. Fuel is special: with no
-                    // tank capacity it falls back to the unit label ("L"/"G") rather than a blank,
-                    // so a bare fuel value still reads as fuel.
-                    suffix = ShowTotalFor(paramId)
-                          && _mapper.TryGetTotalSuffix(paramId, data, out var total)
-                        ? total
-                        : (paramId == ItmParam.Fuel ? _mapper.FuelUnitLabel(data) : " ");
+                    // Lap/position/fuel total (or blank / fuel unit-label fallback).
                 }
                 else
                 {
@@ -408,14 +423,6 @@ namespace FanaBridge.Display.Drivers
             _defTap2Defs = defs;                  // schedule the tight second tap
             _defTap2DueMs = now + DefDoubleTapMs;
             _log("ITM: ParamDefs sent — suffixes: " + s);
-        }
-
-        private bool ShowTotalFor(ushort paramId)
-        {
-            if (paramId == ItmParam.Lap) return ShowLapTotal;
-            if (paramId == ItmParam.Position) return ShowPositionTotal;
-            if (paramId == ItmParam.Fuel) return true;   // fuel/capacity has no user toggle
-            return false;
         }
 
         private enum SendOutcome { Sent, NothingToSend, Declined }

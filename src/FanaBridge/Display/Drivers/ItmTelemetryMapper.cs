@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using GameReaderCommon;
+using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 
 namespace FanaBridge.Display.Drivers
@@ -12,12 +13,11 @@ namespace FanaBridge.Display.Drivers
     /// shows it, so a single flat <c>paramId → encoder</c> registry serves every device.
     ///
     /// Constructed once per display device by <see cref="ItmDisplayDriver"/>; the built-in
-    /// encoder registry is the instance's default layer. The wire-side vocabulary — the page
-    /// catalog (which params a page carries) and subscription-report parsing — lives in
-    /// <see cref="ItmTelemetry"/> (Protocol, no SimHub). This class knows both sides (wire
-    /// <c>paramId</c> + SimHub <c>GameData</c>), which is why it belongs in Adapters, not
-    /// Protocol. It holds no wire framing — the pure, per-frame translation step, the ITM
-    /// analogue of <c>LegacyDisplayDriver</c>'s reads.
+    /// encoder registry is the instance's default layer. Optional per-device
+    /// <see cref="FieldMapping"/> overrides (source + format) sit on top: a resolved scalar
+    /// still flows through the same typed encoder path (clamps, rounding, wire type). The
+    /// wire-side vocabulary — the page catalog and subscription-report parsing — lives in
+    /// <see cref="ItmTelemetry"/> (Protocol, no SimHub).
     /// </summary>
     public class ItmTelemetryMapper
     {
@@ -45,11 +45,55 @@ namespace FanaBridge.Display.Drivers
         // param has an entry here (see HasEncoder).
         private readonly Dictionary<ushort, Func<StatusDataBase, byte, ItmValue>> _registry;
 
+        // Scalar encoder path: same clamps/rounding/wire type as the built-in registry,
+        // fed a double from a FieldMapping override (or from a resolved built-in). Gear and
+        // EngineMapping have no entry — they are override-excluded and keep special forms.
+        private readonly Dictionary<ushort, Func<double, byte, ItmValue>> _scalarEncoders;
+
+        // Per-device field overrides (validated snapshot). Empty when none; never null after
+        // Configure. Read on the DataUpdate thread only.
+        private IReadOnlyDictionary<ushort, FieldMapping> _fieldMappings =
+            EmptyMappings;
+
+        // Shared property reader (the runtime's SimHubPropertySource). Null when no
+        // customization is active — overrides then never fire. BeginFrame is the runtime's
+        // job and must run before the driver's Update that reads here.
+        private IPropertyReader _properties;
+
+        private static readonly IReadOnlyDictionary<ushort, FieldMapping> EmptyMappings =
+            new Dictionary<ushort, FieldMapping>();
+
         /// <summary>Builds a mapper with the built-in default encoder registry.</summary>
         public ItmTelemetryMapper()
         {
             _registry = BuildRegistry();
+            _scalarEncoders = BuildScalarEncoders();
         }
+
+        /// <summary>
+        /// Installs the device's validated field mappings and the shared property reader.
+        /// Call from the runtime on every frame that may encode (or on config swap); a null
+        /// mappings dict or null reader clears the override layer. Gear/EngineMapping are
+        /// already stripped by the validator.
+        /// </summary>
+        public void Configure(
+            IReadOnlyDictionary<ushort, FieldMapping> fieldMappings,
+            IPropertyReader properties)
+        {
+            _fieldMappings = fieldMappings ?? EmptyMappings;
+            _properties = properties;
+        }
+
+        /// <summary>
+        /// Settings-level total toggles (ItmShowLapTotal / ItmShowPositionTotal). Honored
+        /// for one release as a resolve-on-read migration into the format layer: toggle
+        /// false with no explicit format acts as <see cref="FieldFormats.Bare"/>. The
+        /// mapper is the single owner of suffix decisions.
+        /// </summary>
+        public bool ShowLapTotal { get; set; } = true;
+
+        /// <inheritdoc cref="ShowLapTotal"/>
+        public bool ShowPositionTotal { get; set; } = true;
 
         private static Dictionary<ushort, Func<StatusDataBase, byte, ItmValue>> BuildRegistry()
             => new Dictionary<ushort, Func<StatusDataBase, byte, ItmValue>>
@@ -100,6 +144,37 @@ namespace FanaBridge.Display.Drivers
                 [ItmParam.TyreRrTemp] = U8(ItmParam.TyreRrTemp, d => ClampByte(d.TyreTemperatureRearRight)),
             };
 
+        // Scalar path: same wire transforms as the registry selectors above, without the
+        // GameData read. Override values feed through these so fuel still rounds 1dp into
+        // Float32, brake bias still becomes tenths, etc.
+        private static Dictionary<ushort, Func<double, byte, ItmValue>> BuildScalarEncoders()
+            => new Dictionary<ushort, Func<double, byte, ItmValue>>
+            {
+                [ItmParam.Speed] = (n, h) => ItmValue.Int16(h, ItmParam.Speed, ClampSpeed(n)),
+                [ItmParam.Lap] = (n, h) => ItmValue.UInt8(h, ItmParam.Lap, ClampByte(n)),
+                [ItmParam.Position] = (n, h) => ItmValue.UInt8(h, ItmParam.Position, ClampByte(n)),
+                [ItmParam.LapTime] = (n, h) => ItmValue.Float32(h, ItmParam.LapTime, (float)n),
+                [ItmParam.LastLapTime] = (n, h) => ItmValue.Float32(h, ItmParam.LastLapTime, (float)n),
+                [ItmParam.Fuel] = (n, h) => ItmValue.Float32(h, ItmParam.Fuel, (float)Math.Round(n, 1)),
+                [ItmParam.ErsLevel] = (n, h) => ItmValue.Int32(h, ItmParam.ErsLevel, SafeRound(n)),
+                [ItmParam.DrsZone] = (n, h) => ItmValue.UInt8(h, ItmParam.DrsZone, (byte)(n != 0 ? 1 : 0)),
+                [ItmParam.DrsActive] = (n, h) => ItmValue.UInt8(h, ItmParam.DrsActive, (byte)(n != 0 ? 1 : 0)),
+                [ItmParam.DeltaOwnBest] = (n, h) => ItmValue.Float32(h, ItmParam.DeltaOwnBest, (float)Math.Round(n, 2)),
+                [ItmParam.TcSetting] = (n, h) => ItmValue.UInt8(h, ItmParam.TcSetting, ClampByte(n)),
+                [ItmParam.AbsSetting] = (n, h) => ItmValue.UInt8(h, ItmParam.AbsSetting, ClampByte(n)),
+                [ItmParam.OilTemp] = (n, h) => ItmValue.UInt8(h, ItmParam.OilTemp, ClampByte(n)),
+                [ItmParam.BrakeBias] = (n, h) => ItmValue.Int32(h, ItmParam.BrakeBias, BrakeBiasTenths(n)),
+                [ItmParam.BestLapTime] = (n, h) => ItmValue.Float32(h, ItmParam.BestLapTime, (float)n),
+                // Sign is the caller's: built-in path negates CarAhead in the selector; an
+                // override supplies the wire scalar directly (Round 2dp only).
+                [ItmParam.CarAhead] = (n, h) => ItmValue.Float32(h, ItmParam.CarAhead, (float)Math.Round(n, 2)),
+                [ItmParam.CarBehind] = (n, h) => ItmValue.Float32(h, ItmParam.CarBehind, (float)Math.Round(n, 2)),
+                [ItmParam.TyreFlTemp] = (n, h) => ItmValue.UInt8(h, ItmParam.TyreFlTemp, ClampByte(n)),
+                [ItmParam.TyreRlTemp] = (n, h) => ItmValue.UInt8(h, ItmParam.TyreRlTemp, ClampByte(n)),
+                [ItmParam.TyreFrTemp] = (n, h) => ItmValue.UInt8(h, ItmParam.TyreFrTemp, ClampByte(n)),
+                [ItmParam.TyreRrTemp] = (n, h) => ItmValue.UInt8(h, ItmParam.TyreRrTemp, ClampByte(n)),
+            };
+
         /// <summary>
         /// Whether this parameter has a value encoder. Used by the catalog guard test to prove
         /// every param a page can carry (<see cref="ItmTelemetry.ParamsFor"/>) is encodable.
@@ -123,12 +198,24 @@ namespace FanaBridge.Display.Drivers
         /// The unit suffix a temperature's value should display (single char, e.g. "C"/"F"/"K"),
         /// or false if the parameter isn't a temperature. Read from the frame's
         /// <c>TemperatureUnit</c> so it stays consistent with the already-converted value.
+        /// Honours the format layer: <see cref="FieldFormats.Bare"/> clears the unit.
         /// </summary>
         public bool TryGetUnitSuffix(ushort paramId, GameData data, out string suffix)
         {
-            if (TempParams.Contains(paramId)) { suffix = UnitLabel(data?.NewData?.TemperatureUnit, "C"); return true; }
-            suffix = null;
-            return false;
+            if (!TempParams.Contains(paramId))
+            {
+                suffix = null;
+                return false;
+            }
+            // bare → blank " " so a prior unit is actively cleared (same wire convention
+            // as ShowTotalFor=false on totals).
+            if (string.Equals(EffectiveFormat(paramId), FieldFormats.Bare, StringComparison.Ordinal))
+            {
+                suffix = " ";
+                return true;
+            }
+            suffix = UnitLabel(data?.NewData?.TemperatureUnit, "C");
+            return true;
         }
 
         /// <summary>The fuel unit as a single-char label (e.g. "L"/"G"), from the frame's
@@ -159,6 +246,9 @@ namespace FanaBridge.Display.Drivers
         /// and at least the current value. This drops misleading "/0" / "/2" suffixes from games
         /// (e.g. Forza Horizon) that don't expose a race structure, while real races still show
         /// the total.
+        ///
+        /// Does <b>not</b> apply the format layer — callers that need format-aware emit use
+        /// <see cref="TryResolveTotalSuffix"/>.
         /// </summary>
         public bool TryGetTotalSuffix(ushort paramId, GameData data, out string suffix)
         {
@@ -188,6 +278,75 @@ namespace FanaBridge.Display.Drivers
             }
         }
 
+        /// <summary>
+        /// Format-aware total/fuel suffix for ParamDefs: <see cref="FieldFormats.Bare"/>
+        /// (or the migrated Show*Total=false / overridden-source default) clears with " ";
+        /// <see cref="FieldFormats.WithTotal"/> emits the total when available, else the fuel
+        /// unit-label fallback or a blank for lap/position. Single owner of suffix decisions.
+        /// </summary>
+        public bool TryResolveTotalSuffix(ushort paramId, GameData data, out string suffix)
+        {
+            if (!IsTotalParam(paramId))
+            {
+                suffix = null;
+                return false;
+            }
+
+            bool wantTotal = !string.Equals(
+                EffectiveFormat(paramId), FieldFormats.Bare, StringComparison.Ordinal);
+
+            if (wantTotal && TryGetTotalSuffix(paramId, data, out var total))
+            {
+                suffix = total;
+                return true;
+            }
+
+            // bare, or withTotal with no plausible total: fuel falls back to the unit
+            // label when withTotal still wants decoration; bare always blanks.
+            if (wantTotal && paramId == ItmParam.Fuel)
+            {
+                suffix = FuelUnitLabel(data);
+                return true;
+            }
+
+            suffix = " ";
+            return true;
+        }
+
+        /// <summary>
+        /// Effective format for <paramref name="paramId"/> after explicit Format, the
+        /// overridden-source default-bare rule, and the Show*Total toggle migration.
+        /// Null when the param has no format family.
+        /// </summary>
+        internal string EffectiveFormat(ushort paramId)
+        {
+            bool hasOverride = _fieldMappings.TryGetValue(paramId, out var mapping);
+            string explicitFormat = hasOverride ? mapping?.Format : null;
+            if (!string.IsNullOrEmpty(explicitFormat))
+                return explicitFormat;
+
+            // A Source override keeps total/unit suffixes only when the format explicitly
+            // asks for them — otherwise default to bare (suffixes come from GameData, not
+            // the override source, so they rarely make sense on a remapped field).
+            if (hasOverride)
+            {
+                if (IsTotalParam(paramId) || TempParams.Contains(paramId))
+                    return FieldFormats.Bare;
+                return null;
+            }
+
+            // Toggle migration: settings toggle=false with no explicit format → bare.
+            if (paramId == ItmParam.Lap)
+                return ShowLapTotal ? FieldFormats.WithTotal : FieldFormats.Bare;
+            if (paramId == ItmParam.Position)
+                return ShowPositionTotal ? FieldFormats.WithTotal : FieldFormats.Bare;
+            if (paramId == ItmParam.Fuel)
+                return FieldFormats.WithTotal;
+            if (TempParams.Contains(paramId))
+                return FieldFormats.Unit;
+            return null;
+        }
+
         // ── Value encoding ───────────────────────────────────────────────
 
         /// <summary>
@@ -205,6 +364,12 @@ namespace FanaBridge.Display.Drivers
         /// and ignores ASCII, while a Formula V3 takes ASCII chars ('n', '1'..'9', 'r') — both
         /// hardware/capture-verified against the official software. Other parameters encode
         /// the same regardless.
+        ///
+        /// When a <see cref="FieldMapping"/> is configured, resolves the override source
+        /// through the shared <see cref="IPropertyReader"/> and feeds the scalar through the
+        /// param's typed encoder path. Resolution failure falls back to the built-in default
+        /// for that frame (never a stale overridden value). Gear/EngineMapping are never
+        /// overridden (validator + excluded scalar path).
         /// </summary>
         public bool TryEncodeParam(ushort paramId, byte handle, GameData data, byte dataType, out ItmValue value)
         {
@@ -213,15 +378,39 @@ namespace FanaBridge.Display.Drivers
             if (status == null)
                 return false;
 
+            // Gear text form is firmware-slot-driven and never remapped.
             if (paramId == ItmParam.Gear && ItmTelemetry.IsTextType(dataType))
             {
                 value = ItmValue.Ascii(handle, ItmParam.Gear, GearText(status.Gear));
                 return true;
             }
 
+            // Source override: resolve this frame; miss → built-in default (below).
+            if (TryEncodeOverride(paramId, handle, out value))
+                return true;
+
             if (!_registry.TryGetValue(paramId, out var encode))
                 return false;
             value = encode(status, handle);
+            return true;
+        }
+
+        // Returns true when an override was resolved and encoded; false means "use built-in"
+        // (no mapping, excluded param, no reader, or resolution miss this frame).
+        private bool TryEncodeOverride(ushort paramId, byte handle, out ItmValue value)
+        {
+            value = default;
+            if (FieldFormats.IsOverrideExcluded(paramId))
+                return false;
+            if (!_fieldMappings.TryGetValue(paramId, out var mapping) || mapping?.Source == null)
+                return false;
+            if (_properties == null)
+                return false;
+            if (!_properties.TryGetNumber(mapping.Source, out double n))
+                return false;   // miss → caller falls back to built-in for this frame
+            if (!_scalarEncoders.TryGetValue(paramId, out var encodeScalar))
+                return false;
+            value = encodeScalar(n, handle);
             return true;
         }
 
@@ -240,7 +429,16 @@ namespace FanaBridge.Display.Drivers
 
             var values = new ItmValue[ids.Count];
             for (int i = 0; i < ids.Count; i++)
-                values[i] = _registry[ids[i]](status, (byte)(handleBase + i));
+            {
+                ushort paramId = ids[i];
+                byte handle = (byte)(handleBase + i);
+                // BuildValues is the offline/catalog path — still honour overrides when
+                // configured so tests and any future consumer see the same layering.
+                if (TryEncodeOverride(paramId, handle, out var overridden))
+                    values[i] = overridden;
+                else
+                    values[i] = _registry[paramId](status, handle);
+            }
             return values;
         }
 

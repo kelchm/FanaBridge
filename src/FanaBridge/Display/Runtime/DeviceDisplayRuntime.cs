@@ -73,6 +73,11 @@ namespace FanaBridge.Display.Runtime
         private volatile DisplayCustomizationConfig _displayConfig;
         private DisplayRuleStack _displayStack;
         private DisplayRuleSnapshot _displayRuleSnapshot;
+        // Shared property source for the rule stack AND the ITM mapper's field-mapping
+        // overrides. Null on the empty-config fast path (parity gate). BeginFrame runs
+        // once per Tick BEFORE the driver's Update so override resolution and rules share
+        // the same framed reads.
+        private SimHubPropertySource _propertySource;
 
         // ITM status line for the Device Status panel / diagnostics. Composed on the
         // DataUpdate thread — a PART of the published envelope, never read cross-thread
@@ -117,6 +122,9 @@ namespace FanaBridge.Display.Runtime
 
         /// <summary>Test seam: the ITM driver, null until an ITM display is driven.</summary>
         internal ItmDisplayDriver ItmDriver => _itmDisplay;
+
+        /// <summary>Test seam: the shared property source, null on the empty-config path.</summary>
+        internal SimHubPropertySource PropertySource => _propertySource;
 
         // ── Config (volatile release / acquire, the rebuild signal) ──────
 
@@ -299,6 +307,26 @@ namespace FanaBridge.Display.Runtime
                 // wheel-button page changes (the OUT wire carries no PageSet for those).
                 plugin.Wheelbase?.DrainItmReports(FeedItmSubscriptionReport);
 
+                // ── Shared property source + field-mapping overrides ──────────
+                // BeginFrame MUST run before the driver's Update: the mapper resolves
+                // FieldMappings through this same SimHubPropertySource instance during
+                // value encode. The rule stack (UpdateDisplayRules below) reuses the
+                // source after the driver. Ordering pin — do not invert. Empty config
+                // keeps the parity fast path (no source, no mapper overrides).
+                if (config != null && !config.IsEmpty)
+                {
+                    if (_propertySource == null)
+                        _propertySource = new SimHubPropertySource(
+                            msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
+                    _propertySource.BeginFrame(pluginManager, data);
+                    _itmDisplay.Mapper.Configure(config.FieldMappings, _propertySource);
+                }
+                else
+                {
+                    _propertySource = null;
+                    _itmDisplay.Mapper.Configure(null, null);
+                }
+
                 _itmDisplay.Update(data);
                 // Stamp the host lifecycle state onto the twin's snapshot (the wire does not
                 // carry it) and expire its grace/throttle windows. Runs after the driver's
@@ -377,6 +405,7 @@ namespace FanaBridge.Display.Runtime
             _itmWasRunning = false;
             _displayStack = null;         // rules only drive an ITM display
             _displayRuleSnapshot = null;  // and their published snapshot goes with them
+            _propertySource = null;
             MaybePublishPanelSnapshot();
         }
 
@@ -395,6 +424,7 @@ namespace FanaBridge.Display.Runtime
             _itmStatus = null;           // don't show a stale ITM row while disconnected
             _displayStack = null;        // rules restart clean with the reconnect
             _displayRuleSnapshot = null;
+            _propertySource = null;
             _itmErrorLogged = false;     // errors can log again after a reconnect
             MaybePublishPanelSnapshot();
         }
@@ -414,6 +444,7 @@ namespace FanaBridge.Display.Runtime
             _itmTwin = null;
             _displayStack = null;
             _displayRuleSnapshot = null;
+            _propertySource = null;
             _itmStatus = null;
             _panelSnapshot = null;
             _itmWasRunning = false;
@@ -536,9 +567,13 @@ namespace FanaBridge.Display.Runtime
             if (_displayStack == null || !ReferenceEquals(_displayStack.Config, config)
                 || !ReferenceEquals(_displayStack.Driver, _itmDisplay))
             {
+                // Inject the shared property source (BeginFrame already ran above the
+                // driver Update this frame) so rules and field-mapping overrides read
+                // through one instance.
                 _displayStack = new DisplayRuleStack(config, _itmDisplay, _itmDeviceId,
                     settings.ItmDefaultPage,
-                    msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
+                    msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
+                    properties: _propertySource);
                 // The stack takes page policy the moment it exists (and re-takes it on every
                 // rebuild, which is also how a base-page change within a live stack lands):
                 // edge-triggered — the driver rests on the stack's base from its next Update

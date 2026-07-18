@@ -10,9 +10,10 @@ namespace FanaBridge.Display.Host
 {
     /// <summary>
     /// The rule engine's window onto live SimHub data — the production
-    /// <see cref="IPropertyReader"/>. Frame-scoped: the device instance calls
-    /// <see cref="BeginFrame"/> once per DataUpdate before the engines tick, and every
-    /// read until the next BeginFrame refers to that frame.
+    /// <see cref="IPropertyReader"/>. Frame-scoped: the device runtime calls
+    /// <see cref="BeginFrame"/> once per DataUpdate <b>before</b> the ITM driver's
+    /// Update (so field-mapping overrides resolve on this frame) and before the rule
+    /// engines tick; every read until the next BeginFrame refers to that frame.
     ///
     /// Two namespaces, two paths:
     /// <list type="bullet">

@@ -412,6 +412,16 @@ namespace FanaBridge.Tests.Display
                 ["displayCustomization"] = new JObject(),
             }, out var instB);
 
+            // (c) an explicit empty fieldMappings object — still IsEmpty, still parity.
+            var withEmptyMappings = RunScriptedSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject
+                {
+                    ["fieldMappings"] = new JObject(),
+                },
+            }, out var instC);
+
             // The script really exercised the ITM path (not two empty recordings).
             Assert.Contains(baseline, f => f[1] == 0x05 && f[2] == 0x04);   // PageSet
             Assert.Contains(baseline, f => f[1] == 0x05 && f[2] == 0x01);   // ValueUpdate
@@ -419,12 +429,144 @@ namespace FanaBridge.Tests.Display
 
             // Byte parity: identical frame sequences, frame for frame.
             Assert.Equal(AsHex(baseline), AsHex(withEmptyDoc));
+            Assert.Equal(AsHex(baseline), AsHex(withEmptyMappings));
 
             // And no piece of the rules runtime was constructed in either run.
             Assert.Null(instA.DisplayStackForTest);
             Assert.Null(instB.DisplayStackForTest);
+            Assert.Null(instC.DisplayStackForTest);
             Assert.Null(instA.DisplayRuleSnapshot);
             Assert.Null(instB.DisplayRuleSnapshot);
+            Assert.Null(instC.DisplayRuleSnapshot);
+        }
+
+        [Fact]
+        public void FieldMappingOverride_ValueUpdateBytesDiffer_AndPinGolden()
+        {
+            // Baseline (no mappings) vs Lap remapped to a constant SimHub property.
+            // Pins the overridden ValueUpdate payload so a regression in the scalar
+            // encode path is visible even when empty-config parity still holds.
+            var baseline = RunScriptedSession(
+                new JObject { ["wheelType"] = "CSSWFORMV3" }, out _);
+
+            var withMapping = RunScriptedSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject
+                {
+                    // Non-empty only via fieldMappings — still builds the property
+                    // source + mapper overrides; no rules.
+                    ["fieldMappings"] = new JObject
+                    {
+                        // Lap (505): built-in CurrentLap is 3 in the scripted session;
+                        // remap to MaxFuel (a readable built-in) is not useful here —
+                        // use a SimHub property name resolved via null PluginManager
+                        // (miss → built-in). For a real hit we need a built-in source
+                        // that differs: map Lap → Position (scripted Position=2).
+                        ["505"] = new JObject
+                        {
+                            ["source"] = new JObject
+                            {
+                                ["kind"] = "builtIn",
+                                ["name"] = "Position",
+                            },
+                        },
+                    },
+                },
+            }, out var inst);
+
+            // Customization ran (property source + stack built for non-empty config).
+            Assert.NotNull(inst.DisplayStackForTest);
+
+            // First ValueUpdate on page 1: baseline lap byte is CurrentLap=3;
+            // overridden lap byte is Position=2. Find the first ValueUpdate and
+            // compare the lap slot (handle 0x02, param 505).
+            static byte[] FirstValueUpdate(List<byte[]> frames)
+                => frames.First(f => f.Length > 2 && f[1] == 0x05 && f[2] == 0x01);
+
+            var baseVu = FirstValueUpdate(baseline);
+            var mapVu = FirstValueUpdate(withMapping);
+            Assert.NotEqual(AsHex(new List<byte[]> { baseVu }), AsHex(new List<byte[]> { mapVu }));
+
+            // Pin the overridden ValueUpdate frame (page-1 first paint). The lap
+            // slot carries Position=2 instead of CurrentLap=3; everything else
+            // matches the golden ladder's first value paint.
+            // Regenerate by dumping AsHex after a deliberate override-path change.
+            const string overriddenFirstPaint =
+                "FF-05-01-03-00-01-00-02-8E-00-03-01-04-00-01-04-03-02-F9-01-01-02-03-03-F5-01-01-02-03-04-FD-01-04-00-00-00-00-03-05-FE-01-04-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00";
+            Assert.Equal(overriddenFirstPaint, BitConverter.ToString(mapVu));
+        }
+
+        [Fact]
+        public void BeginFrame_RunsBeforeDriverUpdate_WhenCustomizationActive()
+        {
+            // Ordering pin: the shared property source must be framed before the
+            // driver's Update so field-mapping overrides resolve on this frame's
+            // data. Verified by installing a mapping that only the framed reader
+            // can see (built-in from GameData) and asserting the override lands
+            // on the first synced paint — which only works if BeginFrame preceded
+            // TryEncodeParam inside Update.
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject
+                {
+                    ["fieldMappings"] = new JObject
+                    {
+                        ["505"] = new JObject
+                        {
+                            ["source"] = new JObject
+                            {
+                                ["kind"] = "builtIn",
+                                ["name"] = "Position",
+                            },
+                        },
+                    },
+                },
+            });
+
+            var status = NewStatus();
+            Set(status, "SpeedLocal", 142.0);
+            Set(status, "Gear", "4");
+            Set(status, "CurrentLap", 3);
+            Set(status, "Position", 2);
+            Set(status, "OpponentsCount", 16);
+            var running = Data(status);
+
+            byte[] lapInfoPush = HexToBytes(
+                "ff0501" + "0300010034" + "0301040012" + "0382f90132" + "0383f50132" + "0304fd012a" + "0305fe012a");
+
+            s.Frame(running);
+            s.Transport.Itm.Enqueue(lapInfoPush);
+            s.Frame(running);
+            s.Clock.T += 80;
+            s.Frame(running);   // Synced; first value paint with override
+
+            Assert.NotNull(s.Instance.ItmDisplayForTest);
+            // Shared source exists (non-empty config) and is the same instance the
+            // stack holds — the runtime injects it.
+            // (PropertySource seam is on the runtime; stack.Properties is the inject.)
+            Assert.NotNull(s.Instance.DisplayStackForTest);
+
+            var vu = s.Transport.Sent.First(f => f.Length > 2 && f[1] == 0x05 && f[2] == 0x01);
+            // Lap handle 0x02 entry: device 03, handle 02, param F9 01 (505 LE), size 01, value 02
+            // (Position) — proves BeginFrame+override ran before encode.
+            bool foundOverriddenLap = false;
+            for (int i = 3; i + 6 <= vu.Length && vu[i] == 0x03; )
+            {
+                byte handle = vu[i + 1];
+                ushort param = (ushort)(vu[i + 2] | (vu[i + 3] << 8));
+                byte size = vu[i + 4];
+                if (handle == 0x02 && param == ItmParam.Lap)
+                {
+                    Assert.Equal(1, size);
+                    Assert.Equal(2, vu[i + 5]);   // Position, not CurrentLap=3
+                    foundOverriddenLap = true;
+                    break;
+                }
+                i += 5 + size;
+            }
+            Assert.True(foundOverriddenLap, "overridden lap value not found in ValueUpdate");
         }
 
         // ── Page-policy handoff (rules own the base page) ────────────────

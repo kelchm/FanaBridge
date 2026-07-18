@@ -385,15 +385,47 @@ namespace FanaBridge.Display.Rules
             List<ushort> drop = null;
             foreach (var kv in mappings)
             {
-                string reason = InvalidMappingReason(kv.Value);
-                if (reason == null)
+                // Gear / EngineMapping keep special wire text forms — overrides are
+                // rejected whole (warn+drop). The Pages UI locks those fields too.
+                if (FieldFormats.IsOverrideExcluded(kv.Key))
+                {
+                    warn("field mapping for param " + kv.Key
+                        + " dropped — Gear and EngineMapping cannot be remapped");
+                    (drop ?? (drop = new List<ushort>())).Add(kv.Key);
                     continue;
-                warn("field mapping for param " + kv.Key + " dropped — " + reason);
-                (drop ?? (drop = new List<ushort>())).Add(kv.Key);
+                }
+
+                string reason = InvalidMappingReason(kv.Value);
+                if (reason != null)
+                {
+                    warn("field mapping for param " + kv.Key + " dropped — " + reason);
+                    (drop ?? (drop = new List<ushort>())).Add(kv.Key);
+                    continue;
+                }
+
+                // Format is independent of the mapping body: unknown / disallowed text
+                // is warn-and-dropped (cleared) while the source override stays — same
+                // degrade style as NormalizeFieldMappings' other current-version data.
+                NormalizeMappingFormat(kv.Key, kv.Value, warn);
             }
             if (drop != null)
                 foreach (var key in drop)
                     mappings.Remove(key);
+        }
+
+        private static void NormalizeMappingFormat(
+            ushort paramId, FieldMapping mapping, Action<string> warn)
+        {
+            if (string.IsNullOrEmpty(mapping.Format))
+            {
+                mapping.Format = null;
+                return;
+            }
+            if (FieldFormats.IsAllowed(paramId, mapping.Format))
+                return;
+            warn("field mapping for param " + paramId
+                + " — unrecognized format '" + mapping.Format + "' cleared");
+            mapping.Format = null;
         }
 
         private static string InvalidMappingReason(FieldMapping mapping)

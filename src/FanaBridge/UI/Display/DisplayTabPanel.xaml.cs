@@ -128,8 +128,8 @@ namespace FanaBridge.UI.Display
             // (legacy page off) is an ITM-only display-mode choice.
             cmbItemNone.Visibility = _isItm ? Visibility.Visible : Visibility.Collapsed;
             SelectByTag(cmbDisplayMode, _settings.DisplayMode ?? DisplaySettings.DefaultMode);
-            chkShowLapTotal.IsChecked = _settings.ItmShowLapTotal;
-            chkShowPositionTotal.IsChecked = _settings.ItmShowPositionTotal;
+            // chkShowLapTotal / chkShowPositionTotal retired (Phase 6b) — format lives in
+            // the Pages editor; settings booleans remain for one-release migration.
             // _isItm and the default-page table below are read once, at bind, from the host's
             // override-resolved caps. Per-poll consumers (mirror, labels) re-read the live host
             // values each frame; this bind-time layout is NOT re-derived if the resolved caps
@@ -225,7 +225,6 @@ namespace FanaBridge.UI.Display
                 sectionDisplayMode.Visibility = Visibility.Visible;
 
                 panelDefaultPage.IsEnabled = on;
-                panelTotals.IsEnabled = on;
             }
 
             // Header visibility depends on control as well as view/_isItm.
@@ -291,16 +290,6 @@ namespace FanaBridge.UI.Display
         }
 
         // ── Option controls (settings semantics identical to the old tab) ─
-
-        private void ItmOption_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_suppressEvents || _settings == null)
-                return;
-
-            _settings.ItmShowLapTotal = chkShowLapTotal.IsChecked == true;
-            _settings.ItmShowPositionTotal = chkShowPositionTotal.IsChecked == true;
-            _host?.NotifySettingsChanged();
-        }
 
         private void CmbDisplayMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {

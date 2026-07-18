@@ -21,11 +21,13 @@ namespace FanaBridge.Display.Runtime
     /// config swap, driver rebuild (generation rebind, display-id change), wheel change,
     /// disconnect. Engines are per-config by design, so a rebuild is the state reset.
     ///
-    /// Tick order (inside DataUpdate, after the driver's own
-    /// <see cref="ItmDisplayDriver.Update"/> has run the lifecycle's Tick): property
-    /// source BeginFrame → action drain → engine Tick → director Tick. The director's
-    /// manual-navigation result feeds the ENGINE'S NEXT tick — one frame of latency
-    /// (~16 ms), harmless because the lifecycle already adopted the page.
+    /// Tick order (inside DataUpdate): the runtime scopes the shared
+    /// <see cref="SimHubPropertySource"/> with <c>BeginFrame</c> <b>before</b> the
+    /// driver's <see cref="ItmDisplayDriver.Update"/> (so field-mapping overrides
+    /// resolve on the same frame), then this stack's Tick: action drain → engine
+    /// Tick → director Tick. The director's manual-navigation result feeds the
+    /// ENGINE'S NEXT tick — one frame of latency (~16 ms), harmless because the
+    /// lifecycle already adopted the page.
     ///
     /// P2 scope note: the legacy engine runs and its intents are logged, but nothing is
     /// written to the 7-segment surface yet (the col01 text path is a later phase); an
@@ -74,22 +76,27 @@ namespace FanaBridge.Display.Runtime
         private long _lastComposedAt = long.MinValue / 2;
 
         /// <summary>Production wiring: the director talks to the driver's lifecycle
-        /// through <see cref="ItmLifecyclePageControl"/>.</summary>
+        /// through <see cref="ItmLifecyclePageControl"/>. The shared
+        /// <paramref name="properties"/> is the runtime's SimHubPropertySource (also
+        /// fed to the ITM mapper for field overrides); when null a private source is
+        /// created (legacy / test convenience).</summary>
         public DisplayRuleStack(DisplayCustomizationConfig config, ItmDisplayDriver driver,
-            byte itmDeviceId, byte defaultWirePage, Action<string> log = null)
+            byte itmDeviceId, byte defaultWirePage, Action<string> log = null,
+            SimHubPropertySource properties = null)
             : this(config, new ItmLifecyclePageControl(driver.Lifecycle), itmDeviceId,
-                defaultWirePage, log, nowMs: null)
+                defaultWirePage, log, nowMs: null, rawLookup: null, properties: properties)
         {
             Driver = driver;
         }
 
         /// <summary>Test wiring: a fake <see cref="IItmPageControl"/>, injected clock, and an
         /// optional raw named-property lookup (so a test can drive — and count — the property
-        /// reads the LiveText composition reuses). Production passes none: named lookups resolve
-        /// through the frame's <c>PluginManager</c>.</summary>
+        /// reads the LiveText composition reuses). Production passes the shared
+        /// <see cref="SimHubPropertySource"/>; when null a private source is built and named
+        /// lookups resolve through the frame's <c>PluginManager</c>.</summary>
         internal DisplayRuleStack(DisplayCustomizationConfig config, IItmPageControl control,
             byte itmDeviceId, byte defaultWirePage, Action<string> log, Func<long> nowMs,
-            Func<string, object> rawLookup = null)
+            Func<string, object> rawLookup = null, SimHubPropertySource properties = null)
         {
             Config = config ?? throw new ArgumentNullException(nameof(config));
             _log = log ?? (_ => { });
@@ -151,7 +158,9 @@ namespace FanaBridge.Display.Runtime
             _legacyEngine = DisplayRuleEngine.ForLegacy(config.Legacy?.Rules,
                 config.Legacy?.BaseScreenId, _now, _log);
             _director = new DisplayPageDirector(control, itmDeviceId, _now, _log);
-            _properties = new SimHubPropertySource(_log, rawLookup);
+            // Shared with the ITM mapper (field overrides) when the runtime supplies one;
+            // otherwise a private source so stack-level tests stay self-contained.
+            _properties = properties ?? new SimHubPropertySource(_log, rawLookup);
             _actions = new DisplayActionHub(config, _log);
 
             IndexRules(config.Itm?.Rules);
@@ -186,14 +195,26 @@ namespace FanaBridge.Display.Runtime
         internal DisplayActionHub Actions => _actions;
 
         /// <summary>
-        /// Runs one frame: resolves properties, drains action fires, ticks both engines,
-        /// and lets the director reconcile the ITM intent with the lifecycle. Call once
-        /// per DataUpdate, after the ITM driver's Update (all ITM mutation stays on the
-        /// DataUpdate thread). Returns a fresh snapshot when the visible state changed,
-        /// else null (the caller keeps publishing the previous one).
+        /// The shared property source (also fed to the ITM mapper for field overrides).
+        /// </summary>
+        internal SimHubPropertySource Properties => _properties;
+
+        /// <summary>
+        /// Runs one frame: drains action fires, ticks both engines, and lets the director
+        /// reconcile the ITM intent with the lifecycle. Call once per DataUpdate, after
+        /// the ITM driver's Update (all ITM mutation stays on the DataUpdate thread).
+        /// <see cref="SimHubPropertySource.BeginFrame"/> is owned by the runtime and runs
+        /// once before the driver Update so field-mapping overrides and rules share the
+        /// same framed reads; this Tick re-scopes only when the runtime has not already
+        /// (standalone tests call Tick without a prior BeginFrame).
+        /// Returns a fresh snapshot when the visible state changed, else null (the caller
+        /// keeps publishing the previous one).
         /// </summary>
         public DisplayRuleSnapshot Tick(PluginManager pm, GameData data)
         {
+            // Idempotent re-scope: when the runtime already BeginFrame'd for the mapper
+            // this is a no-op cost (memo clear + same frame data). Stack-only tests rely
+            // on this path for their sole BeginFrame.
             _properties.BeginFrame(pm, data);
             _actions.EnsureRegistered(pm);
             _actionBuf.Clear();

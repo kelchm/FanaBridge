@@ -114,8 +114,15 @@ namespace FanaBridge.Display.Rules
         [JsonProperty("source")]
         public PropertySpec Source { get; set; }
 
-        /// <summary>Opaque format key, or null for the parameter's default. The format
-        /// layer is a later piece; this stays an uninterpreted string until it exists.</summary>
+        /// <summary>
+        /// Format key from the small validated vocabulary in <see cref="FieldFormats"/>,
+        /// or null for the parameter's default. Total params accept
+        /// <c>withTotal</c>/<c>bare</c>; temperature params accept <c>unit</c>/<c>bare</c>;
+        /// everything else has no options (unknown text is warn-and-dropped at load).
+        /// A param with a Source override defaults to <c>bare</c> unless this is set
+        /// explicitly to <c>withTotal</c>/<c>unit</c> — total/unit suffixes are computed
+        /// from GameData, not the override source.
+        /// </summary>
         [JsonProperty("format")]
         public string Format { get; set; }
     }

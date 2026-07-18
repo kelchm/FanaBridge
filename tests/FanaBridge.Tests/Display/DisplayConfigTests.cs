@@ -154,7 +154,7 @@ namespace FanaBridge.Tests.Display
             config.FieldMappings[ItmParam.Fuel] = new FieldMapping
             {
                 Source = new PropertySpec { Kind = PropertyKind.SimHubProperty, Name = "DataCorePlugin.Computed.Fuel_RemainingLaps" },
-                Format = "fuel-laps",
+                Format = FieldFormats.Bare,
             };
 
             var loaded = Load(DisplayConfigSerializer.Save(config), out var warnings);
@@ -167,7 +167,7 @@ namespace FanaBridge.Tests.Display
             var mapping = loaded.FieldMappings[ItmParam.Fuel];
             Assert.Equal(PropertyKind.SimHubProperty, mapping.Source.Kind);
             Assert.Equal("DataCorePlugin.Computed.Fuel_RemainingLaps", mapping.Source.Name);
-            Assert.Equal("fuel-laps", mapping.Format);
+            Assert.Equal(FieldFormats.Bare, mapping.Format);
         }
 
         [Fact]
@@ -787,6 +787,55 @@ namespace FanaBridge.Tests.Display
             Assert.Single(config.FieldMappings);
             Assert.True(config.FieldMappings.ContainsKey(ItmParam.Fuel));
             Assert.Equal(3, warnings.Count(w => w.Contains("field mapping")));
+        }
+
+        [Fact]
+        public void FieldMappings_GearAndEngineMapping_Dropped()
+        {
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"fieldMappings\": { "
+                + "\"4\": { \"source\": { \"kind\": \"builtIn\", \"name\": \"Gear\" } }, "
+                + "\"26\": { \"source\": { \"kind\": \"builtIn\", \"name\": \"EngineMap\" } }, "
+                + "\"5\": { \"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" } } "
+                + "} }", out var warnings);
+
+            Assert.Single(config.FieldMappings);
+            Assert.True(config.FieldMappings.ContainsKey(ItmParam.Fuel));
+            Assert.False(config.FieldMappings.ContainsKey(ItmParam.Gear));
+            Assert.False(config.FieldMappings.ContainsKey(ItmParam.EngineMapping));
+            Assert.Equal(2, warnings.Count(w => w.Contains("cannot be remapped")));
+        }
+
+        [Theory]
+        [InlineData("5", "withTotal", true)]   // Fuel total family
+        [InlineData("5", "bare", true)]
+        [InlineData("5", "unit", false)]       // unit is temp-only
+        [InlineData("5", "fuel-laps", false)]  // unknown
+        [InlineData("505", "withTotal", true)] // Lap
+        [InlineData("501", "bare", true)]      // Position
+        [InlineData("33", "unit", true)]       // OilTemp
+        [InlineData("33", "bare", true)]
+        [InlineData("33", "withTotal", false)]
+        [InlineData("1", "bare", false)]       // Speed — no format options
+        public void FieldMappings_FormatVocabulary_PerFamily(string paramKey, string format, bool kept)
+        {
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"fieldMappings\": { "
+                + "\"" + paramKey + "\": { \"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, "
+                + "\"format\": \"" + format + "\" } } }", out var warnings);
+
+            Assert.Single(config.FieldMappings);
+            var mapping = config.FieldMappings[ushort.Parse(paramKey)];
+            if (kept)
+            {
+                Assert.Equal(format, mapping.Format);
+                Assert.DoesNotContain(warnings, w => w.Contains("unrecognized format"));
+            }
+            else
+            {
+                Assert.Null(mapping.Format);
+                Assert.Contains(warnings, w => w.Contains("unrecognized format"));
+            }
         }
 
         // ── Determinism ──────────────────────────────────────────────────

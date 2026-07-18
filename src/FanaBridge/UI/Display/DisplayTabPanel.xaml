@@ -193,17 +193,9 @@
                                 </TextBlock>
                             </StackPanel>
 
-                            <!-- "/total" suffixes -->
-                            <StackPanel x:Name="panelTotals" Margin="0,0,0,12">
-                                <TextBlock Text="Totals" FontWeight="SemiBold" Margin="0,0,0,4" />
-                                <TextBlock Foreground="#999999" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6">
-                                    Show "/total" on the lap and position fields (e.g. "Lap 5 / 34" rather than "Lap 5"). Turn off for games that don't report usable totals.
-                                </TextBlock>
-                                <CheckBox x:Name="chkShowLapTotal" Content="Show lap total (Lap 5 / 34)"
-                                          Checked="ItmOption_Changed" Unchecked="ItmOption_Changed" Margin="0,2" />
-                                <CheckBox x:Name="chkShowPositionTotal" Content="Show position total (P3 / 20)"
-                                          Checked="ItmOption_Changed" Unchecked="ItmOption_Changed" Margin="0,4,0,2" />
-                            </StackPanel>
+                            <!-- Lap/position "/total" toggles retired: format lives in the
+                                 Pages editor's Unit & format dropdown (Phase 6b). Settings
+                                 booleans stay honored on the wire for one release. -->
                         </StackPanel>
                     </styles:SHSubSection>
 
