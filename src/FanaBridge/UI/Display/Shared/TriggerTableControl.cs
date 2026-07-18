@@ -107,13 +107,8 @@ namespace FanaBridge.UI.Display.Shared
             // A rebuild invalidates any in-progress drag (its captured handle is about to be
             // unparented). Release the capture and clear the drag state here so a rebuild can
             // never strand _dragging=true and deaden row clicks, whatever path reached us.
-            if (_dragHandle != null)
-                _dragHandle.ReleaseMouseCapture();
-            _dragHandle = null;
-            _dragging = false;
-            _dragRuleId = null;
+            AbortDrag();
 
-            RemoveDropIndicator();
             Children.Clear();
             _rowChips.Clear();
             _ruleRowOrder.Clear();
@@ -481,6 +476,7 @@ namespace FanaBridge.UI.Display.Shared
             };
             border.KeyDown += (s, e) => RowKeyDown(ruleId, e);
             border.ContextMenu = menu;
+            CloseMenuWhenAnchorLeaves(border, menu);
 
             chips = new RowChips
             {
@@ -564,6 +560,7 @@ namespace FanaBridge.UI.Display.Shared
             string ruleId = row.RuleId;
             border.KeyDown += (s, e) => RowKeyDown(ruleId, e);
             border.ContextMenu = menu;
+            CloseMenuWhenAnchorLeaves(border, menu);
 
             _rowChips[row.RuleId] = new RowChips { Container = border, Degraded = true };
             _ruleRowOrder.Add(new KeyValuePair<string, FrameworkElement>(row.RuleId, border));
@@ -887,6 +884,21 @@ namespace FanaBridge.UI.Display.Shared
             menu.IsOpen = true;
         }
 
+        // Issue-#37 popup lifetime: the row ContextMenu (opened by ⋯ or right-click) lives in
+        // its own popup HWND with the row border as PlacementTarget. A poll rebuild
+        // (SetRows → Children.Clear) can unparent that border while the menu is open, orphaning
+        // a detached popup. Close it when the anchor row leaves the visual tree — the same
+        // Unloaded/IsVisibleChanged guard the Phase 1 DropDownCell uses.
+        private static void CloseMenuWhenAnchorLeaves(FrameworkElement anchor, ContextMenu menu)
+        {
+            anchor.Unloaded += (s, e) => menu.IsOpen = false;
+            anchor.IsVisibleChanged += (s, e) =>
+            {
+                if (!anchor.IsVisible)
+                    menu.IsOpen = false;
+            };
+        }
+
         // Enter / Space activate (open/close) a focused row's editor — the keyboard
         // equivalent of clicking the header; Alt+Up / Alt+Down reorder it (accessibility +
         // drag fallback).
@@ -945,6 +957,37 @@ namespace FanaBridge.UI.Display.Shared
             };
             handle.MouseMove += HandleDragMove;
             handle.MouseLeftButtonUp += HandleDragUp;
+            // The OS can revoke mouse capture mid-drag with NO MouseLeftButtonUp — Alt+Tab,
+            // window deactivation, or a system popup/tooltip all fire LostMouseCapture instead.
+            // Without this, HandleDragUp never runs and the drag state (hence IsDragging) stays
+            // stuck true forever: row clicks deaden ("if (_dragging) return;") and the host's
+            // Poll freezes in the chip-patch-only branch, never rebuilding. Treat a lost capture
+            // as a drag abort so the table always recovers.
+            handle.LostMouseCapture += HandleDragLostCapture;
+        }
+
+        // Abort any in-flight drag: release the handle capture, clear the drag fields, and drop
+        // the drop indicator. Shared by SetRows (a rebuild would unparent the captured handle)
+        // and the LostMouseCapture abort path. Nulls _dragHandle BEFORE releasing capture so the
+        // re-entrant LostMouseCapture this raises sees cleared state and no-ops.
+        private void AbortDrag()
+        {
+            var handle = _dragHandle;
+            _dragHandle = null;
+            _dragging = false;
+            _dragRuleId = null;
+            handle?.ReleaseMouseCapture();
+            RemoveDropIndicator();
+        }
+
+        private void HandleDragLostCapture(object sender, MouseEventArgs e)
+        {
+            // A normal drop (HandleDragUp) and SetRows both null _dragHandle before releasing
+            // capture, so the capture loss they cause no-ops here; only an OS-revoked capture
+            // (handle still held) reaches AbortDrag.
+            if (_dragHandle == null)
+                return;
+            AbortDrag();
         }
 
         private void HandleDragMove(object sender, MouseEventArgs e)
