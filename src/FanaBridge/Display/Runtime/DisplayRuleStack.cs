@@ -102,6 +102,12 @@ namespace FanaBridge.Display.Runtime
         private bool _tickHasSegs;
         private string _tickLegacyScreenName;
 
+        // Special-command win-edge latch (only latched on accepted send).
+        private bool _specialLatched;
+        private SpecialCommand _latchedSpecialCommand = SpecialCommand.Unknown;
+        private string _latchedSpecialRuleId;
+        private string _lastSpecialLogged;
+
         // GearAndSpeed overlay state (clock-injected; matches formatter contract).
         private int _overlayGear = int.MinValue;
         private long _overlayGearAtMs;
@@ -201,17 +207,32 @@ namespace FanaBridge.Display.Runtime
         }
 
         /// <summary>
-        /// True when the document's legacy surface has any screens or rules — the
-        /// non-empty-world gate for rule-driven col01. BaseScreenId alone does not
-        /// count (nothing to resolve without a screen library entry).
+        /// True when the document owns rule-driven col01: any legacy screens or rules,
+        /// or a special-command rule in either set. BaseScreenId alone does not count
+        /// (nothing to resolve without a screen library entry).
         /// </summary>
         internal static bool HasLegacyWorld(DisplayCustomizationConfig config)
         {
             var leg = config?.Legacy;
-            if (leg == null)
+            if (leg != null
+                && ((leg.Rules != null && leg.Rules.Count > 0)
+                    || (leg.Screens != null && leg.Screens.Count > 0)))
+                return true;
+            // Special targets write col01 even without a screen library.
+            return AnySpecialRule(config?.Itm?.Rules) || AnySpecialRule(leg?.Rules);
+        }
+
+        private static bool AnySpecialRule(List<DisplayRule> rules)
+        {
+            if (rules == null)
                 return false;
-            return (leg.Rules != null && leg.Rules.Count > 0)
-                || (leg.Screens != null && leg.Screens.Count > 0);
+            for (int i = 0; i < rules.Count; i++)
+            {
+                var r = rules[i];
+                if (r?.Show != null && r.Show.Kind == TargetKind.Special)
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -221,6 +242,18 @@ namespace FanaBridge.Display.Runtime
         /// (no wire writes). Returns false when a send was attempted and declined.
         /// </summary>
         internal Func<byte, byte, byte, bool> TryWriteLegacySegments { get; set; }
+
+        /// <summary>
+        /// Special-screen sink: pattern byte → accepted. Threaded from
+        /// <see cref="LegacyDisplayDriver.ShowSpecialScreen"/>. Null = log/snapshot only.
+        /// </summary>
+        internal Func<byte, bool> TryShowSpecialScreen { get; set; }
+
+        /// <summary>
+        /// Special-command release: arm exit-blank + invalidate segment gates on the
+        /// driver. Threaded from the device instance; null is a no-op (tests without a driver).
+        /// </summary>
+        internal Action OnSpecialReleased { get; set; }
 
         /// <summary>The config this stack was built from (reference identity — a swap
         /// publishes a new instance, which is the rebuild signal).</summary>
@@ -297,13 +330,26 @@ namespace FanaBridge.Display.Runtime
             input.Manual = null;
             var legacy = _legacyEngine.Tick(input);
 
-            // Rule-path col01: flag-on + non-empty world → resolve + sink write, every
-            // frame (idle included — in-game only gates content per kind and rule
-            // eligibility). Flag-off → exact log-only message.
-            if (LegacyRuleWrites && _hasLegacyWorld)
-                DriveLegacyCol01(legacy.Intent, inGame, data);
+            // Rule-path col01: special commands (either set) win-edge send; else legacy
+            // segments when the world is non-empty. Flag-off → log-only for both.
+            if (LegacyRuleWrites)
+            {
+                if (TryPickSpecialIntent(itm.Intent, legacy.Intent, out var special))
+                    DriveSpecialCommand(special);
+                else
+                {
+                    ReleaseSpecialIfLatched();
+                    if (_hasLegacyWorld)
+                        DriveLegacyCol01(legacy.Intent, inGame, data);
+                    else
+                        LogLegacyIntentChange(legacy.Intent);
+                }
+            }
             else
+            {
+                LogSpecialIntentChange(itm.Intent, legacy.Intent);
                 LogLegacyIntentChange(legacy.Intent);
+            }
 
             var directed = _director.Tick(itm.Intent);
             _pendingManual = directed.Manual;
@@ -472,13 +518,111 @@ namespace FanaBridge.Display.Runtime
         }
 
         private static string DescribeIntent(RuleIntent intent)
-            => intent.Kind == TargetKind.LegacyScreen
-                ? "screen '" + (intent.ScreenId ?? "(blank)") + "'"
-                : (intent.Page == null
-                    // Resting without a page intent: the wheel navigated to a page
-                    // outside the catalog and the engine adopted "wherever the wheel is".
-                    ? "Current page"
-                    : DisplayRuleFormatter.PageName(intent.Page));
+        {
+            if (intent.Kind == TargetKind.Special)
+                return SpecialCommands.Label(intent.Command);
+            if (intent.Kind == TargetKind.LegacyScreen)
+                return "screen '" + (intent.ScreenId ?? "(blank)") + "'";
+            return intent.Page == null
+                // Resting without a page intent: the wheel navigated to a page
+                // outside the catalog and the engine adopted "wherever the wheel is".
+                ? "Current page"
+                : DisplayRuleFormatter.PageName(intent.Page);
+        }
+
+        // ── Special-command col01 (win-edge send / release reclaim) ──────
+
+        /// <summary>ITM special wins over legacy special when both are active.</summary>
+        private static bool TryPickSpecialIntent(RuleIntent itm, RuleIntent legacy,
+            out RuleIntent special)
+        {
+            if (itm.Kind == TargetKind.Special && itm.Command != SpecialCommand.Unknown)
+            {
+                special = itm;
+                return true;
+            }
+            if (legacy.Kind == TargetKind.Special && legacy.Command != SpecialCommand.Unknown)
+            {
+                special = legacy;
+                return true;
+            }
+            special = default(RuleIntent);
+            return false;
+        }
+
+        /// <summary>
+        /// Win-edge: send the special-screen frame once when the winner id or command
+        /// changes; held ticks re-send nothing. Declined send does not latch (retry next
+        /// tick). Snapshot: blank segments + command label as caption.
+        /// </summary>
+        private void DriveSpecialCommand(RuleIntent intent)
+        {
+            string label = SpecialCommands.Label(intent.Command);
+            _tickSeg0 = SevenSegment.Blank;
+            _tickSeg1 = SevenSegment.Blank;
+            _tickSeg2 = SevenSegment.Blank;
+            _tickHasSegs = true;
+            _tickLegacyScreenName = label;
+
+            bool winEdge = !_specialLatched
+                || _latchedSpecialCommand != intent.Command
+                || !string.Equals(_latchedSpecialRuleId, intent.SourceRuleId, StringComparison.Ordinal);
+
+            if (winEdge)
+            {
+                byte pattern = SpecialCommands.PatternOf(intent.Command);
+                bool accepted = TryShowSpecialScreen == null
+                    || TryShowSpecialScreen(pattern);
+                if (accepted)
+                {
+                    _specialLatched = true;
+                    _latchedSpecialCommand = intent.Command;
+                    _latchedSpecialRuleId = intent.SourceRuleId;
+                    LogSpecialWriteTransition(intent.Command, label);
+                }
+                // Declined: leave unlatched so the next tick retries.
+            }
+        }
+
+        private void ReleaseSpecialIfLatched()
+        {
+            if (!_specialLatched)
+                return;
+            _specialLatched = false;
+            _latchedSpecialCommand = SpecialCommand.Unknown;
+            _latchedSpecialRuleId = null;
+            _lastSpecialLogged = null;
+            // Reclaim path: arm exit blank + clear segment gates; the next resolution
+            // write (content or blank-once) reclaims the surface.
+            OnSpecialReleased?.Invoke();
+        }
+
+        private void LogSpecialWriteTransition(SpecialCommand command, string label)
+        {
+            string key = command.ToString();
+            if (string.Equals(key, _lastSpecialLogged, StringComparison.Ordinal))
+                return;
+            _lastSpecialLogged = key;
+            _log("DisplayRules: special command '" + label + "'");
+        }
+
+        // Flag-off: log-only (mirrors legacy surface wording).
+        private void LogSpecialIntentChange(RuleIntent itm, RuleIntent legacy)
+        {
+            if (!TryPickSpecialIntent(itm, legacy, out var special))
+            {
+                if (_lastSpecialLogged != null)
+                    _lastSpecialLogged = null;
+                return;
+            }
+            string key = special.Command.ToString();
+            if (string.Equals(key, _lastSpecialLogged, StringComparison.Ordinal))
+                return;
+            _lastSpecialLogged = key;
+            _log("DisplayRules: special command wants '"
+                + SpecialCommands.Label(special.Command)
+                + "' (text write lands in a later phase)");
+        }
 
         // ── Legacy col01 resolve + write ─────────────────────────────────
 

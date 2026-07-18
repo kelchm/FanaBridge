@@ -386,6 +386,10 @@ namespace FanaBridge.Display.Rules
                         }
                         else
                         {
+                            // Special-command spellings are not ITM pages — drop them
+                            // from the cycle list (warn + preserve nothing of the token).
+                            DropSpecialCommandsFromCycle(t, setName, rule, warn);
+
                             var pages = t.CyclePages;
                             if (pages.Count < 2)
                             {
@@ -415,6 +419,13 @@ namespace FanaBridge.Display.Rules
                                 }
                             }
                         }
+                        break;
+
+                    case TargetKind.Special:
+                        // Available in both rule sets (same physical OLED surface).
+                        if (t.Command == SpecialCommand.Unknown)
+                            Disable(t.CommandRaw == null ? "no special command"
+                                : "unrecognized special command '" + t.CommandRaw + "'");
                         break;
 
                     default:
@@ -467,6 +478,38 @@ namespace FanaBridge.Display.Rules
                     + rule.EligibleRaw + "' — using InGame");
                 rule.CoerceEligible(RuleEligibility.InGame);
             }
+        }
+
+        // Special-command wire spellings are never ITM page names. A cycle that
+        // listed one is current-version broken data: warn and drop the token so the
+        // remaining pages can still form a usable cycle.
+        private static void DropSpecialCommandsFromCycle(RuleTarget t, string setName,
+            DisplayRule rule, Action<string> warn)
+        {
+            if (t.PagesRaw == null || t.PagesRaw.Count == 0)
+                return;
+            List<string> kept = null;
+            for (int i = 0; i < t.PagesRaw.Count; i++)
+            {
+                string raw = t.PagesRaw[i];
+                if (SpecialCommands.IsKnownSpelling(raw))
+                {
+                    warn(setName + " rule '" + Label(rule)
+                        + "': cycle cannot contain special command '" + raw + "' — dropped");
+                    if (kept == null)
+                    {
+                        kept = new List<string>(t.PagesRaw.Count - 1);
+                        for (int j = 0; j < i; j++)
+                            kept.Add(t.PagesRaw[j]);
+                    }
+                }
+                else if (kept != null)
+                {
+                    kept.Add(raw);
+                }
+            }
+            if (kept != null)
+                t.PagesRaw = kept;
         }
 
         // net48 has no double.IsFinite; NaN and the infinities poison comparisons

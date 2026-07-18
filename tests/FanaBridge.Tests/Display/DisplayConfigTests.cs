@@ -240,6 +240,109 @@ namespace FanaBridge.Tests.Display
             Assert.Contains(warnings, w => w.Contains("disabled"));
         }
 
+        // ── Special commands ─────────────────────────────────────────────
+
+        [Fact]
+        public void RoundTrip_SpecialCommand_KnownAndUnknownSurvival()
+        {
+            var config = new DisplayCustomizationConfig();
+            config.Itm.Rules.Add(Rule("logo",
+                Level(ConditionKind.IsTrue, BuiltInProperties.DrsEnabled),
+                new RuleTarget { Kind = TargetKind.Special, Command = SpecialCommand.LogoScreen },
+                new HoldSpec { Kind = HoldKind.WhileActive }));
+            config.Itm.Rules.Add(Rule("inv",
+                Level(ConditionKind.IsTrue, BuiltInProperties.DrsAvailable),
+                new RuleTarget { Kind = TargetKind.Special, Command = SpecialCommand.LogoInvertedScreen },
+                new HoldSpec { Kind = HoldKind.WhileActive }));
+            config.Itm.Rules.Add(Rule("white",
+                Level(ConditionKind.IsTrue, BuiltInProperties.DrsEnabled),
+                new RuleTarget { Kind = TargetKind.Special, Command = SpecialCommand.WhiteScreen },
+                new HoldSpec { Kind = HoldKind.ForDuration, DurationMs = 3000 }));
+            config.Itm.Rules.Add(Rule("blank",
+                Level(ConditionKind.IsTrue, BuiltInProperties.DrsAvailable),
+                new RuleTarget { Kind = TargetKind.Special, Command = SpecialCommand.BlankScreen },
+                new HoldSpec { Kind = HoldKind.WhileActive }));
+
+            var loaded = Load(DisplayConfigSerializer.Save(config), out var warnings);
+            Assert.Empty(warnings);
+            Assert.Equal(SpecialCommand.LogoScreen, loaded.Itm.Rules[0].Show.Command);
+            Assert.Equal("logo", loaded.Itm.Rules[0].Show.CommandRaw);
+            Assert.Equal(SpecialCommand.LogoInvertedScreen, loaded.Itm.Rules[1].Show.Command);
+            Assert.Equal("logoInverted", loaded.Itm.Rules[1].Show.CommandRaw);
+            Assert.Equal(SpecialCommand.WhiteScreen, loaded.Itm.Rules[2].Show.Command);
+            Assert.Equal("white", loaded.Itm.Rules[2].Show.CommandRaw);
+            Assert.Equal(SpecialCommand.BlankScreen, loaded.Itm.Rules[3].Show.Command);
+            Assert.Equal("blankScreen", loaded.Itm.Rules[3].Show.CommandRaw);
+
+            // Unknown command text survives byte-for-byte through degrade + save/load.
+            var unknown = Load(DocWithItmRule(
+                "{ \"id\": \"u1\", " + ValidWhen
+                + ", \"show\": { \"kind\": \"special\", \"command\": \"futureScreen\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } }"), out var uWarn);
+            Assert.True(unknown.Itm.Rules[0].DegradedAtLoad);
+            Assert.Equal("futureScreen", unknown.Itm.Rules[0].Show.CommandRaw);
+            Assert.Equal(SpecialCommand.Unknown, unknown.Itm.Rules[0].Show.Command);
+            Assert.Contains(uWarn, w => w.Contains("futureScreen"));
+
+            var resaved = Load(DisplayConfigSerializer.Save(unknown), out _);
+            Assert.Equal("futureScreen", resaved.Itm.Rules[0].Show.CommandRaw);
+            Assert.True(resaved.Itm.Rules[0].DegradedAtLoad);
+        }
+
+        [Fact]
+        public void Load_Special_UnknownOrAbsentCommand_Degrades()
+        {
+            var absent = Load(DocWithItmRule(
+                "{ \"id\": \"r1\", " + ValidWhen
+                + ", \"show\": { \"kind\": \"special\" }, \"hold\": { \"kind\": \"whileActive\" } }"),
+                out var w1);
+            Assert.True(absent.Itm.Rules[0].DegradedAtLoad);
+            Assert.Contains(w1, w => w.Contains("disabled"));
+
+            var bad = Load(DocWithItmRule(
+                "{ \"id\": \"r1\", " + ValidWhen
+                + ", \"show\": { \"kind\": \"special\", \"command\": \"nope\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } }"), out var w2);
+            Assert.True(bad.Itm.Rules[0].DegradedAtLoad);
+            Assert.Equal("nope", bad.Itm.Rules[0].Show.CommandRaw);
+            Assert.Contains(w2, w => w.Contains("nope"));
+        }
+
+        [Fact]
+        public void Load_Special_AllowedInBothRuleSets()
+        {
+            var config = Load(
+                "{ \"schemaVersion\": 1, "
+                + "\"itm\": { \"rules\": [ { \"id\": \"i1\", " + ValidWhen
+                + ", \"show\": { \"kind\": \"special\", \"command\": \"logo\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } } ] }, "
+                + "\"legacy\": { \"rules\": [ { \"id\": \"l1\", "
+                + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
+                + "\"show\": { \"kind\": \"special\", \"command\": \"white\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } } ] } }",
+                out var warnings);
+            Assert.Empty(warnings);
+            Assert.False(config.Itm.Rules[0].DegradedAtLoad);
+            Assert.False(config.Legacy.Rules[0].DegradedAtLoad);
+            Assert.Equal(SpecialCommand.LogoScreen, config.Itm.Rules[0].Show.Command);
+            Assert.Equal(SpecialCommand.WhiteScreen, config.Legacy.Rules[0].Show.Command);
+        }
+
+        [Fact]
+        public void Load_Cycle_DropsSpecialCommandPages_WithWarn()
+        {
+            var config = Load(DocWithItmRule(
+                "{ \"id\": \"r1\", " + ValidWhen
+                + ", \"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"logo\", \"tyreTemps\" ], "
+                + "\"periodMs\": 3000 }, \"hold\": { \"kind\": \"whileActive\" } }"),
+                out var warnings);
+
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.False(rule.DegradedAtLoad);
+            Assert.Equal(new[] { "fuelErsDrs", "tyreTemps" }, rule.Show.PagesRaw);
+            Assert.Contains(warnings, w => w.Contains("logo") && w.Contains("dropped"));
+        }
+
         [Fact]
         public void Load_UnknownPageName_DisablesRuleAndWarns()
         {

@@ -200,9 +200,14 @@ namespace FanaBridge.Display.Rules
             _wasUncataloged = state == ItmLifecycleState.Synced && !current.HasValue;
 
             // Resolve the intent to a desired wire page (0 = nothing to request).
+            // Special commands write col01 directly — the director does not page-navigate.
             string legacyScreenId = null;
             byte desired = 0;
-            if (intent.Kind == TargetKind.LegacyScreen)
+            if (intent.Kind == TargetKind.Special)
+            {
+                desired = 0;
+            }
+            else if (intent.Kind == TargetKind.LegacyScreen)
             {
                 if (_pages.LegacyWire != 0)
                 {

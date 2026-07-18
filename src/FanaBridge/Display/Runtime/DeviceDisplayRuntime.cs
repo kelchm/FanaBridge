@@ -158,15 +158,25 @@ namespace FanaBridge.Display.Runtime
         /// runs DriveLegacyCol01 arbitration.</summary>
         internal Action AfterTickForTest { get; set; }
 
-        // Segment sink for the rule-driven col01 path — set by the device instance from
-        // its sole LegacyDisplayDriver each frame before Tick / TickLegacyRules. The
-        // stack never constructs a driver or encoder.
+        // Segment / special-screen sinks for the rule-driven col01 path — set by the
+        // device instance from its sole LegacyDisplayDriver each frame before Tick /
+        // TickLegacyRules. The stack never constructs a driver or encoder.
         private Func<byte, byte, byte, bool> _legacySegmentWriter;
+        private Func<byte, bool> _specialScreenWriter;
+        private Action _specialReleased;
 
         /// <summary>Threads the device instance's <c>LegacyDisplayDriver.TryShowSegments</c>
         /// into the rule stack. Pass null when no driver is live.</summary>
         internal void SetLegacySegmentWriter(Func<byte, byte, byte, bool> writer)
             => _legacySegmentWriter = writer;
+
+        /// <summary>Threads special-screen send + release reclaim into the rule stack.
+        /// Pass null writers when no driver is live.</summary>
+        internal void SetSpecialScreenHooks(Func<byte, bool> show, Action released)
+        {
+            _specialScreenWriter = show;
+            _specialReleased = released;
+        }
 
         /// <summary>
         /// Publishes a UI-built customization document — the Display tab's ONLY write path
@@ -625,7 +635,7 @@ namespace FanaBridge.Display.Runtime
             else if (_itmDisplay.HasExternalPagePolicy)
                 _itmDisplay.RestoreBuiltInPagePolicy();
 
-            _displayStack.TryWriteLegacySegments = _legacySegmentWriter;
+            BindStackWriters(_displayStack);
             var snapshot = _displayStack.Tick(pluginManager, data);
             if (snapshot != null)
                 _displayRuleSnapshot = snapshot;
@@ -679,12 +689,19 @@ namespace FanaBridge.Display.Runtime
                     (config.Legacy?.Rules?.Count ?? 0) + " rules)");
             }
 
-            _displayStack.TryWriteLegacySegments = _legacySegmentWriter;
+            BindStackWriters(_displayStack);
             var snapshot = _displayStack.Tick(pluginManager, data);
             if (snapshot != null)
                 _displayRuleSnapshot = snapshot;
             MaybePublishPanelSnapshot();
             AfterTickForTest?.Invoke();
+        }
+
+        private void BindStackWriters(DisplayRuleStack stack)
+        {
+            stack.TryWriteLegacySegments = _legacySegmentWriter;
+            stack.TryShowSpecialScreen = _specialScreenWriter;
+            stack.OnSpecialReleased = _specialReleased;
         }
 
         /// <summary>The one page-policy takeover condition (both the steady-state grant in

@@ -91,7 +91,7 @@ namespace FanaBridge.Display.Rules
     public class LegacyRuleSet
     {
         /// <summary>Prioritized rules — priority is list order, index 0 wins. Legacy rules
-        /// target legacy screens only.</summary>
+        /// target legacy screens or special commands.</summary>
         [JsonProperty("rules")]
         public List<DisplayRule> Rules { get; set; } = new List<DisplayRule>();
 

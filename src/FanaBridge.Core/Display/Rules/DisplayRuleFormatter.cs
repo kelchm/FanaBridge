@@ -58,6 +58,8 @@ namespace FanaBridge.Display.Rules
                     return PageName(target.Page);
                 case TargetKind.LegacyScreen:
                     return "screen '" + (target.ScreenId ?? "?") + "'";
+                case TargetKind.Special:
+                    return SpecialCommands.Label(target.Command);
                 case TargetKind.Alternate:
                 case TargetKind.Cycle:
                 {

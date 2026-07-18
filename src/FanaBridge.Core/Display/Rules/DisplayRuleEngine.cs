@@ -554,6 +554,8 @@ namespace FanaBridge.Display.Rules
             {
                 case TargetKind.LegacyScreen:
                     return new RuleIntent(TargetKind.LegacyScreen, null, t.ScreenId, _selectionRuleId);
+                case TargetKind.Special:
+                    return new RuleIntent(TargetKind.Special, null, null, _selectionRuleId, t.Command);
                 case TargetKind.Alternate:
                 case TargetKind.Cycle:
                     // The dwell floor does not apply to the internal flip — the flip is the
@@ -631,7 +633,8 @@ namespace FanaBridge.Display.Rules
                     return false;
                 }
                 default:
-                    return false;   // legacy screens are not page-gated
+                    // Legacy screens and special commands are never page-gated.
+                    return false;
             }
         }
 

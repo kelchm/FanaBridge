@@ -159,6 +159,12 @@ namespace FanaBridge.Tests.Display
                 h.Stack = new DisplayRuleStack(config, h.Control, itmDeviceId: 2,
                     defaultWirePage: 1, h.Log.Add, () => h.T);
                 h.Stack.TryWriteLegacySegments = (a, b, c) => h.Driver.TryShowSegments(a, b, c);
+                h.Stack.TryShowSpecialScreen = p => h.Driver.ShowSpecialScreen(p);
+                h.Stack.OnSpecialReleased = () =>
+                {
+                    h.Driver.ArmExitBlank();
+                    h.Driver.InvalidateSegmentGates();
+                };
                 return h;
             }
 
@@ -707,6 +713,163 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(0, h.UpdateCalls);
             // Rule path shows PIT, not gear 7.
             Assert.Equal((SevenSegment.P, SevenSegment.I, SevenSegment.T), h.Transport.LastSegments);
+        }
+
+        // ── Special commands (firmware OLED screens) ─────────────────────
+
+        private const string LogoSpecialConfig =
+            "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"pit\", "
+            + "\"screens\": [ { \"id\": \"pit\", \"name\": \"Pit\", \"text\": \"PIT\" } ], "
+            + "\"rules\": [ { \"id\": \"s1\", "
+            + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
+            + "\"show\": { \"kind\": \"special\", \"command\": \"logo\" }, "
+            + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
+
+        private const string LogoSpecialIdleConfig =
+            "{ \"schemaVersion\": 1, \"legacy\": { "
+            + "\"rules\": [ { \"id\": \"s1\", \"eligible\": \"any\", "
+            + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
+            + "\"show\": { \"kind\": \"special\", \"command\": \"logo\" }, "
+            + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
+
+        private static byte[] SpecialFrame(byte pattern)
+            => new byte[] { 0x01, 0xF8, 0x09, 0x01, SpecialCommands.Subcommand, pattern, 0x00, 0x00 };
+
+        [Fact]
+        public void Special_WinEdge_SendsLogoFrameOnce_ChangeGatedAcrossHeldTicks()
+        {
+            var h = Harness.Create(LogoSpecialConfig);
+            h.Control.Land(1);
+
+            h.Tick(Live(isInPit: 1));
+            Assert.Single(h.Transport.SentCol01Reports);
+            Assert.Equal(SpecialFrame(SpecialCommands.PatternLogo), h.Transport.SentCol01Reports[0]);
+
+            // Held ticks: no re-send.
+            h.T += 16;
+            h.Tick(Live(isInPit: 1));
+            h.T += 16;
+            h.Tick(Live(isInPit: 1));
+            Assert.Single(h.Transport.SentCol01Reports);
+        }
+
+        [Fact]
+        public void Special_Release_ContentReclaims_ByteGolden()
+        {
+            var h = Harness.Create(LogoSpecialConfig);
+            h.Control.Land(1);
+
+            h.Tick(Live(isInPit: 1));
+            Assert.Equal(SpecialFrame(SpecialCommands.PatternLogo), h.Transport.SentCol01Reports[0]);
+            h.Transport.SentCol01Reports.Clear();
+
+            // Release → base PIT reclaims via normal segment write.
+            h.T += 2000;
+            h.Tick(Live(isInPit: 0));
+            Assert.Single(h.Transport.SentCol01Reports);
+            Assert.Equal(
+                (SevenSegment.P, SevenSegment.I, SevenSegment.T),
+                h.Transport.LastSegments);
+        }
+
+        [Fact]
+        public void Special_Release_EmptyResolution_WritesBlankOnce()
+        {
+            const string blankBase =
+                "{ \"schemaVersion\": 1, \"legacy\": { "
+                + "\"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
+                + "\"rules\": [ { \"id\": \"s1\", "
+                + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
+                + "\"show\": { \"kind\": \"special\", \"command\": \"logo\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
+
+            var h = Harness.Create(blankBase);
+            h.Control.Land(1);
+            h.Tick(Live(isInPit: 1));
+            h.Transport.SentCol01Reports.Clear();
+
+            h.T += 2000;
+            h.Tick(Live(isInPit: 0));
+            Assert.Single(h.Transport.SentCol01Reports);
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
+                h.Transport.LastSegments);
+
+            // Blank-once: subsequent idle ticks stay silent.
+            h.Transport.SentCol01Reports.Clear();
+            h.T += 16;
+            h.Tick(Live(isInPit: 0));
+            Assert.Empty(h.Transport.SentCol01Reports);
+        }
+
+        [Fact]
+        public void Special_DeclinedSend_RetriesNextTick()
+        {
+            var h = Harness.Create(LogoSpecialConfig);
+            h.Control.Land(1);
+
+            h.Transport.SendReturns = false;
+            h.Tick(Live(isInPit: 1));
+            h.Transport.SentCol01Reports.Clear();
+
+            h.Transport.SendReturns = true;
+            h.T += 16;
+            h.Tick(Live(isInPit: 1));
+            Assert.Single(h.Transport.SentCol01Reports);
+            Assert.Equal(SpecialFrame(SpecialCommands.PatternLogo), h.Transport.SentCol01Reports[0]);
+        }
+
+        [Fact]
+        public void Special_FlagOff_LogOnly_NoCol01Writes()
+        {
+            DisplayRuleStack.LegacyRuleWrites = false;
+            var h = Harness.Create(LogoSpecialConfig);
+            h.Control.Land(1);
+            h.Tick(Live(isInPit: 1));
+
+            Assert.Empty(h.Transport.SentCol01Reports);
+            Assert.Contains(h.Log, m => m ==
+                "DisplayRules: special command wants 'Fanatec logo' (text write lands in a later phase)");
+        }
+
+        [Fact]
+        public void Special_IdleEligible_FiresAtIdle()
+        {
+            var h = Harness.Create(LogoSpecialIdleConfig);
+            h.Control.Land(1);
+
+            var idle = Idle();
+            Set(idle.NewData, "IsInPitLane", 1);
+            h.Tick(idle);
+
+            Assert.Single(h.Transport.SentCol01Reports);
+            Assert.Equal(SpecialFrame(SpecialCommands.PatternLogo), h.Transport.SentCol01Reports[0]);
+        }
+
+        [Fact]
+        public void Special_Snapshot_BlankSegments_AndCommandLabelCaption()
+        {
+            var h = Harness.Create(LogoSpecialConfig);
+            h.Control.Land(1);
+            var snap = h.Tick(Live(isInPit: 1));
+            Assert.NotNull(snap);
+            // Mirror cannot draw firmware art — blank face + command label as caption.
+            Assert.Equal("Fanatec logo", snap.LegacyScreenName);
+            Assert.Equal(
+                new byte[] { SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank },
+                snap.LegacySegments);
+            // Winner row label carries the command name via DescribeTarget.
+            DisplayRuleRow? winner = null;
+            for (int i = 0; i < snap.LegacyRules.Count; i++)
+            {
+                if (snap.LegacyRules[i].Status == RuleStatus.OnScreen)
+                {
+                    winner = snap.LegacyRules[i];
+                    break;
+                }
+            }
+            Assert.NotNull(winner);
+            Assert.Contains("Fanatec logo", winner.Value.Label);
         }
 
         [Fact]

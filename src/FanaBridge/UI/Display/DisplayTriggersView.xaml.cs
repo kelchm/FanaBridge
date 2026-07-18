@@ -280,7 +280,7 @@ namespace FanaBridge.UI.Display
             return row;
         }
 
-        // A RuleTarget shape sufficient for ShowTextFor on a live draft (page or cycle).
+        // A RuleTarget shape sufficient for ShowTextFor on a live draft.
         private static RuleTarget DraftTarget(RuleEdit draft)
         {
             var t = new RuleTarget
@@ -296,6 +296,10 @@ namespace FanaBridge.UI.Display
                 for (int i = 0; i < draft.CyclePages.Count; i++)
                     t.PagesRaw.Add(EnumText.Write(draft.CyclePages[i]));
             }
+            if (draft.TargetKind == TargetKind.Special)
+                t.Command = draft.Command != SpecialCommand.Unknown
+                    ? draft.Command
+                    : SpecialCommand.LogoScreen;
             return t;
         }
 
@@ -552,9 +556,15 @@ namespace FanaBridge.UI.Display
             inner.Children.Add(FieldLabel("Action"));
             inner.Children.Add(BuildActionCell(draft, commit));
 
-            if (_editModel.IsLegacyMode || draft.TargetKind == TargetKind.LegacyScreen)
+            if (draft.TargetKind == TargetKind.Special)
             {
-                // Legacy vocabulary: only "Show a virtual page" + screen DropDownCell.
+                var cmd = BuildSpecialCommandCell(draft, commit);
+                cmd.Margin = new Thickness(0, 7, 0, 0);
+                inner.Children.Add(cmd);
+            }
+            else if (_editModel.IsLegacyMode || draft.TargetKind == TargetKind.LegacyScreen)
+            {
+                // Legacy vocabulary: virtual page + screen DropDownCell (or special above).
                 var screen = BuildScreenCell(draft, commit);
                 screen.Margin = new Thickness(0, 7, 0, 0);
                 inner.Children.Add(screen);
@@ -716,35 +726,50 @@ namespace FanaBridge.UI.Display
                 RuleEligibility.InGame;
         }
 
-        // The Action dropdown: ITM vocabulary is "Show an ITM page" / "Cycle ITM pages";
-        // legacy vocabulary is "Show a virtual page" only (special commands deferred).
+        // The Action dropdown: ITM vocabulary is "Show an ITM page" / "Cycle ITM pages" /
+        // "Special command"; legacy vocabulary is "Show a virtual page" / "Special command".
         private DropDownCell BuildActionCell(RuleEdit draft, Action commit)
         {
             var cell = new DropDownCell { Width = 200, HorizontalAlignment = HorizontalAlignment.Left };
             if (_editModel.IsLegacyMode)
             {
+                string selected = draft.TargetKind == TargetKind.Special ? "special" : "legacy";
                 cell.SetChoices(ChoiceList.Build()
                     .Add("legacy", "Show a virtual page")
-                    .Selected("legacy"));
-                // Single choice — SelectionCommitted is a no-op but keeps the cell honest.
+                    .Add("special", "Special command")
+                    .Selected(selected));
                 cell.SelectionCommitted += (s, id) =>
                 {
-                    if (draft.TargetKind != TargetKind.LegacyScreen)
+                    if (string.Equals(id, "special", StringComparison.Ordinal))
                     {
+                        if (draft.TargetKind == TargetKind.Special)
+                            return;
+                        draft.TargetKind = TargetKind.Special;
+                        if (draft.Command == SpecialCommand.Unknown)
+                            draft.Command = SpecialCommand.LogoScreen;
+                    }
+                    else
+                    {
+                        if (draft.TargetKind == TargetKind.LegacyScreen)
+                            return;
                         draft.TargetKind = TargetKind.LegacyScreen;
                         if (string.IsNullOrEmpty(draft.ScreenId)
                             && _editModel.ScreenOptions().Count > 0)
                             draft.ScreenId = _editModel.ScreenOptions()[0].Id;
-                        commit();
                     }
+                    commit();
                 };
                 return cell;
             }
 
+            string itmSelected =
+                draft.TargetKind == TargetKind.Cycle ? "cycle" :
+                draft.TargetKind == TargetKind.Special ? "special" : "page";
             var choices = ChoiceList.Build()
                 .Add("page", "Show an ITM page")
                 .Add("cycle", "Cycle ITM pages")
-                .Selected(draft.TargetKind == TargetKind.Cycle ? "cycle" : "page");
+                .Add("special", "Special command")
+                .Selected(itmSelected);
             cell.SetChoices(choices);
             cell.SelectionCommitted += (s, id) =>
             {
@@ -764,6 +789,14 @@ namespace FanaBridge.UI.Display
                         draft.CyclePages = new List<ItmPage> { first, OtherPage(first) };
                     }
                 }
+                else if (string.Equals(id, "special", StringComparison.Ordinal))
+                {
+                    if (draft.TargetKind == TargetKind.Special)
+                        return;
+                    draft.TargetKind = TargetKind.Special;
+                    if (draft.Command == SpecialCommand.Unknown)
+                        draft.Command = SpecialCommand.LogoScreen;
+                }
                 else
                 {
                     if (draft.TargetKind == TargetKind.Page)
@@ -773,6 +806,25 @@ namespace FanaBridge.UI.Display
                         ? draft.CyclePages[0]
                         : DefaultPage();
                 }
+                commit();
+            };
+            return cell;
+        }
+
+        private DropDownCell BuildSpecialCommandCell(RuleEdit draft, Action commit)
+        {
+            var cell = new DropDownCell { Width = 220, HorizontalAlignment = HorizontalAlignment.Left };
+            SpecialCommand current = draft.Command != SpecialCommand.Unknown
+                ? draft.Command
+                : SpecialCommand.LogoScreen;
+            cell.SetChoices(DisplayTriggersEditModel.SpecialCommandChoices(current));
+            cell.SelectionCommitted += (s, id) =>
+            {
+                var cmd = SpecialCommands.Parse(id);
+                if (cmd == SpecialCommand.Unknown || cmd == draft.Command)
+                    return;
+                draft.TargetKind = TargetKind.Special;
+                draft.Command = cmd;
                 commit();
             };
             return cell;

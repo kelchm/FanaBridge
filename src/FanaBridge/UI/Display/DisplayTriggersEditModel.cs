@@ -34,7 +34,7 @@ namespace FanaBridge.UI.Display
         public double? Value;
         public double? Hysteresis;
 
-        // SHOW — draft TargetKind is only ever Page, Cycle, or (carried) LegacyScreen;
+        // SHOW — draft TargetKind is Page, Cycle, Special, or (carried) LegacyScreen;
         // Alternate loads as a 2-page Cycle and re-saves as Cycle if the user edits it.
         public TargetKind TargetKind = TargetKind.Page;
         public ItmPage? Page;
@@ -48,6 +48,9 @@ namespace FanaBridge.UI.Display
         /// when a loaded rule already targets a legacy screen; in legacy mode the SHOW
         /// dropdown authors it from the virtual-page survivors list.</summary>
         public string ScreenId;
+
+        /// <summary><see cref="TargetKind.Special"/>: the selected firmware screen.</summary>
+        public SpecialCommand Command = SpecialCommand.Unknown;
 
         // HOLD (Unknown means "let the model pick the condition family's default")
         public HoldKind Hold = HoldKind.Unknown;
@@ -197,6 +200,11 @@ namespace FanaBridge.UI.Display
                                 e.CyclePages.Add(pages[i].Value);
                     }
                     e.CyclePeriodMs = rule.Show.PeriodMs;
+                }
+                else if (rule.Show.Kind == TargetKind.Special)
+                {
+                    e.TargetKind = TargetKind.Special;
+                    e.Command = rule.Show.Command;
                 }
                 else
                 {
@@ -554,11 +562,16 @@ namespace FanaBridge.UI.Display
             row.StateText = TriggerTableModel.StateText(liveStatus, rule.Enabled);
         }
 
+        /// <summary>Mock diamond glyph prefixing a special-command label in the Show cell
+        /// ("◇ Fanatec logo"). Shared by the workbench and Monitor.</summary>
+        public const string SpecialShowGlyph = "\u25C7";
+
         /// <summary>The Show column text for a target: "Page N · Name" (single page, wire
         /// number from this device's page table), "P2 ⇄ P5" (alternate / cycle short labels
-        /// joined with " ⇄ "), "◧ Name" (legacy virtual page — mock half-block glyph), or
-        /// "" when the target is missing/unresolved. The legacy form upgrades the prior
-        /// "screen 'X'" wording (raw id) to the library display name.</summary>
+        /// joined with " ⇄ "), "◧ Name" (legacy virtual page — mock half-block glyph),
+        /// "◇ Fanatec logo" (special command), or "" when the target is missing/unresolved.
+        /// The legacy form upgrades the prior "screen 'X'" wording (raw id) to the library
+        /// display name.</summary>
         public string ShowTextFor(RuleTarget show)
         {
             if (show == null)
@@ -580,9 +593,31 @@ namespace FanaBridge.UI.Display
                 }
                 case TargetKind.LegacyScreen:
                     return LegacyShowGlyph + " " + ScreenDisplayName(show.ScreenId);
+                case TargetKind.Special:
+                    return show.Command == SpecialCommand.Unknown
+                        ? ""
+                        : SpecialShowGlyph + " " + SpecialCommands.Label(show.Command);
                 default:
                     return "";
             }
+        }
+
+        /// <summary>SHOW command choices for a special-command draft.</summary>
+        public static ChoiceList SpecialCommandChoices(SpecialCommand selected)
+        {
+            var b = ChoiceList.Build();
+            b.Add(SpecialCommands.Write(SpecialCommand.LogoScreen),
+                SpecialCommands.Label(SpecialCommand.LogoScreen));
+            b.Add(SpecialCommands.Write(SpecialCommand.LogoInvertedScreen),
+                SpecialCommands.Label(SpecialCommand.LogoInvertedScreen));
+            b.Add(SpecialCommands.Write(SpecialCommand.WhiteScreen),
+                SpecialCommands.Label(SpecialCommand.WhiteScreen));
+            b.Add(SpecialCommands.Write(SpecialCommand.BlankScreen),
+                SpecialCommands.Label(SpecialCommand.BlankScreen));
+            string sel = SpecialCommands.Write(selected);
+            if (sel == null)
+                sel = SpecialCommands.Write(SpecialCommand.LogoScreen);
+            return b.Selected(sel);
         }
 
         /// <summary>Library display name for a screen id, or the id itself when missing.</summary>
@@ -1000,6 +1035,11 @@ namespace FanaBridge.UI.Display
                     // loaded legacy-screen id through an unrelated field edit.
                     show.ScreenId = e.ScreenId;
                     break;
+                case TargetKind.Special:
+                    show.Command = e.Command != SpecialCommand.Unknown
+                        ? e.Command
+                        : SpecialCommand.LogoScreen;
+                    break;
             }
 
             // Hold: an unset draft takes the condition family's natural default (the same
@@ -1070,6 +1110,7 @@ namespace FanaBridge.UI.Display
                         ? null
                         : new List<string>(rule.Show.PagesRaw),
                     PeriodMs = rule.Show.PeriodMs,
+                    CommandRaw = rule.Show.CommandRaw,
                 };
             if (rule.Hold != null)
                 clone.Hold = new HoldSpec

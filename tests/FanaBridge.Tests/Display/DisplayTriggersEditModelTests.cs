@@ -799,6 +799,93 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("P2 ⇄ P5 ⇄ P3", model.ShowTextFor(show));
         }
 
+        // ── Special command (TargetKind.Special draft + Show text) ────────
+
+        [Fact]
+        public void ShowTextFor_Special_DiamondPrefixAndLabel()
+        {
+            var model = new DisplayTriggersEditModel(null, Device3);
+            var show = new RuleTarget
+            {
+                Kind = TargetKind.Special,
+                Command = SpecialCommand.LogoScreen,
+            };
+            Assert.Equal("\u25C7 Fanatec logo", model.ShowTextFor(show));
+            show.Command = SpecialCommand.LogoInvertedScreen;
+            Assert.Equal("\u25C7 Fanatec logo (inverted)", model.ShowTextFor(show));
+            show.Command = SpecialCommand.WhiteScreen;
+            Assert.Equal("\u25C7 White screen", model.ShowTextFor(show));
+            show.Command = SpecialCommand.BlankScreen;
+            Assert.Equal("\u25C7 Blank screen", model.ShowTextFor(show));
+        }
+
+        [Fact]
+        public void ToDraft_And_BuildRule_Special_RoundTripsCommand()
+        {
+            var start = Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
+                + "\"show\": { \"kind\": \"special\", \"command\": \"logoInverted\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } } ] } }");
+            var draft = DisplayTriggersEditModel.ToDraft(start.Itm.Rules[0]);
+            Assert.Equal(TargetKind.Special, draft.TargetKind);
+            Assert.Equal(SpecialCommand.LogoInvertedScreen, draft.Command);
+
+            draft.Command = SpecialCommand.WhiteScreen;
+            var model = new DisplayTriggersEditModel(start, Device3);
+            var cfg = model.UpdateRule(draft);
+            var show = Assert.Single(cfg.Itm.Rules).Show;
+            Assert.Equal(TargetKind.Special, show.Kind);
+            Assert.Equal("special", show.KindRaw);
+            Assert.Equal(SpecialCommand.WhiteScreen, show.Command);
+            Assert.Equal("white", show.CommandRaw);
+        }
+
+        [Fact]
+        public void SpecialCommandChoices_FourScreens_Selected()
+        {
+            var choices = DisplayTriggersEditModel.SpecialCommandChoices(SpecialCommand.LogoScreen);
+            Assert.Equal(new[] { "logo", "logoInverted", "white", "blankScreen" },
+                choices.Items.Select(i => i.Id).ToArray());
+            Assert.Equal("Fanatec logo", choices.Items[0].Label);
+            Assert.Equal("logo", choices.SelectedId);
+        }
+
+        [Fact]
+        public void AddRule_Special_DefaultsLogoWhenCommandUnset()
+        {
+            var model = new DisplayTriggersEditModel(null, Device3);
+            var draft = model.NewTelemetryDraft();
+            draft.SourceKind = PropertyKind.BuiltIn;
+            draft.SourceName = BuiltInProperties.Fuel;
+            draft.Operator = ConditionKind.IsTrue;
+            draft.TargetKind = TargetKind.Special;
+            // Command left Unknown — BuildRule seeds LogoScreen.
+            var cfg = model.AddRule(draft);
+            Assert.Equal(SpecialCommand.LogoScreen, cfg.Itm.Rules[0].Show.Command);
+            Assert.Equal("logo", cfg.Itm.Rules[0].Show.CommandRaw);
+        }
+
+        [Fact]
+        public void CloneRuleWithRun_PreservesCommandRaw_OnDuplicateAndDisable()
+        {
+            var start = Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
+                + "\"show\": { \"kind\": \"special\", \"command\": \"white\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } } ] } }");
+            var model = new DisplayTriggersEditModel(start, Device3);
+
+            var duplicated = model.DuplicateRule("r1", out _);
+            Assert.Equal("white", duplicated.Itm.Rules[0].Show.CommandRaw);
+            Assert.Equal("white", duplicated.Itm.Rules[1].Show.CommandRaw);
+
+            var disabled = model.SetRuleEnabled("r1", false);
+            Assert.False(disabled.Itm.Rules[0].Enabled);
+            Assert.Equal("white", disabled.Itm.Rules[0].Show.CommandRaw);
+            Assert.Equal("special", disabled.Itm.Rules[0].Show.KindRaw);
+        }
+
         // ── Runs mapping (enable × eligibility fold, plan B6) ─────────────
 
         [Fact]

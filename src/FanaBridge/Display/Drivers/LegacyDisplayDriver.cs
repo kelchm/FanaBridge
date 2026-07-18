@@ -2,6 +2,7 @@ using FanaBridge.Protocol;
 using GameReaderCommon;
 using System;
 using FanaBridge.Display.Host;
+using FanaBridge.Display.Rules;
 
 namespace FanaBridge.Display.Drivers
 {
@@ -52,11 +53,26 @@ namespace FanaBridge.Display.Drivers
         /// <see cref="Clear"/> keeps retrying instead of leaving the residue frozen.</summary>
         internal void ArmExitBlank() => _needExitBlank = true;
 
+        /// <summary>
+        /// Clears segment / mode-path change gates only (<see cref="NeedsExitBlank"/>
+        /// untouched). Used on special-command release so the next content write is not
+        /// suppressed by a stale segment latch.
+        /// </summary>
+        internal void InvalidateSegmentGates()
+        {
+            _hasLastSegments = false;
+            _lastDisplayMode = null;
+            _lastSentGear = int.MinValue;
+            _lastSentSpeed = int.MinValue;
+            _lastBracketsShown = false;
+        }
+
         // Rule-path segment latch (TryShowSegments): change-gate identical resolved
         // frames so effect clocks only re-send when the visible window actually moves.
         private byte _lastSeg0, _lastSeg1, _lastSeg2;
         private bool _hasLastSegments;
         private const string RuleSegmentsMode = "RuleSegments";
+        private const string SpecialScreenMode = "SpecialScreen";
 
         public LegacyDisplayDriver(DisplayEncoder display, DisplaySettings settings)
         {
@@ -124,6 +140,28 @@ namespace FanaBridge.Display.Drivers
                     UpdateGear(data);
                     break;
             }
+        }
+
+        /// <summary>
+        /// Rule-path special-screen sink: sends the firmware OLED screen-selector
+        /// frame once per accepted write. Declined send returns false so the stack
+        /// retries on the next win-edge tick (does not latch). An accepted send arms
+        /// <see cref="NeedsExitBlank"/> — firmware content now covers our surface and
+        /// must be reclaimed later.
+        /// </summary>
+        public bool ShowSpecialScreen(byte pattern)
+        {
+            if (!_display.SendCommand(SpecialCommands.Subcommand, pattern))
+                return false;
+
+            _needExitBlank = true;
+            _lastDisplayMode = SpecialScreenMode;
+            // Mode-path / segment latches must not suppress a later reclaim write.
+            _hasLastSegments = false;
+            _lastSentGear = int.MinValue;
+            _lastSentSpeed = int.MinValue;
+            _lastBracketsShown = false;
+            return true;
         }
 
         /// <summary>

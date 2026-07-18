@@ -592,6 +592,7 @@ namespace FanaBridge.Adapters
                 else
                 {
                     _displayRuntime.SetLegacySegmentWriter(null);
+                    _displayRuntime.SetSpecialScreenHooks(null, null);
                 }
 
                 // The runtime owns the whole ITM frame (driver/twin build + hot-swap, the
@@ -660,6 +661,7 @@ namespace FanaBridge.Adapters
                     else
                     {
                         _displayRuntime.SetLegacySegmentWriter(null);
+                        _displayRuntime.SetSpecialScreenHooks(null, null);
                     }
                     DriveLegacyCol01(plugin, data, displayTest, logCreate: true);
                 }
@@ -729,10 +731,18 @@ namespace FanaBridge.Adapters
                 var driver = _legacyDriver;
                 _displayRuntime.SetLegacySegmentWriter(
                     (a, b, c) => driver.TryShowSegments(a, b, c));
+                _displayRuntime.SetSpecialScreenHooks(
+                    pattern => driver.ShowSpecialScreen(pattern),
+                    () =>
+                    {
+                        driver.ArmExitBlank();
+                        driver.InvalidateSegmentGates();
+                    });
             }
             else
             {
                 _displayRuntime.SetLegacySegmentWriter(null);
+                _displayRuntime.SetSpecialScreenHooks(null, null);
             }
         }
 

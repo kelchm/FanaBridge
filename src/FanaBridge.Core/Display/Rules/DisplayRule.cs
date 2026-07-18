@@ -157,6 +157,8 @@ namespace FanaBridge.Display.Rules
         /// <summary>An ordered list of ITM pages shown in rotation every
         /// <see cref="RuleTarget.PeriodMs"/>.</summary>
         Cycle,
+        /// <summary>A firmware OLED special screen (<see cref="RuleTarget.Command"/>).</summary>
+        Special,
     }
 
     /// <summary>
@@ -275,6 +277,28 @@ namespace FanaBridge.Display.Rules
         [JsonProperty("periodMs")]
         [DefaultValue(DefaultCyclePeriodMs)]
         public int PeriodMs { get; set; } = DefaultCyclePeriodMs;
+
+        private string _commandRaw;
+        private SpecialCommand? _command;
+
+        /// <summary>Serialized form of <see cref="Command"/> for
+        /// <see cref="TargetKind.Special"/>, preserved verbatim (unknown text survives
+        /// a load/save round-trip byte-for-byte — see <see cref="RuleCondition.KindRaw"/>).</summary>
+        [JsonProperty("command")]
+        public string CommandRaw
+        {
+            get => _commandRaw;
+            set { _commandRaw = value; _command = null; }
+        }
+
+        /// <summary>Parsed <see cref="CommandRaw"/> — <see cref="SpecialCommand.Unknown"/>
+        /// when missing or unrecognized (the validator degrades the rule).</summary>
+        [JsonIgnore]
+        public SpecialCommand Command
+        {
+            get => _command ?? (_command = SpecialCommands.Parse(_commandRaw)).Value;
+            set { _command = value; _commandRaw = SpecialCommands.Write(value); }
+        }
     }
 
     /// <summary>How long an activation lives once its condition fires.</summary>

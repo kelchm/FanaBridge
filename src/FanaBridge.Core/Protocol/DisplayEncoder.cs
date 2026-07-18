@@ -57,6 +57,27 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
+        /// Sends a raw col01 command frame: <c>01 F8 09 01 &lt;subcmd&gt; &lt;arg&gt; 00 00</c>.
+        /// Uses the same pooled buffer and lock discipline as <see cref="SetDisplay"/>.
+        /// </summary>
+        public bool SendCommand(byte subcmd, byte arg)
+        {
+            lock (_sync)
+            {
+                _reportBuf[0] = 0x01;  // Report ID
+                _reportBuf[1] = 0xF8;
+                _reportBuf[2] = 0x09;
+                _reportBuf[3] = 0x01;
+                _reportBuf[4] = subcmd;
+                _reportBuf[5] = arg;
+                _reportBuf[6] = 0x00;
+                _reportBuf[7] = 0x00;
+
+                return _transport.SendCol01(_reportBuf);
+            }
+        }
+
+        /// <summary>
         /// Display a gear number: -1=R, 0=N, 1-9.
         /// When <paramref name="showBrackets"/> is true, renders [n] using the outer digit positions.
         /// </summary>
