@@ -203,6 +203,60 @@ namespace FanaBridge.Tests.UI
             Assert.Equal("5s", rows[2].Seconds);
         }
 
+        // ── Monitor rows (the v9 converged Overview list) ────────────────
+
+        [Fact]
+        public void MonitorRows_DropsDisabledAndIneligible_RenumbersContiguously_BaseLast()
+        {
+            var config = DisplayConfigSerializer.Load(
+                "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" }, \"hold\": { \"kind\": \"forDuration\", \"durationMs\": 3200 } }, "
+                + "{ \"id\": \"r2\", \"enabled\": false, \"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" } }, "
+                + "{ \"id\": \"r3\", \"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"PitLimiterOn\" } }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"carSettings\" }, \"eligible\": \"idle\" }, "
+                + "{ \"id\": \"r4\", \"when\": { \"kind\": \"greaterThan\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Speed\" }, \"value\": 100 }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" } } ] } }", _ => { });
+
+            var snapshot = Snapshot(new[]
+            {
+                new DisplayRuleRow("r1", "x", RuleStatus.OnScreen, 3200, "8.4"),
+                new DisplayRuleRow("r2", "x", RuleStatus.Disabled, null, "off"),
+                new DisplayRuleRow("r3", "x", RuleStatus.Ineligible, null, "off"),
+                new DisplayRuleRow("r4", "x", RuleStatus.Waiting, null, "150"),
+            });
+
+            var rows = DisplayOverviewRender.MonitorRows(snapshot, config, itmDeviceId: 3, defaultWirePage: 1);
+
+            // r2 (disabled) and r3 (session-ineligible) drop; r1 + r4 survive, renumbered 1..2;
+            // base row pinned last.
+            Assert.Equal(3, rows.Count);
+            Assert.Equal(new[] { "1", "2", "★" }, rows.Select(r => r.Rank).ToArray());
+            Assert.Equal(new[] { "r1", "r4" },
+                rows.Where(r => !r.IsBase).Select(r => r.RuleId).ToArray());
+
+            // Winning emphasis flag + live "Now" value + countdown carry through.
+            Assert.True(rows[0].OnScreen);
+            Assert.Equal("8.4", rows[0].NowText);
+            Assert.Equal("4s", rows[0].Seconds);       // 3.2 s ceils to 4s
+            Assert.False(rows[1].OnScreen);
+            Assert.Equal("150", rows[1].NowText);
+
+            // Base footer row: device 3 default wire 1 = Lap Info; ShowText carries the bare name.
+            Assert.True(rows[2].IsBase);
+            Assert.Equal("Lap Info", rows[2].ShowText);
+        }
+
+        [Fact]
+        public void MonitorRows_NullConfig_JustTheBaseRow()
+        {
+            var rows = DisplayOverviewRender.MonitorRows(null, null, itmDeviceId: 3, defaultWirePage: 2);
+            var row = Assert.Single(rows);
+            Assert.True(row.IsBase);
+            Assert.Equal("Fuel / ERS / DRS", row.ShowText);   // wire 2 on device 3
+        }
+
         // ── Empty state / base page name ─────────────────────────────────
 
         [Fact]

@@ -355,17 +355,22 @@ namespace FanaBridge.UI.Display
         // ── Row model ─────────────────────────────────────────────────────
 
         /// <summary>
-        /// The editor rows in priority order, then the pinned base row last. Live state is
-        /// merged in by rule id from <paramref name="snapshot"/> (so poll re-renders can
-        /// patch chips without rebuilding), degraded rules render as muted non-expandable
-        /// rows, and the base row's page name follows the running stack's own resolution
-        /// exactly as the Overview does.
+        /// The editor rows in priority order. In <see cref="TriggerTableMode.Workbench"/>
+        /// every rule row is emitted (ranks are the config positions) and the base is left to
+        /// the editor's footer; in <see cref="TriggerTableMode.Monitor"/> (the Overview's
+        /// "what's in play" list) disabled/degraded rules and rules the current session state
+        /// makes ineligible are dropped, the survivors renumber 1..n, the pinned base row is
+        /// appended last, and each row carries the live "Now" value. Live state is merged in
+        /// by rule id from <paramref name="snapshot"/> (so poll re-renders can patch chips
+        /// without rebuilding), and the base row's page name follows the running stack's own
+        /// resolution exactly as the Overview does.
         /// </summary>
         public IReadOnlyList<TriggerTableRow> Rows(DisplayRuleSnapshot snapshot, byte defaultWirePage,
             TriggerTableMode mode = TriggerTableMode.Monitor)
         {
             var rows = new List<TriggerTableRow>();
             var rules = Rules;
+            bool monitor = mode == TriggerTableMode.Monitor;
 
             Dictionary<string, DisplayRuleRow> live = null;
             if (snapshot?.ItmRules != null)
@@ -376,13 +381,31 @@ namespace FanaBridge.UI.Display
                         live[r.RuleId] = r;
             }
 
+            int rank = 0;
             for (int i = 0; i < rules.Count; i++)
             {
                 var rule = rules[i];
+
+                // Resolve the live state first — the Monitor eligibility filter reads it.
+                RuleStatus liveStatus = RuleStatus.Armed;
+                DisplayRuleRow state = default;
+                bool haveLive = live != null && rule.Id != null && live.TryGetValue(rule.Id, out state);
+                if (haveLive)
+                    liveStatus = state.Status;
+
+                // Monitor is "what's in play": drop disabled/degraded rules and rows the
+                // current session state (in-game vs idle, reported per frame as Ineligible)
+                // excludes. The survivors' ranks renumber contiguously below.
+                if (monitor && (rule.DegradedAtLoad || !rule.Enabled
+                    || liveStatus == RuleStatus.Disabled
+                    || liveStatus == RuleStatus.Ineligible))
+                    continue;
+
+                rank++;
                 var row = new TriggerTableRow
                 {
                     RuleId = rule.Id,
-                    Rank = (i + 1).ToString(),
+                    Rank = (monitor ? rank : i + 1).ToString(),
                     Label = DisplayRuleFormatter.Label(rule),
                     Enabled = rule.Enabled,
                     Degraded = rule.DegradedAtLoad,
@@ -391,15 +414,14 @@ namespace FanaBridge.UI.Display
                     Eligibility = rule.DegradedAtLoad ? "" : EligibilityLabel(rule.Eligible),
                 };
                 ApplyStructuredWhen(row, rule);
-                RuleStatus liveStatus = RuleStatus.Armed;
-                if (live != null && rule.Id != null && live.TryGetValue(rule.Id, out var state))
+                if (haveLive)
                 {
-                    liveStatus = state.Status;
                     var chip = DisplayOverviewRender.StateChip(state.Status, state.RemainingMs);
                     row.Chip = chip.Chip;
                     row.Seconds = chip.Seconds;
                     row.OnScreen = chip.OnScreen;
                     row.Muted = chip.Muted;
+                    row.NowText = state.LiveText;
                 }
                 if (rule.DegradedAtLoad)
                     row.Muted = true;      // always dimmed, regardless of live state
@@ -414,18 +436,24 @@ namespace FanaBridge.UI.Display
 
             // The pinned base row: shown as the last stack row in Monitor (the Overview's
             // "what's in play" list) but pulled OUT of the Workbench stack — the editor
-            // renders it as a dedicated BASE PAGE footer instead (spec 2b §5).
-            if (mode == TriggerTableMode.Monitor)
+            // renders it as a dedicated BASE PAGE footer instead (spec 2b §5). Label keeps the
+            // "Always → <page>" form for the plain consumers/tests; ShowText carries the bare
+            // page name so the Monitor footer can render its "→ <page>" Show cell.
+            if (monitor)
+            {
+                string baseName = DisplayOverviewRender.BasePageName(
+                    snapshot, _config, _itmDeviceId, defaultWirePage);
                 rows.Add(new TriggerTableRow
                 {
                     Rank = "★",
-                    Label = "Always → " + DisplayOverviewRender.BasePageName(
-                        snapshot, _config, _itmDeviceId, defaultWirePage),
+                    Label = "Always → " + baseName,
+                    ShowText = baseName,
                     Chip = "base",
                     IsBase = true,
                     Draggable = false,
                     Expandable = false,
                 });
+            }
             return rows;
         }
 

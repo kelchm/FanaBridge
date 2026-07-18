@@ -93,11 +93,16 @@ namespace FanaBridge.UI.Display
 
             // The Triggers editor is its own control now — bind it to the same host, catalogs,
             // and mutable settings, and wire its two seam events: ‹ back returns to Overview,
-            // and a committed edit refreshes the Overview priority list (the immediacy the old
-            // in-shell RenderPriority gave).
+            // and a committed edit refreshes the Overview Monitor list so it stays consistent.
             viewTriggers.Bind(_host, _propertyCatalog, _roleCatalog, _settings);
             viewTriggers.BackRequested += (s, e) => NavigateTo(TabView.Overview);
-            viewTriggers.ConfigApplied += (s, e) => RenderPriority(_lastSnapshot);
+            viewTriggers.ConfigApplied += (s, e) => RenderMonitor(_lastSnapshot);
+
+            // The Overview priority list IS the shared trigger table in Monitor mode: a
+            // read-only "what's in play" list. A row click lands in the Triggers editor with
+            // that rule expanded (the EnterAndSelect seam).
+            monitorTable.Mode = TriggerTableMode.Monitor;
+            monitorTable.RowActivated += id => NavigateTo(TabView.Triggers, id);
 
             // DISPLAY MODE segments — the ITM/Legacy pair, driven by DisplaySettings.ItmEnabled.
             // SelectionChanged fires on user activation only; UpdateModeState mirrors the
@@ -200,16 +205,22 @@ namespace FanaBridge.UI.Display
             viewTriggers.BeginAdd();
         }
 
-        private void NavigateTo(TabView view)
+        private void NavigateTo(TabView view, string expandRuleId = null)
         {
             _currentView = view;
             foreach (var kv in _views)
                 kv.Value.Visibility = kv.Key == view ? Visibility.Visible : Visibility.Collapsed;
 
             // Build (or rebuild) the Triggers editor from the current config each time it
-            // becomes the active view — a clean slate, snapshot-driven from there.
+            // becomes the active view — a clean slate, snapshot-driven from there. A row-click
+            // from the Overview Monitor list carries the rule to expand on arrival.
             if (view == TabView.Triggers && _host != null)
-                viewTriggers.Enter(_lastSnapshot);
+            {
+                if (expandRuleId != null)
+                    viewTriggers.EnterAndSelect(_lastSnapshot, expandRuleId);
+                else
+                    viewTriggers.Enter(_lastSnapshot);
+            }
 
             // The DISPLAY MODE header belongs to the hub — it shows on Overview only
             // (and only on ITM wheels), never inside an editor.
@@ -269,7 +280,7 @@ namespace FanaBridge.UI.Display
                 // engine captures this setting at build time, so the row deliberately
                 // keeps showing the engine's actual base until the next rebuild rather
                 // than a page the engine isn't using yet.
-                RenderPriority(_lastSnapshot);
+                RenderMonitor(_lastSnapshot);
             }
         }
 
@@ -362,7 +373,7 @@ namespace FanaBridge.UI.Display
             _suppressEvents = false;
             UpdateModeState();               // recomputes panelItmLive visibility; navigates to Overview if no longer ITM
             RefreshModeHeader();             // basic→ITM live rebind reveals the DISPLAY MODE toggle without a renavigate
-            RenderPriority(_lastSnapshot);   // Overview base-name/rows for the new device
+            RenderMonitor(_lastSnapshot);    // Overview base-name/rows for the new device
             if (_currentView == TabView.Triggers)
                 viewTriggers.Enter(_lastSnapshot);   // rebuild the editor for the new device; drops any open draft
         }
@@ -406,7 +417,7 @@ namespace FanaBridge.UI.Display
 
             if (force || snapshotChanged || statusChanged)
             {
-                RenderPriority(snapshot);
+                RenderMonitor(snapshot);
                 RenderActivity(snapshot);
                 // The Triggers editor merges the same live state into its rows — patched in
                 // place while an editor is open so poll re-renders never disturb it.
@@ -415,24 +426,32 @@ namespace FanaBridge.UI.Display
             }
         }
 
-        // ── Overview rendering (row models from DisplayOverviewRender) ───
+        // ── Overview rendering (the shared trigger table, Monitor mode) ───
 
-        private void RenderPriority(DisplayRuleSnapshot snapshot)
+        // The Overview "Display priority" list. The shared table is read-only here (no drag,
+        // no ⋯, no drawer) and its filtered row-set is itself live-derived (session-ineligible
+        // rules drop), so a full SetRows on each gated snapshot change — the reference-compare
+        // the poll loop already applies — is the right rebuild: nothing open to protect, and it
+        // handles rows appearing/leaving the filter that an in-place patch could not.
+        private void RenderMonitor(DisplayRuleSnapshot snapshot)
         {
             if (_host == null)
                 return;
             var config = _host.GetDisplayConfig();
-            string basePage = DisplayOverviewRender.BasePageName(
-                snapshot, config, _host.ItmDeviceId, _settings.ItmDefaultPage);
+            monitorTable.SetRows(DisplayOverviewRender.MonitorRows(
+                snapshot, config, _host.ItmDeviceId, _settings.ItmDefaultPage));
 
-            panelPriorityRows.Children.Clear();
-            foreach (var row in DisplayOverviewRender.PriorityRows(snapshot, basePage, config?.Itm?.Rules))
-                panelPriorityRows.Children.Add(BuildPriorityRow(row));
-
+            txtSituation.Text = "live · " + SituationLabel(_lastStatus);
             panelNoTriggers.Visibility = DisplayOverviewRender.HasConfiguredTriggers(config)
                 ? Visibility.Collapsed
                 : Visibility.Visible;
         }
+
+        // The section header's situation caption ("in game" / "idle"), derived from the ITM
+        // lifecycle status line the envelope already carries — "Idle" means no game is feeding
+        // the display; a synced/bring-up/recovery line means a game is running.
+        private static string SituationLabel(string itmStatus)
+            => string.Equals(itmStatus, "Idle", StringComparison.Ordinal) ? "idle" : "in game";
 
         private void RenderActivity(DisplayRuleSnapshot snapshot)
         {
@@ -446,144 +465,6 @@ namespace FanaBridge.UI.Display
                 count = rows.Count;
             }
             txtNoActivity.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        }
-
-        // Generous budget before the property grammar left-elides; CharacterEllipsis backstops.
-        private const int PriorityPropertyBudget = 34;
-
-        // The plain remainder after the property: "< 10 → Fuel / ERS / DRS".
-        private static string PriorityRestText(PriorityRowModel model)
-        {
-            string s = model.Operator ?? "";
-            if (!string.IsNullOrEmpty(model.ValueText))
-                s = s.Length > 0 ? s + " " + model.ValueText : model.ValueText;
-            if (!string.IsNullOrEmpty(model.TargetText))
-                s = s.Length > 0 ? s + " → " + model.TargetText : "→ " + model.TargetText;
-            return s;
-        }
-
-        // One priority row: [rank] [label ……] [chip] [seconds]. On-screen rows get the
-        // green accent and left bar; the base row a dashed outline; muted rows dim whole.
-        private UIElement BuildPriorityRow(PriorityRowModel model)
-        {
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var rank = new TextBlock
-            {
-                Text = model.Rank,
-                FontSize = 11,
-                FontWeight = FontWeights.Bold,
-                Foreground = model.OnScreen ? DisplayPalette.GreenRank : (model.IsBase ? DisplayPalette.BaseRank : DisplayPalette.MutedRank),
-                Width = 18,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 0, 8, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(rank, 0);
-            grid.Children.Add(rank);
-
-            var labelBrush = model.OnScreen ? DisplayPalette.OnScreenText : (model.IsBase ? DisplayPalette.BaseText : DisplayPalette.RowText);
-            FrameworkElement labelColumn;
-            if (!string.IsNullOrEmpty(model.PropertyName))
-            {
-                // The v9 structured WHEN: dim-ns/bright-leaf property + plain operator/value/target.
-                var strip = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                strip.Children.Add(PropertyLabel.ForProperty(
-                    model.PropertyName, model.DisplayKind, PriorityPropertyBudget));
-                strip.Children.Add(new TextBlock
-                {
-                    Text = PriorityRestText(model),
-                    FontSize = 12.5,
-                    Foreground = labelBrush,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(6, 0, 0, 0),
-                });
-                labelColumn = strip;
-            }
-            else
-            {
-                labelColumn = new TextBlock
-                {
-                    Text = model.Label,
-                    FontSize = 12.5,
-                    Foreground = labelBrush,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-            }
-            Grid.SetColumn(labelColumn, 1);
-            grid.Children.Add(labelColumn);
-
-            if (!string.IsNullOrEmpty(model.Chip))
-            {
-                var chip = new TextBlock
-                {
-                    Text = model.Chip,
-                    FontSize = 10.5,
-                    Foreground = model.OnScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText,
-                    Margin = new Thickness(10, 0, 0, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                Grid.SetColumn(chip, 2);
-                grid.Children.Add(chip);
-            }
-
-            if (model.Seconds != null)
-            {
-                var seconds = new CountdownRing
-                {
-                    Margin = new Thickness(10, 0, 0, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                seconds.Update(double.NaN, model.Seconds);
-                Grid.SetColumn(seconds, 3);
-                grid.Children.Add(seconds);
-            }
-
-            if (model.IsBase)
-            {
-                // WPF borders can't dash — a dashed Rectangle under the content gives the
-                // design's "pinned base" outline.
-                var host = new Grid { Margin = new Thickness(0, 0, 0, 6) };
-                host.Children.Add(new Rectangle
-                {
-                    Stroke = DisplayPalette.BaseDash,
-                    StrokeThickness = 1,
-                    StrokeDashArray = new DoubleCollection { 3, 2 },
-                    RadiusX = 4,
-                    RadiusY = 4,
-                    Fill = DisplayPalette.BaseBg,
-                });
-                host.Children.Add(new Border
-                {
-                    Padding = new Thickness(10, 8, 10, 8),
-                    Child = grid,
-                });
-                return host;
-            }
-
-            var border = new Border
-            {
-                Background = model.OnScreen ? DisplayPalette.OnScreenBg : DisplayPalette.RowBg,
-                BorderBrush = model.OnScreen ? DisplayPalette.OnScreenBorder : DisplayPalette.RowBorder,
-                BorderThickness = model.OnScreen ? new Thickness(3, 1, 1, 1) : new Thickness(1),
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(10, 8, 10, 8),
-                Margin = new Thickness(0, 0, 0, 6),
-                Child = grid,
-            };
-            if (model.Muted)
-                border.Opacity = 0.5;
-            return border;
         }
 
         // One activity row: [age] [event text].

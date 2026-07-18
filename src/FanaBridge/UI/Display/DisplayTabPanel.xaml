@@ -91,22 +91,27 @@
                             </Border>
                         </Grid>
 
-                        <!-- Display priority list -->
+                        <!-- Display priority list (shared trigger table, Monitor mode) -->
                         <Grid>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="Display priority" FontSize="13.5"
                                            FontWeight="SemiBold" />
-                                <TextBlock Text="— top wins" FontSize="12" Foreground="#8F8F8F"
-                                           Margin="8,0,0,0" VerticalAlignment="Center" />
+                                <TextBlock Text="— top eligible trigger wins" FontSize="12"
+                                           Foreground="#8F8F8F" Margin="8,0,0,0"
+                                           VerticalAlignment="Center" />
+                                <Ellipse Width="6" Height="6" Fill="#45B85A" Margin="12,0,0,0"
+                                         VerticalAlignment="Center" />
+                                <TextBlock x:Name="txtSituation" FontSize="11" Foreground="#8FBF9A"
+                                           Margin="5,0,0,0" VerticalAlignment="Center" />
                             </StackPanel>
                             <TextBlock FontSize="11.5" HorizontalAlignment="Right"
                                        VerticalAlignment="Center">
                                 <Hyperlink x:Name="btnManageTriggers" Style="{StaticResource Link}"
-                                           Click="ManageTriggers_Click">Manage triggers →</Hyperlink>
+                                           Click="ManageTriggers_Click">Edit triggers →</Hyperlink>
                             </TextBlock>
                         </Grid>
                         <Rectangle Height="1" Fill="#3D3D3F" Margin="0,7,0,10" />
-                        <StackPanel x:Name="panelPriorityRows" />
+                        <shared:TriggerTableControl x:Name="monitorTable" />
                         <StackPanel x:Name="panelNoTriggers" Visibility="Collapsed" Margin="0,2,0,4">
                             <TextBlock Text="No triggers configured yet." FontSize="12"
                                        Foreground="#8F8F8F" Margin="0,0,0,8" />
@@ -120,6 +125,11 @@
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                             <TextBlock Text="Also edit:" FontSize="12" Foreground="#8F8F8F" />
                             <TextBlock FontSize="12" Margin="14,0,0,0">
+                                <Hyperlink x:Name="btnAllTriggers" Style="{StaticResource Link}"
+                                           Click="ManageTriggers_Click">All triggers &amp; idle behavior</Hyperlink>
+                            </TextBlock>
+                            <TextBlock Text="·" FontSize="12" Foreground="#8F8F8F" Margin="10,0" />
+                            <TextBlock FontSize="12">
                                 <Hyperlink x:Name="btnEditLegacy" Style="{StaticResource Link}"
                                            Click="EditLegacy_Click">Legacy screens (Page 6)</Hyperlink>
                             </TextBlock>

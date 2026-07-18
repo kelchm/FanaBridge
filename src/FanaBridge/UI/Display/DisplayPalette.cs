@@ -59,6 +59,7 @@ namespace FanaBridge.UI.Display
         internal static readonly SolidColorBrush ThLabel = Frozen("#7F7F84");
         internal static readonly SolidColorBrush Caret = Frozen("#7FB2D8");
         internal static readonly SolidColorBrush GreenDot = Frozen("#45B85A");
+        internal static readonly SolidColorBrush NowDotIdle = Frozen("#5A5A5C");
         internal static readonly SolidColorBrush FieldBg = Frozen("#2C3239");
         internal static readonly SolidColorBrush FieldBorder = Frozen("#565658");
         internal static readonly SolidColorBrush FieldText = Frozen("#E6E6E6");

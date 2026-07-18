@@ -485,7 +485,10 @@ namespace FanaBridge.Tests.Display
         {
             var model = new DisplayTriggersEditModel(WithDegradedRule(), Device3);
 
-            var rows = model.Rows(null, defaultWirePage: 1);
+            // Degraded rows live in the Workbench editor stack; the Monitor "what's in play"
+            // list drops them (they can never compete), so their reorder/edit affordances are
+            // a Workbench projection.
+            var rows = model.Rows(null, defaultWirePage: 1, TriggerTableMode.Workbench);
 
             var degradedRow = rows[0];
             Assert.Equal("future", degradedRow.RuleId);
@@ -595,6 +598,28 @@ namespace FanaBridge.Tests.Display
             var model = new DisplayTriggersEditModel(OneNormalRule(), Device3);
             var rows = model.Rows(null, defaultWirePage: 1, TriggerTableMode.Monitor);
             Assert.True(rows[rows.Count - 1].IsBase);
+        }
+
+        [Fact]
+        public void Rows_Monitor_DropsDisabled_RenumbersAndCarriesTheNowValue()
+        {
+            // r1 idle+enabled (live on screen), r2 disabled → r2 drops from the Monitor list,
+            // r1 renumbers to rank 1, and its live "Now" value + the base ShowText carry through.
+            var model = new DisplayTriggersEditModel(TwoRulesWithEligibility(), Device3);
+            var ids = model.Rules.Select(r => r.Id).ToArray();
+            var snapshot = Snapshot(
+                new DisplayRuleRow(ids[0], "x", RuleStatus.OnScreen, null, "42"),
+                new DisplayRuleRow(ids[1], "x", RuleStatus.Disabled, null, "off"));
+
+            var rows = model.Rows(snapshot, defaultWirePage: 1, TriggerTableMode.Monitor);
+
+            Assert.Equal(2, rows.Count);                    // r1 + base (r2 disabled dropped)
+            Assert.Equal("1", rows[0].Rank);
+            Assert.Equal(ids[0], rows[0].RuleId);
+            Assert.Equal("42", rows[0].NowText);
+            Assert.True(rows[0].OnScreen);
+            Assert.True(rows[1].IsBase);
+            Assert.Equal("Lap Info", rows[1].ShowText);     // device 3 default wire 1
         }
 
         [Fact]

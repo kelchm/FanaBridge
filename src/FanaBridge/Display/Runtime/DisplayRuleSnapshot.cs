@@ -7,12 +7,14 @@ namespace FanaBridge.Display.Runtime
     /// <summary>One rule's row in the UI snapshot: identity, display label, live status.</summary>
     public struct DisplayRuleRow
     {
-        public DisplayRuleRow(string ruleId, string label, RuleStatus status, int? remainingMs)
+        public DisplayRuleRow(string ruleId, string label, RuleStatus status, int? remainingMs,
+            string liveText = null)
         {
             RuleId = ruleId;
             Label = label;
             Status = status;
             RemainingMs = remainingMs;
+            LiveText = liveText;
         }
 
         public string RuleId { get; }
@@ -24,6 +26,16 @@ namespace FanaBridge.Display.Runtime
 
         /// <summary>Hold countdown at composition time (OnScreen + ForDuration only).</summary>
         public int? RemainingMs { get; }
+
+        /// <summary>
+        /// The rule condition's source property, formatted for the Overview's "Now" column
+        /// (the Monitor mode live value): the invariant round-trip of the numeric read,
+        /// "on"/"off" for the boolean kinds (isTrue/isFalse), and "—" when the property is
+        /// unreadable this frame. Composed at snapshot time from the SAME per-frame memoized
+        /// reads the engine already performed (no extra property fetches). Null when the rule
+        /// has no readable source (an event/action-triggered rule composes "—").
+        /// </summary>
+        public string LiveText { get; }
     }
 
     /// <summary>

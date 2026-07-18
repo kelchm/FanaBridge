@@ -99,6 +99,22 @@ namespace FanaBridge.UI.Display
             EnterTriggersEditor();
         }
 
+        // The Overview Monitor row-click path: enter the editor (a clean slate, as
+        // <see cref="Enter"/> does) and immediately expand the clicked rule so the drawer is
+        // open on arrival. An unknown or degraded id simply enters with nothing expanded.
+        internal void EnterAndSelect(DisplayRuleSnapshot snapshot, string ruleId)
+        {
+            _lastSnapshot = snapshot;
+            EnterTriggersEditor();
+            var rule = FindRule(ruleId);
+            if (rule != null && !rule.DegradedAtLoad)
+            {
+                _expandedRuleId = ruleId;
+                _expandedDraft = null;
+                RenderTriggerRows(_lastSnapshot);
+            }
+        }
+
         // The Overview empty-state "＋ Add trigger" path: open the draft-at-top add flow. The
         // shell has already navigated here (rebuilding the model).
         internal void BeginAdd() => StartAddDraft();

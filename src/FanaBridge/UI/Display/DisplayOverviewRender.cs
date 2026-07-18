@@ -127,6 +127,20 @@ namespace FanaBridge.UI.Display
             => config?.Itm?.Rules != null && config.Itm.Rules.Count > 0;
 
         /// <summary>
+        /// The Overview's Monitor rows (the v9 converged "what's in play" list) for the shared
+        /// <see cref="Shared.TriggerTableControl"/>: the config's rules projected through
+        /// <see cref="DisplayTriggersEditModel.Rows"/> in <see cref="TriggerTableMode.Monitor"/>,
+        /// so the row language (structured When, live chip, "Now" value, winning emphasis) is
+        /// single-sourced with the Triggers editor. Disabled/degraded and session-ineligible
+        /// rules drop, the survivors renumber 1..n, and the base row is pinned last — the same
+        /// filter the mock applies. A null config yields just the base row.
+        /// </summary>
+        public static IReadOnlyList<Shared.TriggerTableRow> MonitorRows(DisplayRuleSnapshot snapshot,
+            DisplayCustomizationConfig config, byte itmDeviceId, byte defaultWirePage)
+            => new DisplayTriggersEditModel(config, itmDeviceId, defaultWirePage)
+                .Rows(snapshot, defaultWirePage, TriggerTableMode.Monitor);
+
+        /// <summary>
         /// The priority list: one row per ITM rule in snapshot (priority) order, then the
         /// base row pinned last. A null snapshot (no customization active, or none composed
         /// yet) yields just the base row.

@@ -63,6 +63,12 @@ namespace FanaBridge.UI.Display.Shared
         /// <summary>The Show column: "Page N · Name", "P2 ⇄ P5", or "screen 'X'".</summary>
         public string ShowText = "";
 
+        /// <summary>The Monitor "Now" column: the live source-property value
+        /// (<see cref="FanaBridge.Display.Runtime.DisplayRuleRow.LiveText"/>) — a numeric
+        /// round-trip, "on"/"off", or "—". Empty/null renders the "—" placeholder. The
+        /// Workbench mode ignores it (it has no Now column).</summary>
+        public string NowText = "";
+
         /// <summary>The Timeout column: "While active" / "&lt;n&gt; s" / "Until replaced".</summary>
         public string Timeout = "";
 

@@ -47,12 +47,12 @@ namespace FanaBridge.Tests.Display
             public DisplayRuleStack Stack = null!;
 
             public static Harness Create(string configJson, byte itmDeviceId = 2,
-                byte defaultWirePage = 1)
+                byte defaultWirePage = 1, Func<string, object> rawLookup = null)
             {
                 var h = new Harness();
                 var config = DisplayConfigSerializer.Load(configJson, h.Log.Add);
                 h.Stack = new DisplayRuleStack(config, h.Control, itmDeviceId,
-                    defaultWirePage, h.Log.Add, () => h.T);
+                    defaultWirePage, h.Log.Add, () => h.T, rawLookup);
                 return h;
             }
 
@@ -466,6 +466,76 @@ namespace FanaBridge.Tests.Display
             var bentley = Harness.Create(unavailableConfig, itmDeviceId: 4, defaultWirePage: 1);
             bentley.Control.Land(1);
             Assert.Equal("Lap Info", bentley.Tick(SpeedData(0))!.BasePageName);
+        }
+
+        // ── Snapshot: the Overview "Now" column (LiveText) ──────────────────
+
+        private const string BoolRuleConfig =
+            "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+            + "{ \"id\": \"r1\", "
+            + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
+            + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" }, "
+            + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
+
+        private const string NamedRuleConfig =
+            "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+            + "{ \"id\": \"r1\", "
+            + "\"when\": { \"kind\": \"greaterThan\", \"source\": { \"kind\": \"simHubProperty\", \"name\": \"Watched\" }, \"value\": 100 }, "
+            + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" }, "
+            + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
+
+        [Fact]
+        public void Snapshot_LiveText_NumericSource_RoundTripsInvariant()
+        {
+            var h = Harness.Create(SpeedRuleConfig);   // greaterThan Speed 100
+            h.Control.Land(1);
+            var s = h.Tick(SpeedData(150));            // fires; Speed reads 150
+            var row = Assert.Single(s!.ItmRules);
+            Assert.Equal("150", row.LiveText);         // the invariant round-trip of the read
+        }
+
+        [Fact]
+        public void Snapshot_LiveText_BooleanSource_ReadsOnOff()
+        {
+            var h = Harness.Create(BoolRuleConfig);    // isTrue IsInPitLane
+            h.Control.Land(1);
+
+            var off = NewStatus();
+            Set(off, "IsInPitLane", 0);
+            Assert.Equal("off", Assert.Single(h.Tick(Data(off))!.ItmRules).LiveText);
+
+            var on = NewStatus();
+            Set(on, "IsInPitLane", 1);
+            Assert.Equal("on", Assert.Single(h.Tick(Data(on))!.ItmRules).LiveText);
+        }
+
+        [Fact]
+        public void Snapshot_LiveText_UnreadableProperty_IsEmDash()
+        {
+            // A named property with no lookup wired (pm null, no rawLookup) never resolves.
+            var h = Harness.Create(NamedRuleConfig);
+            h.Control.Land(1);
+            var s = h.Tick(SpeedData(0));
+            Assert.Equal("—", Assert.Single(s!.ItmRules).LiveText);
+        }
+
+        [Fact]
+        public void Snapshot_LiveText_ReusesTheFrameMemo_NoExtraPropertyFetch()
+        {
+            // The engine reads the named property once per frame to evaluate the rule; the
+            // LiveText composition must reuse that memoized read, not fetch again.
+            int calls = 0;
+            var h = Harness.Create(NamedRuleConfig, rawLookup: name =>
+            {
+                if (name == "Watched") { calls++; return 150.0; }
+                return null;
+            });
+            h.Control.Land(1);
+
+            var s = h.Tick(SpeedData(0));
+            var row = Assert.Single(s!.ItmRules);
+            Assert.Equal("150", row.LiveText);
+            Assert.Equal(1, calls);                    // one fetch for the frame, reused
         }
 
         [Fact]

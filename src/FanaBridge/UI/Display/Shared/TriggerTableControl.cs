@@ -40,10 +40,12 @@ namespace FanaBridge.UI.Display.Shared
         {
             public Border Container;
             public TextBlock Chip;     // the State-cell text ("on screen" / "waiting" / "off")
-            public UIElement Dot;      // the on-screen green dot
+            public UIElement Dot;      // the on-screen green dot (Workbench State cell)
             public CountdownRing Seconds;
             public TextBlock Rank;
             public TextBlock Label;    // the When-cell operator/value span (accent-recoloured)
+            public TextBlock Now;      // the Monitor Now-cell live value ("62%", "on", "—")
+            public Border NowDot;      // the Monitor Now-cell dot (green on screen, grey else)
             public bool Degraded;
         }
         private readonly Dictionary<string, RowChips> _rowChips =
@@ -116,14 +118,16 @@ namespace FanaBridge.UI.Display.Shared
             _rowChips.Clear();
             _ruleRowOrder.Clear();
 
-            if (Mode == TriggerTableMode.Workbench)
-                Children.Add(BuildHeaderStrip());
+            bool monitor = Mode == TriggerTableMode.Monitor;
+            Children.Add(monitor ? BuildMonitorHeaderStrip() : BuildHeaderStrip());
 
             if (rows == null)
                 return;
             foreach (var row in rows)
             {
-                if (row.IsBase)
+                if (monitor)
+                    Children.Add(row.IsBase ? BuildMonitorBaseRow(row) : BuildMonitorRow(row));
+                else if (row.IsBase)
                     Children.Add(BuildBaseRow(row));
                 else if (row.Degraded)
                     Children.Add(BuildDegradedRow(row));
@@ -174,6 +178,17 @@ namespace FanaBridge.UI.Display.Shared
                 holder.Dot.Visibility = onScreen ? Visibility.Visible : Visibility.Collapsed;
             if (holder.Seconds != null)
                 holder.Seconds.Update(double.NaN, seconds);
+
+            // Monitor "Now" cell: the live value + its dot (green on screen, grey otherwise),
+            // always visible — an unreadable value reads "—".
+            if (holder.Now != null)
+            {
+                string now = string.IsNullOrEmpty(row?.NowText) ? "—" : row.NowText;
+                holder.Now.Text = now;
+                holder.Now.Foreground = onScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText;
+            }
+            if (holder.NowDot != null)
+                holder.NowDot.Background = onScreen ? DisplayPalette.GreenDot : DisplayPalette.NowDotIdle;
 
             if (Mode == TriggerTableMode.Monitor && !holder.Degraded)
                 ApplyRowAccent(holder, onScreen);
@@ -599,6 +614,250 @@ namespace FanaBridge.UI.Display.Shared
             });
             host.Children.Add(new Border { Padding = new Thickness(10, 8, 10, 8), Child = grid });
             return host;
+        }
+
+        // ── Monitor mode (the Overview's read-only "what's in play" list) ─────
+        //    Columns: rank · When · Now · Show · State. No drag handle, no ⋯, no
+        //    expansion; the whole row activates (→ Triggers). Winning rows carry the
+        //    loud green emphasis (bg + 3px bar + green rank); grammar colours stay fixed.
+
+        private const double MonRankWidth = 44;
+
+        private static void AddMonitorColumns(Grid grid)
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(MonRankWidth) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.05, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.92, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.15, GridUnitType.Star) });
+        }
+
+        private UIElement BuildMonitorHeaderStrip()
+        {
+            var grid = new Grid { Background = DisplayPalette.ThHeaderBg };
+            AddMonitorColumns(grid);
+            AddHeaderLabel(grid, 1, "When");
+            AddHeaderLabel(grid, 2, "Now");
+            AddHeaderLabel(grid, 3, "Show");
+            AddHeaderLabel(grid, 4, "State");
+            return grid;
+        }
+
+        // One Monitor rule row: rank · When (grammar or label) · Now (dot + live value) ·
+        // Show (→ target) · State (state text + countdown ring). Clicking anywhere activates it.
+        private UIElement BuildMonitorRow(TriggerTableRow row)
+        {
+            var grid = new Grid();
+            AddMonitorColumns(grid);
+
+            // col0 — rank.
+            var rank = new TextBlock
+            {
+                Text = row.Rank,
+                FontSize = 12.5,
+                FontWeight = FontWeights.Bold,
+                Foreground = DisplayPalette.MutedRank,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(rank, 0);
+            grid.Children.Add(rank);
+
+            // col1 — When: structured grammar (dim ns / bright leaf, fixed) + operator/value.
+            var when = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 9, 6, 9),
+            };
+            TextBlock label;
+            if (!string.IsNullOrEmpty(row.PropertyName))
+            {
+                when.Children.Add(PropertyLabel.ForProperty(
+                    row.PropertyName, row.DisplayKind, RowPropertyBudget));
+                label = new TextBlock
+                {
+                    Text = WhenRest(row),
+                    FontSize = 12,
+                    Foreground = DisplayPalette.BaseText,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(6, 0, 0, 0),
+                };
+            }
+            else
+            {
+                label = new TextBlock
+                {
+                    Text = row.Label,
+                    FontSize = 12,
+                    Foreground = DisplayPalette.RowText,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+            }
+            when.Children.Add(label);
+            Grid.SetColumn(when, 1);
+            grid.Children.Add(when);
+
+            // col2 — Now: dot + live value.
+            var nowCell = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 9, 6, 9),
+            };
+            var nowDot = new Border
+            {
+                Width = 6,
+                Height = 6,
+                CornerRadius = new CornerRadius(3),
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            nowCell.Children.Add(nowDot);
+            var nowText = new TextBlock
+            {
+                FontFamily = DisplayPalette.Mono,
+                FontSize = 11,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            nowCell.Children.Add(nowText);
+            Grid.SetColumn(nowCell, 2);
+            grid.Children.Add(nowCell);
+
+            // col3 — Show ("→ Page N · Name").
+            var show = new TextBlock
+            {
+                Text = string.IsNullOrEmpty(row.ShowText) ? "" : "→ " + row.ShowText,
+                FontSize = 12,
+                Foreground = DisplayPalette.TargetText,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 9, 6, 9),
+            };
+            Grid.SetColumn(show, 3);
+            grid.Children.Add(show);
+
+            // col4 — State: state text + countdown ring.
+            var statePanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 9, 6, 9),
+            };
+            var stateText = new TextBlock
+            {
+                FontSize = 10.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = DisplayPalette.ChipText,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            statePanel.Children.Add(stateText);
+            var seconds = new CountdownRing
+            {
+                Margin = new Thickness(6, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            statePanel.Children.Add(seconds);
+            Grid.SetColumn(statePanel, 4);
+            grid.Children.Add(statePanel);
+
+            var border = new Border
+            {
+                BorderBrush = DisplayPalette.TableDivider,
+                BorderThickness = new Thickness(0, 1, 0, 0),
+                Cursor = Cursors.Hand,
+                Focusable = true,
+                Child = grid,
+            };
+            string ruleId = row.RuleId;
+            border.MouseLeftButtonUp += (s, e) => RowActivated?.Invoke(ruleId);
+            border.KeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Enter || e.Key == Key.Space)
+                {
+                    RowActivated?.Invoke(ruleId);
+                    e.Handled = true;
+                }
+            };
+
+            var chips = new RowChips
+            {
+                Container = border,
+                Chip = stateText,
+                Seconds = seconds,
+                Rank = rank,
+                Label = label,
+                Now = nowText,
+                NowDot = nowDot,
+            };
+            if (row.RuleId != null)
+                _rowChips[row.RuleId] = chips;
+            ApplyRowLive(chips, row);
+            return border;
+        }
+
+        // The Monitor base footer row (mock): ★ · "When nothing's firing" · (blank Now) ·
+        // "→ <base page>" · "resting". Inside the table, a heavier top divider sets it apart.
+        private UIElement BuildMonitorBaseRow(TriggerTableRow row)
+        {
+            var grid = new Grid { Background = DisplayPalette.ThHeaderBg };
+            AddMonitorColumns(grid);
+
+            var star = new TextBlock
+            {
+                Text = "★",
+                FontSize = 13,
+                Foreground = DisplayPalette.BaseRank,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(star, 0);
+            grid.Children.Add(star);
+
+            var when = new TextBlock
+            {
+                Text = "When nothing's firing",
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = DisplayPalette.BaseText,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 9, 6, 9),
+            };
+            Grid.SetColumn(when, 1);
+            grid.Children.Add(when);
+
+            var show = new TextBlock
+            {
+                Text = string.IsNullOrEmpty(row.ShowText) ? "" : "→ " + row.ShowText,
+                FontSize = 12,
+                Foreground = DisplayPalette.GreenAccent,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 9, 6, 9),
+            };
+            Grid.SetColumn(show, 3);
+            grid.Children.Add(show);
+
+            var state = new TextBlock
+            {
+                Text = "resting",
+                FontSize = 10.5,
+                Foreground = DisplayPalette.ChipText,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 9, 6, 9),
+            };
+            Grid.SetColumn(state, 4);
+            grid.Children.Add(state);
+
+            return new Border
+            {
+                BorderBrush = DisplayPalette.MutedRank,
+                BorderThickness = new Thickness(0, 2, 0, 0),
+                Child = grid,
+            };
         }
 
         // ── Reorder: overflow / context menu ──────────────────────────────

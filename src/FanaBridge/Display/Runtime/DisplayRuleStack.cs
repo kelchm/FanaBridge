@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
@@ -82,9 +83,13 @@ namespace FanaBridge.Display.Runtime
             Driver = driver;
         }
 
-        /// <summary>Test wiring: a fake <see cref="IItmPageControl"/> and injected clock.</summary>
+        /// <summary>Test wiring: a fake <see cref="IItmPageControl"/>, injected clock, and an
+        /// optional raw named-property lookup (so a test can drive — and count — the property
+        /// reads the LiveText composition reuses). Production passes none: named lookups resolve
+        /// through the frame's <c>PluginManager</c>.</summary>
         internal DisplayRuleStack(DisplayCustomizationConfig config, IItmPageControl control,
-            byte itmDeviceId, byte defaultWirePage, Action<string> log, Func<long> nowMs)
+            byte itmDeviceId, byte defaultWirePage, Action<string> log, Func<long> nowMs,
+            Func<string, object> rawLookup = null)
         {
             Config = config ?? throw new ArgumentNullException(nameof(config));
             _log = log ?? (_ => { });
@@ -146,7 +151,7 @@ namespace FanaBridge.Display.Runtime
             _legacyEngine = DisplayRuleEngine.ForLegacy(config.Legacy?.Rules,
                 config.Legacy?.BaseScreenId, _now, _log);
             _director = new DisplayPageDirector(control, itmDeviceId, _now, _log);
-            _properties = new SimHubPropertySource(_log);
+            _properties = new SimHubPropertySource(_log, rawLookup);
             _actions = new DisplayActionHub(config, _log);
 
             IndexRules(config.Itm?.Rules);
@@ -305,9 +310,32 @@ namespace FanaBridge.Display.Runtime
                 _rulesById.TryGetValue(state.RuleId ?? "", out var rule);
                 rows[i] = new DisplayRuleRow(state.RuleId,
                     rule != null ? DisplayRuleFormatter.Label(rule) : (state.RuleId ?? "?"),
-                    state.Status, state.RemainingMs);
+                    state.Status, state.RemainingMs,
+                    ComposeLiveText(rule));
             }
             return rows;
+        }
+
+        // The rule condition's current source-property value, for the Overview's "Now"
+        // column, read through the SAME property source the engine ticked this frame:
+        // named lookups are memoized, so a rule the engine already evaluated costs no extra
+        // fetch, and a rule it short-circuited resolves once and memoizes for the frame. The
+        // boolean kinds (isTrue/isFalse — and a mapped control) render "on"/"off"; every other
+        // readable kind renders the invariant round-trip of the numeric value; an event kind
+        // (no readable value) and an unreadable property both render "—".
+        private string ComposeLiveText(DisplayRule rule)
+        {
+            var src = rule?.When?.Source;
+            if (src == null || string.IsNullOrEmpty(src.Name))
+                return null;
+            var kind = rule.When.Kind;
+            if (kind == ConditionKind.IsTrue || kind == ConditionKind.IsFalse)
+                return _properties.TryGetBool(src, out bool b) ? (b ? "on" : "off") : "—";
+            if (kind == ConditionKind.ActionTriggered)
+                return "—";   // an action fires; it carries no readable value
+            return _properties.TryGetNumber(src, out double n)
+                ? n.ToString(CultureInfo.InvariantCulture)
+                : "—";
         }
 
         // Both engines share one clock, so a time-merge yields one coherent feed.
