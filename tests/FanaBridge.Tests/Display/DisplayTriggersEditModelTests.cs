@@ -665,6 +665,137 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("P2 ⇄ P5", row.ShowText);
         }
 
+        // ── Cycle target (Phase 4b: draft maps Alternate → Cycle, BuildRule writes
+        //    kind "cycle" + pages; untouched Alternate siblings stay byte-identical) ─
+
+        private static DisplayCustomizationConfig TwoAlternateRules()
+            => Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\", "
+                + "\"periodMs\": 4000 }, \"hold\": { \"kind\": \"whileActive\" } }, "
+                + "{ \"id\": \"r2\", \"when\": { \"kind\": \"lessThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 5 }, "
+                + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"lapInfo\", \"pageB\": \"lapTimes\", "
+                + "\"periodMs\": 2500 }, \"hold\": { \"kind\": \"whileActive\" } } ] } }");
+
+        [Fact]
+        public void ToDraft_AlternateRule_MapsToTwoPageCycle_PeriodCarried()
+        {
+            var rule = TwoAlternateRules().Itm.Rules[0];
+            Assert.Equal(TargetKind.Alternate, rule.Show.Kind);
+
+            var draft = DisplayTriggersEditModel.ToDraft(rule);
+
+            Assert.Equal(TargetKind.Cycle, draft.TargetKind);
+            Assert.Equal(new[] { ItmPage.FuelErsDrs, ItmPage.TyreTemps }, draft.CyclePages.ToArray());
+            Assert.Equal(4000, draft.CyclePeriodMs);
+        }
+
+        [Fact]
+        public void BuildRule_Cycle_WritesKindPagesAndPeriod_CamelCase()
+        {
+            var model = new DisplayTriggersEditModel(null, Device3);
+            var draft = model.NewTelemetryDraft();
+            draft.SourceKind = PropertyKind.BuiltIn;
+            draft.SourceName = BuiltInProperties.Fuel;
+            draft.Operator = ConditionKind.GreaterThan;
+            draft.Value = 10;
+            draft.TargetKind = TargetKind.Cycle;
+            draft.CyclePages = new List<ItmPage>
+            {
+                ItmPage.FuelErsDrs, ItmPage.TyreTemps, ItmPage.CarSettings,
+            };
+            draft.CyclePeriodMs = 2500;
+
+            var cfg = model.AddRule(draft);
+
+            var show = Assert.Single(cfg.Itm.Rules).Show;
+            Assert.Equal(TargetKind.Cycle, show.Kind);
+            Assert.Equal("cycle", show.KindRaw);
+            Assert.Equal(new[] { "fuelErsDrs", "tyreTemps", "carSettings" }, show.PagesRaw);
+            Assert.Equal(2500, show.PeriodMs);
+            // No pageA/pageB spill from a cycle draft.
+            Assert.Null(show.PageARaw);
+            Assert.Null(show.PageBRaw);
+        }
+
+        [Fact]
+        public void UpdateRule_EditedAlternate_ResavesAsCycle_UntouchedAlternateSurvivesByReference()
+        {
+            var start = TwoAlternateRules();
+            string r2JsonBefore = DisplayConfigSerializer.Save(
+                new DisplayCustomizationConfig
+                {
+                    SchemaVersion = 1,
+                    Itm = new ItmRuleSet { Rules = new List<DisplayRule> { start.Itm.Rules[1] } },
+                });
+            var model = new DisplayTriggersEditModel(start, Device3);
+            var untouched = start.Itm.Rules[1];
+
+            var draft = DisplayTriggersEditModel.ToDraft(start.Itm.Rules[0]);
+            Assert.Equal(TargetKind.Cycle, draft.TargetKind);
+            draft.CyclePages.Add(ItmPage.CarSettings);     // user edit: grow the cycle
+            draft.CyclePeriodMs = 5000;
+            var cfg = model.UpdateRule(draft);
+
+            var edited = cfg.Itm.Rules[0];
+            Assert.Equal(TargetKind.Cycle, edited.Show.Kind);
+            Assert.Equal("cycle", edited.Show.KindRaw);
+            Assert.Equal(new[] { "fuelErsDrs", "tyreTemps", "carSettings" }, edited.Show.PagesRaw);
+            Assert.Equal(5000, edited.Show.PeriodMs);
+
+            // Untouched sibling: same instance (edit-path guarantee) and still Alternate text.
+            Assert.Same(untouched, cfg.Itm.Rules[1]);
+            Assert.Equal(TargetKind.Alternate, cfg.Itm.Rules[1].Show.Kind);
+            Assert.Equal("alternate", cfg.Itm.Rules[1].Show.KindRaw);
+            string r2JsonAfter = DisplayConfigSerializer.Save(
+                new DisplayCustomizationConfig
+                {
+                    SchemaVersion = 1,
+                    Itm = new ItmRuleSet { Rules = new List<DisplayRule> { cfg.Itm.Rules[1] } },
+                });
+            Assert.Equal(r2JsonBefore, r2JsonAfter);
+        }
+
+        [Fact]
+        public void CloneRuleWithRun_PreservesPagesRaw_OnDuplicateAndDisable()
+        {
+            var start = Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"tyreTemps\", \"carSettings\" ], "
+                + "\"periodMs\": 3000 }, \"hold\": { \"kind\": \"whileActive\" } } ] } }");
+            var model = new DisplayTriggersEditModel(start, Device3);
+            string[] expected = { "fuelErsDrs", "tyreTemps", "carSettings" };
+
+            var duplicated = model.DuplicateRule("r1", out _);
+            Assert.Equal(expected, duplicated.Itm.Rules[0].Show.PagesRaw);
+            Assert.Equal(expected, duplicated.Itm.Rules[1].Show.PagesRaw);
+            // Fresh list — mutating the copy must not reach the source.
+            duplicated.Itm.Rules[1].Show.PagesRaw.Add("lapInfo");
+            Assert.Equal(expected, duplicated.Itm.Rules[0].Show.PagesRaw);
+
+            var disabled = model.SetRuleEnabled("r1", false);
+            Assert.False(disabled.Itm.Rules[0].Enabled);
+            Assert.Equal(expected, disabled.Itm.Rules[0].Show.PagesRaw);
+            Assert.Equal("cycle", disabled.Itm.Rules[0].Show.KindRaw);
+        }
+
+        [Fact]
+        public void ShowTextFor_ThreePageCycle_JoinsShortLabels()
+        {
+            var model = new DisplayTriggersEditModel(null, Device3);
+            var show = new RuleTarget
+            {
+                Kind = TargetKind.Cycle,
+                PagesRaw = new List<string> { "fuelErsDrs", "tyreTemps", "carSettings" },
+                PeriodMs = 3000,
+            };
+            // Device 3: Fuel/ERS/DRS wire 2, Tyre Temps wire 5, Car Settings wire 3.
+            Assert.Equal("P2 ⇄ P5 ⇄ P3", model.ShowTextFor(show));
+        }
+
         // ── Runs mapping (enable × eligibility fold, plan B6) ─────────────
 
         [Fact]

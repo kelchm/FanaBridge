@@ -128,6 +128,19 @@ namespace FanaBridge.Tests.Display
         private static RuleTarget Alt(ItmPage a, ItmPage b, int periodMs)
             => new RuleTarget { Kind = TargetKind.Alternate, PageA = a, PageB = b, PeriodMs = periodMs };
 
+        private static RuleTarget Cycle(int periodMs, params ItmPage[] pages)
+        {
+            var raw = new List<string>(pages.Length);
+            foreach (var p in pages)
+                raw.Add(EnumText.Write(p));
+            return new RuleTarget
+            {
+                Kind = TargetKind.Cycle,
+                PagesRaw = raw,
+                PeriodMs = periodMs,
+            };
+        }
+
         private static HoldSpec While() => new HoldSpec { Kind = HoldKind.WhileActive };
         private static HoldSpec For(int ms) => new HoldSpec { Kind = HoldKind.ForDuration, DurationMs = ms };
         private static HoldSpec Indef() => new HoldSpec { Kind = HoldKind.Indefinite };
@@ -753,7 +766,7 @@ namespace FanaBridge.Tests.Display
             AssertPage(r, ItmPage.FuelErsDrs, "lo");
         }
 
-        // ── Alternate targets ────────────────────────────────────────────
+        // ── Alternate / Cycle targets ────────────────────────────────────
 
         [Fact]
         public void Alternate_FlipsEachPeriod_UnimpededByDwell()
@@ -772,6 +785,55 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(ItmPage.TyreTemps, h.Tick(advance: 1).Intent.Page);      // t+1000 → B
             Assert.Equal(ItmPage.FuelErsDrs, h.Tick(advance: 1000).Intent.Page);  // t+2000 → A
             Assert.Equal(ItmPage.TyreTemps, h.Tick(advance: 1000).Intent.Page);   // t+3000 → B
+        }
+
+        [Fact]
+        public void Cycle_ThreePages_RotatesAtPeriodBoundaries_AnchoredAtWin()
+        {
+            var h = Itm(Rule("r", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
+                Cycle(1000, ItmPage.FuelErsDrs, ItmPage.TyreTemps, ItmPage.CarSettings), While()));
+            h.Props.Set(BuiltInProperties.Fuel, 50);
+            h.Tick();
+
+            h.Props.Set(BuiltInProperties.Fuel, 5);
+            AssertPage(h.Tick(advance: 100), ItmPage.FuelErsDrs, "r");            // win: [0]
+            Assert.Equal(ItmPage.FuelErsDrs, h.Tick(advance: 999).Intent.Page);   // t+999
+            Assert.Equal(ItmPage.TyreTemps, h.Tick(advance: 1).Intent.Page);      // t+1000 → [1]
+            Assert.Equal(ItmPage.CarSettings, h.Tick(advance: 1000).Intent.Page); // t+2000 → [2]
+            Assert.Equal(ItmPage.FuelErsDrs, h.Tick(advance: 1000).Intent.Page);  // t+3000 → [0]
+        }
+
+        [Fact]
+        public void Cycle_TwoPages_ReproducesAlternateSequence()
+        {
+            var h = Itm(Rule("r", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
+                Cycle(1000, ItmPage.FuelErsDrs, ItmPage.TyreTemps), While()));
+            h.Props.Set(BuiltInProperties.Fuel, 50);
+            h.Tick();
+
+            h.Props.Set(BuiltInProperties.Fuel, 5);
+            AssertPage(h.Tick(advance: 100), ItmPage.FuelErsDrs, "r");
+            Assert.Equal(ItmPage.FuelErsDrs, h.Tick(advance: 999).Intent.Page);
+            Assert.Equal(ItmPage.TyreTemps, h.Tick(advance: 1).Intent.Page);
+            Assert.Equal(ItmPage.FuelErsDrs, h.Tick(advance: 1000).Intent.Page);
+            Assert.Equal(ItmPage.TyreTemps, h.Tick(advance: 1000).Intent.Page);
+        }
+
+        [Fact]
+        public void Cycle_UnavailablePageInList_PermanentStatus()
+        {
+            var available = new HashSet<ItmPage> { ItmPage.LapInfo, ItmPage.FuelErsDrs };
+            var h = Itm(ItmPage.LapInfo, available,
+                Rule("cyc", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
+                    Cycle(2000, ItmPage.FuelErsDrs, ItmPage.TyreTemps), While()),
+                Rule("ok", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
+                    Page(ItmPage.FuelErsDrs), While()));
+            h.Props.Set(BuiltInProperties.Fuel, 5);
+
+            var r = h.Tick();
+            Assert.Equal(RuleStatus.Unavailable, StatusOf(r, "cyc"));
+            Assert.Equal(RuleStatus.OnScreen, StatusOf(r, "ok"));
+            AssertPage(r, ItmPage.FuelErsDrs, "ok");
         }
 
         // ── Manual override ──────────────────────────────────────────────
@@ -1094,6 +1156,9 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("'ShowTyres' triggered → Fuel / ERS / DRS ⇄ Tire Temps",
                 DisplayRuleFormatter.Describe(Rule("r", Action("ShowTyres"),
                     Alt(ItmPage.FuelErsDrs, ItmPage.TyreTemps, 3000), For(2000))));
+            Assert.Equal("Fuel / ERS / DRS ⇄ Tire Temps ⇄ Car Settings",
+                DisplayRuleFormatter.DescribeTarget(
+                    Cycle(3000, ItmPage.FuelErsDrs, ItmPage.TyreTemps, ItmPage.CarSettings)));
         }
 
         [Fact]

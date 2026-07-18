@@ -240,9 +240,10 @@ namespace FanaBridge.Display.Runtime
             bool versionChanged = version != _lastActivityVersion;
             bool itmChanged = StatusesChanged(itm.RuleStates, ref _lastItmStatuses);
             bool legacyChanged = StatusesChanged(legacy.RuleStates, ref _lastLegacyStatuses);
-            // The described intent is a gate of its own: an Alternate target flips the
-            // emitted intent every period with no activity event and no status change,
-            // and the published snapshot must follow what the display actually shows.
+            // The described intent is a gate of its own: a cycle-family target (Alternate
+            // or Cycle) flips the emitted intent every period with no activity event and
+            // no status change, and the published snapshot must follow what the display
+            // actually shows.
             string intent = DescribeIntent(itm.Intent);
             bool intentChanged = !string.Equals(intent, _lastIntentDescription, StringComparison.Ordinal);
             long now = _now();

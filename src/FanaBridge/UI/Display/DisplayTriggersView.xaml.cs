@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using FanaBridge.Adapters;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Runtime;
@@ -261,15 +263,24 @@ namespace FanaBridge.UI.Display
             return row;
         }
 
+        // A RuleTarget shape sufficient for ShowTextFor on a live draft (page or cycle).
         private static RuleTarget DraftTarget(RuleEdit draft)
-            => new RuleTarget
+        {
+            var t = new RuleTarget
             {
                 Kind = draft.TargetKind,
                 Page = draft.Page,
-                PageA = draft.PageA,
-                PageB = draft.PageB,
                 ScreenId = draft.ScreenId,
+                PeriodMs = draft.CyclePeriodMs,
             };
+            if (draft.TargetKind == TargetKind.Cycle && draft.CyclePages != null)
+            {
+                t.PagesRaw = new List<string>(draft.CyclePages.Count);
+                for (int i = 0; i < draft.CyclePages.Count; i++)
+                    t.PagesRaw.Add(EnumText.Write(draft.CyclePages[i]));
+            }
+            return t;
+        }
 
         // ── Base page footer ──────────────────────────────────────────────
 
@@ -494,14 +505,12 @@ namespace FanaBridge.UI.Display
             inner.Children.Add(FieldLabel("Action"));
             inner.Children.Add(BuildActionCell(draft, commit));
 
-            if (draft.TargetKind == TargetKind.Alternate)
+            if (draft.TargetKind == TargetKind.Cycle)
             {
-                var a = BuildPageCell(draft.PageA, id => { draft.PageA = ParsePage(id); commit(); });
-                a.Margin = new Thickness(0, 7, 0, 0);
-                inner.Children.Add(a);
-                var b = BuildPageCell(draft.PageB, id => { draft.PageB = ParsePage(id); commit(); });
-                b.Margin = new Thickness(0, 6, 0, 0);
-                inner.Children.Add(b);
+                // Chips row (⠿ · mono page · ✕) + "＋ Add ITM page" + period seconds field.
+                inner.Children.Add(BuildCyclePagesPanel(draft, commit));
+                inner.Children.Add(FieldLabel("Every (seconds)", top: 11));
+                inner.Children.Add(BuildCyclePeriodBox(draft, commit));
             }
             else
             {
@@ -653,38 +662,223 @@ namespace FanaBridge.UI.Display
                 RuleEligibility.InGame;
         }
 
-        // The Action dropdown: the two target kinds v9 authors (cycle/special are Phase 4).
+        // The Action dropdown: "Show an ITM page" / "Cycle ITM pages" (mock vocabulary).
+        // Special command is deferred past this phase.
         private DropDownCell BuildActionCell(RuleEdit draft, Action commit)
         {
             var cell = new DropDownCell { Width = 200, HorizontalAlignment = HorizontalAlignment.Left };
             var choices = ChoiceList.Build()
                 .Add("page", "Show an ITM page")
-                .Add("alt", "Alternate two pages")
-                .Selected(draft.TargetKind == TargetKind.Alternate ? "alt" : "page");
+                .Add("cycle", "Cycle ITM pages")
+                .Selected(draft.TargetKind == TargetKind.Cycle ? "cycle" : "page");
             cell.SetChoices(choices);
             cell.SelectionCommitted += (s, id) =>
             {
-                if (string.Equals(id, "alt", StringComparison.Ordinal))
+                if (string.Equals(id, "cycle", StringComparison.Ordinal))
                 {
-                    if (draft.TargetKind == TargetKind.Alternate)
+                    if (draft.TargetKind == TargetKind.Cycle)
                         return;
-                    draft.TargetKind = TargetKind.Alternate;
-                    if (draft.PageA == null)
-                        draft.PageA = draft.Page ?? DefaultPage();
-                    if (draft.PageB == null)
-                        draft.PageB = OtherPage(draft.PageA);
+                    draft.TargetKind = TargetKind.Cycle;
+                    // Seed a two-page cycle when the draft has fewer than two entries.
+                    if (draft.CyclePages == null)
+                        draft.CyclePages = new List<ItmPage>();
+                    if (draft.CyclePages.Count < 2)
+                    {
+                        ItmPage first = draft.CyclePages.Count > 0
+                            ? draft.CyclePages[0]
+                            : (draft.Page ?? DefaultPage());
+                        draft.CyclePages = new List<ItmPage> { first, OtherPage(first) };
+                    }
                 }
                 else
                 {
                     if (draft.TargetKind == TargetKind.Page)
                         return;
                     draft.TargetKind = TargetKind.Page;
-                    if (draft.Page == null)
-                        draft.Page = draft.PageA ?? DefaultPage();
+                    draft.Page = (draft.CyclePages != null && draft.CyclePages.Count > 0)
+                        ? draft.CyclePages[0]
+                        : DefaultPage();
                 }
                 commit();
             };
             return cell;
+        }
+
+        // Cycle chips: dark rounded wrap panel, one chip per page (⠿ decorative · mono
+        // label · ✕ remove), plus a dashed "＋ Add ITM page" chip that opens a ContextMenu
+        // of PageOptions (least new machinery vs. a custom DropDownCell for a non-value chip).
+        // ✕ is hidden while the list has exactly two entries (a cycle can't drop below 2).
+        private FrameworkElement BuildCyclePagesPanel(RuleEdit draft, Action commit)
+        {
+            if (draft.CyclePages == null)
+                draft.CyclePages = new List<ItmPage>();
+
+            var wrap = new WrapPanel();
+            bool canRemove = draft.CyclePages.Count > 2;
+            for (int i = 0; i < draft.CyclePages.Count; i++)
+            {
+                int index = i;
+                ItmPage page = draft.CyclePages[i];
+                var chip = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                chip.Children.Add(new TextBlock
+                {
+                    Text = "⠿",
+                    FontSize = 11,
+                    Foreground = DisplayPalette.PropMono,
+                    Margin = new Thickness(0, 0, 7, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+                chip.Children.Add(new TextBlock
+                {
+                    Text = PageChoiceLabel(page),
+                    FontSize = 11.5,
+                    FontFamily = DisplayPalette.Mono,
+                    Foreground = DisplayPalette.FieldText,
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+                if (canRemove)
+                {
+                    var remove = new TextBlock
+                    {
+                        Text = "✕",
+                        FontSize = 11.5,
+                        Foreground = DisplayPalette.SubLabel,
+                        Margin = new Thickness(7, 0, 0, 0),
+                        Cursor = Cursors.Hand,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        ToolTip = "Remove page from cycle",
+                    };
+                    Action drop = () =>
+                    {
+                        if (draft.CyclePages != null && draft.CyclePages.Count > 2
+                            && index >= 0 && index < draft.CyclePages.Count)
+                        {
+                            draft.CyclePages.RemoveAt(index);
+                            commit();
+                        }
+                    };
+                    remove.MouseLeftButtonUp += (s, e) => { drop(); e.Handled = true; };
+                    MakeKeyActivatable(remove, drop);
+                    chip.Children.Add(remove);
+                }
+                wrap.Children.Add(new Border
+                {
+                    Background = DisplayPalette.FieldBg,
+                    BorderBrush = DisplayPalette.FieldBorder,
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(4),
+                    Padding = new Thickness(9, 5, 9, 5),
+                    Margin = new Thickness(0, 0, 8, 6),
+                    Child = chip,
+                });
+            }
+            wrap.Children.Add(BuildAddCyclePageChip(draft, commit));
+
+            return new Border
+            {
+                Background = DisplayPalette.SegBarBg,
+                BorderBrush = DisplayPalette.FieldBorder,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(5),
+                Padding = new Thickness(9),
+                Margin = new Thickness(0, 7, 0, 0),
+                Child = wrap,
+            };
+        }
+
+        // Dashed "＋ Add ITM page" chip: ContextMenu of PageOptions; pick appends + commits.
+        private FrameworkElement BuildAddCyclePageChip(RuleEdit draft, Action commit)
+        {
+            var label = new TextBlock
+            {
+                Text = "＋ Add ITM page",
+                FontSize = 11.5,
+                Foreground = DisplayPalette.Caret,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var host = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            host.Children.Add(new Rectangle
+            {
+                Stroke = DisplayPalette.FieldBorder,
+                StrokeThickness = 1,
+                StrokeDashArray = new DoubleCollection { 3, 2 },
+                RadiusX = 4,
+                RadiusY = 4,
+                Fill = DisplayPalette.AddCardBg,
+            });
+            host.Children.Add(new Border
+            {
+                Padding = new Thickness(10, 5, 10, 5),
+                Child = label,
+            });
+
+            var menu = new ContextMenu();
+            foreach (var p in _editModel.PageOptions())
+            {
+                ItmPage page = p;
+                var item = new MenuItem { Header = PageChoiceLabel(page) };
+                item.Click += (s, e) =>
+                {
+                    if (draft.CyclePages == null)
+                        draft.CyclePages = new List<ItmPage>();
+                    draft.CyclePages.Add(page);
+                    commit();
+                };
+                menu.Items.Add(item);
+            }
+
+            var border = new Border
+            {
+                Cursor = Cursors.Hand,
+                Child = host,
+                Focusable = true,
+            };
+            Action open = () =>
+            {
+                menu.PlacementTarget = border;
+                menu.Placement = PlacementMode.Bottom;
+                menu.IsOpen = true;
+            };
+            border.MouseLeftButtonUp += (s, e) => { open(); e.Handled = true; };
+            MakeKeyActivatable(border, open);
+            // Issue #37 companion: close the menu if the drawer is torn down mid-open.
+            border.Unloaded += (s, e) => menu.IsOpen = false;
+            border.IsVisibleChanged += (s, e) => { if (!border.IsVisible) menu.IsOpen = false; };
+            return border;
+        }
+
+        // Cycle flip period: free seconds field (timeout-box pattern). Blank → default 3 s;
+        // commit clamps to ≥ 1 s (validator floor is 1000 ms).
+        private TextBox BuildCyclePeriodBox(RuleEdit draft, Action commit)
+        {
+            var box = new TextBox
+            {
+                Width = 56,
+                Height = 30,
+                Margin = new Thickness(0, 4, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Text = (draft.CyclePeriodMs / 1000.0).ToString("0.###", CultureInfo.InvariantCulture),
+                ToolTip = "Seconds between page flips while this trigger is on screen.",
+            };
+            CommitOnLeave(box, () =>
+            {
+                double? secs = ParseNum(box.Text);
+                int ms;
+                if (secs == null || string.IsNullOrWhiteSpace(box.Text))
+                    ms = RuleTarget.DefaultCyclePeriodMs;
+                else
+                    ms = (int)Math.Round(Math.Max(1.0, secs.Value) * 1000.0);
+                if (ms == draft.CyclePeriodMs)
+                    return;
+                draft.CyclePeriodMs = ms;
+                commit();
+            });
+            return box;
         }
 
         private DropDownCell BuildPageCell(ItmPage? selected, Action<string> onCommit)

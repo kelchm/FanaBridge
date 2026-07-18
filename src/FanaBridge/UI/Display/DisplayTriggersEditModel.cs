@@ -34,12 +34,15 @@ namespace FanaBridge.UI.Display
         public double? Value;
         public double? Hysteresis;
 
-        // SHOW
+        // SHOW — draft TargetKind is only ever Page, Cycle, or (carried) LegacyScreen;
+        // Alternate loads as a 2-page Cycle and re-saves as Cycle if the user edits it.
         public TargetKind TargetKind = TargetKind.Page;
         public ItmPage? Page;
-        public ItmPage? PageA;
-        public ItmPage? PageB;
-        public int AlternatePeriodMs = RuleTarget.DefaultAlternatePeriodMs;
+        /// <summary>Resolved pages for a <see cref="TargetKind.Cycle"/> draft (order is
+        /// rotation order). Never holds null entries — a draft is only built from a
+        /// non-degraded rule.</summary>
+        public List<ItmPage> CyclePages = new List<ItmPage>();
+        public int CyclePeriodMs = RuleTarget.DefaultCyclePeriodMs;
 
         /// <summary>A legacy-screen target's screen id, carried through untouched. The v1
         /// SHOW dropdown does not author legacy targets (P3 owns that), but a rule that
@@ -160,12 +163,29 @@ namespace FanaBridge.UI.Display
             }
             if (rule.Show != null)
             {
-                e.TargetKind = rule.Show.Kind;
-                e.Page = rule.Show.Page;
-                e.PageA = rule.Show.PageA;
-                e.PageB = rule.Show.PageB;
-                e.AlternatePeriodMs = rule.Show.PeriodMs;
-                e.ScreenId = rule.Show.ScreenId;
+                // Alternate is a parse alias of Cycle: the draft always holds Cycle so an
+                // edit re-saves as kind "cycle" + pages (design decision 2). Untouched
+                // Alternate rules never pass through ToDraft/BuildRule, so they keep their
+                // original kind byte-for-byte.
+                if (rule.Show.Kind == TargetKind.Alternate || rule.Show.Kind == TargetKind.Cycle)
+                {
+                    e.TargetKind = TargetKind.Cycle;
+                    e.CyclePages = new List<ItmPage>();
+                    var pages = rule.Show.CyclePages;
+                    if (pages != null)
+                    {
+                        for (int i = 0; i < pages.Count; i++)
+                            if (pages[i] != null)
+                                e.CyclePages.Add(pages[i].Value);
+                    }
+                    e.CyclePeriodMs = rule.Show.PeriodMs;
+                }
+                else
+                {
+                    e.TargetKind = rule.Show.Kind;
+                    e.Page = rule.Show.Page;
+                    e.ScreenId = rule.Show.ScreenId;
+                }
             }
             if (rule.Hold != null)
             {
@@ -473,8 +493,9 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>The Show column text for a target: "Page N · Name" (single page, wire
-        /// number from this device's page table), "P2 ⇄ P5" (alternate), "screen 'X'"
-        /// (legacy), or "" when the target is missing/unresolved.</summary>
+        /// number from this device's page table), "P2 ⇄ P5" (alternate / cycle short labels
+        /// joined with " ⇄ "), "screen 'X'" (legacy), or "" when the target is
+        /// missing/unresolved.</summary>
         public string ShowTextFor(RuleTarget show)
         {
             if (show == null)
@@ -484,7 +505,16 @@ namespace FanaBridge.UI.Display
                 case TargetKind.Page:
                     return show.Page == null ? "" : PageLabel(show.Page.Value);
                 case TargetKind.Alternate:
-                    return PageShort(show.PageA) + " ⇄ " + PageShort(show.PageB);
+                case TargetKind.Cycle:
+                {
+                    var pages = show.CyclePages;
+                    if (pages == null || pages.Count == 0)
+                        return "";
+                    var parts = new string[pages.Count];
+                    for (int i = 0; i < pages.Count; i++)
+                        parts[i] = PageShort(pages[i]);
+                    return string.Join(" ⇄ ", parts);
+                }
                 case TargetKind.LegacyScreen:
                     return "screen '" + (show.ScreenId ?? "?") + "'";
                 default:
@@ -787,10 +817,16 @@ namespace FanaBridge.UI.Display
                 case TargetKind.Page:
                     show.Page = e.Page;
                     break;
-                case TargetKind.Alternate:
-                    show.PageA = e.PageA;
-                    show.PageB = e.PageB;
-                    show.PeriodMs = e.AlternatePeriodMs;
+                case TargetKind.Cycle:
+                    // Draft never holds Alternate — ToDraft maps it to Cycle, so BuildRule
+                    // always writes kind "cycle" + camelCase pages (ItmPage? setter spelling).
+                    show.PagesRaw = new List<string>();
+                    if (e.CyclePages != null)
+                    {
+                        for (int i = 0; i < e.CyclePages.Count; i++)
+                            show.PagesRaw.Add(EnumText.Write(e.CyclePages[i]));
+                    }
+                    show.PeriodMs = e.CyclePeriodMs;
                     break;
                 case TargetKind.LegacyScreen:
                     // The v1 SHOW dropdown does not author legacy targets (P3 owns that),
@@ -862,6 +898,11 @@ namespace FanaBridge.UI.Display
                     ScreenId = rule.Show.ScreenId,
                     PageARaw = rule.Show.PageARaw,
                     PageBRaw = rule.Show.PageBRaw,
+                    // Fresh list so a later mutation of the clone cannot reach the source
+                    // rule's PagesRaw (byte-faithful clone for cycle rules).
+                    PagesRaw = rule.Show.PagesRaw == null
+                        ? null
+                        : new List<string>(rule.Show.PagesRaw),
                     PeriodMs = rule.Show.PeriodMs,
                 };
             if (rule.Hold != null)

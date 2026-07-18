@@ -59,7 +59,16 @@ namespace FanaBridge.Display.Rules
                 case TargetKind.LegacyScreen:
                     return "screen '" + (target.ScreenId ?? "?") + "'";
                 case TargetKind.Alternate:
-                    return PageName(target.PageA) + " ⇄ " + PageName(target.PageB);
+                case TargetKind.Cycle:
+                {
+                    var pages = target.CyclePages;
+                    if (pages == null || pages.Count == 0)
+                        return "?";
+                    string text = PageName(pages[0]);
+                    for (int i = 1; i < pages.Count; i++)
+                        text += " ⇄ " + PageName(pages[i]);
+                    return text;
+                }
                 default:
                     return "(unrecognized target)";
             }

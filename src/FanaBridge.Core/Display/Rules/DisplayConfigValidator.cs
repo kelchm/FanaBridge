@@ -248,12 +248,50 @@ namespace FanaBridge.Display.Rules
                         {
                             Disable("missing or unrecognized alternate pages");
                         }
-                        else if (t.PeriodMs < RuleTarget.MinAlternatePeriodMs)
+                        else if (t.PeriodMs < RuleTarget.MinCyclePeriodMs)
                         {
                             warn(setName + " rule '" + Label(rule) + "': alternate period "
                                 + t.PeriodMs + "ms clamped to "
-                                + RuleTarget.MinAlternatePeriodMs + "ms");
-                            t.PeriodMs = RuleTarget.MinAlternatePeriodMs;
+                                + RuleTarget.MinCyclePeriodMs + "ms");
+                            t.PeriodMs = RuleTarget.MinCyclePeriodMs;
+                        }
+                        break;
+
+                    case TargetKind.Cycle:
+                        if (isLegacySet)
+                        {
+                            Disable("legacy rules can only target legacy screens");
+                        }
+                        else
+                        {
+                            var pages = t.CyclePages;
+                            if (pages.Count < 2)
+                            {
+                                Disable("a cycle needs at least two pages");
+                            }
+                            else
+                            {
+                                bool pageOk = true;
+                                for (int i = 0; i < pages.Count; i++)
+                                {
+                                    if (pages[i] != null)
+                                        continue;
+                                    string raw = t.PagesRaw != null && i < t.PagesRaw.Count
+                                        ? t.PagesRaw[i] : null;
+                                    Disable(raw == null
+                                        ? "missing or unrecognized cycle page"
+                                        : "missing or unrecognized cycle page '" + raw + "'");
+                                    pageOk = false;
+                                    break;
+                                }
+                                if (pageOk && t.PeriodMs < RuleTarget.MinCyclePeriodMs)
+                                {
+                                    warn(setName + " rule '" + Label(rule) + "': cycle period "
+                                        + t.PeriodMs + "ms clamped to "
+                                        + RuleTarget.MinCyclePeriodMs + "ms");
+                                    t.PeriodMs = RuleTarget.MinCyclePeriodMs;
+                                }
+                            }
                         }
                         break;
 

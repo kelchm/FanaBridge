@@ -524,7 +524,7 @@ namespace FanaBridge.Tests.Display
 
             var rule = Assert.Single(config.Itm.Rules);
             Assert.True(rule.Enabled);
-            Assert.Equal(RuleTarget.MinAlternatePeriodMs, rule.Show.PeriodMs);
+            Assert.Equal(RuleTarget.MinCyclePeriodMs, rule.Show.PeriodMs);
             Assert.Contains(warnings, w => w.Contains("clamped"));
         }
 
@@ -537,7 +537,147 @@ namespace FanaBridge.Tests.Display
                 out var warnings);
 
             Assert.Empty(warnings);
-            Assert.Equal(RuleTarget.DefaultAlternatePeriodMs, config.Itm.Rules[0].Show.PeriodMs);
+            Assert.Equal(RuleTarget.DefaultCyclePeriodMs, config.Itm.Rules[0].Show.PeriodMs);
+        }
+
+        [Fact]
+        public void RoundTrip_CycleRule_PreservesPagesIncludingUnknown()
+        {
+            // A cycle with three pages (one unknown to this build) serializes camelCase
+            // "pages", degrades at load, and survives a save/load round-trip verbatim —
+            // the raw page name is what a future version needs.
+            string original = DocWithItmRule(
+                "{ \"id\": \"c1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"tyreTemps\", \"ersDetail\" ], "
+                + "\"periodMs\": 2500 }, \"hold\": { \"kind\": \"whileActive\" } }");
+
+            var config = Load(original, out var warnings);
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.Equal(TargetKind.Cycle, rule.Show.Kind);
+            Assert.Equal(new[] { "fuelErsDrs", "tyreTemps", "ersDetail" }, rule.Show.PagesRaw);
+            Assert.Equal(2500, rule.Show.PeriodMs);
+            Assert.True(rule.DegradedAtLoad);
+            Assert.Contains(warnings, w => w.Contains("ersDetail"));
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"cycle\"", saved);
+            Assert.Contains("\"pages\"", saved);
+            Assert.Contains("\"ersDetail\"", saved);
+            Assert.Contains("\"fuelErsDrs\"", saved);
+            Assert.Contains("\"tyreTemps\"", saved);
+            Assert.Contains("\"periodMs\": 2500", saved);
+
+            var reloaded = Load(saved, out _);
+            Assert.Equal(rule.Show.PagesRaw, reloaded.Itm.Rules[0].Show.PagesRaw);
+            Assert.Equal(saved, DisplayConfigSerializer.Save(reloaded));
+        }
+
+        [Fact]
+        public void RoundTrip_UntouchedAlternate_SurvivesVerbatim()
+        {
+            // An Alternate rule that this build never rewrites must ride through load/save
+            // with its pageA/pageB spelling intact (no pages array introduced).
+            string original = DocWithItmRule(
+                "{ \"id\": \"a1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\", "
+                + "\"periodMs\": 4000 }, \"hold\": { \"kind\": \"whileActive\" } }");
+
+            var config = Load(original, out var warnings);
+            Assert.Empty(warnings);
+            Assert.Equal(TargetKind.Alternate, config.Itm.Rules[0].Show.Kind);
+            Assert.Null(config.Itm.Rules[0].Show.PagesRaw);
+            Assert.Equal(new ItmPage?[] { ItmPage.FuelErsDrs, ItmPage.TyreTemps },
+                config.Itm.Rules[0].Show.CyclePages);
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"alternate\"", saved);
+            Assert.Contains("\"pageA\"", saved);
+            Assert.Contains("\"pageB\"", saved);
+            Assert.DoesNotContain("\"pages\"", saved);
+            Assert.Contains("\"periodMs\": 4000", saved);
+
+            Assert.Equal(saved, DisplayConfigSerializer.Save(Load(saved, out _)));
+        }
+
+        [Fact]
+        public void Cycle_ZeroOrOnePage_DisablesRule()
+        {
+            var empty = Load(DocWithItmRule(
+                "{ \"id\": \"c0\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [] } }"), out var w0);
+            Assert.True(empty.Itm.Rules[0].DegradedAtLoad);
+            Assert.Contains(w0, w => w.Contains("at least two pages"));
+
+            var one = Load(DocWithItmRule(
+                "{ \"id\": \"c1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\" ] } }"), out var w1);
+            Assert.True(one.Itm.Rules[0].DegradedAtLoad);
+            Assert.Contains(w1, w => w.Contains("at least two pages"));
+
+            var missing = Load(DocWithItmRule(
+                "{ \"id\": \"c2\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"cycle\" } }"), out var w2);
+            Assert.True(missing.Itm.Rules[0].DegradedAtLoad);
+            Assert.Contains(w2, w => w.Contains("at least two pages"));
+        }
+
+        [Fact]
+        public void Cycle_UnknownPage_DisablesAndPreservesRaw()
+        {
+            var config = Load(DocWithItmRule(
+                "{ \"id\": \"c1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"ersDetail\" ] } }"),
+                out var warnings);
+
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.True(rule.DegradedAtLoad);
+            Assert.Equal(new[] { "fuelErsDrs", "ersDetail" }, rule.Show.PagesRaw);
+            Assert.Contains(warnings, w => w.Contains("ersDetail"));
+            Assert.Contains("\"ersDetail\"", DisplayConfigSerializer.Save(config));
+        }
+
+        [Fact]
+        public void Cycle_InLegacySet_Disables()
+        {
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"rules\": [ "
+                + "{ \"id\": \"l1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"tyreTemps\" ] } } "
+                + "] } }", out var warnings);
+
+            Assert.True(config.Legacy.Rules[0].DegradedAtLoad);
+            Assert.Contains(warnings, w => w.Contains("legacy screens"));
+        }
+
+        [Fact]
+        public void Cycle_PeriodBelowFloor_Clamped()
+        {
+            var config = Load(DocWithItmRule(
+                "{ \"id\": \"c1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"tyreTemps\" ], "
+                + "\"periodMs\": 500 } }"), out var warnings);
+
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.False(rule.DegradedAtLoad);
+            Assert.Equal(RuleTarget.MinCyclePeriodMs, rule.Show.PeriodMs);
+            Assert.Contains(warnings, w => w.Contains("clamped"));
+        }
+
+        [Fact]
+        public void Cycle_ValidThreePages_LoadsEnabled()
+        {
+            var config = Load(DocWithItmRule(
+                "{ \"id\": \"c1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"tyreTemps\", \"carSettings\" ], "
+                + "\"periodMs\": 2000 } }"), out var warnings);
+
+            Assert.Empty(warnings);
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.False(rule.DegradedAtLoad);
+            Assert.Equal(TargetKind.Cycle, rule.Show.Kind);
+            Assert.Equal(new ItmPage?[] { ItmPage.FuelErsDrs, ItmPage.TyreTemps, ItmPage.CarSettings },
+                rule.Show.CyclePages);
+            Assert.Equal(2000, rule.Show.PeriodMs);
         }
 
         // ── Normalization: ids, targets, sets ────────────────────────────

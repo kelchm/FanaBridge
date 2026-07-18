@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using Newtonsoft.Json;
 using FanaBridge.Protocol;
@@ -149,8 +151,12 @@ namespace FanaBridge.Display.Rules
         /// target this too: it resolves to the device's legacy ITM page plus that screen
         /// on the 7-segment surface.</summary>
         LegacyScreen,
-        /// <summary>Two ITM pages alternating every <see cref="RuleTarget.PeriodMs"/>.</summary>
+        /// <summary>Parse alias — presents as a two-page cycle via
+        /// <see cref="RuleTarget.CyclePages"/>; kept forever so old documents load unchanged.</summary>
         Alternate,
+        /// <summary>An ordered list of ITM pages shown in rotation every
+        /// <see cref="RuleTarget.PeriodMs"/>.</summary>
+        Cycle,
     }
 
     /// <summary>
@@ -163,11 +169,11 @@ namespace FanaBridge.Display.Rules
     public class RuleTarget
     {
         /// <summary>Factory default for <see cref="PeriodMs"/>.</summary>
-        public const int DefaultAlternatePeriodMs = 3000;
+        public const int DefaultCyclePeriodMs = 3000;
 
-        /// <summary>Floor for <see cref="PeriodMs"/> — alternation faster than this would
+        /// <summary>Floor for <see cref="PeriodMs"/> — cycling faster than this would
         /// flap the firmware's page switching.</summary>
-        public const int MinAlternatePeriodMs = 1000;
+        public const int MinCyclePeriodMs = 1000;
 
         private string _kindRaw;
         private TargetKind? _kind;
@@ -231,11 +237,44 @@ namespace FanaBridge.Display.Rules
             set => PageBRaw = value == null ? null : EnumText.Write(value.Value);
         }
 
-        /// <summary><see cref="TargetKind.Alternate"/>: flip period in milliseconds
-        /// (clamped to ≥ <see cref="MinAlternatePeriodMs"/> at load).</summary>
+        /// <summary>Serialized page names for <see cref="TargetKind.Cycle"/>, in rotation
+        /// order, preserved verbatim (null when absent; never emitted for non-cycle targets).</summary>
+        [JsonProperty("pages")]
+        public List<string> PagesRaw { get; set; }
+
+        /// <summary>
+        /// Unified page list for the cycle family: for <see cref="TargetKind.Cycle"/> one
+        /// entry per <see cref="PagesRaw"/> element (empty when <see cref="PagesRaw"/> is
+        /// null); for <see cref="TargetKind.Alternate"/> the pair
+        /// [<see cref="PageA"/>, <see cref="PageB"/>]; null for every other kind. Null
+        /// entries mean a missing or unrecognized page name — the raw text is preserved
+        /// on the document for the round-trip.
+        /// </summary>
+        [JsonIgnore]
+        public IReadOnlyList<ItmPage?> CyclePages
+        {
+            get
+            {
+                if (Kind == TargetKind.Cycle)
+                {
+                    if (PagesRaw == null)
+                        return Array.Empty<ItmPage?>();
+                    var pages = new ItmPage?[PagesRaw.Count];
+                    for (int i = 0; i < PagesRaw.Count; i++)
+                        pages[i] = EnumText.ParseNullable<ItmPage>(PagesRaw[i]);
+                    return pages;
+                }
+                if (Kind == TargetKind.Alternate)
+                    return new ItmPage?[] { PageA, PageB };
+                return null;
+            }
+        }
+
+        /// <summary><see cref="TargetKind.Alternate"/> and <see cref="TargetKind.Cycle"/>:
+        /// flip period in milliseconds (clamped to ≥ <see cref="MinCyclePeriodMs"/> at load).</summary>
         [JsonProperty("periodMs")]
-        [DefaultValue(DefaultAlternatePeriodMs)]
-        public int PeriodMs { get; set; } = DefaultAlternatePeriodMs;
+        [DefaultValue(DefaultCyclePeriodMs)]
+        public int PeriodMs { get; set; } = DefaultCyclePeriodMs;
     }
 
     /// <summary>How long an activation lives once its condition fires.</summary>

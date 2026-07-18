@@ -104,7 +104,7 @@ namespace FanaBridge.Display.Rules
         private int _selectionIndex;          // int.MaxValue for resting (lowest priority)
         private RuleTarget _selectionTarget;  // null for resting
         private long _selectionChangedAt;
-        private long _alternateAnchor;        // flip-period origin (set at selection time)
+        private long _cycleAnchor;            // flip-period origin (set at selection time)
 
         private string _prevWinnerId;         // RuleExpired detection
 
@@ -522,8 +522,9 @@ namespace FanaBridge.Display.Rules
             _selectionIndex = sel != null ? sel.Index : int.MaxValue;
             _selectionTarget = sel != null ? sel.Rule.Show : null;
             _selectionChangedAt = now;
-            if (sel != null && sel.Rule.Show.Kind == TargetKind.Alternate)
-                _alternateAnchor = now;   // the flip period starts at win time
+            if (sel != null && (sel.Rule.Show.Kind == TargetKind.Alternate
+                || sel.Rule.Show.Kind == TargetKind.Cycle))
+                _cycleAnchor = now;   // the flip period starts at win time
             if (sel == null && wasRule && logReturn)
                 AddEvent(now, ActivityKind.ReturnedToBase,
                     "Returned to " + DescribeResting(), null);
@@ -547,12 +548,16 @@ namespace FanaBridge.Display.Rules
                 case TargetKind.LegacyScreen:
                     return new RuleIntent(TargetKind.LegacyScreen, null, t.ScreenId, _selectionRuleId);
                 case TargetKind.Alternate:
-                    // The dwell floor does not apply to the internal alternation — the flip
-                    // is the rule's target, not an intent change.
+                case TargetKind.Cycle:
+                    // The dwell floor does not apply to the internal flip — the flip is the
+                    // rule's target, not an intent change.
                     // Math.Max guards a hand-built list; the validator clamps PeriodMs >= 1s.
-                    long phase = (now - _alternateAnchor) / Math.Max(1, t.PeriodMs) % 2;
+                    var pages = t.CyclePages;
+                    if (pages == null || pages.Count == 0)
+                        return new RuleIntent(TargetKind.Page, null, null, _selectionRuleId);
+                    long phase = (now - _cycleAnchor) / Math.Max(1, t.PeriodMs) % pages.Count;
                     return new RuleIntent(TargetKind.Page,
-                        phase == 0 ? t.PageA : t.PageB, null, _selectionRuleId);
+                        pages[(int)phase], null, _selectionRuleId);
                 default:
                     return new RuleIntent(TargetKind.Page, t.Page, null, _selectionRuleId);
             }
@@ -606,9 +611,18 @@ namespace FanaBridge.Display.Rules
                 case TargetKind.Page:
                     return show.Page == null || !availablePages.Contains(show.Page.Value);
                 case TargetKind.Alternate:
-                    return show.PageA == null || show.PageB == null
-                        || !availablePages.Contains(show.PageA.Value)
-                        || !availablePages.Contains(show.PageB.Value);
+                case TargetKind.Cycle:
+                {
+                    var pages = show.CyclePages;
+                    if (pages == null || pages.Count == 0)
+                        return true;
+                    for (int i = 0; i < pages.Count; i++)
+                    {
+                        if (pages[i] == null || !availablePages.Contains(pages[i].Value))
+                            return true;
+                    }
+                    return false;
+                }
                 default:
                     return false;   // legacy screens are not page-gated
             }
