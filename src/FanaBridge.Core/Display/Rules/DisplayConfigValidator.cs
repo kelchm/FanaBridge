@@ -104,7 +104,12 @@ namespace FanaBridge.Display.Rules
 
         private static HashSet<string> NormalizeScreens(LegacyRuleSet legacy, Action<string> warn)
         {
-            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // seenIds tracks every id we have kept (including unknown-kind screens that
+            // stay in the document for the round-trip). survivorIds is the subset rules
+            // may target — unknown contentKind is excluded so those rules degrade like a
+            // missing screen.
+            var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var survivorIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var kept = new List<LegacyScreen>(legacy.Screens.Count);
 
             foreach (var screen in legacy.Screens)
@@ -117,24 +122,117 @@ namespace FanaBridge.Display.Rules
                         + "' skipped — no id");
                     continue;
                 }
-                if (!LegacyScreen.IsRenderableText(screen.Text))
-                {
-                    warn("legacy screen '" + screen.Id + "' skipped — text "
-                        + (screen.Text == null ? "(none)" : "'" + screen.Text + "'")
-                        + " is not renderable (1-3 seven-segment positions)");
-                    continue;
-                }
-                if (!ids.Add(screen.Id))
+                if (!seenIds.Add(screen.Id))
                 {
                     warn("duplicate legacy screen id '" + screen.Id + "' — keeping the first");
                     continue;
                 }
+
+                // Effect: Flash parses but coerces to Blink (runtime-only); unknown
+                // effect text is left alone (treated as None by the clock, raw survives).
+                if (screen.Effect == LegacyEffect.Flash)
+                {
+                    warn("legacy screen '" + screen.Id
+                        + "': effect 'flash' is not implemented — using blink");
+                    screen.CoerceEffect(LegacyEffect.Blink);
+                }
+
+                // Format is reserved/uninterpreted in v1 — clear any non-empty text.
+                if (!string.IsNullOrEmpty(screen.Format))
+                {
+                    warn("legacy screen '" + screen.Id
+                        + "' — unrecognized format '" + screen.Format + "' cleared");
+                    screen.Format = null;
+                }
+
+                bool usable;
+                switch (screen.ContentKind)
+                {
+                    case LegacyContentKind.Text:
+                        if (!LegacyScreen.IsRenderableText(screen.Text))
+                        {
+                            warn("legacy screen '" + screen.Id + "' skipped — text "
+                                + (screen.Text == null ? "(none)" : "'" + screen.Text + "'")
+                                + " is not renderable (1-3 seven-segment positions)");
+                            // Drop from the document (current-version broken data) and
+                            // free the id so a later sibling could claim it — matching
+                            // the pre-growth skip behaviour for unrenderable text.
+                            seenIds.Remove(screen.Id);
+                            continue;
+                        }
+                        usable = true;
+                        break;
+
+                    case LegacyContentKind.Message:
+                        if (!LegacyScreen.IsRenderableMessage(screen.Text))
+                        {
+                            warn("legacy screen '" + screen.Id + "' skipped — message "
+                                + (screen.Text == null ? "(none)" : "'" + screen.Text + "'")
+                                + " is not renderable (every char must be seven-segment, length ≥ 1)");
+                            seenIds.Remove(screen.Id);
+                            continue;
+                        }
+                        usable = true;
+                        break;
+
+                    case LegacyContentKind.Property:
+                        string badSource = InvalidPropertySourceReason(screen.Source);
+                        if (badSource != null)
+                        {
+                            warn("legacy screen '" + screen.Id + "' skipped — " + badSource);
+                            seenIds.Remove(screen.Id);
+                            continue;
+                        }
+                        usable = true;
+                        break;
+
+                    case LegacyContentKind.Speed:
+                    case LegacyContentKind.Gear:
+                    case LegacyContentKind.GearAndSpeed:
+                    case LegacyContentKind.GearBrackets:
+                    case LegacyContentKind.Rpm:
+                    case LegacyContentKind.Position:
+                    case LegacyContentKind.Fuel:
+                        // Dynamic kinds ignore Text — nothing to validate at load.
+                        usable = true;
+                        break;
+
+                    case LegacyContentKind.Unknown:
+                    default:
+                        // Future-version kind: keep for the round-trip, exclude from
+                        // survivors (rules targeting it degrade like a missing screen).
+                        warn("legacy screen '" + screen.Id + "' skipped — "
+                            + (screen.ContentKindRaw == null ? "no content kind"
+                                : "unrecognized content kind '" + screen.ContentKindRaw + "'"));
+                        usable = false;
+                        break;
+                }
+
                 kept.Add(screen);
+                if (usable)
+                    survivorIds.Add(screen.Id);
             }
 
             legacy.Screens.Clear();
             legacy.Screens.AddRange(kept);
-            return ids;
+            return survivorIds;
+        }
+
+        /// <summary>Why a Property-kind screen's source is unusable, or null if fine.</summary>
+        private static string InvalidPropertySourceReason(PropertySpec source)
+        {
+            if (source == null)
+                return "property kind requires a source";
+            if (string.IsNullOrWhiteSpace(source.Name))
+                return "source has no name";
+            if (source.Kind == PropertyKind.Unknown)
+                return source.KindRaw == null ? "no source kind"
+                    : "unrecognized source kind '" + source.KindRaw + "'";
+            if (source.Kind == PropertyKind.FanaBridgeAction)
+                return "an action is not a readable value";
+            if (source.Kind == PropertyKind.BuiltIn && !BuiltInProperties.IsKnown(source.Name))
+                return "unknown built-in property '" + source.Name + "'";
+            return null;
         }
 
         // ── Rules ────────────────────────────────────────────────────────

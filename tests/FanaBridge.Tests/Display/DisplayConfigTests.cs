@@ -771,6 +771,237 @@ namespace FanaBridge.Tests.Display
         public void LegacyScreen_IsRenderableText(string? text, bool expected)
             => Assert.Equal(expected, LegacyScreen.IsRenderableText(text));
 
+        [Theory]
+        [InlineData("PIT", true)]
+        [InlineData("HELLO", true)]    // Message allows any length ≥ 1
+        [InlineData("-1.5", true)]
+        [InlineData("", false)]
+        [InlineData(null, false)]
+        [InlineData("◆F◆", false)]
+        public void LegacyScreen_IsRenderableMessage(string? text, bool expected)
+            => Assert.Equal(expected, LegacyScreen.IsRenderableMessage(text));
+
+        // ── Legacy screen contentKind / effect growth (Phase 7a) ─────────
+
+        [Fact]
+        public void LegacyScreen_OmittedContentKind_DefaultsToText()
+        {
+            // Today's static screens omit contentKind — must stay Text with no warn.
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"pit\", \"text\": \"PIT\" } ] } }", out var warnings);
+
+            var screen = Assert.Single(config.Legacy.Screens);
+            Assert.Equal(LegacyContentKind.Text, screen.ContentKind);
+            Assert.Null(screen.ContentKindRaw);
+            Assert.Equal(LegacyEffect.None, screen.Effect);
+            Assert.Empty(warnings);
+        }
+
+        [Fact]
+        public void RoundTrip_LegacyScreen_PreservesEveryContentKindAndEffect()
+        {
+            var kinds = new[]
+            {
+                LegacyContentKind.Text, LegacyContentKind.Speed, LegacyContentKind.Gear,
+                LegacyContentKind.GearAndSpeed, LegacyContentKind.GearBrackets,
+                LegacyContentKind.Rpm, LegacyContentKind.Position, LegacyContentKind.Fuel,
+                LegacyContentKind.Message, LegacyContentKind.Property,
+            };
+            var effects = new[]
+            {
+                LegacyEffect.None, LegacyEffect.Scroll, LegacyEffect.Blink,
+            };
+
+            var config = new DisplayCustomizationConfig();
+            int i = 0;
+            foreach (var kind in kinds)
+            {
+                var screen = new LegacyScreen
+                {
+                    Id = "s" + i,
+                    Name = kind.ToString(),
+                    ContentKind = kind,
+                    Effect = effects[i % effects.Length],
+                };
+                if (kind == LegacyContentKind.Text)
+                    screen.Text = "T" + (i % 10);
+                else if (kind == LegacyContentKind.Message)
+                    screen.Text = "HELLO";
+                else if (kind == LegacyContentKind.Property)
+                    screen.Source = new PropertySpec
+                    {
+                        Kind = PropertyKind.BuiltIn,
+                        Name = BuiltInProperties.Fuel,
+                    };
+                config.Legacy.Screens.Add(screen);
+                i++;
+            }
+
+            var loaded = Load(DisplayConfigSerializer.Save(config), out var warnings);
+
+            Assert.Empty(warnings);
+            Assert.Equal(kinds.Length, loaded.Legacy.Screens.Count);
+            for (int k = 0; k < kinds.Length; k++)
+            {
+                Assert.Equal(kinds[k], loaded.Legacy.Screens[k].ContentKind);
+                Assert.Equal(effects[k % effects.Length], loaded.Legacy.Screens[k].Effect);
+            }
+        }
+
+        [Fact]
+        public void SaveAfterLoad_UnknownContentKindAndEffect_SurviveVerbatim()
+        {
+            // A future version's contentKind/effect must pass through this build
+            // byte-for-byte — the screen is kept (not dropped) but is not a survivor.
+            string original =
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"x1\", \"text\": \"PIT\", \"contentKind\": \"hologram\", \"effect\": \"shimmer\" }, "
+                + "{ \"id\": \"ok\", \"text\": \"FN1\" } "
+                + "], \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
+                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"x1\" } } "
+                + "] } }";
+
+            var config = Load(original, out var warnings);
+            Assert.Equal(2, config.Legacy.Screens.Count);
+            var future = config.Legacy.Screens[0];
+            Assert.Equal("hologram", future.ContentKindRaw);
+            Assert.Equal(LegacyContentKind.Unknown, future.ContentKind);
+            Assert.Equal("shimmer", future.EffectRaw);
+            Assert.Equal(LegacyEffect.Unknown, future.Effect);
+            Assert.Contains(warnings, w => w.Contains("hologram"));
+
+            // Rules targeting the unknown-kind screen degrade like a missing screen.
+            Assert.True(config.Legacy.Rules[0].DegradedAtLoad);
+            Assert.Contains(warnings, w => w.Contains("x1") && w.Contains("does not exist"));
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"hologram\"", saved);
+            Assert.Contains("\"shimmer\"", saved);
+
+            var reloaded = Load(saved, out _);
+            Assert.Equal("hologram", reloaded.Legacy.Screens[0].ContentKindRaw);
+            Assert.Equal("shimmer", reloaded.Legacy.Screens[0].EffectRaw);
+            Assert.Equal(saved, DisplayConfigSerializer.Save(reloaded));
+        }
+
+        [Fact]
+        public void LegacyScreen_MessageKind_AllowsLongRenderableText()
+        {
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"msg\", \"contentKind\": \"message\", \"text\": \"HELLO\" } "
+                + "] } }", out var warnings);
+
+            var screen = Assert.Single(config.Legacy.Screens);
+            Assert.Equal(LegacyContentKind.Message, screen.ContentKind);
+            Assert.Equal("HELLO", screen.Text);
+            Assert.Empty(warnings);
+        }
+
+        [Fact]
+        public void LegacyScreen_MessageKind_Unrenderable_Skipped()
+        {
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"msg\", \"contentKind\": \"message\", \"text\": \"\\u25c6F\\u25c6\" } "
+                + "] } }", out var warnings);
+
+            Assert.Empty(config.Legacy.Screens);
+            Assert.Contains(warnings, w => w.Contains("'msg'"));
+        }
+
+        [Fact]
+        public void LegacyScreen_DynamicKind_IgnoresText()
+        {
+            // Dynamic kinds do not require Text — even oversized/empty is fine.
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"spd\", \"contentKind\": \"speed\", \"text\": \"TOOLONG\" }, "
+                + "{ \"id\": \"gr\", \"contentKind\": \"gear\" } "
+                + "] } }", out var warnings);
+
+            Assert.Equal(2, config.Legacy.Screens.Count);
+            Assert.Empty(warnings);
+            Assert.Equal(LegacyContentKind.Speed, config.Legacy.Screens[0].ContentKind);
+            Assert.Equal(LegacyContentKind.Gear, config.Legacy.Screens[1].ContentKind);
+        }
+
+        [Fact]
+        public void LegacyScreen_PropertyWithoutSource_Skipped()
+        {
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"p1\", \"contentKind\": \"property\" }, "
+                + "{ \"id\": \"p2\", \"contentKind\": \"property\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"FluxCapacitor\" } }, "
+                + "{ \"id\": \"p3\", \"contentKind\": \"property\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" } } "
+                + "] } }", out var warnings);
+
+            var kept = Assert.Single(config.Legacy.Screens);
+            Assert.Equal("p3", kept.Id);
+            Assert.Equal(2, warnings.Count(w => w.Contains("skipped")));
+        }
+
+        [Fact]
+        public void LegacyScreen_FlashEffect_CoercesToBlink_RawSurvives()
+        {
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"pit\", \"text\": \"PIT\", \"effect\": \"flash\" } "
+                + "] } }", out var warnings);
+
+            var screen = Assert.Single(config.Legacy.Screens);
+            Assert.Equal(LegacyEffect.Blink, screen.Effect);   // runtime view
+            Assert.Equal("flash", screen.EffectRaw);           // document preserved
+            Assert.Contains(warnings, w => w.Contains("flash") && w.Contains("blink"));
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"flash\"", saved);
+            Assert.DoesNotContain("\"blink\"", saved);
+        }
+
+        [Fact]
+        public void LegacyScreen_UnknownFormat_ClearedWithWarning()
+        {
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"pit\", \"text\": \"PIT\", \"format\": \"fancy\" } "
+                + "] } }", out var warnings);
+
+            var screen = Assert.Single(config.Legacy.Screens);
+            Assert.Null(screen.Format);
+            Assert.Contains(warnings, w => w.Contains("fancy"));
+        }
+
+        [Fact]
+        public void RoundTrip_LegacyScreen_PropertySourcePreserved()
+        {
+            var config = new DisplayCustomizationConfig();
+            config.Legacy.Screens.Add(new LegacyScreen
+            {
+                Id = "fuel",
+                ContentKind = LegacyContentKind.Property,
+                Source = new PropertySpec
+                {
+                    Kind = PropertyKind.SimHubProperty,
+                    Name = "DataCorePlugin.GameData.Fuel",
+                },
+                Effect = LegacyEffect.Scroll,
+            });
+
+            var loaded = Load(DisplayConfigSerializer.Save(config), out var warnings);
+            Assert.Empty(warnings);
+            var screen = Assert.Single(loaded.Legacy.Screens);
+            Assert.Equal(LegacyContentKind.Property, screen.ContentKind);
+            Assert.Equal(PropertyKind.SimHubProperty, screen.Source.Kind);
+            Assert.Equal("DataCorePlugin.GameData.Fuel", screen.Source.Name);
+            Assert.Equal(LegacyEffect.Scroll, screen.Effect);
+        }
+
         // ── Field mappings ───────────────────────────────────────────────
 
         [Fact]
