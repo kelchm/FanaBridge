@@ -54,74 +54,6 @@ namespace FanaBridge.UI.Display
         public RuleEligibility Eligibility = RuleEligibility.InGame;
     }
 
-    /// <summary>One row of the Triggers editor list, ready for the XAML to draw: the
-    /// collapsed row language (rank, label, live-state chip + countdown, eligibility) plus
-    /// the affordance flags (draggable / expandable) and the degraded / base markers.</summary>
-    internal sealed class TriggerRowModel
-    {
-        /// <summary>The rule this row edits, or null for the pinned base row.</summary>
-        public string RuleId;
-
-        /// <summary>"1".."n" for rules, "★" for the base row.</summary>
-        public string Rank;
-
-        /// <summary>Row label (<see cref="DisplayRuleFormatter.Label"/>), or "Always → &lt;base&gt;".
-        /// The v9 row header prefers the structured when-fields below; <see cref="Label"/> is the
-        /// fallback for the base row, degraded rows, and user-named rules
-        /// (<see cref="PropertyName"/> null in those cases).</summary>
-        public string Label;
-
-        // ── Structured WHEN (v9 property grammar). Populated only for a non-degraded,
-        //    unnamed rule with a source property; null PropertyName means "use Label". ──
-
-        /// <summary>The condition's source property, for <see cref="Shared.PropertyGrammar"/>;
-        /// null on base / degraded / user-named rows (render <see cref="Label"/> then).</summary>
-        public string PropertyName;
-
-        /// <summary>How <see cref="PropertyName"/> namespaces for display.</summary>
-        public PropertyDisplayKind DisplayKind;
-
-        /// <summary>The operator glyph ("&gt;", "is on", "changes"), or "".</summary>
-        public string Operator = "";
-
-        /// <summary>The comparison value text, or "".</summary>
-        public string ValueText = "";
-
-        /// <summary>The SHOW target text ("Fuel / ERS / DRS"), or "".</summary>
-        public string TargetText = "";
-
-        /// <summary>Live-state chip ("on screen"/"waiting"/…/"base"), merged from the snapshot by id.</summary>
-        public string Chip = "";
-
-        /// <summary>Hold countdown ("4s"), only while on screen with a timed hold.</summary>
-        public string Seconds;
-
-        /// <summary>The winning rule — green accent.</summary>
-        public bool OnScreen;
-
-        /// <summary>Disabled, ineligible, or degraded — the row renders dimmed.</summary>
-        public bool Muted;
-
-        /// <summary>Loaded from a newer version this build can't honor: shown muted with a
-        /// "created by a newer version" hint, reorderable and removable but not editable.</summary>
-        public bool Degraded;
-
-        /// <summary>The user's own enable toggle (independent of <see cref="Degraded"/>).</summary>
-        public bool Enabled;
-
-        /// <summary>Eligibility chip text ("In-game"/"Idle"/"Any time"); empty for base / degraded.</summary>
-        public string Eligibility = "";
-
-        /// <summary>The pinned "Always" row — dashed, last, not draggable, not expandable.</summary>
-        public bool IsBase;
-
-        /// <summary>Whether the drag handle reorders this row (every rule row; not the base).</summary>
-        public bool Draggable;
-
-        /// <summary>Whether the chevron opens an editor (every non-degraded rule row).</summary>
-        public bool Expandable;
-    }
-
     /// <summary>
     /// The testable core of the Triggers editor: it holds the working
     /// <see cref="DisplayCustomizationConfig"/> and turns every user action
@@ -320,9 +252,9 @@ namespace FanaBridge.UI.Display
         /// rows, and the base row's page name follows the running stack's own resolution
         /// exactly as the Overview does.
         /// </summary>
-        public IReadOnlyList<TriggerRowModel> Rows(DisplayRuleSnapshot snapshot, byte defaultWirePage)
+        public IReadOnlyList<TriggerTableRow> Rows(DisplayRuleSnapshot snapshot, byte defaultWirePage)
         {
-            var rows = new List<TriggerRowModel>();
+            var rows = new List<TriggerTableRow>();
             var rules = Rules;
 
             Dictionary<string, DisplayRuleRow> live = null;
@@ -337,7 +269,7 @@ namespace FanaBridge.UI.Display
             for (int i = 0; i < rules.Count; i++)
             {
                 var rule = rules[i];
-                var row = new TriggerRowModel
+                var row = new TriggerTableRow
                 {
                     RuleId = rule.Id,
                     Rank = (i + 1).ToString(),
@@ -362,7 +294,7 @@ namespace FanaBridge.UI.Display
                 rows.Add(row);
             }
 
-            rows.Add(new TriggerRowModel
+            rows.Add(new TriggerTableRow
             {
                 Rank = "★",
                 Label = "Always → " + DisplayOverviewRender.BasePageName(
@@ -382,7 +314,7 @@ namespace FanaBridge.UI.Display
         // ("'Action' triggered", DescribeCondition) that the property/operator/value grammar
         // would drop and re-namespace — such rules (imported only; the editor never authors
         // them) fall back to Label to keep that framing.
-        internal static void ApplyStructuredWhen(TriggerRowModel row, DisplayRule rule)
+        internal static void ApplyStructuredWhen(TriggerTableRow row, DisplayRule rule)
         {
             if (rule.DegradedAtLoad
                 || !string.IsNullOrWhiteSpace(rule.Name)

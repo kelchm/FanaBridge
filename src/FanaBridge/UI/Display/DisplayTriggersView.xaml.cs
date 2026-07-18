@@ -37,10 +37,9 @@ namespace FanaBridge.UI.Display
     {
         private enum AddTriggerType { Telemetry, MappedControl }
 
-        // Generous character budgets before the property grammar left-elides (the WPF
-        // CharacterEllipsis is the visual backstop past these): the collapsed row shares its
-        // width, the detail button gets its own line.
-        private const int RowPropertyBudget = 34;
+        // Generous character budget before the property grammar left-elides in the detail
+        // button (the WPF CharacterEllipsis is the visual backstop past it) — the detail
+        // button gets its own line. The collapsed-row budget lives in TriggerTableControl.
         private const int DetailPropertyBudget = 42;
 
         // ── Bound members (the shell's own instances, wired in Bind) ───────
@@ -59,32 +58,6 @@ namespace FanaBridge.UI.Display
         private AddTriggerType _addType = AddTriggerType.Telemetry;
         private RuleEdit _addDraft;
 
-        // Per-row live-chip handles, keyed by rule id, so a poll can patch the state chip
-        // and countdown in place (never rebuilding an open editor row).
-        private sealed class RowChips
-        {
-            public Border Container;
-            public TextBlock Chip;
-            public CountdownRing Seconds;
-            public TextBlock Rank;
-            public TextBlock Label;
-            public bool Degraded;
-        }
-        private readonly Dictionary<string, RowChips> _rowChips =
-            new Dictionary<string, RowChips>(StringComparer.Ordinal);
-
-        // Rule-row containers in priority order (base row excluded) — the drop-target
-        // geometry for drag reordering.
-        private readonly List<KeyValuePair<string, FrameworkElement>> _ruleRowOrder =
-            new List<KeyValuePair<string, FrameworkElement>>();
-
-        // ── Drag state ────────────────────────────────────────────────────
-        private string _dragRuleId;
-        private Point _dragStart;
-        private bool _dragging;
-        private UIElement _dragHandle;
-        private Rectangle _dropIndicator;
-
         // ── Seam events (the shell subscribes once in its Bind) ────────────
         internal event EventHandler BackRequested;
         internal event EventHandler ConfigApplied;
@@ -92,6 +65,13 @@ namespace FanaBridge.UI.Display
         public DisplayTriggersView()
         {
             InitializeComponent();
+            // The shared table owns the row machinery (build/drag/menu/keyboard); this view
+            // owns the edit model and every commit. Wire the table's gestures to the commit
+            // paths and hand it the expansion-drawer builder.
+            triggerTable.ExpansionContent = BuildExpansionContent;
+            triggerTable.RowActivated += OnRowActivated;
+            triggerTable.RowMoved += OnRowMoved;
+            triggerTable.RowAction += OnRowAction;
         }
 
         // ── The bind/input surface (the seam) ──────────────────────────────
@@ -173,11 +153,11 @@ namespace FanaBridge.UI.Display
             if (_editModel == null || _host == null)
                 return;
             // A drag in progress must never be interrupted by a rebuild: it holds mouse
-            // capture on a ⠿ handle, and clearing the panel children unparents that handle,
-            // dropping the capture — the gesture strands and _dragging sticks true, killing
+            // capture on a ⠿ handle, and clearing the table's children unparents that handle,
+            // dropping the capture — the gesture strands and the drag sticks, killing
             // subsequent row clicks. Chip patching never touches the children collection, so
             // it stays safe; defer every rebuild (and any external reconcile) until the drop.
-            bool dragInProgress = _dragHandle != null || _dragging;
+            bool dragInProgress = triggerTable.IsDragging;
             // An external config change (generation rebind, another surface) → rebuild.
             if (!ReferenceEquals(_host.GetDisplayConfig(), _editModelSource))
             {
@@ -199,402 +179,52 @@ namespace FanaBridge.UI.Display
 
         private void RenderTriggerRows(DisplayRuleSnapshot snapshot)
         {
-            // A rebuild invalidates any in-progress drag (its captured handle is about to be
-            // unparented). Release the capture and clear the drag state here so a rebuild can
-            // never strand _dragging=true and deaden row clicks, whatever path reached us.
-            if (_dragHandle != null)
-                _dragHandle.ReleaseMouseCapture();
-            _dragHandle = null;
-            _dragging = false;
-            _dragRuleId = null;
-
-            RemoveDropIndicator();
-            panelTriggerRows.Children.Clear();
-            _rowChips.Clear();
-            _ruleRowOrder.Clear();
-
             byte wire = _settings != null ? _settings.ItmDefaultPage : (byte)1;
-            var rows = _editModel.Rows(snapshot, wire);
-            foreach (var row in rows)
-            {
-                if (row.IsBase)
-                    panelTriggerRows.Children.Add(BuildBaseRow(row));
-                else if (row.Degraded)
-                    panelTriggerRows.Children.Add(BuildDegradedRow(row));
-                else
-                    panelTriggerRows.Children.Add(BuildRuleRow(row));
-            }
-
+            triggerTable.ExpandedRuleId = _expandedRuleId;
+            triggerTable.SetRows(_editModel.Rows(snapshot, wire));
             txtTriggersEmpty.Visibility = _editModel.Rules.Count == 0
                 ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        // In-place chip patch: only the live-state chip, countdown, and muted dimming, so an
-        // open editor row keeps its controls and focus.
+        // In-place chip patch: recompute the row projection (chip/countdown/accent) from the
+        // fresh snapshot and let the table patch each rule row in place, so an open editor row
+        // keeps its controls and focus and an in-flight drag is never disturbed.
         private void PatchTriggerChips(DisplayRuleSnapshot snapshot)
         {
-            var live = new Dictionary<string, DisplayRuleRow>(StringComparer.Ordinal);
-            if (snapshot?.ItmRules != null)
-                foreach (var r in snapshot.ItmRules)
-                    if (r.RuleId != null)
-                        live[r.RuleId] = r;
-
-            foreach (var kv in _rowChips)
-            {
-                var holder = kv.Value;
-                var chip = live.TryGetValue(kv.Key, out var state)
-                    ? DisplayOverviewRender.StateChip(state.Status, state.RemainingMs)
-                    : default(RuleStateChip);
-                ApplyChip(holder, chip);
-            }
+            byte wire = _settings != null ? _settings.ItmDefaultPage : (byte)1;
+            triggerTable.PatchLive(_editModel.Rows(snapshot, wire));
         }
 
-        private static void ApplyChip(RowChips holder, RuleStateChip chip)
+        // The table asks for the expansion drawer of the open row; the host builds it from
+        // the live edit model (a degraded/unknown row yields none, as before).
+        private UIElement BuildExpansionContent(string ruleId)
         {
-            if (holder.Chip != null)
-            {
-                holder.Chip.Text = chip.Chip ?? "";
-                holder.Chip.Visibility = string.IsNullOrEmpty(chip.Chip)
-                    ? Visibility.Collapsed : Visibility.Visible;
-                holder.Chip.Foreground = chip.OnScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText;
-            }
-            if (holder.Seconds != null)
-                holder.Seconds.Update(double.NaN, chip.Seconds);
-            // The on-screen accent spans the WHOLE row, not just the chip — patch the rank,
-            // label, and border together so an off→on transition during an in-place poll
-            // (which runs while a different row's editor is open) can't leave a green
-            // "on screen" chip on an otherwise-inactive row body. Degraded rows never go
-            // on-screen, so they keep their fixed styling.
-            if (!holder.Degraded)
-                ApplyRowAccent(holder, chip.OnScreen);
-            if (holder.Container != null)
-                holder.Container.Opacity = (chip.Muted || holder.Degraded) ? 0.5 : 1.0;
+            var rule = FindRule(ruleId);
+            return rule != null ? BuildDetail(rule) : null;
         }
 
-        // The single definition of a rule row's on-screen accent — rank + label colour and
-        // the border's background / brush / left accent bar — shared by first build and every
-        // in-place patch so the two can't drift.
-        private static void ApplyRowAccent(RowChips holder, bool onScreen)
+        // ── Table gesture handlers (each routes to a commit path) ──────────
+
+        private void OnRowActivated(string ruleId) => ToggleExpanded(ruleId);
+
+        // A reorder gesture (drag drop, Alt+arrow, context-menu move) targets a new index
+        // among the rule rows; translate it to the edit model's relative move. A move to the
+        // same slot is a no-op (no republish), exactly as the drag path was before.
+        private void OnRowMoved(string ruleId, int newIndex)
         {
-            if (holder.Rank != null)
-                holder.Rank.Foreground = onScreen ? DisplayPalette.GreenRank : DisplayPalette.MutedRank;
-            if (holder.Label != null)
-                holder.Label.Foreground = onScreen ? DisplayPalette.OnScreenText : DisplayPalette.RowText;
-            if (holder.Container != null)
-            {
-                holder.Container.Background = onScreen ? DisplayPalette.OnScreenBg : DisplayPalette.RowBg;
-                holder.Container.BorderBrush = onScreen ? DisplayPalette.OnScreenBorder : DisplayPalette.RowBorder;
-                holder.Container.BorderThickness = onScreen ? new Thickness(3, 1, 1, 1) : new Thickness(1);
-            }
+            int from = IndexOfRule(ruleId);
+            if (from < 0)
+                return;
+            int delta = newIndex - from;
+            if (delta == 0)
+                return;
+            MoveRule(ruleId, delta);
         }
 
-        // One editable rule row: a clickable collapsed header, plus the detail panel when
-        // this is the open row.
-        private UIElement BuildRuleRow(TriggerRowModel row)
+        private void OnRowAction(string ruleId, string actionId)
         {
-            var rule = FindRule(row.RuleId);
-            bool expanded = string.Equals(row.RuleId, _expandedRuleId, StringComparison.Ordinal);
-
-            var container = new StackPanel { Margin = new Thickness(0, 0, 0, 7) };
-
-            var header = BuildRowHeader(row, expanded, out var chips);
-            container.Children.Add(header);
-            _rowChips[row.RuleId] = chips;
-            _ruleRowOrder.Add(new KeyValuePair<string, FrameworkElement>(row.RuleId, container));
-
-            if (expanded && rule != null)
-                container.Children.Add(BuildDetail(rule));
-
-            return container;
-        }
-
-        // The collapsed header: [⠿ handle] [rank] [label] [eligibility] [state chip]
-        // [countdown] [chevron]. Clicking anywhere but the handle toggles the editor.
-        private Border BuildRowHeader(TriggerRowModel row, bool expanded, out RowChips chips)
-        {
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // handle
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // rank
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // label
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // eligibility
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // chip
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // seconds
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // chevron
-
-            var handle = new TextBlock
-            {
-                Text = "⠿",
-                FontSize = 13,
-                Foreground = DisplayPalette.HandColor,
-                Cursor = Cursors.SizeAll,
-                ToolTip = "Drag to reorder priority",
-                Margin = new Thickness(0, 0, 9, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            AttachDragHandle(handle, row.RuleId);
-            Grid.SetColumn(handle, 0);
-            grid.Children.Add(handle);
-
-            var rank = new TextBlock
-            {
-                Text = row.Rank,
-                FontSize = 11,
-                FontWeight = FontWeights.Bold,
-                Foreground = DisplayPalette.MutedRank,   // on-screen accent applied via ApplyRowAccent below
-                Width = 16,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 0, 8, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(rank, 1);
-            grid.Children.Add(rank);
-
-            // The label column: the v9 structured WHEN (dim-ns/bright-leaf property + plain
-            // operator/value/target spans) when the model populated it, else the plain label
-            // (base/degraded/user-named rows). `label` is the span the on-screen accent recolours.
-            FrameworkElement labelColumn;
-            TextBlock label;
-            if (!string.IsNullOrEmpty(row.PropertyName))
-            {
-                var strip = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                strip.Children.Add(PropertyLabel.ForProperty(
-                    row.PropertyName, row.DisplayKind, RowPropertyBudget));
-                label = new TextBlock
-                {
-                    Text = RestText(row),
-                    FontSize = 12.5,
-                    Foreground = DisplayPalette.RowText,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(6, 0, 0, 0),
-                };
-                strip.Children.Add(label);
-                labelColumn = strip;
-            }
-            else
-            {
-                label = new TextBlock
-                {
-                    Text = row.Label,
-                    FontSize = 12.5,
-                    Foreground = DisplayPalette.RowText,   // on-screen accent applied via ApplyRowAccent below
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                labelColumn = label;
-            }
-            Grid.SetColumn(labelColumn, 2);
-            grid.Children.Add(labelColumn);
-
-            if (!string.IsNullOrEmpty(row.Eligibility))
-            {
-                var elig = new TextBlock
-                {
-                    Text = row.Eligibility,
-                    FontSize = 10.5,
-                    Foreground = DisplayPalette.EligChip,
-                    Margin = new Thickness(10, 0, 0, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                Grid.SetColumn(elig, 3);
-                grid.Children.Add(elig);
-            }
-
-            var chip = new TextBlock
-            {
-                Text = row.Chip ?? "",
-                FontSize = 10.5,
-                Foreground = row.OnScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText,
-                Margin = new Thickness(10, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                Visibility = string.IsNullOrEmpty(row.Chip) ? Visibility.Collapsed : Visibility.Visible,
-            };
-            Grid.SetColumn(chip, 4);
-            grid.Children.Add(chip);
-
-            var seconds = new CountdownRing
-            {
-                Margin = new Thickness(8, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            seconds.Update(double.NaN, row.Seconds);
-            Grid.SetColumn(seconds, 5);
-            grid.Children.Add(seconds);
-
-            var chevron = new TextBlock
-            {
-                Text = expanded ? "▾" : "▸",
-                FontSize = 12,
-                Foreground = DisplayPalette.ChevronBrush,
-                Margin = new Thickness(11, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(chevron, 6);
-            grid.Children.Add(chevron);
-
-            var border = new Border
-            {
-                Background = DisplayPalette.RowBg,           // on-screen accent applied via ApplyRowAccent below
-                BorderBrush = DisplayPalette.RowBorder,
-                BorderThickness = new Thickness(1),
-                CornerRadius = expanded ? new CornerRadius(4, 4, 0, 0) : new CornerRadius(4),
-                Padding = new Thickness(10, 8, 10, 8),
-                Cursor = Cursors.Hand,
-                Focusable = true,
-                Child = grid,
-                Opacity = row.Muted ? 0.5 : 1.0,
-            };
-            string ruleId = row.RuleId;
-            border.MouseLeftButtonUp += (s, e) =>
-            {
-                if (_dragging) return;   // a drag ended on the handle, not a click
-                ToggleExpanded(ruleId);
-            };
-            border.KeyDown += (s, e) => RowKeyDown(ruleId, e);
-            border.ContextMenu = BuildRowContextMenu(ruleId, canRemove: true);
-
-            chips = new RowChips { Container = border, Chip = chip, Seconds = seconds, Rank = rank, Label = label };
-            ApplyRowAccent(chips, row.OnScreen);
-            return border;
-        }
-
-        // A degraded rule (loaded from a newer version): muted, non-expandable, still
-        // reorderable and removable, with a "created by a newer version" hint.
-        private UIElement BuildDegradedRow(TriggerRowModel row)
-        {
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var handle = new TextBlock
-            {
-                Text = "⠿",
-                FontSize = 13,
-                Foreground = DisplayPalette.HandColor,
-                Cursor = Cursors.SizeAll,
-                ToolTip = "Drag to reorder priority",
-                Margin = new Thickness(0, 0, 9, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            AttachDragHandle(handle, row.RuleId);
-            Grid.SetColumn(handle, 0);
-            grid.Children.Add(handle);
-
-            var rank = new TextBlock
-            {
-                Text = row.Rank,
-                FontSize = 11,
-                FontWeight = FontWeights.Bold,
-                Foreground = DisplayPalette.MutedRank,
-                Width = 16,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 0, 8, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(rank, 1);
-            grid.Children.Add(rank);
-
-            var text = new StackPanel();
-            text.Children.Add(new TextBlock
-            {
-                Text = row.Label,
-                FontSize = 12.5,
-                Foreground = DisplayPalette.RowText,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            });
-            text.Children.Add(new TextBlock
-            {
-                Text = "created by a newer version — not editable here",
-                FontSize = 10.5,
-                Foreground = DisplayPalette.KLabelBrush,
-                Margin = new Thickness(0, 2, 0, 0),
-            });
-            Grid.SetColumn(text, 2);
-            grid.Children.Add(text);
-
-            var border = new Border
-            {
-                Background = DisplayPalette.RowBg,
-                BorderBrush = DisplayPalette.RowBorder,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(10, 8, 10, 8),
-                Opacity = 0.5,
-                Focusable = true,
-                Margin = new Thickness(0, 0, 0, 7),
-                Child = grid,
-            };
-            string ruleId = row.RuleId;
-            border.KeyDown += (s, e) => RowKeyDown(ruleId, e);
-            border.ContextMenu = BuildRowContextMenu(ruleId, canRemove: true);
-
-            _rowChips[row.RuleId] = new RowChips { Container = border, Degraded = true };
-            _ruleRowOrder.Add(new KeyValuePair<string, FrameworkElement>(row.RuleId, border));
-            return border;
-        }
-
-        // The pinned "★ Always → <base>" row: dashed, last, not draggable, not expandable —
-        // its page is edited on the Overview (Starting page).
-        private UIElement BuildBaseRow(TriggerRowModel row)
-        {
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var rank = new TextBlock
-            {
-                Text = row.Rank,
-                FontSize = 11,
-                FontWeight = FontWeights.Bold,
-                Foreground = DisplayPalette.BaseRank,
-                Width = 16,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 0, 8, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(rank, 0);
-            grid.Children.Add(rank);
-
-            var label = new TextBlock
-            {
-                Text = row.Label,
-                FontSize = 12.5,
-                Foreground = DisplayPalette.BaseText,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(label, 1);
-            grid.Children.Add(label);
-
-            var hint = new TextBlock
-            {
-                Text = "edit on Overview",
-                FontSize = 10.5,
-                Foreground = DisplayPalette.KLabelBrush,
-                Margin = new Thickness(10, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(hint, 2);
-            grid.Children.Add(hint);
-
-            var host = new Grid { Margin = new Thickness(0, 0, 0, 6) };
-            host.Children.Add(new Rectangle
-            {
-                Stroke = DisplayPalette.BaseDash,
-                StrokeThickness = 1,
-                StrokeDashArray = new DoubleCollection { 3, 2 },
-                RadiusX = 4,
-                RadiusY = 4,
-                Fill = DisplayPalette.BaseBg,
-            });
-            host.Children.Add(new Border { Padding = new Thickness(10, 8, 10, 8), Child = grid });
-            return host;
+            if (string.Equals(actionId, "remove", StringComparison.Ordinal))
+                RemoveRule(ruleId);
         }
 
         // ── The expanded detail editor ────────────────────────────────────
@@ -1269,174 +899,10 @@ namespace FanaBridge.UI.Display
             RenderTriggerRows(_lastSnapshot);
         }
 
-        // ── Reorder: context menu + keyboard ──────────────────────────────
-
-        private ContextMenu BuildRowContextMenu(string ruleId, bool canRemove)
-        {
-            var menu = new ContextMenu();
-            var up = new MenuItem { Header = "Move up" };
-            up.Click += (s, e) => MoveRule(ruleId, -1);
-            menu.Items.Add(up);
-            var down = new MenuItem { Header = "Move down" };
-            down.Click += (s, e) => MoveRule(ruleId, +1);
-            menu.Items.Add(down);
-            if (canRemove)
-            {
-                menu.Items.Add(new Separator());
-                var remove = new MenuItem { Header = "Remove" };
-                remove.Click += (s, e) => RemoveRule(ruleId);
-                menu.Items.Add(remove);
-            }
-            return menu;
-        }
-
-        // Enter / Space open (or close) a focused row's editor — the keyboard equivalent of
-        // clicking the header; Alt+Up / Alt+Down reorder it (accessibility + drag fallback).
-        private void RowKeyDown(string ruleId, KeyEventArgs e)
-        {
-            if (e.Key == Key.Enter || e.Key == Key.Space)
-            {
-                ToggleExpanded(ruleId);   // no-ops on a degraded row (not editable)
-                e.Handled = true;
-                return;
-            }
-            if ((Keyboard.Modifiers & ModifierKeys.Alt) == 0)
-                return;
-            if (e.Key == Key.Up || e.SystemKey == Key.Up)
-            {
-                MoveRule(ruleId, -1);
-                e.Handled = true;
-            }
-            else if (e.Key == Key.Down || e.SystemKey == Key.Down)
-            {
-                MoveRule(ruleId, +1);
-                e.Handled = true;
-            }
-        }
-
-        // ── Reorder: mouse drag on the ⠿ handle ───────────────────────────
-
-        private void AttachDragHandle(UIElement handle, string ruleId)
-        {
-            handle.MouseLeftButtonDown += (s, e) =>
-            {
-                _dragRuleId = ruleId;
-                _dragStart = e.GetPosition(panelTriggerRows);
-                _dragging = false;
-                _dragHandle = handle;
-                handle.CaptureMouse();
-                e.Handled = true;
-            };
-            handle.MouseMove += HandleDragMove;
-            handle.MouseLeftButtonUp += HandleDragUp;
-        }
-
-        private void HandleDragMove(object sender, MouseEventArgs e)
-        {
-            if (_dragHandle == null || e.LeftButton != MouseButtonState.Pressed)
-                return;
-            var pos = e.GetPosition(panelTriggerRows);
-            if (!_dragging)
-            {
-                if (Math.Abs(pos.Y - _dragStart.Y) < 5)
-                    return;
-                _dragging = true;
-            }
-            ShowDropIndicator(ComputeDropIndex(pos.Y));
-        }
-
-        private void HandleDragUp(object sender, MouseButtonEventArgs e)
-        {
-            var handle = _dragHandle;
-            _dragHandle = null;
-            handle?.ReleaseMouseCapture();
-
-            bool wasDragging = _dragging;
-            string id = _dragRuleId;
-            double y = e.GetPosition(panelTriggerRows).Y;
-            _dragging = false;
-            _dragRuleId = null;
-            RemoveDropIndicator();
-            e.Handled = true;
-
-            if (wasDragging && id != null)
-                CommitDrag(id, ComputeDropIndex(y));
-        }
-
-        // The insertion slot (0..ruleCount) the cursor Y falls at, using each rule row's
-        // vertical midpoint.
-        private int ComputeDropIndex(double y)
-        {
-            for (int i = 0; i < _ruleRowOrder.Count; i++)
-            {
-                var el = _ruleRowOrder[i].Value;
-                double top, height;
-                if (!TryRowBounds(el, out top, out height))
-                    continue;
-                if (y < top + height / 2.0)
-                    return i;
-            }
-            return _ruleRowOrder.Count;
-        }
-
-        private bool TryRowBounds(FrameworkElement el, out double top, out double height)
-        {
-            top = 0;
-            height = 0;
-            try
-            {
-                if (!el.IsVisible)
-                    return false;
-                var t = el.TransformToAncestor(panelTriggerRows);
-                top = t.Transform(new Point(0, 0)).Y;
-                height = el.ActualHeight;
-                return height > 0;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private void ShowDropIndicator(int slot)
-        {
-            RemoveDropIndicator();
-            _dropIndicator = new Rectangle
-            {
-                Height = 2,
-                Fill = DisplayPalette.AccentBg,
-                Margin = new Thickness(2, 0, 2, 0),
-            };
-            int at = Math.Max(0, Math.Min(slot, _ruleRowOrder.Count));
-            // Rule rows occupy the first children; the base row follows. Insert the
-            // indicator just above the row at `slot` (or above the base row at the end).
-            at = Math.Min(at, panelTriggerRows.Children.Count);
-            panelTriggerRows.Children.Insert(at, _dropIndicator);
-        }
-
-        private void RemoveDropIndicator()
-        {
-            if (_dropIndicator != null)
-            {
-                panelTriggerRows.Children.Remove(_dropIndicator);
-                _dropIndicator = null;
-            }
-        }
-
-        private void CommitDrag(string ruleId, int slot)
-        {
-            int from = IndexOfRule(ruleId);
-            if (from < 0)
-                return;
-            int desired = slot <= from ? slot : slot - 1;
-            int delta = desired - from;
-            if (delta == 0)
-                return;
-            MoveRule(ruleId, delta);
-        }
-
         // ── Small helpers ─────────────────────────────────────────────────
 
+        // The rule's current index in the edit model (== its position among the table's rule
+        // rows), used to translate a table RowMoved(newIndex) into a relative move.
         private int IndexOfRule(string ruleId)
         {
             var rules = _editModel.Rules;
@@ -1496,17 +962,6 @@ namespace FanaBridge.UI.Display
                     e.Handled = true;
                 }
             };
-        }
-
-        // The plain remainder of a structured row after the property: "> 10 → Fuel / ERS / DRS".
-        private static string RestText(TriggerRowModel row)
-        {
-            string s = row.Operator ?? "";
-            if (!string.IsNullOrEmpty(row.ValueText))
-                s = s.Length > 0 ? s + " " + row.ValueText : row.ValueText;
-            if (!string.IsNullOrEmpty(row.TargetText))
-                s = s.Length > 0 ? s + " → " + row.TargetText : "→ " + row.TargetText;
-            return s;
         }
 
         private static TextBlock KLabel(string text)
