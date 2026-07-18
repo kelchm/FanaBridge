@@ -15,7 +15,7 @@ namespace FanaBridge.Display.Drivers
     /// subscription-report parsing — lives in <see cref="ItmTelemetry"/> (Protocol, no SimHub).
     /// This class knows both sides (wire <c>paramId</c> + SimHub <c>GameData</c>), which is why
     /// it belongs in Adapters, not Protocol. It holds no wire framing and no state — the pure,
-    /// per-frame translation step, the ITM analogue of <c>FanatecDisplayDriver</c>'s reads.
+    /// per-frame translation step, the ITM analogue of <c>LegacyDisplayDriver</c>'s reads.
     /// </summary>
     public static class ItmTelemetryMapper
     {

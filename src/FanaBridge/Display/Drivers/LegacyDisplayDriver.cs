@@ -12,7 +12,7 @@ namespace FanaBridge.Display.Drivers
     /// Driven by a typed <see cref="DisplaySettings"/> so this can be owned by
     /// either the plugin or a DeviceInstance — no dependency on FanatecPluginSettings.
     /// </summary>
-    public class FanatecDisplayDriver
+    public class LegacyDisplayDriver
     {
         private readonly DisplayEncoder _display;
         private DisplaySettings _settings;
@@ -41,7 +41,7 @@ namespace FanaBridge.Display.Drivers
         // be inferred from the data itself.
         private bool _needExitBlank;
 
-        public FanatecDisplayDriver(DisplayEncoder display, DisplaySettings settings)
+        public LegacyDisplayDriver(DisplayEncoder display, DisplaySettings settings)
         {
             _display = display;
             _settings = settings ?? new DisplaySettings();

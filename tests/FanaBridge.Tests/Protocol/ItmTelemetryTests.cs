@@ -14,7 +14,7 @@ namespace FanaBridge.Tests.Protocol
 {
     public class ItmTelemetryTests
     {
-        // ── GameData construction (see FanatecDisplayDriverTests) ─────────
+        // ── GameData construction (see LegacyDisplayDriverTests) ─────────
         // StatusDataBase is abstract with internal setters; its only concrete
         // subclass is StatusData<T>. Close it over object, create uninitialized,
         // and drive the internal setters by reflection.

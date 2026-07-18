@@ -11,7 +11,7 @@ using Xunit;
 
 namespace FanaBridge.Tests.Display
 {
-    public class FanatecDisplayDriverTests
+    public class LegacyDisplayDriverTests
     {
         // ── Test stub ────────────────────────────────────────────────────
 
@@ -64,11 +64,11 @@ namespace FanaBridge.Tests.Display
 
         // ── Helpers ──────────────────────────────────────────────────────
 
-        private static FanatecDisplayDriver MakeDriver(RecordingTransport transport, string mode)
+        private static LegacyDisplayDriver MakeDriver(RecordingTransport transport, string mode)
         {
             var encoder = new DisplayEncoder(transport);
             var settings = new DisplaySettings { DisplayMode = mode };
-            return new FanatecDisplayDriver(encoder, settings);
+            return new LegacyDisplayDriver(encoder, settings);
         }
 
         // StatusDataBase is abstract with internal setters, so it can't be
@@ -125,7 +125,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void DisplayMode_DefaultsToGear_WhenSettingsNull()
         {
-            var driver = new FanatecDisplayDriver(new DisplayEncoder(new RecordingTransport()), null);
+            var driver = new LegacyDisplayDriver(new DisplayEncoder(new RecordingTransport()), null);
             Assert.Equal("Gear", driver.DisplayMode);
         }
 

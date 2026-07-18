@@ -53,7 +53,7 @@ namespace FanaBridge.Adapters
         private bool _pendingLedDefaults;
 
         // Display manager — null when the wheel has no display.
-        private FanatecDisplayDriver _displayManager;
+        private LegacyDisplayDriver _legacyDriver;
         private DisplaySettings _displaySettings = new DisplaySettings();
 
         // Late accessor over _displaySettings, handed to the runtime's per-frame Tick so the
@@ -270,7 +270,7 @@ namespace FanaBridge.Adapters
 
             // The legacy col01 display driver holds its encoder for life — recreate it
             // lazily (DataUpdate builds it on demand from the live plugin).
-            _displayManager = null;
+            _legacyDriver = null;
             // The ITM session's driver-adjacent objects (driver, twin, rule stack, status
             // line, published envelope) are all invalidated by the generation swap — the
             // runtime drops them and nulls the envelope the instant the driver is
@@ -456,7 +456,7 @@ namespace FanaBridge.Adapters
                 : DisplayConfigSerializer.Load(displayCustomization.ToString(),
                     msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg)));
 
-            _displayManager?.UpdateSettings(_displaySettings);
+            _legacyDriver?.UpdateSettings(_displaySettings);
         }
 
         public override void DataUpdate(PluginManager pluginManager, ref GameData data)
@@ -488,7 +488,7 @@ namespace FanaBridge.Adapters
                     "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                     "]: Lost connection");
 
-                _displayManager?.Clear();
+                _legacyDriver?.Clear();
                 // The ITM session went cold: stop the driver, cold-start the twin, drop
                 // the rule stack + status line, and republish the (now null) envelope —
                 // the per-frame Tick below is unreachable while disconnected.
@@ -526,7 +526,7 @@ namespace FanaBridge.Adapters
             // waiting for the next value change.
             bool displayTest = plugin.DisplayTestActive;
             if (!displayTest && _displayTestWasActive)
-                _displayManager?.Clear();
+                _legacyDriver?.Clear();
             _displayTestWasActive = displayTest;
 
             // Resolve THIS descriptor's caps override-aware — the same rule the
@@ -549,7 +549,7 @@ namespace FanaBridge.Adapters
                 {
                     _displaySettings = DisplaySettingsCodec.Read(
                         _customSettings ?? new JObject(), itmCapableNow);
-                    _displayManager?.UpdateSettings(_displaySettings);
+                    _legacyDriver?.UpdateSettings(_displaySettings);
                     _migratedItmCapable = itmCapableNow;
                 }
             }
@@ -590,19 +590,19 @@ namespace FanaBridge.Adapters
                     {
                         if (_displaySettings.LegacyPageActive)
                         {
-                            if (_displayManager == null)
-                                _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
+                            if (_legacyDriver == null)
+                                _legacyDriver = new LegacyDisplayDriver(plugin.Display, _displaySettings);
                             if (!displayTest)
-                                _displayManager.Update(data);
+                                _legacyDriver.Update(data);
                             _legacyBlanked = false;
                         }
-                        else if (_displayManager != null && !_legacyBlanked && !displayTest)
+                        else if (_legacyDriver != null && !_legacyBlanked && !displayTest)
                         {
                             // Switched to None / Off — blank the legacy page once. Only latch
                             // when the blanking write was accepted, so a transient
                             // transport failure gets retried instead of leaving the
                             // page frozen on its last value.
-                            _legacyBlanked = _displayManager.Clear();
+                            _legacyBlanked = _legacyDriver.Clear();
                         }
                     }
                     catch (Exception ex)
@@ -626,21 +626,21 @@ namespace FanaBridge.Adapters
                 {
                     if (_displaySettings.LegacyPageActive)
                     {
-                        if (_displayManager == null)
+                        if (_legacyDriver == null)
                         {
-                            _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
+                            _legacyDriver = new LegacyDisplayDriver(plugin.Display, _displaySettings);
                             SimHub.Logging.Current.Info(
                                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                                 "]: Created display manager");
                         }
 
                         if (!displayTest)
-                            _displayManager.Update(data);
+                            _legacyDriver.Update(data);
                         _legacyBlanked = false;
                     }
-                    else if (_displayManager != null && !_legacyBlanked && !displayTest)
+                    else if (_legacyDriver != null && !_legacyBlanked && !displayTest)
                     {
-                        _legacyBlanked = _displayManager.Clear();
+                        _legacyBlanked = _legacyDriver.Clear();
                     }
                 }
                 catch (Exception ex)
@@ -727,7 +727,7 @@ namespace FanaBridge.Adapters
             DisplaySettingsCodec.Write(_customSettings, _displaySettings);
             // Write bakes displayControl — migration is closed until the next load.
             _migratedItmCapable = null;
-            _displayManager?.UpdateSettings(_displaySettings);
+            _legacyDriver?.UpdateSettings(_displaySettings);
             // ITM driver reads _displaySettings live each frame.
         }
 
@@ -791,7 +791,7 @@ namespace FanaBridge.Adapters
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: End called");
 
             PluginResolver()?.UnregisterDeviceInstance(this);
-            _displayManager?.Clear();
+            _legacyDriver?.Clear();
             // The ITM session ends: the runtime stops the driver, detaches + drops the
             // twin, and republishes so the envelope composes a null values part (DataUpdate
             // won't run again for this instance).
