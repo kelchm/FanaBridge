@@ -203,10 +203,7 @@ namespace FanaBridge.UI.Display
             segMode.SelectionChanged += (s, id) =>
                 SetDisplayControl(DisplayModeHeaderModel.ControlForSegment(id));
 
-            // Option controls — identical semantics to the old Screen tab. "None"
-            // (legacy page off) is an ITM-only display-mode choice.
-            cmbItemNone.Visibility = _isItm ? Visibility.Visible : Visibility.Collapsed;
-            SelectByTag(cmbDisplayMode, _settings.DisplayMode ?? DisplaySettings.DefaultMode);
+            // Option controls — identical semantics to the old Screen tab.
             // chkShowLapTotal / chkShowPositionTotal retired (Phase 6b) — format lives in
             // the Pages editor; settings booleans remain for one-release migration.
             // _isItm and the default-page table below are read once, at bind, from the host's
@@ -214,15 +211,15 @@ namespace FanaBridge.UI.Display
             // values each frame; this bind-time layout is NOT re-derived if the resolved caps
             // change while the tab stays open (an override applied after a reconnect) — a known
             // limitation until the Display tab is split into per-view controls.
+            // DisplayMode combo retired (Phase 9b) — legacy content is authored as virtual
+            // pages; the frozen DisplayMode setting is storage-only for flag-off revert.
             PopulateDefaultPages(host.ItmDeviceId);
             SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
 
             // ITM wheels get the mode header (via NavigateTo — it shows on Overview
             // only, plus whenever control is Off); the info banner and ITM options are
             // mode-dependent chrome owned by UpdateModeState below. Basic-display wheels
-            // get only the (7-segment) Display Mode section — the same information as
-            // the old panel — unless they are trapped in Off.
-            sectionDisplayMode.Title = _isItm ? "Legacy Display Mode" : "Display Mode";
+            // land on the legacy Overview (virtual pages + triggers) unless Off.
             ApplyLegacyFaceHost();
 
             NavigateTo(TabView.Overview);
@@ -286,7 +283,6 @@ namespace FanaBridge.UI.Display
                 panelLegacyLive.Visibility = Visibility.Collapsed;
                 borderItmInfo.Visibility = Visibility.Collapsed;
                 sectionItmOptions.Visibility = Visibility.Collapsed;
-                sectionDisplayMode.Visibility = Visibility.Collapsed;
             }
             else
             {
@@ -307,12 +303,10 @@ namespace FanaBridge.UI.Display
 
                 // The info banner and ITM options are ITM-world chrome: shown only while
                 // the ITM Overview is up, not alongside the legacy Overview in Legacy-only
-                // control. The (Legacy) Display Mode section stays — it picks the fallback
-                // face when the legacy rule world is empty.
+                // control. Legacy content is authored under Virtual pages.
                 var itmChrome = itmUi ? Visibility.Visible : Visibility.Collapsed;
                 borderItmInfo.Visibility = itmChrome;
                 sectionItmOptions.Visibility = itmChrome;
-                sectionDisplayMode.Visibility = Visibility.Visible;
 
                 panelDefaultPage.IsEnabled = _settings.ItmActive;
             }
@@ -398,23 +392,6 @@ namespace FanaBridge.UI.Display
 
         // ── Option controls (settings semantics identical to the old tab) ─
 
-        private void CmbDisplayMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (_suppressEvents || _settings == null)
-                return;
-
-            if (cmbDisplayMode.SelectedItem is ComboBoxItem selected)
-            {
-                _settings.DisplayMode = (string)selected.Tag;
-                _host?.NotifySettingsChanged();
-                // The legacy Overview reads this setting (caption fallback and the
-                // LegacyPageActive face gate) but the poll loop only re-renders on
-                // snapshot/status changes — refresh now so a None ↔ mode flip shows
-                // immediately (same pattern as the default-page RenderMonitor refresh).
-                RenderLegacyOverview(_lastSnapshot);
-            }
-        }
-
         private void CmbDefaultPage_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_suppressEvents || _settings == null)
@@ -431,18 +408,6 @@ namespace FanaBridge.UI.Display
                 // keeps showing the engine's actual base until the next rebuild rather
                 // than a page the engine isn't using yet.
                 RenderMonitor(_lastSnapshot);
-            }
-        }
-
-        private static void SelectByTag(ComboBox combo, string tag)
-        {
-            foreach (ComboBoxItem item in combo.Items)
-            {
-                if ((string)item.Tag == tag)
-                {
-                    combo.SelectedItem = item;
-                    return;
-                }
             }
         }
 
@@ -517,10 +482,8 @@ namespace FanaBridge.UI.Display
             // reads a stale control and option edits mutate an orphaned object.
             _settings = _host.DisplaySettings ?? _settings;
             _suppressEvents = true;
-            cmbItemNone.Visibility = _isItm ? Visibility.Visible : Visibility.Collapsed;
             // Mode-dependent chrome (info banner, ITM options, live panels) is re-derived
             // by the UpdateModeState call below for the new caps.
-            sectionDisplayMode.Title = _isItm ? "Legacy Display Mode" : "Display Mode";
             ApplyLegacyFaceHost();
             PopulateDefaultPages(id);
             SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
@@ -628,10 +591,9 @@ namespace FanaBridge.UI.Display
         }
 
         // Legacy Overview (basic wheels; ITM wheels in Legacy-only control): face from
-        // last-sent segments (rule path) or caption fallback (mode-based face), plus the
-        // legacy Monitor priority list. LegacyPageActive gates the face — with the page
-        // off (ITM wheel, DisplayMode "None") the stack resolves segments for the
-        // snapshot only and the mirror must not paint what the wire never wrote.
+        // last-sent segments (rule path) or caption fallback (frozen DisplayMode under
+        // flag-off), plus the legacy Monitor priority list. LegacyPageActive gates the
+        // face — Off blanks the mirror so it does not paint what the wire never wrote.
         private void RenderLegacyOverview(DisplayRuleSnapshot snapshot)
         {
             if (_host == null || panelLegacyLive.Visibility != Visibility.Visible)
@@ -643,6 +605,7 @@ namespace FanaBridge.UI.Display
             else
                 _legacyFace.Render(SevenSegmentFaceRender.BlankFrame());
 
+            // displayMode fallback stays for flag-off honesty (frozen storage, no UI write).
             txtLegacyCaption.Text = DisplayShellRouting.LegacyMirrorCaption(
                 snapshot?.LegacyScreenName, _settings?.DisplayMode, pageActive);
 

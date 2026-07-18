@@ -173,7 +173,7 @@
                             Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
                             CornerRadius="4" Padding="10,8" Margin="0,0,0,12">
                         <TextBlock Foreground="#AADDFF" FontSize="12" TextWrapping="Wrap">
-                            &#x2139;  This wheel has an ITM telemetry display — FanaBridge shows live SimHub telemetry on its pages (speed, gear, lap times, tire temps, and more). Pick the page each game starts on below, and use the wheel's display button to switch pages while driving. Its legacy page shows the simple gear/speed display picked under Legacy Display Mode; choose "None" to leave that off.
+                            &#x2139;  This wheel has an ITM telemetry display — FanaBridge shows live SimHub telemetry on its pages (speed, gear, lap times, tire temps, and more). Pick the page each game starts on below, and use the wheel's display button to switch pages while driving. Its legacy page shows the virtual pages you set up under Legacy screens.
                         </TextBlock>
                     </Border>
 
@@ -189,7 +189,7 @@
                                           SelectionChanged="CmbDefaultPage_SelectionChanged"
                                           Width="220" HorizontalAlignment="Left" />
                                 <TextBlock Foreground="#999999" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0">
-                                    The display returns to this page each time a game starts. Use the wheel's display button to switch pages while driving; the next game starts back here. Pick the legacy gear/speed page here if you'd rather start on that.
+                                    The display returns to this page each time a game starts. Use the wheel's display button to switch pages while driving; the next game starts back here. Pick the legacy page here if you'd rather start on that.
                                 </TextBlock>
                             </StackPanel>
 
@@ -284,20 +284,6 @@
                             </TextBlock>
                         </StackPanel>
                     </StackPanel>
-
-                    <!-- 7-segment display mode. Titled "Legacy Display Mode" (with a "None"
-                         option) on ITM wheels; plain "Display Mode" on basic wheels. -->
-                    <styles:SHSubSection x:Name="sectionDisplayMode" Title="Display Mode">
-                        <ComboBox x:Name="cmbDisplayMode"
-                                  SelectionChanged="CmbDisplayMode_SelectionChanged"
-                                  Width="200" HorizontalAlignment="Left">
-                            <ComboBoxItem x:Name="cmbItemNone" Content="None" Tag="None" Visibility="Collapsed" />
-                            <ComboBoxItem Content="Gear" Tag="Gear" />
-                            <ComboBoxItem Content="Speed" Tag="Speed" />
-                            <ComboBoxItem Content="Gear + Speed" Tag="GearAndSpeed" />
-                            <ComboBoxItem Content="Gear + Upshift Brackets" Tag="GearUpshiftBrackets" />
-                        </ComboBox>
-                    </styles:SHSubSection>
                 </StackPanel>
 
                 <!-- Triggers editor (its own UserControl; the shell binds it and routes

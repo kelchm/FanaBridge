@@ -608,11 +608,11 @@ namespace FanaBridge.Adapters
 
                 if (itmOk)
                 {
-                    // Optionally also drive the legacy 7-segment gear/speed over col01. On an
-                    // ITM OLED (e.g. PBME) the firmware renders this on its legacy page. This
-                    // adds col01 traffic interleaved with col03 ITM, which can destabilise the
-                    // firmware under load, so it is opt-in — the "Legacy Display Mode" dropdown,
-                    // where "None" leaves it off.
+                    // Optionally also drive the legacy page over col01. On an ITM OLED
+                    // (e.g. PBME) the firmware renders this on its legacy page. This adds
+                    // col01 traffic interleaved with col03 ITM, which can destabilise the
+                    // firmware under load, so it is opt-in — an empty legacy world (no
+                    // virtual pages) leaves it off.
                     //
                     // Guarded exactly as this drive was before the ITM body moved into the
                     // runtime: it shared the runtime's ITM try/catch then, so a col01
