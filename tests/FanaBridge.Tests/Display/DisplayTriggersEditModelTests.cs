@@ -395,12 +395,15 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void PageOptions_ExcludesTheLegacyPage()
+        public void PageOptions_IncludesTheFullDeviceSet_LegacyPageToo()
         {
+            // Page 6 is a real page: a rule may target it (its CONTENT is still authored
+            // as virtual pages on the legacy rule set).
             var model = new DisplayTriggersEditModel(null, Device3);
             var pages = model.PageOptions();
-            Assert.DoesNotContain(ItmPage.Legacy, pages);
+            Assert.Contains(ItmPage.Legacy, pages);
             Assert.Contains(ItmPage.CarSettings, pages);   // device 3 has it
+            Assert.Equal(ItmPage.Legacy, pages[pages.Count - 1]);   // catalog order: last
         }
 
         // ── Row model ─────────────────────────────────────────────────────

@@ -822,15 +822,16 @@ namespace FanaBridge.UI.Display
             return builder.Selected(selected);
         }
 
-        /// <summary>The single-page SHOW options this device offers (legacy page excluded —
-        /// virtual pages are authored on the legacy rule set). Content identities, resolved
-        /// to wire numbers at the edge. ITM mode only.</summary>
+        /// <summary>The single-page SHOW options this device offers — the full device
+        /// page set INCLUDING the legacy page (kelchm 2026-07-18: page 6 is a real page
+        /// and belongs in the options; its CONTENT is still authored on the legacy rule
+        /// set / virtual pages). Content identities, resolved to wire numbers at the
+        /// edge. ITM mode only.</summary>
         public IReadOnlyList<ItmPage> PageOptions()
         {
             var result = new List<ItmPage>();
             foreach (var p in _pageTable.Pages)
-                if (p.Page != ItmPage.Legacy)
-                    result.Add(p.Page);
+                result.Add(p.Page);
             return result;
         }
 
