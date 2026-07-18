@@ -143,8 +143,15 @@ namespace FanaBridge.Display.Drivers
                 && seg2 == SevenSegment.Blank;
             if (!blankFrame)
                 _needExitBlank = true;
-            else if (!_hasLastSegments)
-                return true;   // nothing of ours on the page — never write a first blank
+            else if (!_hasLastSegments && !_needExitBlank)
+            {
+                // Nothing of ours on the page AND nothing pending to clear — never
+                // write a first blank. (_hasLastSegments alone is not "page clean":
+                // Clear() resets it even when its write was DECLINED, and display-test
+                // residue arms the latch without segments — both must let the blank
+                // through so it retries until accepted.)
+                return true;
+            }
 
             if (_hasLastSegments
                 && seg0 == _lastSeg0 && seg1 == _lastSeg1 && seg2 == _lastSeg2

@@ -560,6 +560,34 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void DeclinedHandbackClear_RulePathIdleBlank_RetriesUntilAccepted()
+        {
+            // Display-test handback: Clear() declined (residue still on the wheel)
+            // and the instance arms the exit-blank latch. Clear() reset
+            // _hasLastSegments even though nothing was cleared — the first-blank
+            // no-op must NOT swallow the rule path's idle blank while the latch is
+            // armed, or the residue stays frozen forever.
+            var h = Harness.Create(SpeedScreenConfig);
+            h.Control.Land(1);
+
+            h.Transport.SendReturns = false;
+            Assert.False(h.Driver.Clear());          // declined handback blank
+            h.Driver.ArmExitBlank();                 // instance's decline path
+            h.Transport.SentCol01Reports.Clear();
+            h.Transport.SendReturns = true;
+
+            h.Tick(Idle());                          // dynamic base → blank resolve
+            Assert.Single(h.Transport.SentCol01Reports);
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
+                h.Transport.LastSegments);
+            Assert.False(h.Driver.NeedsExitBlank);   // accepted blank cleared the latch
+
+            h.Tick(Idle());                          // then silence
+            Assert.Single(h.Transport.SentCol01Reports);
+        }
+
+        [Fact]
         public void ScrollEffect_TicksAtIdle()
         {
             // Effects run on the stack clock, game or not — a scrolling message
