@@ -36,6 +36,8 @@ namespace FanaBridge.Display.Host
                 ItmShowLapTotal = (bool?)source["itmShowLapTotal"] ?? DisplaySettings.DefaultShowLapTotal,
                 ItmShowPositionTotal = (bool?)source["itmShowPositionTotal"] ?? DisplaySettings.DefaultShowPositionTotal,
                 ItmDefaultPage = (byte?)source["itmDefaultPage"] ?? DisplaySettings.DefaultItmDefaultPage,
+                // Absent key = false so fresh / pre-9a blobs still run the mode→world step.
+                LegacyModeMigrated = (bool?)source["legacyModeMigrated"] ?? false,
             };
         }
 
@@ -59,6 +61,8 @@ namespace FanaBridge.Display.Host
             destination["itmShowLapTotal"] = settings.ItmShowLapTotal;
             destination["itmShowPositionTotal"] = settings.ItmShowPositionTotal;
             destination["itmDefaultPage"] = settings.ItmDefaultPage;
+            // Always emit so a save after migration cannot re-synthesize on next load.
+            destination["legacyModeMigrated"] = settings.LegacyModeMigrated;
         }
 
         public static void WriteDefaults(JObject destination, bool itmCapable)
@@ -82,6 +86,8 @@ namespace FanaBridge.Display.Host
             destination["itmShowLapTotal"] = DisplaySettings.DefaultShowLapTotal;
             destination["itmShowPositionTotal"] = DisplaySettings.DefaultShowPositionTotal;
             destination["itmDefaultPage"] = DisplaySettings.DefaultItmDefaultPage;
+            // Omit: absent = false so LoadDefaultSettings still migrates the default Gear.
+            destination.Remove("legacyModeMigrated");
         }
 
         private static string CanonicalControl(string value)

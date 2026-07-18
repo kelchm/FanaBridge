@@ -56,7 +56,15 @@ namespace FanaBridge.Tests.Display
                 return true;
             }
 
-            public bool SendCol01(byte[] data) => true;
+            public List<byte[]> SentCol01 { get; } = new List<byte[]>();
+
+            public bool SendCol01(byte[] data)
+            {
+                var copy = new byte[data.Length];
+                Array.Copy(data, copy, data.Length);
+                SentCol01.Add(copy);
+                return true;
+            }
             public IReportStream IdentityReports => Identity;
             public IReportStream ItmReports => Itm;
             public IReportStream SrmReports => FakeReportStream.Empty;
@@ -183,8 +191,10 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void LoadDefaultSettings_DropsTheConfig()
+        public void LoadDefaultSettings_SynthesizesMigratedGearWorld()
         {
+            // Phase 9a: fresh defaults migrate the default Gear mode into a virtual page
+            // (replaces the empty-config ClearConfig path for col01).
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;
 
@@ -192,13 +202,22 @@ namespace FanaBridge.Tests.Display
             inst.LoadDefaultSettings();
 
             var saved = (JObject)inst.GetSettings(false, false);
-            Assert.Null(saved["displayCustomization"]);
+            var doc = saved["displayCustomization"] as JObject;
+            Assert.NotNull(doc);
+            var reloaded = DisplayConfigSerializer.Load(doc!.ToString(), _ => { });
+            Assert.True(DisplayRuleStack.HasLegacyWorld(reloaded));
+            Assert.Single(reloaded.Legacy.Screens);
+            Assert.Equal(LegacyContentKind.Gear, reloaded.Legacy.Screens[0].ContentKind);
+            Assert.Equal("Gear", reloaded.Legacy.Screens[0].Name);
+            Assert.Empty(reloaded.Itm.Rules);
+            Assert.True((bool)saved["legacyModeMigrated"]!);
         }
 
         [Fact]
-        public void SetSettings_WithoutTheKey_ClearsAnEarlierConfig()
+        public void SetSettings_WithoutTheKey_MigratesDefaultGearWorld()
         {
-            // A settings payload is authoritative: no key = no customization.
+            // A settings payload is authoritative: no key = empty document input, then
+            // Phase 9a migration synthesizes the frozen mode (default Gear) into a page.
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;
 
@@ -206,7 +225,12 @@ namespace FanaBridge.Tests.Display
             inst.SetSettings(new JObject { ["wheelType"] = "PSWBMW" }, false);
 
             var saved = (JObject)inst.GetSettings(false, false);
-            Assert.Null(saved["displayCustomization"]);
+            var doc = saved["displayCustomization"] as JObject;
+            Assert.NotNull(doc);
+            var reloaded = DisplayConfigSerializer.Load(doc!.ToString(), _ => { });
+            Assert.Single(reloaded.Legacy.Screens);
+            Assert.Equal(LegacyContentKind.Gear, reloaded.Legacy.Screens[0].ContentKind);
+            Assert.True((bool)saved["legacyModeMigrated"]!);
         }
 
         // ── IsEmpty (the parity gate's switch) ───────────────────────────
@@ -399,20 +423,23 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void EmptyConfig_FramePathIsByteIdentical_AndBuildsNothing()
+        public void MigratedDefault_Col03FramePathIsByteIdentical_ToPreFeature()
         {
-            // (a) no displayCustomization key at all.
+            // Phase 9a: a migrated-default user (Gear world, no ITM rules/fieldMappings)
+            // must produce col03 sequences byte-identical to the pre-feature build.
+            // The legacy stack now exists; ITM page policy stays built-in.
+            // (a) no displayCustomization key → migration synthesizes Gear.
             var baseline = RunScriptedSession(
                 new JObject { ["wheelType"] = "CSSWFORMV3" }, out var instA);
 
-            // (b) an explicitly empty document.
+            // (b) an explicitly empty document → same synthesis.
             var withEmptyDoc = RunScriptedSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
                 ["displayCustomization"] = new JObject(),
             }, out var instB);
 
-            // (c) an explicit empty fieldMappings object — still IsEmpty, still parity.
+            // (c) empty fieldMappings only → synthesis grafts Gear, still no ITM rules.
             var withEmptyMappings = RunScriptedSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
@@ -430,14 +457,39 @@ namespace FanaBridge.Tests.Display
             // Byte parity: identical frame sequences, frame for frame.
             Assert.Equal(AsHex(baseline), AsHex(withEmptyDoc));
             Assert.Equal(AsHex(baseline), AsHex(withEmptyMappings));
+            // Absolute golden still holds for the migrated-default arm.
+            Assert.Equal(GoldenFrames, AsHex(baseline));
 
-            // And no piece of the rules runtime was constructed in either run.
-            Assert.Null(instA.DisplayStackForTest);
-            Assert.Null(instB.DisplayStackForTest);
-            Assert.Null(instC.DisplayStackForTest);
-            Assert.Null(instA.DisplayRuleSnapshot);
-            Assert.Null(instB.DisplayRuleSnapshot);
-            Assert.Null(instC.DisplayRuleSnapshot);
+            // Legacy stack exists (Gear world); ITM page policy is NOT taken over.
+            Assert.NotNull(instA.DisplayStackForTest);
+            Assert.NotNull(instB.DisplayStackForTest);
+            Assert.NotNull(instC.DisplayStackForTest);
+            Assert.True(DisplayRuleStack.HasLegacyWorld(instA.DisplayStackForTest!.Config));
+            Assert.False(instA.ItmDisplayForTest!.HasExternalPagePolicy);
+            Assert.False(instB.ItmDisplayForTest!.HasExternalPagePolicy);
+            Assert.False(instC.ItmDisplayForTest!.HasExternalPagePolicy);
+        }
+
+        [Fact]
+        public void MigratedLegacyOnly_ItmActive_HasExternalPagePolicyFalse()
+        {
+            // Page-policy pin: migrated Gear-world-only + ItmActive must leave built-in
+            // page policy (live default-page semantics) untouched.
+            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            var running = Data(NewStatus());
+            s.Frame(running);
+            s.Frame(running);
+
+            Assert.True(((IDisplayPanelHost)s.Instance).DisplaySettings.ItmActive);
+            Assert.NotNull(s.Instance.DisplayStackForTest);
+            Assert.True(DisplayRuleStack.HasLegacyWorld(s.Instance.DisplayStackForTest!.Config));
+            Assert.Equal(0, s.Instance.DisplayStackForTest.Config.Itm?.Rules?.Count ?? 0);
+
+            var driver = s.Instance.ItmDisplayForTest;
+            Assert.NotNull(driver);
+            Assert.False(driver!.HasExternalPagePolicy);
+            Assert.Equal(DisplaySettings.DefaultItmDefaultPage, driver.Lifecycle.DefaultPage);
+            Assert.True(driver.Lifecycle.GameStartPageRevert);
         }
 
         [Fact]
@@ -609,8 +661,8 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void EmptyConfig_DriverPagePolicyKeepsTheSettings()
         {
-            // No customization: stock behavior — the setting is the default page and
-            // the lifecycle's game-start revert stays on.
+            // Migrated Gear world (no ITM rules): stock ITM page policy — the setting is
+            // the default page and the lifecycle's game-start revert stays on.
             var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
             var running = Data(NewStatus());
             s.Frame(running);
@@ -681,24 +733,70 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void ApplyDisplayConfig_ReachesTheFramePath()
         {
+            // Migrated default already has a Gear-world stack; apply a richer ITM config
+            // and confirm the frame path rebuilds, then empty tears it down.
             var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
             var running = Data(NewStatus());
             s.Frame(running);
-            Assert.Null(s.Instance.DisplayStackForTest);
+            Assert.NotNull(s.Instance.DisplayStackForTest);
+            Assert.True(DisplayRuleStack.HasLegacyWorld(s.Instance.DisplayStackForTest!.Config));
 
             // The UI applies a config: the frame path notices the reference swap and
-            // builds the rule stack, no settings round-trip involved.
+            // rebuilds the rule stack, no settings round-trip involved.
             s.Instance.ApplyDisplayConfig(
                 DisplayConfigSerializer.Load(RuleDocument().ToString(), _ => { }));
             s.Frame(running);
             Assert.NotNull(s.Instance.DisplayStackForTest);
             Assert.NotNull(s.Instance.DisplayRuleSnapshot);
+            Assert.NotEmpty(s.Instance.DisplayStackForTest!.Config.Itm.Rules);
 
             // Applying an empty document tears it back down.
             s.Instance.ApplyDisplayConfig(new DisplayCustomizationConfig());
             s.Frame(running);
             Assert.Null(s.Instance.DisplayStackForTest);
             Assert.Null(s.Instance.DisplayRuleSnapshot);
+        }
+
+        [Fact]
+        public void EmptiedWorldLive_BlanksCol01Once_ThenSilence()
+        {
+            // Flag-on + empty world is silence — but a page the rule path painted this
+            // session must be blanked once when the world empties live (last virtual page
+            // deleted), not left frozen on its final frame.
+            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            var status = NewStatus();
+            Set(status, "Gear", "3");
+            var running = Data(status);
+
+            s.Frame(running);
+            Assert.NotEmpty(s.Transport.SentCol01);   // migrated Gear world painted
+
+            s.Instance.ApplyDisplayConfig(new DisplayCustomizationConfig());
+            int before = s.Transport.SentCol01.Count;
+            s.Frame(running);
+            Assert.Equal(before + 1, s.Transport.SentCol01.Count);   // blank-once
+            s.Frame(running);
+            s.Frame(running);
+            Assert.Equal(before + 1, s.Transport.SentCol01.Count);   // then silence
+        }
+
+        [Fact]
+        public void FrozenNone_EmptyWorld_NeverWritesCol01()
+        {
+            // Fresh session with a frozen "None" mode: nothing is synthesized, the page
+            // was never painted, and col01 must stay untouched across live frames.
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayMode"] = "None",
+            });
+            var status = NewStatus();
+            Set(status, "Gear", "3");
+            var running = Data(status);
+
+            s.Frame(running);
+            s.Frame(running);
+            Assert.Empty(s.Transport.SentCol01);
         }
 
         // ── GetSettingsControls (the Display tab) ────────────────────────
@@ -796,8 +894,9 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void ValuesSnapshot_PublishedWithoutAnyRuleConfig_AndClearedWithTheDriver()
         {
-            // The values snapshot exists for every ITM user — no customization document
-            // required (unlike the rule snapshot, which stays null here).
+            // The values snapshot exists for every ITM user. Phase 9a also migrates a
+            // Gear legacy world, so the rule snapshot is present (legacy-only stack);
+            // ITM page policy stays built-in.
             var session = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
 
             var s = NewStatus();
@@ -821,7 +920,8 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(ItmPage.LapInfo, snap!.Page);
             Assert.Equal("15 /73", Assert.Single(snap.LeftTop!.Fields).Value);
             Assert.Equal("268", snap.SpeedText);
-            Assert.Null(session.Instance.DisplayRuleSnapshot);   // no rules involved
+            Assert.NotNull(session.Instance.DisplayRuleSnapshot); // migrated Gear world
+            Assert.False(session.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
 
             // Switching the display type away from ITM tears the driver down — the
             // values snapshot must go with it (same edge as the ITM status snapshot).
@@ -835,7 +935,7 @@ namespace FanaBridge.Tests.Display
         // ── Display-type teardown ────────────────────────────────────────
 
         [Fact]
-        public void DisplayTypeSwitchAwayFromItm_ClearsTheRuleRuntimeAndSnapshot()
+        public void DisplayTypeSwitchAwayFromItm_ClearsItmSession_LegacyStackMayRemain()
         {
             var s = StartSession(new JObject
             {
@@ -846,11 +946,12 @@ namespace FanaBridge.Tests.Display
             s.Frame(running);
             Assert.NotNull(s.Instance.DisplayStackForTest);
             Assert.NotNull(s.Instance.DisplayRuleSnapshot);
+            Assert.NotNull(s.Instance.ItmDisplayForTest);
 
             // A user profile override switching the device to a basic display takes
-            // effect on the frame path with no restart — the rule runtime AND its
-            // published snapshot must both go with the ITM driver (nothing on the
-            // non-ITM path would ever clear the snapshot afterwards).
+            // effect on the frame path with no restart — the ITM driver goes. The
+            // legacy world (migrated Gear graft + any authored screens) may rebuild
+            // via TickLegacyRules on the basic path.
             var basic = WheelProfileStore.FindByWheelType("PSWBMW");
             Assert.NotNull(basic);
             Assert.NotEqual(DisplayType.Itm, new WheelCapabilities(basic!).Display);
@@ -858,8 +959,11 @@ namespace FanaBridge.Tests.Display
             s.Wheelbase.RefreshCapabilities();
 
             s.Frame(running);
-            Assert.Null(s.Instance.DisplayStackForTest);
-            Assert.Null(s.Instance.DisplayRuleSnapshot);
+            Assert.Null(s.Instance.ItmDisplayForTest);
+            Assert.Null(s.Instance.DisplayValuesSnapshot);
+            // Migrated legacy world keeps a basic-path stack for col01.
+            Assert.NotNull(s.Instance.DisplayStackForTest);
+            Assert.True(DisplayRuleStack.HasLegacyWorld(s.Instance.DisplayStackForTest!.Config));
         }
     }
 }

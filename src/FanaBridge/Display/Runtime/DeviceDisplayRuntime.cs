@@ -614,9 +614,10 @@ namespace FanaBridge.Display.Runtime
                     (config.Legacy?.Rules?.Count ?? 0) + " legacy)");
             }
 
-            // ITM page policy only while ITM is the active world; legacy-only tenure
-            // must not pin the lifecycle to the stack's base.
-            if (settings.ItmActive)
+            // ITM page policy only while ITM is the active world AND the document has
+            // ITM rule content. A migrated-legacy-only stack must not pin the lifecycle
+            // to the stack's base (built-in page policy + live default-page stay).
+            if (settings.ItmActive && (config.Itm?.Rules?.Count ?? 0) > 0)
                 _itmDisplay.SetPagePolicy(_displayStack.BaseWirePage);
             else if (_itmDisplay.HasExternalPagePolicy)
                 _itmDisplay.RestoreBuiltInPagePolicy();

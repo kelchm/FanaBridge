@@ -177,8 +177,15 @@ namespace FanaBridge.Tests.Display
             throw new InvalidOperationException("page not on device 3: " + page);
         }
 
+        // basePage plus a never-firing rule so Rules.Count > 0: Phase 9a takes ITM page
+        // policy only when the document has ITM rule content (not stack existence alone).
         private static JObject ConfigWithBase(string basePage)
-            => JObject.Parse("{ \"schemaVersion\": 1, \"itm\": { \"basePage\": \"" + basePage + "\" } }");
+            => JObject.Parse(
+                "{ \"schemaVersion\": 1, \"itm\": { \"basePage\": \"" + basePage + "\", "
+                + "\"rules\": [ { \"id\": \"never\", "
+                + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } } ] } }");
 
         // Runs a session to push-confirmed sync: bring-up, one confirming push, judge.
         // With no config the sync lands on the setting page (wire 1, Lap Info).

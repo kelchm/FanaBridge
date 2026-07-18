@@ -301,12 +301,41 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(1, h.UpdateCalls);
         }
 
-        // ── Empty world = mode fallback ──────────────────────────────────
+        // ── Empty world (flag-on = silence; flag-off = classic mode) ─────
 
         [Fact]
-        public void EmptyLegacyWorld_ModeUpdateDrives_NoRuleWrites()
+        public void EmptyLegacyWorld_FlagOn_NoModeFallback_Silence()
         {
-            // ITM-only config: HasLegacyWorld is false.
+            // Phase 9a: flag-on + empty legacy world must produce NO mode-driver writes
+            // (None-migrated / deliberately emptied → silence, not the old mode fallback).
+            const string itmOnly =
+                "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"name\": \"Fast\", "
+                + "\"when\": { \"kind\": \"greaterThan\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Speed\" }, \"value\": 100 }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
+
+            var h = Harness.Create(itmOnly, displayMode: "Speed");
+            h.Control.Land(1);
+            Assert.False(DisplayRuleStack.HasLegacyWorld(h.Stack.Config));
+            Assert.True(DisplayRuleStack.LegacyRuleWrites);
+
+            // Device-instance stand-in for flag-on empty world: rule path off, no Update.
+            bool useRulePath = DisplayRuleStack.LegacyRuleWrites
+                && DisplayRuleStack.HasLegacyWorld(h.Stack.Config);
+            Assert.False(useRulePath);
+            h.Tick(Live(speedLocal: 120));
+            // No mode Update — silence.
+            Assert.Empty(h.Transport.SentCol01Reports);
+            Assert.Equal(0, h.UpdateCalls);
+        }
+
+        [Fact]
+        public void EmptyLegacyWorld_FlagOff_ClassicModeFallback_Bytes()
+        {
+            // Flag-off keeps today's classic mode driver (frozen displayMode), including
+            // the mode != None gate that LegacyPageActive no longer carries.
+            DisplayRuleStack.LegacyRuleWrites = false;
             const string itmOnly =
                 "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
                 + "{ \"id\": \"r1\", \"name\": \"Fast\", "
@@ -323,6 +352,109 @@ namespace FanaBridge.Tests.Display
                 (SevenSegment.Digit1, SevenSegment.Digit2, SevenSegment.Digit0),
                 h.Transport.LastSegments);
             Assert.Equal(1, h.UpdateCalls);
+        }
+
+        // ── Migrated mode path vs classic driver byte parity ─────────────
+
+        [Theory]
+        [InlineData("Gear", "1", 0.0, 0.0, 0.0)]
+        [InlineData("Gear", "R", 0.0, 0.0, 0.0)]
+        [InlineData("Speed", "1", 88.0, 0.0, 0.0)]
+        [InlineData("Speed", "1", 120.4, 0.0, 0.0)]
+        [InlineData("GearUpshiftBrackets", "3", 0.0, 5000.0, 0.0)]
+        [InlineData("GearUpshiftBrackets", "3", 0.0, 5000.0, 1.0)]
+        public void MigratedRulePath_TimingFreeModes_ByteIdenticalToClassicDriver(
+            string mode, string gear, double speedLocal, double rpms, double redLine)
+        {
+            // Cross-path: classic mode driver sequence vs migrated rule path for the
+            // same live frame sequence — RecordingTransport both sides.
+            string kind = mode == "GearUpshiftBrackets" ? "gearBrackets"
+                : mode == "Speed" ? "speed" : "gear";
+            string configJson =
+                "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"m1\", "
+                + "\"screens\": [ { \"id\": \"m1\", \"name\": \"M\", "
+                + "\"contentKind\": \"" + kind + "\" } ] } }";
+
+            var classic = new RecordingTransport();
+            var classicDriver = new LegacyDisplayDriver(
+                new DisplayEncoder(classic), new DisplaySettings { DisplayMode = mode });
+
+            var rule = Harness.Create(configJson, displayMode: mode);
+            rule.Control.Land(1);
+
+            // Scripted sequence: live frames with value changes.
+            var frames = new[]
+            {
+                Live(gear: gear, speedLocal: speedLocal, rpms: rpms, redLine: redLine),
+                Live(gear: gear, speedLocal: speedLocal, rpms: rpms, redLine: redLine),
+                Live(gear: gear == "R" ? "1" : "2", speedLocal: speedLocal + 10,
+                    rpms: rpms, redLine: redLine),
+                Live(gear: gear == "R" ? "2" : "4", speedLocal: speedLocal + 20,
+                    rpms: rpms + 500, redLine: redLine > 0 ? 0.0 : 1.0),
+            };
+
+            foreach (var f in frames)
+            {
+                classicDriver.Update(f);
+                rule.DriveFrame(f, useRulePath: true);
+            }
+
+            Assert.Equal(classic.SentCol01Reports.Count, rule.Transport.SentCol01Reports.Count);
+            for (int i = 0; i < classic.SentCol01Reports.Count; i++)
+            {
+                Assert.Equal(
+                    classic.SentCol01Reports[i],
+                    rule.Transport.SentCol01Reports[i]);
+            }
+        }
+
+        [Fact]
+        public void MigratedGearAndSpeed_RulePath_InjectedClock_Sequence()
+        {
+            // Timing-dependent overlay: assert on the rule path's injected clock only
+            // (formatter parity already covers per-frame; strict cross-path equality is
+            // not required because the classic driver uses DateTime.UtcNow).
+            const string configJson =
+                "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"gs\", "
+                + "\"screens\": [ { \"id\": \"gs\", \"name\": \"Gear + Speed\", "
+                + "\"contentKind\": \"gearAndSpeed\" } ] } }";
+
+            var h = Harness.Create(configJson, displayMode: "GearAndSpeed");
+            h.Control.Land(1);
+
+            h.T = 0;
+            h.Tick(Live(gear: "3", speedLocal: 100));
+            // Fresh gear change at T=0 → gear overlay.
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Digit3, SevenSegment.Blank),
+                h.Transport.LastSegments);
+
+            h.T = LegacyValueFormatter.GearOverlayMs; // overlay expired → speed
+            h.Tick(Live(gear: "3", speedLocal: 100));
+            Assert.Equal(
+                (SevenSegment.Digit1, SevenSegment.Digit0, SevenSegment.Digit0),
+                h.Transport.LastSegments);
+
+            h.T += 16;
+            h.Tick(Live(gear: "4", speedLocal: 100)); // gear change → overlay again
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Digit4, SevenSegment.Blank),
+                h.Transport.LastSegments);
+        }
+
+        [Fact]
+        public void NoneMode_FlagOn_EmptyWorld_ZeroCol01Writes()
+        {
+            // Fresh session, frozen None, control != Off → zero col01 writes.
+            const string empty =
+                "{ \"schemaVersion\": 1 }";
+            var h = Harness.Create(empty, displayMode: DisplaySettings.ModeNone);
+            h.Control.Land(1);
+            Assert.False(DisplayRuleStack.HasLegacyWorld(h.Stack.Config));
+
+            h.Tick(Live(gear: "5", speedLocal: 200));
+            h.Tick(Live(gear: "6", speedLocal: 210));
+            Assert.Empty(h.Transport.SentCol01Reports);
         }
 
         // ── Idle gate ────────────────────────────────────────────────────

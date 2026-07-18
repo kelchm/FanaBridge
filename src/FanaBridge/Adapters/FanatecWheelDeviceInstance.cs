@@ -75,6 +75,11 @@ namespace FanaBridge.Adapters
         // True once the legacy page has been blanked after switching to mode "None"/Off,
         // so it is cleared once on the transition rather than every frame.
         private bool _legacyBlanked;
+        // True while the legacy page carries content from this session's rule or classic
+        // drive. Flag-on + empty world is silence, but a world emptied LIVE (last virtual
+        // page deleted) must blank the page once instead of freezing on its final frame;
+        // a fresh session with an empty world (frozen "None") never writes.
+        private bool _legacyPagePainted;
         // Last itmCapable snapshot used for resolve-on-read when displayControl is absent
         // from the blob. Avoids allocating a DisplaySettings every frame; only re-Reads
         // when live caps flip while migration is still open.
@@ -278,6 +283,7 @@ namespace FanaBridge.Adapters
             // the twin is dropped WITHOUT a detach — the old tap is already gone).
             _displayRuntime.OnGenerationRebind();
             _legacyBlanked = false;
+            _legacyPagePainted = false;
             // The col01 driver is dropped/rebuilt against the new generation below — re-arm
             // its one-shot failure latch too, matching the runtime's _itmErrorLogged reset.
             _legacyErrorLogged = false;
@@ -305,7 +311,12 @@ namespace FanaBridge.Adapters
             DisplaySettingsCodec.WriteDefaults(_customSettings, itmCapable);
             _displaySettings = DisplaySettingsCodec.Read(_customSettings, itmCapable);
             _migratedItmCapable = _customSettings["displayControl"] == null ? itmCapable : (bool?)null;
-            _displayRuntime.ClearConfig();   // no displayCustomization key = no customization
+            // Fresh device: marker absent (false) + default Gear → synthesize the Gear
+            // page so every wheel has its legacy page from first light (same step as
+            // SetSettings). Replaces the empty-config ClearConfig fast path for col01.
+            var defaultsConfig = LegacyModeMigration.Apply(_displaySettings, null);
+            _customSettings["legacyModeMigrated"] = _displaySettings.LegacyModeMigrated;
+            _displayRuntime.SetConfig(defaultsConfig);
 
             if (_ledModule != null)
             {
@@ -406,7 +417,8 @@ namespace FanaBridge.Adapters
             // Extract custom settings
             _customSettings = new JObject();
             foreach (var key in new[] { "wheelType", "moduleType", "displayMode", "displayControl", "itmEnabled",
-                                        "itmShowLapTotal", "itmShowPositionTotal", "itmDefaultPage" })
+                                        "itmShowLapTotal", "itmShowPositionTotal", "itmDefaultPage",
+                                        "legacyModeMigrated" })
             {
                 if (obj[key] != null)
                     _customSettings[key] = obj[key].DeepClone();
@@ -442,19 +454,25 @@ namespace FanaBridge.Adapters
             _migratedItmCapable = _customSettings["displayControl"] == null ? itmCapable : (bool?)null;
 
             // Display customization document (whitelisted nested key; absent = none).
-            // Parsed leniently on this thread — Load never throws — and handed to the
-            // runtime as an immutable snapshot (its volatile release); the frame path
-            // notices the reference change and rebuilds the rule stack. Released AFTER the
-            // plain _displaySettings write above, and paired with the runtime's
-            // acquire-before-settings read order, so a frame that sees the new config also
-            // sees the settings that arrived with it (the runtime's volatile is the fence).
-            // Settings can arrive before plugin Init: the snapshot just waits until the
-            // frame path is alive to consume it.
+            // Parsed leniently on this thread — Load never throws — then the Phase 9a
+            // mode→legacy-world migration runs on the parsed graph (never the raw
+            // JObject). Handed to the runtime as an immutable snapshot (its volatile
+            // release); the frame path notices the reference change and rebuilds the
+            // rule stack. Released AFTER the plain _displaySettings write above, and
+            // paired with the runtime's acquire-before-settings read order, so a frame
+            // that sees the new config also sees the settings that arrived with it
+            // (the runtime's volatile is the fence). Settings can arrive before plugin
+            // Init: the snapshot just waits until the frame path is alive to consume it.
             var displayCustomization = obj["displayCustomization"];
-            _displayRuntime.SetConfig(displayCustomization == null
+            var parsedConfig = displayCustomization == null
                 ? null
                 : DisplayConfigSerializer.Load(displayCustomization.ToString(),
-                    msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg)));
+                    msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg));
+            parsedConfig = LegacyModeMigration.Apply(_displaySettings, parsedConfig);
+            // Bake the marker into the settings bag so GetSettings persists it (without
+            // this, a save would re-run synthesis after the user emptied the world).
+            _customSettings["legacyModeMigrated"] = _displaySettings.LegacyModeMigrated;
+            _displayRuntime.SetConfig(parsedConfig);
 
             _legacyDriver?.UpdateSettings(_displaySettings);
         }
@@ -494,9 +512,10 @@ namespace FanaBridge.Adapters
                 // the per-frame Tick below is unreachable while disconnected.
                 _displayRuntime.OnDisconnected();
                 // Reset the legacy col01 one-shot latches so a reconnect can re-blank the
-                // legacy page when the mode is "None" and can log a fresh col01 failure
+                // legacy page when control is Off and can log a fresh col01 failure
                 // (mirrors the runtime clearing its own _itmErrorLogged on disconnect).
                 _legacyBlanked = false;
+                _legacyPagePainted = false;
                 _legacyErrorLogged = false;
             }
 
@@ -681,8 +700,8 @@ namespace FanaBridge.Adapters
         /// acquire Tick / TickLegacyRules already made) — never re-reads the volatile
         /// <see cref="DeviceDisplayRuntime.CurrentConfig"/>, so a concurrent UI Apply between
         /// the tick and this drive cannot split ownership (rule sink + mode Update both
-        /// writing col01 in one frame). Empty world (or flag off) keeps the mode-based
-        /// <see cref="LegacyDisplayDriver.Update"/> fallback byte-identical to today.
+        /// writing col01 in one frame). Flag-off keeps the mode-based
+        /// <see cref="LegacyDisplayDriver.Update"/> fallback; flag-on empty world is silence.
         /// </summary>
         private bool UseLegacyRulePath
             => DisplayRuleStack.LegacyRuleWrites
@@ -746,25 +765,42 @@ namespace FanaBridge.Adapters
 
                 if (!displayTest)
                 {
+                    bool telemetryLive = data != null && data.GameRunning
+                        && data.NewData != null;
                     if (UseLegacyRulePath)
                     {
                         // Rule path owns live frames (stack already wrote). Idle: blank-once
                         // via the driver's Update gate — same telemetryLive contract.
-                        bool telemetryLive = data != null && data.GameRunning
-                            && data.NewData != null;
                         if (!telemetryLive)
                             _legacyDriver.Update(data);
+                        else
+                            _legacyPagePainted = true;
                     }
-                    else
+                    else if (!DisplayRuleStack.LegacyRuleWrites
+                        && _displaySettings.DisplayMode != DisplaySettings.ModeNone)
                     {
+                        // Flag-off classic fallback: mode driver from the frozen displayMode.
+                        // The mode != None gate lives here because LegacyPageActive no longer
+                        // carries it.
                         _legacyDriver.Update(data);
+                        if (telemetryLive)
+                            _legacyPagePainted = true;
+                    }
+                    else if (DisplayRuleStack.LegacyRuleWrites && _legacyPagePainted)
+                    {
+                        // Flag-on + empty world is silence — but a page this session painted
+                        // (rule or classic tenure) is blanked once when the world empties
+                        // live, so deleting the last virtual page cannot leave col01 frozen
+                        // on its final frame. Declined sends retry (latch only on accept).
+                        if (_legacyDriver.Clear())
+                            _legacyPagePainted = false;
                     }
                 }
                 _legacyBlanked = false;
             }
             else if (_legacyDriver != null && !_legacyBlanked && !displayTest)
             {
-                // Switched to None / Off — blank the legacy page once. Only latch when
+                // Switched to Off — blank the legacy page once. Only latch when
                 // the blanking write was accepted, so a transient transport failure gets
                 // retried instead of leaving the page frozen on its last value.
                 _legacyBlanked = _legacyDriver.Clear();

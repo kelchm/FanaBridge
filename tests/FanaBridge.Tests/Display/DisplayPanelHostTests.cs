@@ -207,6 +207,8 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Envelope_PublishesStatusAndValues_WithoutAnyRuleConfig()
         {
+            // Phase 9a: no authored ITM rules, but migration seeds a Gear legacy world
+            // so the Rules part is present (legacy stack). Status + values still publish.
             var running = Data(NewStatus());
             var s = SyncedSession(new JObject { ["wheelType"] = "CSSWFORMV3" }, running);
 
@@ -214,7 +216,8 @@ namespace FanaBridge.Tests.Display
             Assert.NotNull(envelope);
             Assert.NotNull(envelope!.ItmStatus);
             Assert.NotNull(envelope.Values);
-            Assert.Null(envelope.Rules);             // no customization document
+            Assert.NotNull(envelope.Rules);          // migrated Gear world
+            Assert.False(s.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
 
             // The parts ARE the producers' snapshots — composed, never copied.
             Assert.Same(s.Instance.DisplayValuesSnapshot, envelope.Values);
@@ -374,15 +377,23 @@ namespace FanaBridge.Tests.Display
             Assert.NotNull(s.Host.Snapshot);
 
             // A profile override retargets the device to a basic display: the ITM
-            // driver (status + values) and the rule runtime all go together.
+            // driver (status + values) goes. A migrated legacy world may keep a Rules
+            // part via the basic-path stack (TickLegacyRules).
             var basic = WheelProfileStore.FindByWheelType("PSWBMW");
             Assert.NotNull(basic);
             s.Wheelbase.ProfileOverrideResolver = _ => basic!.Id;
             s.Wheelbase.RefreshCapabilities();
             s.Frame(running);
 
-            Assert.Null(s.Host.Snapshot);
             Assert.Null(s.Instance.ItmStatusDescription);
+            Assert.Null(s.Instance.ItmDisplayForTest);
+            var envelope = s.Host.Snapshot;
+            // ITM parts cleared; Rules may remain for the legacy world on basic.
+            if (envelope != null)
+            {
+                Assert.Null(envelope.ItmStatus);
+                Assert.Null(envelope.Values);
+            }
         }
 
         [Fact]
@@ -407,7 +418,7 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void LegacyControl_ClearsTheRulePart()
+        public void LegacyControl_DropsItmPagePolicy_KeepsLegacyRuleStack()
         {
             var running = Data(NewStatus());
             var s = SyncedSession(new JObject
@@ -417,8 +428,9 @@ namespace FanaBridge.Tests.Display
             }, running);
             Assert.NotNull(s.Host.Snapshot!.Rules);
 
-            // Rules only drive the ITM world. DisplayControl is authoritative even when
-            // the downgrade mirror disagrees, and the customization document stays stored.
+            // DisplayControl is authoritative even when the downgrade mirror disagrees.
+            // Under Legacy, ITM page policy is released; the migrated legacy world still
+            // owns a rule stack for col01 (Rules part may stay).
             s.Instance.SetSettings(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
@@ -430,7 +442,9 @@ namespace FanaBridge.Tests.Display
 
             var envelope = s.Host.Snapshot;
             Assert.NotNull(envelope);                // the driver still reports status
-            Assert.Null(envelope!.Rules);
+            Assert.False(((IDisplayPanelHost)s.Instance).DisplaySettings.ItmActive);
+            Assert.False(s.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
+            Assert.NotNull(envelope!.Rules);         // legacy world still ticks
         }
 
         [Fact]
@@ -550,11 +564,13 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(3, host.ItmDeviceId);       // CSSWFORMV3 = display device 3
             Assert.NotNull(host.DisplaySettings);
 
-            // Config path: apply → read back → persisted.
-            Assert.Null(host.GetDisplayConfig());
+            // Config path: StartSession migrates default Gear; apply replaces it.
+            Assert.NotNull(host.GetDisplayConfig());
+            Assert.True(DisplayRuleStack.HasLegacyWorld(host.GetDisplayConfig()));
             host.ApplyDisplayConfig(DisplayConfigSerializer.Load(
                 RuleDocument().ToString(), _ => { }));
             Assert.NotNull(host.GetDisplayConfig());
+            Assert.NotEmpty(host.GetDisplayConfig()!.Itm.Rules);
             Assert.NotNull(((JObject)s.Instance.GetSettings(false, false))["displayCustomization"]);
 
             // Settings path: the panel mutates DisplaySettings and notifies; the

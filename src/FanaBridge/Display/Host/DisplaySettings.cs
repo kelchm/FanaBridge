@@ -42,9 +42,20 @@ namespace FanaBridge.Display.Host
         /// <summary>ITM world active (replaces raw ItmEnabled reads on the frame path).</summary>
         public bool ItmActive => DisplayControl == ControlItm;
 
-        /// <summary>The legacy 3-char page should be driven this frame.</summary>
-        public bool LegacyPageActive => DisplayControl != ControlOff
-            && DisplayMode != ModeNone;
+        /// <summary>
+        /// The legacy 3-char page should be driven this frame. Off is the only control
+        /// that silences the surface; "None" mode semantics live in the empty legacy
+        /// world (no screens) after Phase 9 migration. Flag-off classic drive re-adds
+        /// the mode term inline where it runs.
+        /// </summary>
+        public bool LegacyPageActive => DisplayControl != ControlOff;
+
+        /// <summary>
+        /// True once the frozen <see cref="DisplayMode"/> has been migrated into the
+        /// legacy world (or baked without synthesis when a world already existed / mode
+        /// was None). Default false so absent storage keys remigrate on load.
+        /// </summary>
+        public bool LegacyModeMigrated { get; set; }
 
         // Some games don't report a usable total laps or field size, producing misleading
         // "/0" or "/2" suffixes. These let the user turn the totals off per total.

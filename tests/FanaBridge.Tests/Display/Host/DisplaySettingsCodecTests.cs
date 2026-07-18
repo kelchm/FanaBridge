@@ -197,14 +197,16 @@ namespace FanaBridge.Tests.Display.Host
 
         [Theory]
         [InlineData(DisplaySettings.ControlItm, "Gear", true, true)]
-        [InlineData(DisplaySettings.ControlItm, DisplaySettings.ModeNone, true, false)]
+        [InlineData(DisplaySettings.ControlItm, DisplaySettings.ModeNone, true, true)]
         [InlineData(DisplaySettings.ControlLegacy, "Gear", false, true)]
-        [InlineData(DisplaySettings.ControlLegacy, DisplaySettings.ModeNone, false, false)]
+        [InlineData(DisplaySettings.ControlLegacy, DisplaySettings.ModeNone, false, true)]
         [InlineData(DisplaySettings.ControlOff, "Gear", false, false)]
         [InlineData(DisplaySettings.ControlOff, DisplaySettings.ModeNone, false, false)]
         public void DerivedGates_FollowControlTruthTable(string control, string mode,
             bool itmActive, bool legacyPageActive)
         {
+            // Phase 9a: LegacyPageActive is Off-only; ModeNone no longer gates the page
+            // (empty legacy world = wire silence instead).
             var settings = new DisplaySettings
             {
                 DisplayControl = control,
@@ -213,6 +215,45 @@ namespace FanaBridge.Tests.Display.Host
 
             Assert.Equal(itmActive, settings.ItmActive);
             Assert.Equal(legacyPageActive, settings.LegacyPageActive);
+        }
+
+        [Fact]
+        public void ReadWrite_RoundTripsLegacyModeMigrated_AndWriteAlwaysEmits()
+        {
+            var source = new JObject
+            {
+                ["displayMode"] = "Speed",
+                ["legacyModeMigrated"] = true,
+            };
+            var original = (JObject)source.DeepClone();
+
+            var settings = DisplaySettingsCodec.Read(source, itmCapable: true);
+            Assert.True(settings.LegacyModeMigrated);
+            Assert.True(JToken.DeepEquals(original, source)); // resolve-on-read: no rewrite
+
+            var dest = new JObject();
+            DisplaySettingsCodec.Write(dest, settings);
+            Assert.True((bool)dest["legacyModeMigrated"]!);
+
+            // Write always emits even when false.
+            settings.LegacyModeMigrated = false;
+            DisplaySettingsCodec.Write(dest, settings);
+            Assert.False((bool)dest["legacyModeMigrated"]!);
+        }
+
+        [Fact]
+        public void Read_AbsentLegacyModeMigrated_DefaultsFalse()
+        {
+            var settings = DisplaySettingsCodec.Read(new JObject(), itmCapable: false);
+            Assert.False(settings.LegacyModeMigrated);
+        }
+
+        [Fact]
+        public void WriteDefaults_OmitsLegacyModeMigrated()
+        {
+            var document = new JObject();
+            DisplaySettingsCodec.WriteDefaults(document, itmCapable: true);
+            Assert.Null(document["legacyModeMigrated"]);
         }
 
         private static string ExpectedControl(string? storedControl, bool itmEnabled,
