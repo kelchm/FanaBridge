@@ -625,17 +625,19 @@ namespace FanaBridge.Adapters
             {
                 // Basic / non-ITM 7-seg path: same LegacyPageActive + blank-once gate as the
                 // ITM branch so DisplayControl=Off is honored regardless of caps / rebind
-                // history (Off must blank col01, not keep painting gear/speed). Non-empty
-                // legacy world: tick the rule stack (no ITM) then drive via the sink.
+                // history (Off must blank col01, not keep painting gear/speed). Always tick
+                // the legacy-rules runtime on LegacyPageActive frames so an emptied world
+                // still drops the stack and republishes a cleared snapshot (mirror of the
+                // ITM branch's per-frame UpdateDisplayRules cleanup); col01 ownership then
+                // follows the frame-latched config, not a fresh volatile re-read.
                 try
                 {
                     if (_displaySettings.LegacyPageActive && !displayTest)
                     {
                         EnsureLegacyDriver(plugin, logCreate: true);
                         BindLegacySegmentSink();
-                        if (UseLegacyRulePath)
-                            _displayRuntime.TickLegacyRules(
-                                pluginManager, data, _displaySettings);
+                        _displayRuntime.TickLegacyRules(
+                            pluginManager, data, _displaySettings);
                     }
                     else
                     {
@@ -674,13 +676,17 @@ namespace FanaBridge.Adapters
         // ── Legacy col01 arbitration (single writer: LegacyDisplayDriver) ─
 
         /// <summary>
-        /// True when the rule path owns col01: flag on and the published config has a
-        /// non-empty legacy world. Empty world (or flag off) keeps the mode-based
+        /// True when the rule path owns col01: flag on and the frame-latched config has a
+        /// non-empty legacy world. Uses <see cref="DeviceDisplayRuntime.FrameConfig"/> (the
+        /// acquire Tick / TickLegacyRules already made) — never re-reads the volatile
+        /// <see cref="DeviceDisplayRuntime.CurrentConfig"/>, so a concurrent UI Apply between
+        /// the tick and this drive cannot split ownership (rule sink + mode Update both
+        /// writing col01 in one frame). Empty world (or flag off) keeps the mode-based
         /// <see cref="LegacyDisplayDriver.Update"/> fallback byte-identical to today.
         /// </summary>
         private bool UseLegacyRulePath
             => DisplayRuleStack.LegacyRuleWrites
-                && DisplayRuleStack.HasLegacyWorld(_displayRuntime.CurrentConfig);
+                && DisplayRuleStack.HasLegacyWorld(_displayRuntime.FrameConfig);
 
         private void EnsureLegacyDriver(FanatecPlugin plugin, bool logCreate = false)
         {

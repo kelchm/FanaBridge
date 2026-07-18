@@ -73,13 +73,27 @@ namespace FanaBridge.Display.Rules
             }
 
             // Screens first: rules validate their screen targets against the survivors.
-            var screenIds = NormalizeScreens(config.Legacy, warn);
+            // keptIds is every id still in the document (including future-kind screens that
+            // survive the round-trip but are not usable on this build).
+            var screenIds = NormalizeScreens(config.Legacy, warn, out var keptIds);
 
             if (string.IsNullOrEmpty(config.Legacy.BaseScreenId))
             {
                 config.Legacy.BaseScreenId = null;   // blank display when nothing is active
             }
-            else if (!screenIds.Contains(config.Legacy.BaseScreenId))
+            else if (screenIds.Contains(config.Legacy.BaseScreenId))
+            {
+                // Usable survivor — fine.
+            }
+            else if (keptIds.Contains(config.Legacy.BaseScreenId))
+            {
+                // Kept but unusable (e.g. unknown contentKind from a future version): preserve
+                // BaseScreenId so a load/save round-trip stays byte-for-byte; the runtime
+                // already resolves unknown-kind screens to blank (same as a null base).
+                warn("base screen '" + config.Legacy.BaseScreenId
+                    + "' is not usable on this build — the legacy display will be blank when no rule is active");
+            }
+            else
             {
                 warn("base screen '" + config.Legacy.BaseScreenId
                     + "' does not exist — the legacy display will be blank when no rule is active");
@@ -102,7 +116,16 @@ namespace FanaBridge.Display.Rules
 
         // ── Screens ──────────────────────────────────────────────────────
 
-        private static HashSet<string> NormalizeScreens(LegacyRuleSet legacy, Action<string> warn)
+        /// <summary>
+        /// Normalizes the screen library in place. Returns the survivor id set (usable
+        /// screens rules may target). <paramref name="keptIds"/> receives every id still
+        /// present in the document after normalization — including future-kind screens
+        /// that are kept for the round-trip but excluded from survivors. Base-screen
+        /// validation uses both: missing-from-kept clears BaseScreenId; kept-but-not-
+        /// survivor leaves the text alone and warns that the base renders blank here.
+        /// </summary>
+        private static HashSet<string> NormalizeScreens(LegacyRuleSet legacy, Action<string> warn,
+            out HashSet<string> keptIds)
         {
             // seenIds tracks every id we have kept (including unknown-kind screens that
             // stay in the document for the round-trip). survivorIds is the subset rules
@@ -215,6 +238,7 @@ namespace FanaBridge.Display.Rules
 
             legacy.Screens.Clear();
             legacy.Screens.AddRange(kept);
+            keptIds = seenIds;
             return survivorIds;
         }
 

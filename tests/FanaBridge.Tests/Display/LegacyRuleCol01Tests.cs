@@ -7,6 +7,7 @@ using FanaBridge.Display.Legacy;
 using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Session;
+using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using GameReaderCommon;
@@ -505,6 +506,134 @@ namespace FanaBridge.Tests.Display
             var itmOnly = DisplayConfigSerializer.Load(
                 "{ \"itm\": { \"basePage\": \"tyreTemps\" } }", _ => { });
             Assert.False(DisplayRuleStack.HasLegacyWorld(itmOnly));
+        }
+
+        // ── Forward-compat base: unknown kind blanks, id preserved ───────
+
+        [Fact]
+        public void UnknownKindBaseScreen_RendersBlank_BaseIdPreserved()
+        {
+            // Validator keeps baseScreenId pointing at a future contentKind screen; the
+            // rule path must blank the wire (not invent text) without mutating the doc.
+            const string json =
+                "{ \"schemaVersion\": 1, "
+                + "\"legacy\": { \"baseScreenId\": \"x1\", "
+                + "\"screens\": [ { \"id\": \"x1\", \"name\": \"Future\", \"text\": \"PIT\", "
+                + "\"contentKind\": \"hologram\" } ] } }";
+
+            var h = Harness.Create(json);
+            Assert.Equal("x1", h.Stack.Config.Legacy.BaseScreenId);
+            Assert.Equal(LegacyContentKind.Unknown, h.Stack.Config.Legacy.Screens[0].ContentKind);
+
+            h.Control.Land(1);
+            h.Tick(Live());
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
+                h.Transport.LastSegments);
+            Assert.Equal("x1", h.Stack.Config.Legacy.BaseScreenId);
+        }
+
+        // ── Mid-frame config swap: one ownership decision via FrameConfig ─
+
+        [Fact]
+        public void MidFrameConfigSwap_FrameConfigKeepsSingleCol01Ownership()
+        {
+            // TickLegacyRules latches FrameConfig from a non-empty world, writes col01 via
+            // the rule sink, then AfterTickForTest swaps the volatile to empty. Arbitration
+            // must still follow FrameConfig (rule path) — never re-read CurrentConfig —
+            // so mode Update does not also write col01 this frame.
+            var profile = WheelProfileStore.FindByWheelType("PSWBMW");
+            Assert.NotNull(profile);
+            var runtime = new DeviceDisplayRuntime(
+                new DeviceConfig
+                {
+                    Profile = profile,
+                    Capabilities = new WheelCapabilities(profile!),
+                },
+                itmClock: () => null,
+                log: _ => { });
+
+            var world = DisplayConfigSerializer.Load(StaticPitConfig, _ => { });
+            runtime.SetConfig(world);
+
+            var transport = new RecordingTransport();
+            var settings = new DisplaySettings { DisplayMode = "Gear" };
+            var driver = new LegacyDisplayDriver(new DisplayEncoder(transport), settings);
+            int modeUpdates = 0;
+            runtime.SetLegacySegmentWriter((a, b, c) => driver.TryShowSegments(a, b, c));
+
+            runtime.AfterTickForTest = () => runtime.ClearConfig();
+
+            runtime.TickLegacyRules(null, Live(gear: "7", speedLocal: 200), settings);
+
+            // Volatile is empty after the seam; frame-latched config still has the world.
+            Assert.Null(runtime.CurrentConfig);
+            Assert.True(DisplayRuleStack.HasLegacyWorld(runtime.FrameConfig));
+
+            bool useRulePath = DisplayRuleStack.LegacyRuleWrites
+                && DisplayRuleStack.HasLegacyWorld(runtime.FrameConfig);
+            Assert.True(useRulePath);
+
+            // Device-instance DriveLegacyCol01 stand-in: rule path owns live frames.
+            bool telemetryLive = true;
+            if (useRulePath)
+            {
+                if (!telemetryLive)
+                {
+                    modeUpdates++;
+                    driver.Update(Live(gear: "7"));
+                }
+            }
+            else
+            {
+                modeUpdates++;
+                driver.Update(Live(gear: "7"));
+            }
+
+            Assert.Equal(0, modeUpdates);
+            Assert.Equal((SevenSegment.P, SevenSegment.I, SevenSegment.T), transport.LastSegments);
+            // Re-reading the volatile would have flipped ownership and painted gear 7.
+            Assert.False(DisplayRuleStack.HasLegacyWorld(runtime.CurrentConfig));
+        }
+
+        [Fact]
+        public void TickLegacyRules_EmptyWorld_ClearsPublishedLegacySnapshot()
+        {
+            // Mirrors the basic-wheel bug: once the legacy world empties, TickLegacyRules
+            // must still run and drop stack + snapshot so LegacySegments / name clear.
+            var profile = WheelProfileStore.FindByWheelType("PSWBMW");
+            Assert.NotNull(profile);
+            var runtime = new DeviceDisplayRuntime(
+                new DeviceConfig
+                {
+                    Profile = profile,
+                    Capabilities = new WheelCapabilities(profile!),
+                },
+                itmClock: () => null,
+                log: _ => { });
+
+            var world = DisplayConfigSerializer.Load(StaticPitConfig, _ => { });
+            runtime.SetConfig(world);
+
+            var transport = new RecordingTransport();
+            var settings = new DisplaySettings { DisplayMode = "Gear" };
+            var driver = new LegacyDisplayDriver(new DisplayEncoder(transport), settings);
+            runtime.SetLegacySegmentWriter((a, b, c) => driver.TryShowSegments(a, b, c));
+
+            runtime.TickLegacyRules(null, Live(), settings);
+            Assert.NotNull(runtime.RuleSnapshot);
+            Assert.Equal(
+                new byte[] { SevenSegment.P, SevenSegment.I, SevenSegment.T },
+                runtime.RuleSnapshot!.LegacySegments);
+            Assert.Equal("Pit", runtime.RuleSnapshot.LegacyScreenName);
+
+            // Empty the world live (UI Apply / settings) — next basic frame still ticks.
+            runtime.ClearConfig();
+            runtime.TickLegacyRules(null, Live(), settings);
+
+            Assert.Null(runtime.Stack);
+            Assert.Null(runtime.RuleSnapshot);
+            Assert.Null(runtime.Snapshot?.Rules);
         }
     }
 }

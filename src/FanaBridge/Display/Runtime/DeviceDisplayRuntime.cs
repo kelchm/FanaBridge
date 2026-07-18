@@ -71,6 +71,12 @@ namespace FanaBridge.Display.Runtime
         // (a PART of the published envelope below — DataUpdate-thread only). All three stay
         // null on the empty-config fast path.
         private volatile DisplayCustomizationConfig _displayConfig;
+        // Config acquired at the top of this frame's Tick / TickLegacyRules. The device
+        // instance's col01 arbitration (UseLegacyRulePath / DriveLegacyCol01) must use THIS
+        // reference for the rest of the frame — never re-read the volatile — so a concurrent
+        // UI ApplyDisplayConfig cannot make the rule sink AND the mode Update both own col01
+        // in one frame.
+        private DisplayCustomizationConfig _frameConfig;
         private DisplayRuleStack _displayStack;
         private DisplayRuleSnapshot _displayRuleSnapshot;
         // Shared property source for the rule stack AND the ITM mapper's field-mapping
@@ -131,12 +137,26 @@ namespace FanaBridge.Display.Runtime
         /// <summary>The current customization config snapshot, or null when none.</summary>
         internal DisplayCustomizationConfig CurrentConfig => _displayConfig;
 
+        /// <summary>
+        /// Config acquired for the current frame at the top of <see cref="Tick"/> /
+        /// <see cref="TickLegacyRules"/>. Frame-local: arbitration after the tick must
+        /// use this, not <see cref="CurrentConfig"/>, so a mid-frame volatile swap cannot
+        /// split col01 ownership. Null before the first tick of a session.
+        /// </summary>
+        internal DisplayCustomizationConfig FrameConfig => _frameConfig;
+
         /// <summary>Publishes a parsed config snapshot (volatile release). The frame path
         /// notices the reference swap and rebuilds the rule stack.</summary>
         internal void SetConfig(DisplayCustomizationConfig parsed) => _displayConfig = parsed;
 
         /// <summary>Drops any config (no displayCustomization key = no customization).</summary>
         internal void ClearConfig() => _displayConfig = null;
+
+        /// <summary>Test seam: invoked at the end of <see cref="Tick"/> /
+        /// <see cref="TickLegacyRules"/> after the frame config is latched and the stack
+        /// has run — so a test can swap the volatile mid-frame before the device instance
+        /// runs DriveLegacyCol01 arbitration.</summary>
+        internal Action AfterTickForTest { get; set; }
 
         // Segment sink for the rule-driven col01 path — set by the device instance from
         // its sole LegacyDisplayDriver each frame before Tick / TickLegacyRules. The
@@ -268,7 +288,10 @@ namespace FanaBridge.Display.Runtime
                 // from latching a stale ItmDefaultPage (see the method summary). Both the
                 // acquired config and the single settings read flow down into
                 // UpdateDisplayRules so the ordering holds all the way to the stack build.
+                // FrameConfig is the same acquire: DriveLegacyCol01 after this Tick must
+                // arbitrate against it, never re-read the volatile.
                 var config = _displayConfig;
+                _frameConfig = config;
                 var settingsSnap = settings();
 
                 _itmDisplay.Enabled = settingsSnap.ItmActive;
@@ -390,6 +413,7 @@ namespace FanaBridge.Display.Runtime
             // whatever the parts say now). Change-gated: composes nothing when no part moved
             // this frame. This subsumes the old standalone per-frame publish.
             MaybePublishPanelSnapshot();
+            AfterTickForTest?.Invoke();
             return ok;
         }
 
@@ -604,24 +628,30 @@ namespace FanaBridge.Display.Runtime
         }
 
         /// <summary>
-        /// Basic (non-ITM) frame step for the display-rules runtime when a non-empty
-        /// legacy world needs the rule-driven col01 path. Builds a stack against a
-        /// no-op page control (no ITM lifecycle) and ticks it once. Empty / no-legacy
-        /// configs construct nothing — the basic mode driver stays the sole face.
+        /// Basic (non-ITM) frame step for the display-rules runtime. Called every
+        /// LegacyPageActive basic frame (not only when the rule path owns col01): when the
+        /// legacy world is non-empty it builds a stack against a no-op page control and
+        /// ticks it once; when the world is empty / config gone it drops any prior stack
+        /// and republishes a cleared snapshot so the Overview 3-char face cannot keep
+        /// painting stale rule segments after the wire has fallen back to mode.
         /// </summary>
         internal void TickLegacyRules(PluginManager pluginManager, GameData data,
             DisplaySettings settings)
         {
+            // One acquire for the whole basic frame — DriveLegacyCol01 must arbitrate
+            // against FrameConfig, not re-read the volatile after a concurrent Apply.
             var config = _displayConfig;
+            _frameConfig = config;
             if (config == null || config.IsEmpty || !DisplayRuleStack.HasLegacyWorld(config))
             {
-                if (_displayStack != null)
+                if (_displayStack != null || _displayRuleSnapshot != null)
                 {
                     _displayStack = null;
                     _displayRuleSnapshot = null;
                     _propertySource = null;
                     MaybePublishPanelSnapshot();
                 }
+                AfterTickForTest?.Invoke();
                 return;
             }
 
@@ -650,6 +680,7 @@ namespace FanaBridge.Display.Runtime
             if (snapshot != null)
                 _displayRuleSnapshot = snapshot;
             MaybePublishPanelSnapshot();
+            AfterTickForTest?.Invoke();
         }
 
         /// <summary>No-op ITM page control for basic-wheel rule stacks (no lifecycle).</summary>

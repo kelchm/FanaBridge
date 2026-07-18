@@ -888,6 +888,33 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void BaseScreenId_UnknownContentKind_KeptForRoundTrip_NotCleared()
+        {
+            // Future-version base pointing at a kept-but-unusable screen must NOT clear
+            // BaseScreenId (a persisted mutation) — only warn that this build blanks it.
+            // Contrast: a base id with no kept screen at all still clears (existing behaviour).
+            string original =
+                "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"x1\", \"screens\": [ "
+                + "{ \"id\": \"x1\", \"text\": \"PIT\", \"contentKind\": \"hologram\" }, "
+                + "{ \"id\": \"ok\", \"text\": \"FN1\" } "
+                + "] } }";
+
+            var config = Load(original, out var warnings);
+            Assert.Equal("x1", config.Legacy.BaseScreenId);
+            Assert.Equal(2, config.Legacy.Screens.Count);
+            Assert.Contains(warnings, w => w.Contains("base screen") && w.Contains("not usable"));
+            Assert.DoesNotContain(warnings, w => w.Contains("does not exist"));
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"baseScreenId\": \"x1\"", saved);
+            Assert.Contains("\"hologram\"", saved);
+
+            var reloaded = Load(saved, out _);
+            Assert.Equal("x1", reloaded.Legacy.BaseScreenId);
+            Assert.Equal(saved, DisplayConfigSerializer.Save(reloaded));
+        }
+
+        [Fact]
         public void LegacyScreen_MessageKind_AllowsLongRenderableText()
         {
             var config = Load(
