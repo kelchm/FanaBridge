@@ -167,6 +167,8 @@ namespace FanaBridge.UI.Display
         // The v9 structured WHEN, derived from the config rule (the snapshot row carries only a
         // label). Shown for a non-degraded, unnamed rule with a source property — otherwise the
         // row falls back to the snapshot's own label, exactly as the Triggers editor does.
+        // ActionTriggered is excluded (mirror of DisplayTriggersEditModel.ApplyStructuredWhen):
+        // its label keeps the quoted "'Action' triggered" framing the grammar would drop.
         private static PriorityRowModel RuleRow(int rank, DisplayRuleRow rule, DisplayRule config)
         {
             var chip = StateChip(rule.Status, rule.RemainingMs);
@@ -182,7 +184,8 @@ namespace FanaBridge.UI.Display
             if (config != null
                 && !config.DegradedAtLoad
                 && string.IsNullOrWhiteSpace(config.Name)
-                && config.When?.Source?.Name != null)
+                && config.When?.Source?.Name != null
+                && config.When.Kind != ConditionKind.ActionTriggered)
             {
                 var w = WhenFields.From(config.When);
                 row.PropertyName = w.PropertyName;

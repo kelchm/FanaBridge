@@ -508,5 +508,45 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("", rows[0].Chip);                // no live state merged
             Assert.Equal("Always → Fuel / ERS / DRS", rows[1].Label);
         }
+
+        [Fact]
+        public void Rows_UserNamedRule_KeepsItsLabel_NoStructuredGrammar()
+        {
+            // Deliberate deviation #1: a user-named rule (e.g. imported with a friendly name)
+            // must keep its Label, not have the name replaced by the "prop op value" grammar.
+            // Guarded by the !IsNullOrWhiteSpace(rule.Name) clause in ApplyStructuredWhen;
+            // remove that clause and PropertyName populates — this test fails.
+            var cfg = Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"name\": \"My Fuel Rule\", \"when\": { \"kind\": \"greaterThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" } } ] } }");
+            var model = new DisplayTriggersEditModel(cfg, Device3);
+
+            var row = model.Rows(null, defaultWirePage: 1)[0];
+
+            Assert.False(row.Degraded);                 // a valid rule, just named
+            Assert.Null(row.PropertyName);              // no structured grammar
+            Assert.Equal("My Fuel Rule", row.Label);    // its name survives
+        }
+
+        [Fact]
+        public void Rows_ActionTriggeredRule_FallsBackToQuotedLabel_NoStructuredGrammar()
+        {
+            // ActionTriggered's label carries a distinct quoted framing ("'ShowTyres' triggered")
+            // the property/operator grammar would drop and re-namespace; such (imported-only)
+            // rules must fall back to Label. Without the ActionTriggered guard in
+            // ApplyStructuredWhen the structured path populates PropertyName — this test fails.
+            var cfg = Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"actionTriggered\", "
+                + "\"source\": { \"kind\": \"simHubProperty\", \"name\": \"ShowTyres\" } }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" } } ] } }");
+            var model = new DisplayTriggersEditModel(cfg, Device3);
+
+            var row = model.Rows(null, defaultWirePage: 1)[0];
+
+            Assert.False(row.Degraded);                 // event condition loads valid
+            Assert.Null(row.PropertyName);              // fell back to Label, no grammar
+            Assert.Contains("'ShowTyres' triggered", row.Label);
+        }
     }
 }

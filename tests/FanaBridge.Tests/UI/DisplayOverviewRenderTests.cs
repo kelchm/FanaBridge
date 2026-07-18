@@ -132,6 +132,50 @@ namespace FanaBridge.Tests.UI
         }
 
         [Fact]
+        public void PriorityRows_UserNamedRule_NoStructuredGrammar_UsesSnapshotLabel()
+        {
+            // Mirror of the Triggers editor: a user-named rule keeps its Label (deviation #1),
+            // never the "prop op value" grammar. Guarded by IsNullOrWhiteSpace(config.Name) in
+            // RuleRow — remove it and PropertyName populates, failing this test.
+            var snapshot = Snapshot(new[]
+            {
+                new DisplayRuleRow("r1", "My Fuel Rule", RuleStatus.Armed, null),
+            });
+            var config = DisplayConfigSerializer.Load(
+                "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"name\": \"My Fuel Rule\", \"when\": { \"kind\": \"greaterThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" } } ] } }", _ => { });
+
+            var rows = DisplayOverviewRender.PriorityRows(snapshot, "Lap Info", config.Itm.Rules);
+
+            Assert.Null(rows[0].PropertyName);              // named → no grammar
+            Assert.Equal("My Fuel Rule", rows[0].Label);
+        }
+
+        [Fact]
+        public void PriorityRows_ActionTriggeredRule_NoStructuredGrammar_UsesSnapshotLabel()
+        {
+            // ActionTriggered is excluded from structured rendering (its quoted framing would
+            // be dropped) — the row keeps the snapshot's own label. Without the ActionTriggered
+            // guard in RuleRow, PropertyName populates and this test fails.
+            var snapshot = Snapshot(new[]
+            {
+                new DisplayRuleRow("r1", "'ShowTyres' triggered → Tire Temps", RuleStatus.Armed, null),
+            });
+            var config = DisplayConfigSerializer.Load(
+                "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"actionTriggered\", "
+                + "\"source\": { \"kind\": \"simHubProperty\", \"name\": \"ShowTyres\" } }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" } } ] } }", _ => { });
+
+            var rows = DisplayOverviewRender.PriorityRows(snapshot, "Lap Info", config.Itm.Rules);
+
+            Assert.Null(rows[0].PropertyName);              // ActionTriggered → label fallback
+            Assert.Equal("'ShowTyres' triggered → Tire Temps", rows[0].Label);
+        }
+
+        [Fact]
         public void PriorityRows_NullSnapshot_JustTheBaseRow()
         {
             var rows = DisplayOverviewRender.PriorityRows(null, "Tire Temps");

@@ -378,11 +378,16 @@ namespace FanaBridge.UI.Display
         // The v9 structured WHEN: shown for a non-degraded, unnamed rule that has a source
         // property. A user-named rule keeps its name (via Label) and a degraded/base row has
         // no editable condition, so those leave PropertyName null and the view uses Label.
+        // ActionTriggered is excluded too: its label carries a distinct quoted framing
+        // ("'Action' triggered", DescribeCondition) that the property/operator/value grammar
+        // would drop and re-namespace — such rules (imported only; the editor never authors
+        // them) fall back to Label to keep that framing.
         internal static void ApplyStructuredWhen(TriggerRowModel row, DisplayRule rule)
         {
             if (rule.DegradedAtLoad
                 || !string.IsNullOrWhiteSpace(rule.Name)
-                || rule.When?.Source?.Name == null)
+                || rule.When?.Source?.Name == null
+                || rule.When.Kind == ConditionKind.ActionTriggered)
                 return;
             var w = WhenFields.From(rule.When);
             row.PropertyName = w.PropertyName;
