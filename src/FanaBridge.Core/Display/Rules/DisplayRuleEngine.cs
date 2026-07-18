@@ -105,6 +105,9 @@ namespace FanaBridge.Display.Rules
         private RuleTarget _selectionTarget;  // null for resting
         private long _selectionChangedAt;
         private long _cycleAnchor;            // flip-period origin (set at selection time)
+        // The selection's resolved cycle pages, cached at selection time: CyclePages
+        // parses raw names and allocates on every read, and CurrentIntent runs per tick.
+        private IReadOnlyList<ItmPage?> _selectionCyclePages;
 
         private string _prevWinnerId;         // RuleExpired detection
 
@@ -522,8 +525,10 @@ namespace FanaBridge.Display.Rules
             _selectionIndex = sel != null ? sel.Index : int.MaxValue;
             _selectionTarget = sel != null ? sel.Rule.Show : null;
             _selectionChangedAt = now;
-            if (sel != null && (sel.Rule.Show.Kind == TargetKind.Alternate
-                || sel.Rule.Show.Kind == TargetKind.Cycle))
+            bool cycleFamily = sel != null && (sel.Rule.Show.Kind == TargetKind.Alternate
+                || sel.Rule.Show.Kind == TargetKind.Cycle);
+            _selectionCyclePages = cycleFamily ? sel.Rule.Show.CyclePages : null;
+            if (cycleFamily)
                 _cycleAnchor = now;   // the flip period starts at win time
             if (sel == null && wasRule && logReturn)
                 AddEvent(now, ActivityKind.ReturnedToBase,
@@ -552,7 +557,7 @@ namespace FanaBridge.Display.Rules
                     // The dwell floor does not apply to the internal flip — the flip is the
                     // rule's target, not an intent change.
                     // Math.Max guards a hand-built list; the validator clamps PeriodMs >= 1s.
-                    var pages = t.CyclePages;
+                    var pages = _selectionCyclePages;
                     if (pages == null || pages.Count == 0)
                         return new RuleIntent(TargetKind.Page, null, null, _selectionRuleId);
                     long phase = (now - _cycleAnchor) / Math.Max(1, t.PeriodMs) % pages.Count;

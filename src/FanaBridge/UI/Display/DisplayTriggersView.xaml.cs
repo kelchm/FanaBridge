@@ -865,16 +865,26 @@ namespace FanaBridge.UI.Display
                 Text = (draft.CyclePeriodMs / 1000.0).ToString("0.###", CultureInfo.InvariantCulture),
                 ToolTip = "Seconds between page flips while this trigger is on screen.",
             };
+            Func<string> currentText = () =>
+                (draft.CyclePeriodMs / 1000.0).ToString("0.###", CultureInfo.InvariantCulture);
             CommitOnLeave(box, () =>
             {
                 double? secs = ParseNum(box.Text);
-                int ms;
-                if (secs == null || string.IsNullOrWhiteSpace(box.Text))
-                    ms = RuleTarget.DefaultCyclePeriodMs;
-                else
-                    ms = (int)Math.Round(Math.Max(1.0, secs.Value) * 1000.0);
-                if (ms == draft.CyclePeriodMs)
+                if (secs == null)
+                {
+                    // Unparseable (or blank) text never rewrites the period — keep the
+                    // draft's value and put its text back (the hold-seconds contract).
+                    box.Text = currentText();
                     return;
+                }
+                int ms = (int)Math.Round(Math.Max(1.0, secs.Value) * 1000.0);
+                if (ms == draft.CyclePeriodMs)
+                {
+                    // Same effective period (e.g. sub-floor text clamping to the current
+                    // value): no commit, but the box must show what the engine will do.
+                    box.Text = currentText();
+                    return;
+                }
                 draft.CyclePeriodMs = ms;
                 commit();
             });
