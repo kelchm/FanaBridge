@@ -93,8 +93,10 @@ namespace FanaBridge.Display.Drivers
             if (!telemetryLive)
             {
                 // Game exited (or never started): blank once on the way out, then
-                // write nothing while idle — the firmware may be using the display
-                // itself (e.g. the tuning menu).
+                // write nothing while idle — SimHub keeps the last telemetry values
+                // after a game exits, so painting here would show stale data as if
+                // live. (Classic mode path only — the rule path resolves idle frames
+                // itself, with per-kind idle content.)
                 if (_needExitBlank)
                     Clear();   // resets the latch only when accepted — declined retries
                 return;
@@ -133,9 +135,16 @@ namespace FanaBridge.Display.Drivers
         /// </summary>
         public bool TryShowSegments(byte seg0, byte seg1, byte seg2)
         {
-            // Content ownership — arm the same exit-blank latch Update arms on live
-            // frames so a rule-driven session still blanks once on game exit.
-            _needExitBlank = true;
+            // Content ownership — a non-blank frame arms the same exit-blank latch
+            // Update arms on live frames; an ACCEPTED all-blank frame clears it (the
+            // page no longer holds our content), so the rule path's own idle blanks
+            // never leave a stale "needs blanking" state behind.
+            bool blankFrame = seg0 == SevenSegment.Blank && seg1 == SevenSegment.Blank
+                && seg2 == SevenSegment.Blank;
+            if (!blankFrame)
+                _needExitBlank = true;
+            else if (!_hasLastSegments)
+                return true;   // nothing of ours on the page — never write a first blank
 
             if (_hasLastSegments
                 && seg0 == _lastSeg0 && seg1 == _lastSeg1 && seg2 == _lastSeg2
@@ -145,6 +154,8 @@ namespace FanaBridge.Display.Drivers
             if (!_display.SetDisplay(seg0, seg1, seg2))
                 return false;
 
+            if (blankFrame)
+                _needExitBlank = false;
             _lastSeg0 = seg0;
             _lastSeg1 = seg1;
             _lastSeg2 = seg2;

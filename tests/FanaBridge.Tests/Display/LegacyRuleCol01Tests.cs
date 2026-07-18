@@ -164,19 +164,14 @@ namespace FanaBridge.Tests.Display
 
             public DisplayRuleSnapshot Tick(GameData data) => Stack.Tick(null, data);
 
-            /// <summary>Device-instance arbitration stand-in: rule path on live frames;
-            /// idle blank-once via Update; mode Update only when rule path is off.</summary>
+            /// <summary>Device-instance arbitration stand-in: the rule path owns every
+            /// frame (idle included) through the sink; mode Update only when the rule
+            /// path is off (flag-off classic).</summary>
             public void DriveFrame(GameData data, bool useRulePath)
             {
-                bool live = data != null && data.GameRunning && data.NewData != null;
                 if (useRulePath)
                 {
                     Tick(data);
-                    if (!live)
-                    {
-                        UpdateCalls++;
-                        Driver.Update(data);
-                    }
                 }
                 else
                 {
@@ -457,25 +452,84 @@ namespace FanaBridge.Tests.Display
             Assert.Empty(h.Transport.SentCol01Reports);
         }
 
-        // ── Idle gate ────────────────────────────────────────────────────
+        // ── Idle parity (in-game gates content per kind, never the wire) ─
 
         [Fact]
-        public void Idle_NoCol01Writes_FromRulePath()
+        public void TextBase_PaintsAtIdle()
         {
+            // "Display something while parked": a Text base paints on pure idle
+            // frames — no game ever ran.
             var h = Harness.Create(StaticPitConfig);
             h.Control.Land(1);
-            // Never ran a live frame — pure idle.
             h.Tick(Idle());
+            Assert.Single(h.Transport.SentCol01Reports);
+            Assert.Equal(
+                (SevenSegment.P, SevenSegment.I, SevenSegment.T),
+                h.Transport.LastSegments);
+            // Change-gated: identical idle frames never re-send.
+            h.Tick(Idle());
+            h.Tick(Idle());
+            Assert.Single(h.Transport.SentCol01Reports);
+        }
+
+        [Fact]
+        public void IdleEligibleRule_WinsAndPaintsAtIdle_InGameRuleCannot()
+        {
+            // Two rules on the same live property: the "any"-eligible one paints at
+            // idle; the default (inGame) one is ineligible there — its screen never
+            // shows without a game even though its condition holds.
+            const string cfg =
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"prk\", \"text\": \"TIP\" }, "
+                + "{ \"id\": \"pit\", \"text\": \"PIT\" } ], "
+                + "\"rules\": [ "
+                + "{ \"id\": \"g1\", \"eligible\": \"inGame\", "
+                + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
+                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"pit\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } }, "
+                + "{ \"id\": \"a1\", \"eligible\": \"any\", "
+                + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
+                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"prk\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
+
+            var h = Harness.Create(cfg);
+            h.Control.Land(1);
+
+            // Idle frame with the condition satisfied (stale or live — a level read):
+            // the inGame rule (higher priority) is ineligible, the any rule wins.
+            var idle = Idle();
+            Set(idle.NewData, "IsInPitLane", 1);
+            h.Tick(idle);
+            Assert.Equal(
+                (SevenSegment.T, SevenSegment.I, SevenSegment.P),
+                h.Transport.LastSegments);
+        }
+
+        [Fact]
+        public void DynamicBase_PureIdle_StaysSilent_NeverPaintsStale()
+        {
+            // Idle GameData still carries stale values (SimHub keeps them after
+            // exit) — dynamic kinds resolve blank, and a blank over a page we never
+            // painted is a no-op: FanaBridge stays wire-silent until it has content
+            // (the wheel keeps its own resting display).
+            var h = Harness.Create(SpeedScreenConfig);
+            h.Control.Land(1);
+            h.Tick(Idle());   // Idle() carries gear "3" stale data
             h.Tick(Idle());
             Assert.Empty(h.Transport.SentCol01Reports);
         }
 
         [Fact]
-        public void GameExit_BlankOnce_ViaDriverUpdate()
+        public void GameExit_DynamicBase_BlankEmergesFromResolution()
         {
-            var h = Harness.Create(StaticPitConfig);
+            // Live speed content, then exit: the blank is one change-gated write
+            // from the stack's own resolution — no driver Update involved.
+            var h = Harness.Create(SpeedScreenConfig);
             h.Control.Land(1);
-            h.DriveFrame(Live(), useRulePath: true);
+            h.DriveFrame(Live(speedLocal: 88), useRulePath: true);
+            Assert.NotEqual(
+                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
+                h.Transport.LastSegments);
             h.Transport.SentCol01Reports.Clear();
 
             h.DriveFrame(Idle(), useRulePath: true);
@@ -483,24 +537,55 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(
                 (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
                 h.Transport.LastSegments);
+            Assert.Equal(0, h.UpdateCalls);   // the rule path never calls mode Update
 
             h.Transport.SentCol01Reports.Clear();
             h.DriveFrame(Idle(), useRulePath: true);
             Assert.Empty(h.Transport.SentCol01Reports);
         }
 
+        [Fact]
+        public void GameExit_TextBase_ContentPersistsAtIdle()
+        {
+            // A Text base is idle-safe content: game exit changes nothing on the
+            // wire (no blank, no re-send — the text stays up while parked).
+            var h = Harness.Create(StaticPitConfig);
+            h.Control.Land(1);
+            h.DriveFrame(Live(), useRulePath: true);
+            h.Transport.SentCol01Reports.Clear();
+
+            h.DriveFrame(Idle(), useRulePath: true);
+            h.DriveFrame(Idle(), useRulePath: true);
+            Assert.Empty(h.Transport.SentCol01Reports);
+        }
+
+        [Fact]
+        public void ScrollEffect_TicksAtIdle()
+        {
+            // Effects run on the stack clock, game or not — a scrolling message
+            // keeps stepping while parked.
+            var h = Harness.Create(ScrollMsgConfig);
+            h.Control.Land(1);
+            h.T = 0;
+            h.Tick(Idle());
+            int first = h.Transport.SentCol01Reports.Count;
+            Assert.True(first > 0);
+            h.T += LegacyEffectClock.ScrollStepMs;
+            h.Tick(Idle());
+            Assert.True(h.Transport.SentCol01Reports.Count > first);
+        }
+
         // ── Base / blank handoff ─────────────────────────────────────────
 
         [Fact]
-        public void NoActiveRule_NullBase_BlanksDisplay()
+        public void NoActiveRule_NullBase_StaysSilent_UntilContentPainted()
         {
             var h = Harness.Create(BlankBaseConfig);
             h.Control.Land(1);
-            // Pit condition false → base null → blank.
+            // Pit condition false → base null → nothing to show. A blank over a page
+            // we never painted is a no-op — the wheel keeps its resting display.
             h.Tick(Live(isInPit: 0));
-            Assert.Equal(
-                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
-                h.Transport.LastSegments);
+            Assert.Empty(h.Transport.SentCol01Reports);
         }
 
         [Fact]
@@ -643,10 +728,11 @@ namespace FanaBridge.Tests.Display
         // ── Forward-compat base: unknown kind blanks, id preserved ───────
 
         [Fact]
-        public void UnknownKindBaseScreen_RendersBlank_BaseIdPreserved()
+        public void UnknownKindBaseScreen_ResolvesNoContent_BaseIdPreserved()
         {
             // Validator keeps baseScreenId pointing at a future contentKind screen; the
-            // rule path must blank the wire (not invent text) without mutating the doc.
+            // rule path must not invent text (no content → wire-silent on a page we
+            // never painted) and must not mutate the doc.
             const string json =
                 "{ \"schemaVersion\": 1, "
                 + "\"legacy\": { \"baseScreenId\": \"x1\", "
@@ -659,9 +745,7 @@ namespace FanaBridge.Tests.Display
 
             h.Control.Land(1);
             h.Tick(Live());
-            Assert.Equal(
-                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
-                h.Transport.LastSegments);
+            Assert.Empty(h.Transport.SentCol01Reports);
             Assert.Equal("x1", h.Stack.Config.Legacy.BaseScreenId);
         }
 

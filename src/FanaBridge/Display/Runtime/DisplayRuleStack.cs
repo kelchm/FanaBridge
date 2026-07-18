@@ -297,8 +297,9 @@ namespace FanaBridge.Display.Runtime
             input.Manual = null;
             var legacy = _legacyEngine.Tick(input);
 
-            // Rule-path col01: flag-on + non-empty world → resolve + sink write
-            // (telemetryLive-gated). Flag-off → exact log-only message.
+            // Rule-path col01: flag-on + non-empty world → resolve + sink write, every
+            // frame (idle included — in-game only gates content per kind and rule
+            // eligibility). Flag-off → exact log-only message.
             if (LegacyRuleWrites && _hasLegacyWorld)
                 DriveLegacyCol01(legacy.Intent, inGame, data);
             else
@@ -482,19 +483,17 @@ namespace FanaBridge.Display.Runtime
         // ── Legacy col01 resolve + write ─────────────────────────────────
 
         /// <summary>
-        /// Resolves the legacy intent to a 3-byte frame and, when telemetry is live,
-        /// hands it to the segment sink. Idle frames resolve nothing to the wire
-        /// (exit blank-once stays on the driver via the device instance).
+        /// Resolves the legacy intent to a 3-byte frame and hands it to the segment
+        /// sink — EVERY frame, idle included. Whether a game runs on the host is a
+        /// content/eligibility input, never a wire gate (the hardware behaves
+        /// identically either way). Idle staleness is handled per content kind in
+        /// <see cref="FormatScreen"/>: dynamic (telemetry) kinds render blank while
+        /// no game runs — SimHub keeps stale values after exit — so the game-exit
+        /// blank emerges from resolution as one change-gated blank write, and
+        /// Text/Message/Property content stays visible while parked.
         /// </summary>
-        private void DriveLegacyCol01(RuleIntent intent, bool telemetryLive, GameData data)
+        private void DriveLegacyCol01(RuleIntent intent, bool inGame, GameData data)
         {
-            // Default: no segment payload this tick (idle / not driving).
-            _tickHasSegs = false;
-            _tickLegacyScreenName = null;
-
-            if (!telemetryLive)
-                return;
-
             string screenId = intent.Kind == TargetKind.LegacyScreen ? intent.ScreenId : null;
             LegacyScreen screen = null;
             if (!string.IsNullOrEmpty(screenId))
@@ -505,7 +504,7 @@ namespace FanaBridge.Display.Runtime
 
             if (screen != null && screen.ContentKind != LegacyContentKind.Unknown)
             {
-                string text = FormatScreen(screen, data);
+                string text = FormatScreen(screen, data, inGame);
                 if (text != null)
                 {
                     byte[] frame = LegacyEffectClock.Apply(text, screen.Effect, _now());
@@ -534,9 +533,14 @@ namespace FanaBridge.Display.Runtime
             LogLegacyWriteTransition(screenId, screenName);
         }
 
-        private string FormatScreen(LegacyScreen screen, GameData data)
+        // Dynamic (telemetry) kinds read StatusDataBase and render BLANK while no game
+        // runs: SimHub keeps the last values after exit, so painting them at idle would
+        // show stale data as if live. Text/Message render always; Property renders
+        // whatever its source yields (live SimHub properties work at idle — a builtIn
+        // telemetry source there is the user's explicit choice).
+        private string FormatScreen(LegacyScreen screen, GameData data, bool inGame)
         {
-            StatusDataBase d = data != null ? data.NewData : null;
+            StatusDataBase d = inGame && data != null ? data.NewData : null;
             switch (screen.ContentKind)
             {
                 case LegacyContentKind.Text:

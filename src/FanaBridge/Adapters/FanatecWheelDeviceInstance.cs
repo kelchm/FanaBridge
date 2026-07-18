@@ -739,9 +739,9 @@ namespace FanaBridge.Adapters
         /// <summary>
         /// Shared col01 drive for the ITM and basic branches. P3 gates
         /// (<see cref="DisplaySettings.LegacyPageActive"/>, blank-once) stay ahead of
-        /// content; when the rule path is active the mode-based Update is bypassed on
-        /// live frames (the stack already wrote via the sink) and only runs on idle for
-        /// the game-exit blank-once handoff.
+        /// content. When the rule path is active the stack owns every frame — idle
+        /// included — through the sink (in-game gates content per kind, never the
+        /// wire); the mode-based Update runs only on the flag-off classic path.
         /// </summary>
         private void DriveLegacyCol01(FanatecPlugin plugin, GameData data,
             bool displayTest, bool logCreate)
@@ -766,12 +766,11 @@ namespace FanaBridge.Adapters
                 {
                     if (UseLegacyRulePath)
                     {
-                        // Rule path owns live frames (stack already wrote). Idle: blank-once
-                        // via the driver's Update gate — same telemetryLive contract.
-                        bool telemetryLive = data != null && data.GameRunning
-                            && data.NewData != null;
-                        if (!telemetryLive)
-                            _legacyDriver.Update(data);
+                        // The stack resolved this frame — idle included — and wrote
+                        // through the sink (in-game gates content per kind and rule
+                        // eligibility, never the wire; dynamic kinds blank while no
+                        // game runs, so the game-exit blank emerges from resolution).
+                        // Nothing to drive here.
                     }
                     else if (!DisplayRuleStack.LegacyRuleWrites
                         && _displaySettings.DisplayMode != DisplaySettings.ModeNone)
