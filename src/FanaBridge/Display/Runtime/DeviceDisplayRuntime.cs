@@ -138,6 +138,16 @@ namespace FanaBridge.Display.Runtime
         /// <summary>Drops any config (no displayCustomization key = no customization).</summary>
         internal void ClearConfig() => _displayConfig = null;
 
+        // Segment sink for the rule-driven col01 path — set by the device instance from
+        // its sole LegacyDisplayDriver each frame before Tick / TickLegacyRules. The
+        // stack never constructs a driver or encoder.
+        private Func<byte, byte, byte, bool> _legacySegmentWriter;
+
+        /// <summary>Threads the device instance's <c>LegacyDisplayDriver.TryShowSegments</c>
+        /// into the rule stack. Pass null when no driver is live.</summary>
+        internal void SetLegacySegmentWriter(Func<byte, byte, byte, bool> writer)
+            => _legacySegmentWriter = writer;
+
         /// <summary>
         /// Publishes a UI-built customization document — the Display tab's ONLY write path
         /// into the config. The document is run through the settings load path
@@ -533,8 +543,12 @@ namespace FanaBridge.Display.Runtime
         /// empty one) nothing is constructed and nothing runs — the ITM frame path stays
         /// byte-identical to a build without the feature. With a config, the stack is
         /// (re)built whenever its config or driver reference changes (settings swap,
-        /// generation rebind, display-id change) and ticked once per frame; rules only drive
-        /// pages while the user has ITM enabled.
+        /// generation rebind, display-id change) and ticked once per frame.
+        ///
+        /// The stack is kept when ITM is active (page rules + field mappings) OR when the
+        /// legacy world is non-empty (rule-driven col01). ITM page policy is only taken
+        /// while <see cref="DisplaySettings.ItmActive"/>; legacy-only tenure restores the
+        /// built-in owner.
         ///
         /// The config is the value the caller already volatile-acquired at the top of the
         /// frame's config-consuming path (Tick), and <paramref name="settings"/> was read
@@ -545,16 +559,13 @@ namespace FanaBridge.Display.Runtime
         private void UpdateDisplayRules(DisplayCustomizationConfig config,
             PluginManager pluginManager, GameData data, DisplaySettings settings)
         {
-            if (config == null || config.IsEmpty || !settings.ItmActive)
+            bool needStack = config != null && !config.IsEmpty
+                && (settings.ItmActive || DisplayRuleStack.HasLegacyWorld(config));
+
+            if (!needStack)
             {
-                // Customization removed (or ITM turned off): drop the runtime and its
-                // published snapshot so nothing stale lingers, and hand page policy back to
-                // the built-in owner — the driver returns to the default-page setting live
-                // and re-enables its game-start revert. The policy check covers the corner
-                // where the stack was already dropped this same frame (a wheel change) while
-                // the driver still holds the external policy; the dead stack's published rule
-                // snapshot drops there too. Rule state restarts clean when customization
-                // comes back — engines are per-config.
+                // Customization removed, or neither ITM nor a legacy world needs the stack:
+                // drop it and hand page policy back to the built-in owner.
                 if (_displayStack != null || _itmDisplay.HasExternalPagePolicy)
                 {
                     _displayStack = null;
@@ -574,20 +585,81 @@ namespace FanaBridge.Display.Runtime
                     settings.ItmDefaultPage,
                     msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
                     properties: _propertySource);
-                // The stack takes page policy the moment it exists (and re-takes it on every
-                // rebuild, which is also how a base-page change within a live stack lands):
-                // edge-triggered — the driver rests on the stack's base from its next Update
-                // and suppresses the lifecycle's game-start revert for the stack's whole
-                // tenure.
-                _itmDisplay.SetPagePolicy(_displayStack.BaseWirePage);
                 _log("FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                     "]: Display rules active (" + (config.Itm?.Rules?.Count ?? 0) + " ITM, " +
                     (config.Legacy?.Rules?.Count ?? 0) + " legacy)");
             }
 
+            // ITM page policy only while ITM is the active world; legacy-only tenure
+            // must not pin the lifecycle to the stack's base.
+            if (settings.ItmActive)
+                _itmDisplay.SetPagePolicy(_displayStack.BaseWirePage);
+            else if (_itmDisplay.HasExternalPagePolicy)
+                _itmDisplay.RestoreBuiltInPagePolicy();
+
+            _displayStack.TryWriteLegacySegments = _legacySegmentWriter;
             var snapshot = _displayStack.Tick(pluginManager, data);
             if (snapshot != null)
                 _displayRuleSnapshot = snapshot;
+        }
+
+        /// <summary>
+        /// Basic (non-ITM) frame step for the display-rules runtime when a non-empty
+        /// legacy world needs the rule-driven col01 path. Builds a stack against a
+        /// no-op page control (no ITM lifecycle) and ticks it once. Empty / no-legacy
+        /// configs construct nothing — the basic mode driver stays the sole face.
+        /// </summary>
+        internal void TickLegacyRules(PluginManager pluginManager, GameData data,
+            DisplaySettings settings)
+        {
+            var config = _displayConfig;
+            if (config == null || config.IsEmpty || !DisplayRuleStack.HasLegacyWorld(config))
+            {
+                if (_displayStack != null)
+                {
+                    _displayStack = null;
+                    _displayRuleSnapshot = null;
+                    _propertySource = null;
+                    MaybePublishPanelSnapshot();
+                }
+                return;
+            }
+
+            if (_propertySource == null)
+                _propertySource = new SimHubPropertySource(
+                    msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
+            _propertySource.BeginFrame(pluginManager, data);
+
+            // Rebuild when the config swaps or when this stack was last bound to an
+            // ITM driver (left ITM / basic tenure) — Driver non-null means ITM-wired.
+            if (_displayStack == null || !ReferenceEquals(_displayStack.Config, config)
+                || _displayStack.Driver != null)
+            {
+                _displayStack = new DisplayRuleStack(config, NoOpPageControl.Instance,
+                    itmDeviceId: 0, defaultWirePage: settings?.ItmDefaultPage
+                        ?? DisplaySettings.DefaultItmDefaultPage,
+                    msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
+                    nowMs: null, rawLookup: null, properties: _propertySource);
+                _log("FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                    "]: Display rules active (legacy-only, " +
+                    (config.Legacy?.Rules?.Count ?? 0) + " rules)");
+            }
+
+            _displayStack.TryWriteLegacySegments = _legacySegmentWriter;
+            var snapshot = _displayStack.Tick(pluginManager, data);
+            if (snapshot != null)
+                _displayRuleSnapshot = snapshot;
+            MaybePublishPanelSnapshot();
+        }
+
+        /// <summary>No-op ITM page control for basic-wheel rule stacks (no lifecycle).</summary>
+        private sealed class NoOpPageControl : IItmPageControl
+        {
+            public static readonly NoOpPageControl Instance = new NoOpPageControl();
+            public ItmLifecycleState State => ItmLifecycleState.Idle;
+            public byte? CurrentWirePage => null;
+            public long SyncGeneration => 0;
+            public void RequestPage(byte wirePage) { }
         }
     }
 }

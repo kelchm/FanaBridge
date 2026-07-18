@@ -41,6 +41,12 @@ namespace FanaBridge.Display.Drivers
         // be inferred from the data itself.
         private bool _needExitBlank;
 
+        // Rule-path segment latch (TryShowSegments): change-gate identical resolved
+        // frames so effect clocks only re-send when the visible window actually moves.
+        private byte _lastSeg0, _lastSeg1, _lastSeg2;
+        private bool _hasLastSegments;
+        private const string RuleSegmentsMode = "RuleSegments";
+
         public LegacyDisplayDriver(DisplayEncoder display, DisplaySettings settings)
         {
             _display = display;
@@ -108,6 +114,50 @@ namespace FanaBridge.Display.Drivers
         }
 
         /// <summary>
+        /// Rule-path sink: write three segment bytes through the same change-gate
+        /// and declined-send-retry machinery as the mode-based path. Identical
+        /// frames never re-send (effect steps only hit the wire when the visible
+        /// window actually changes). Returns <c>false</c> only when a send was
+        /// attempted and declined — the next frame must retry.
+        /// </summary>
+        public bool TryShowSegments(byte seg0, byte seg1, byte seg2)
+        {
+            // Content ownership — arm the same exit-blank latch Update arms on live
+            // frames so a rule-driven session still blanks once on game exit.
+            _needExitBlank = true;
+
+            if (_hasLastSegments
+                && seg0 == _lastSeg0 && seg1 == _lastSeg1 && seg2 == _lastSeg2
+                && _lastDisplayMode == RuleSegmentsMode)
+                return true;
+
+            if (!_display.SetDisplay(seg0, seg1, seg2))
+                return false;
+
+            _lastSeg0 = seg0;
+            _lastSeg1 = seg1;
+            _lastSeg2 = seg2;
+            _hasLastSegments = true;
+            _lastDisplayMode = RuleSegmentsMode;
+            // Mode-path latches must not suppress a later Update after rule tenure.
+            _lastSentGear = int.MinValue;
+            _lastSentSpeed = int.MinValue;
+            _lastBracketsShown = false;
+            return true;
+        }
+
+        /// <summary>
+        /// <see cref="TryShowSegments(byte,byte,byte)"/> over a 3-byte frame.
+        /// Null/short arrays blank the display via <see cref="Clear"/>.
+        /// </summary>
+        public bool TryShowSegments(byte[] segments)
+        {
+            if (segments == null || segments.Length < 3)
+                return Clear();
+            return TryShowSegments(segments[0], segments[1], segments[2]);
+        }
+
+        /// <summary>
         /// Blanks the display and resets cached state. Returns whether the
         /// blanking write reached the transport, so callers that latch a
         /// "cleared" state (e.g. the legacy-page blank) can retry a declined
@@ -125,6 +175,8 @@ namespace FanaBridge.Display.Drivers
             _lastKnownGear = int.MinValue;
             _gearOverlayUntil = DateTime.MinValue;
             _lastBracketsShown = false;
+            _hasLastSegments = false;
+            _lastDisplayMode = null;
             return sent;
         }
 

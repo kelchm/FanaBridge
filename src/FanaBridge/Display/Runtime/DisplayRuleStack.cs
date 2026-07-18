@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using FanaBridge.Display.Legacy;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
@@ -29,10 +30,12 @@ namespace FanaBridge.Display.Runtime
     /// ENGINE'S NEXT tick — one frame of latency (~16 ms), harmless because the
     /// lifecycle already adopted the page.
     ///
-    /// P2 scope note: the legacy engine runs and its intents are logged, but nothing is
-    /// written to the 7-segment surface yet (the col01 text path is a later phase); an
-    /// ITM-rule legacy-screen target gets the display onto the legacy page (director)
-    /// with the screen id logged the same way.
+    /// Legacy col01: when <see cref="LegacyRuleWrites"/> is on and the config's legacy
+    /// world is non-empty, resolved screen text is handed to the injected segment sink
+    /// (the device instance's <see cref="LegacyDisplayDriver"/> — the stack never
+    /// constructs drivers or encoders). Flag-off restores the exact log-only message.
+    /// An ITM-rule legacy-screen target still routes the display onto the legacy page
+    /// via the director.
     /// </summary>
     public class DisplayRuleStack
     {
@@ -41,6 +44,14 @@ namespace FanaBridge.Display.Runtime
         /// visible change with no status/activity/intent edge. Bounded churn: outside a
         /// timed hold the change gates alone decide.</summary>
         internal const int CountdownRecomposeMs = 250;
+
+        /// <summary>
+        /// When true (default), a non-empty legacy world resolves intents to segment
+        /// frames and feeds them through <see cref="TryWriteLegacySegments"/>. When
+        /// false, restores the exact pre-7b log-only behavior (the
+        /// "text write lands in a later phase" message). Test-settable.
+        /// </summary>
+        internal static bool LegacyRuleWrites = true;
 
         private readonly DisplayRuleEngine _itmEngine;
         private readonly DisplayRuleEngine _legacyEngine;
@@ -58,14 +69,21 @@ namespace FanaBridge.Display.Runtime
         private readonly Dictionary<string, DisplayRule> _rulesById =
             new Dictionary<string, DisplayRule>(StringComparer.Ordinal);
 
+        // Legacy screen library (id → screen) for rule-path resolution.
+        private readonly Dictionary<string, LegacyScreen> _screensById =
+            new Dictionary<string, LegacyScreen>(StringComparer.Ordinal);
+
+        // True when this config has any legacy screens or rules — the gate that
+        // activates the rule-driven col01 path (empty world = mode-based fallback).
+        private readonly bool _hasLegacyWorld;
+
         // Manual navigation detected by the director last tick, consumed by the ITM
         // engine this tick (the documented one-frame latency).
         private ManualNavigation? _pendingManual;
 
         private readonly List<string> _actionBuf = new List<string>();
 
-        // Change detection for logging (P2: legacy intents are log-only) and for
-        // snapshot recomposition.
+        // Change detection for logging and snapshot recomposition.
         private string _lastLegacyLogged;
         private string _lastLegacyScreenLogged;
         private long _lastActivityVersion = -1;
@@ -74,6 +92,19 @@ namespace FanaBridge.Display.Runtime
         private RuleStatus[] _lastItmStatuses;
         private RuleStatus[] _lastLegacyStatuses;
         private long _lastComposedAt = long.MinValue / 2;
+
+        // Last-resolved legacy frame (for change-gated snapshot + write logging).
+        private byte _lastSeg0, _lastSeg1, _lastSeg2;
+        private bool _hasLastSegs;
+        private string _lastLegacyScreenName;
+        // This-tick resolution (fed into MaybeCompose).
+        private byte _tickSeg0, _tickSeg1, _tickSeg2;
+        private bool _tickHasSegs;
+        private string _tickLegacyScreenName;
+
+        // GearAndSpeed overlay state (clock-injected; matches formatter contract).
+        private int _overlayGear = int.MinValue;
+        private long _overlayGearAtMs;
 
         /// <summary>Production wiring: the director talks to the driver's lifecycle
         /// through <see cref="ItmLifecyclePageControl"/>. The shared
@@ -165,7 +196,31 @@ namespace FanaBridge.Display.Runtime
 
             IndexRules(config.Itm?.Rules);
             IndexRules(config.Legacy?.Rules);
+            IndexScreens(config.Legacy?.Screens);
+            _hasLegacyWorld = HasLegacyWorld(config);
         }
+
+        /// <summary>
+        /// True when the document's legacy surface has any screens or rules — the
+        /// non-empty-world gate for rule-driven col01. BaseScreenId alone does not
+        /// count (nothing to resolve without a screen library entry).
+        /// </summary>
+        internal static bool HasLegacyWorld(DisplayCustomizationConfig config)
+        {
+            var leg = config?.Legacy;
+            if (leg == null)
+                return false;
+            return (leg.Rules != null && leg.Rules.Count > 0)
+                || (leg.Screens != null && leg.Screens.Count > 0);
+        }
+
+        /// <summary>
+        /// Segment sink for the rule-driven col01 path. Threaded from the device
+        /// instance's <see cref="LegacyDisplayDriver.TryShowSegments"/> — the stack
+        /// never constructs a driver or encoder. Null = resolve for snapshot only
+        /// (no wire writes). Returns false when a send was attempted and declined.
+        /// </summary>
+        internal Func<byte, byte, byte, bool> TryWriteLegacySegments { get; set; }
 
         /// <summary>The config this stack was built from (reference identity — a swap
         /// publishes a new instance, which is the rebuild signal).</summary>
@@ -241,7 +296,13 @@ namespace FanaBridge.Display.Runtime
             // 7-segment screens).
             input.Manual = null;
             var legacy = _legacyEngine.Tick(input);
-            LogLegacyIntentChange(legacy.Intent);
+
+            // Rule-path col01: flag-on + non-empty world → resolve + sink write
+            // (telemetryLive-gated). Flag-off → exact log-only message.
+            if (LegacyRuleWrites && _hasLegacyWorld)
+                DriveLegacyCol01(legacy.Intent, inGame, data);
+            else
+                LogLegacyIntentChange(legacy.Intent);
 
             var directed = _director.Tick(itm.Intent);
             _pendingManual = directed.Manual;
@@ -267,8 +328,12 @@ namespace FanaBridge.Display.Runtime
             // actually shows.
             string intent = DescribeIntent(itm.Intent);
             bool intentChanged = !string.Equals(intent, _lastIntentDescription, StringComparison.Ordinal);
+            // Last-resolved legacy segments / screen name — effect frames recompose when
+            // the visible window changes (same change-gate style as the intent description).
+            bool legacyDisplayChanged = LegacyDisplayChanged();
             long now = _now();
-            if (!versionChanged && !itmChanged && !legacyChanged && !intentChanged)
+            if (!versionChanged && !itmChanged && !legacyChanged && !intentChanged
+                && !legacyDisplayChanged)
             {
                 // Nothing edged — but a timed on-screen hold still counts down, and the
                 // snapshot carries RemainingMs as of composition, so a frozen snapshot
@@ -283,6 +348,7 @@ namespace FanaBridge.Display.Runtime
             _lastActivityVersion = version;
             _lastIntentDescription = intent;
             _lastComposedAt = now;
+            LatchLegacyDisplay();
 
             return new DisplayRuleSnapshot(
                 intent,
@@ -292,7 +358,32 @@ namespace FanaBridge.Display.Runtime
                 MergeActivity(),
                 version,
                 now,
-                DateTime.UtcNow);
+                DateTime.UtcNow,
+                _tickHasSegs
+                    ? new byte[] { _tickSeg0, _tickSeg1, _tickSeg2 }
+                    : null,
+                _tickLegacyScreenName);
+        }
+
+        private bool LegacyDisplayChanged()
+        {
+            if (_tickHasSegs != _hasLastSegs)
+                return true;
+            if (!_tickHasSegs)
+                return !string.Equals(_tickLegacyScreenName, _lastLegacyScreenName,
+                    StringComparison.Ordinal);
+            return _tickSeg0 != _lastSeg0 || _tickSeg1 != _lastSeg1 || _tickSeg2 != _lastSeg2
+                || !string.Equals(_tickLegacyScreenName, _lastLegacyScreenName,
+                    StringComparison.Ordinal);
+        }
+
+        private void LatchLegacyDisplay()
+        {
+            _hasLastSegs = _tickHasSegs;
+            _lastSeg0 = _tickSeg0;
+            _lastSeg1 = _tickSeg1;
+            _lastSeg2 = _tickSeg2;
+            _lastLegacyScreenName = _tickLegacyScreenName;
         }
 
         // True when the surface's winning rule is holding the screen on a timer — the
@@ -388,11 +479,127 @@ namespace FanaBridge.Display.Runtime
                     ? "Current page"
                     : DisplayRuleFormatter.PageName(intent.Page));
 
-        // ── P2 log-only surfaces ─────────────────────────────────────────
+        // ── Legacy col01 resolve + write ─────────────────────────────────
 
-        // The legacy ENGINE's intent (what the 7-segment surface should show). The
-        // col01 write lands in a later phase; until then the decision is logged on
-        // change so field sessions can verify rule behavior.
+        /// <summary>
+        /// Resolves the legacy intent to a 3-byte frame and, when telemetry is live,
+        /// hands it to the segment sink. Idle frames resolve nothing to the wire
+        /// (exit blank-once stays on the driver via the device instance).
+        /// </summary>
+        private void DriveLegacyCol01(RuleIntent intent, bool telemetryLive, GameData data)
+        {
+            // Default: no segment payload this tick (idle / not driving).
+            _tickHasSegs = false;
+            _tickLegacyScreenName = null;
+
+            if (!telemetryLive)
+                return;
+
+            string screenId = intent.Kind == TargetKind.LegacyScreen ? intent.ScreenId : null;
+            LegacyScreen screen = null;
+            if (!string.IsNullOrEmpty(screenId))
+                _screensById.TryGetValue(screenId, out screen);
+
+            byte s0 = SevenSegment.Blank, s1 = SevenSegment.Blank, s2 = SevenSegment.Blank;
+            string screenName = null;
+
+            if (screen != null && screen.ContentKind != LegacyContentKind.Unknown)
+            {
+                string text = FormatScreen(screen, data);
+                if (text != null)
+                {
+                    byte[] frame = LegacyEffectClock.Apply(text, screen.Effect, _now());
+                    s0 = frame[0];
+                    s1 = frame[1];
+                    s2 = frame[2];
+                    screenName = !string.IsNullOrEmpty(screen.Name) ? screen.Name : screen.Id;
+                }
+                else
+                {
+                    // Unreadable dynamic source → blank (same degrade as a missing screen).
+                    screenName = !string.IsNullOrEmpty(screen.Name) ? screen.Name : screen.Id;
+                }
+            }
+            // else: no screen / base null / unknown kind → blank-once via change-gated blanks
+
+            _tickSeg0 = s0;
+            _tickSeg1 = s1;
+            _tickSeg2 = s2;
+            _tickHasSegs = true;
+            _tickLegacyScreenName = screenName;
+
+            // Sink write (declined-send retry lives inside the driver).
+            TryWriteLegacySegments?.Invoke(s0, s1, s2);
+
+            LogLegacyWriteTransition(screenId, screenName);
+        }
+
+        private string FormatScreen(LegacyScreen screen, GameData data)
+        {
+            StatusDataBase d = data != null ? data.NewData : null;
+            switch (screen.ContentKind)
+            {
+                case LegacyContentKind.Text:
+                case LegacyContentKind.Message:
+                    return LegacyValueFormatter.FormatText(screen.Text);
+
+                case LegacyContentKind.Speed:
+                    return d == null ? null : LegacyValueFormatter.FormatSpeed(d.SpeedLocal);
+
+                case LegacyContentKind.Gear:
+                    return d == null ? null : LegacyValueFormatter.FormatGear(d.Gear);
+
+                case LegacyContentKind.GearAndSpeed:
+                    if (d == null)
+                        return null;
+                    int gear = LegacyValueFormatter.ParseGear(d.Gear);
+                    long now = _now();
+                    if (gear != _overlayGear)
+                    {
+                        _overlayGear = gear;
+                        _overlayGearAtMs = now;
+                    }
+                    return LegacyValueFormatter.FormatGearAndSpeed(
+                        d.Gear, d.SpeedLocal, _overlayGearAtMs, now);
+
+                case LegacyContentKind.GearBrackets:
+                    return d == null
+                        ? null
+                        : LegacyValueFormatter.FormatGearBrackets(
+                            d.Gear, d.Rpms, d.CarSettings_RPMRedLineReached);
+
+                case LegacyContentKind.Rpm:
+                    return d == null ? null : LegacyValueFormatter.FormatRpm(d.Rpms);
+
+                case LegacyContentKind.Position:
+                    return d == null ? null : LegacyValueFormatter.FormatPosition(d.Position);
+
+                case LegacyContentKind.Fuel:
+                    return d == null ? null : LegacyValueFormatter.FormatFuel(d.Fuel);
+
+                case LegacyContentKind.Property:
+                    return LegacyValueFormatter.FormatProperty(_properties, screen.Source);
+
+                default:
+                    return null;
+            }
+        }
+
+        // Flag-on: log write transitions (change-gated on screen id).
+        private void LogLegacyWriteTransition(string screenId, string screenName)
+        {
+            if (string.Equals(screenId, _lastLegacyLogged, StringComparison.Ordinal))
+                return;
+            _lastLegacyLogged = screenId;
+            if (screenId != null)
+                _log("DisplayRules: legacy surface showing screen '" + screenId
+                    + "'" + (screenName != null && screenName != screenId
+                        ? " (" + screenName + ")" : ""));
+            else
+                _log("DisplayRules: legacy surface blank");
+        }
+
+        // Flag-off: exact pre-7b log-only message (byte-identical text).
         private void LogLegacyIntentChange(RuleIntent intent)
         {
             string screenId = intent.Kind == TargetKind.LegacyScreen ? intent.ScreenId : null;
@@ -405,7 +612,8 @@ namespace FanaBridge.Display.Runtime
         }
 
         // An ITM rule targeting a legacy screen: the director already routed the
-        // display to the legacy page; the screen text itself is the same later phase.
+        // display to the legacy page; the screen text is driven by DriveLegacyCol01
+        // when the legacy world is non-empty (flag-on), else still log-only.
         private void LogLegacyScreenChange(string screenId)
         {
             if (string.Equals(screenId, _lastLegacyScreenLogged, StringComparison.Ordinal))
@@ -431,6 +639,15 @@ namespace FanaBridge.Display.Runtime
             foreach (var rule in rules)
                 if (rule?.Id != null)
                     _rulesById[rule.Id] = rule;
+        }
+
+        private void IndexScreens(List<LegacyScreen> screens)
+        {
+            if (screens == null)
+                return;
+            foreach (var screen in screens)
+                if (screen?.Id != null)
+                    _screensById[screen.Id] = screen;
         }
     }
 }

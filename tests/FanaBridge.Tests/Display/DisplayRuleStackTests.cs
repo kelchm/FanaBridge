@@ -273,25 +273,36 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void LegacyEngineIntent_LoggedOnChange_NotPerFrame()
         {
-            const string config =
-                "{ \"schemaVersion\": 1, "
-                + "\"legacy\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
-                + "\"rules\": [ { \"id\": \"l1\", "
-                + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"pit\" }, "
-                + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
-
-            var h = Harness.Create(config);
-            h.Control.Land(1);
-
-            var s = NewStatus();
-            Set(s, "IsInPitLane", 1);
-            for (int i = 0; i < 5; i++)
+            // Flag-off restores the exact pre-7b log-only message text.
+            bool prior = DisplayRuleStack.LegacyRuleWrites;
+            DisplayRuleStack.LegacyRuleWrites = false;
+            try
             {
-                h.T += 16;
-                h.Tick(Data(s));
+                const string config =
+                    "{ \"schemaVersion\": 1, "
+                    + "\"legacy\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
+                    + "\"rules\": [ { \"id\": \"l1\", "
+                    + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
+                    + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"pit\" }, "
+                    + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
+
+                var h = Harness.Create(config);
+                h.Control.Land(1);
+
+                var s = NewStatus();
+                Set(s, "IsInPitLane", 1);
+                for (int i = 0; i < 5; i++)
+                {
+                    h.T += 16;
+                    h.Tick(Data(s));
+                }
+                Assert.Single(h.Log, m => m.Contains(
+                    "legacy surface wants screen 'pit' (text write lands in a later phase)"));
             }
-            Assert.Single(h.Log, m => m.Contains("legacy surface wants screen 'pit'"));
+            finally
+            {
+                DisplayRuleStack.LegacyRuleWrites = prior;
+            }
         }
 
         // ── Snapshot ─────────────────────────────────────────────────────

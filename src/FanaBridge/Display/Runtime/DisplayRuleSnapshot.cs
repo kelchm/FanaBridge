@@ -51,7 +51,8 @@ namespace FanaBridge.Display.Runtime
         internal DisplayRuleSnapshot(string intentDescription, string basePageName,
             IReadOnlyList<DisplayRuleRow> itmRules, IReadOnlyList<DisplayRuleRow> legacyRules,
             IReadOnlyList<DisplayActivityEvent> activity, long activityVersion,
-            long composedAtMs, DateTime composedAtUtc)
+            long composedAtMs, DateTime composedAtUtc,
+            byte[] legacySegments = null, string legacyScreenName = null)
         {
             IntentDescription = intentDescription;
             BasePageName = basePageName;
@@ -61,6 +62,8 @@ namespace FanaBridge.Display.Runtime
             ActivityVersion = activityVersion;
             ComposedAtMs = composedAtMs;
             ComposedAtUtc = composedAtUtc;
+            LegacySegments = legacySegments;
+            LegacyScreenName = legacyScreenName;
         }
 
         /// <summary>What the ITM surface should be showing, in row language
@@ -104,5 +107,18 @@ namespace FanaBridge.Display.Runtime
         /// opens — anchoring ages to first observation instead would understate them all.
         /// </summary>
         public DateTime ComposedAtUtc { get; }
+
+        /// <summary>
+        /// Last-resolved 3-byte segment frame for the legacy surface when the rule path
+        /// drives col01, or null when the rule path is idle / flag-off / no world.
+        /// Composed change-gated with the rest of the snapshot (effect frames recompose
+        /// only when the visible window changes). Mirror truth = wire truth.
+        /// </summary>
+        public byte[] LegacySegments { get; }
+
+        /// <summary>
+        /// Display name of the last-resolved legacy screen (or null when blank / none).
+        /// </summary>
+        public string LegacyScreenName { get; }
     }
 }

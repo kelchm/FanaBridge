@@ -562,6 +562,20 @@ namespace FanaBridge.Adapters
 
             if (displayType == DisplayType.Itm)
             {
+                // Ensure the sole col01 writer exists before the rule stack ticks so the
+                // segment sink is live for this frame's resolve (single-writer: the stack
+                // never constructs a driver). Off / display-test leave the sink unbound
+                // so P3 gates stay ahead of rule writes.
+                if (_displaySettings.LegacyPageActive && !displayTest)
+                {
+                    EnsureLegacyDriver(plugin);
+                    BindLegacySegmentSink();
+                }
+                else
+                {
+                    _displayRuntime.SetLegacySegmentWriter(null);
+                }
+
                 // The runtime owns the whole ITM frame (driver/twin build + hot-swap, the
                 // settings apply, wheel-change cold restart, subscription drain, driver +
                 // twin tick, co-driver probe, status snapshot, rules, and the envelope
@@ -586,24 +600,14 @@ namespace FanaBridge.Adapters
                     // firmware/transport hiccup must still log once and MUST NOT skip the LED
                     // update further down this same DataUpdate. The one-shot _legacyErrorLogged
                     // latch mirrors the runtime's _itmErrorLogged (reset on disconnect/rebind).
+                    //
+                    // When the legacy rule world is non-empty and LegacyRuleWrites is on, the
+                    // rule path already fed segments through the sink during Tick — the
+                    // mode-based Update is bypassed (fallback only when the world is empty
+                    // or the flag is off). Idle frames still hit Update for blank-once.
                     try
                     {
-                        if (_displaySettings.LegacyPageActive)
-                        {
-                            if (_legacyDriver == null)
-                                _legacyDriver = new LegacyDisplayDriver(plugin.Display, _displaySettings);
-                            if (!displayTest)
-                                _legacyDriver.Update(data);
-                            _legacyBlanked = false;
-                        }
-                        else if (_legacyDriver != null && !_legacyBlanked && !displayTest)
-                        {
-                            // Switched to None / Off — blank the legacy page once. Only latch
-                            // when the blanking write was accepted, so a transient
-                            // transport failure gets retried instead of leaving the
-                            // page frozen on its last value.
-                            _legacyBlanked = _legacyDriver.Clear();
-                        }
+                        DriveLegacyCol01(plugin, data, displayTest, logCreate: false);
                     }
                     catch (Exception ex)
                     {
@@ -621,27 +625,23 @@ namespace FanaBridge.Adapters
             {
                 // Basic / non-ITM 7-seg path: same LegacyPageActive + blank-once gate as the
                 // ITM branch so DisplayControl=Off is honored regardless of caps / rebind
-                // history (Off must blank col01, not keep painting gear/speed).
+                // history (Off must blank col01, not keep painting gear/speed). Non-empty
+                // legacy world: tick the rule stack (no ITM) then drive via the sink.
                 try
                 {
-                    if (_displaySettings.LegacyPageActive)
+                    if (_displaySettings.LegacyPageActive && !displayTest)
                     {
-                        if (_legacyDriver == null)
-                        {
-                            _legacyDriver = new LegacyDisplayDriver(plugin.Display, _displaySettings);
-                            SimHub.Logging.Current.Info(
-                                "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                                "]: Created display manager");
-                        }
-
-                        if (!displayTest)
-                            _legacyDriver.Update(data);
-                        _legacyBlanked = false;
+                        EnsureLegacyDriver(plugin, logCreate: true);
+                        BindLegacySegmentSink();
+                        if (UseLegacyRulePath)
+                            _displayRuntime.TickLegacyRules(
+                                pluginManager, data, _displaySettings);
                     }
-                    else if (_legacyDriver != null && !_legacyBlanked && !displayTest)
+                    else
                     {
-                        _legacyBlanked = _legacyDriver.Clear();
+                        _displayRuntime.SetLegacySegmentWriter(null);
                     }
+                    DriveLegacyCol01(plugin, data, displayTest, logCreate: true);
                 }
                 catch (Exception ex)
                 {
@@ -669,6 +669,100 @@ namespace FanaBridge.Adapters
             }
 
             _ledModule?.Display();
+        }
+
+        // ── Legacy col01 arbitration (single writer: LegacyDisplayDriver) ─
+
+        /// <summary>
+        /// True when the rule path owns col01: flag on and the published config has a
+        /// non-empty legacy world. Empty world (or flag off) keeps the mode-based
+        /// <see cref="LegacyDisplayDriver.Update"/> fallback byte-identical to today.
+        /// </summary>
+        private bool UseLegacyRulePath
+            => DisplayRuleStack.LegacyRuleWrites
+                && DisplayRuleStack.HasLegacyWorld(_displayRuntime.CurrentConfig);
+
+        private void EnsureLegacyDriver(FanatecPlugin plugin, bool logCreate = false)
+        {
+            if (_legacyDriver != null || plugin?.Display == null)
+                return;
+            if (!_displaySettings.LegacyPageActive)
+                return;
+            _legacyDriver = new LegacyDisplayDriver(plugin.Display, _displaySettings);
+            if (logCreate)
+            {
+                SimHub.Logging.Current.Info(
+                    "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                    "]: Created display manager");
+            }
+        }
+
+        private void BindLegacySegmentSink()
+        {
+            // Caller already gated LegacyPageActive + !displayTest; only bind a live driver.
+            if (_legacyDriver != null)
+            {
+                var driver = _legacyDriver;
+                _displayRuntime.SetLegacySegmentWriter(
+                    (a, b, c) => driver.TryShowSegments(a, b, c));
+            }
+            else
+            {
+                _displayRuntime.SetLegacySegmentWriter(null);
+            }
+        }
+
+        /// <summary>
+        /// Shared col01 drive for the ITM and basic branches. P3 gates
+        /// (<see cref="DisplaySettings.LegacyPageActive"/>, blank-once) stay ahead of
+        /// content; when the rule path is active the mode-based Update is bypassed on
+        /// live frames (the stack already wrote via the sink) and only runs on idle for
+        /// the game-exit blank-once handoff.
+        /// </summary>
+        private void DriveLegacyCol01(FanatecPlugin plugin, GameData data,
+            bool displayTest, bool logCreate)
+        {
+            if (_displaySettings.LegacyPageActive)
+            {
+                if (_legacyDriver == null)
+                {
+                    if (plugin?.Display == null)
+                        return;
+                    _legacyDriver = new LegacyDisplayDriver(plugin.Display, _displaySettings);
+                    if (logCreate)
+                    {
+                        SimHub.Logging.Current.Info(
+                            "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                            "]: Created display manager");
+                    }
+                    BindLegacySegmentSink();
+                }
+
+                if (!displayTest)
+                {
+                    if (UseLegacyRulePath)
+                    {
+                        // Rule path owns live frames (stack already wrote). Idle: blank-once
+                        // via the driver's Update gate — same telemetryLive contract.
+                        bool telemetryLive = data != null && data.GameRunning
+                            && data.NewData != null;
+                        if (!telemetryLive)
+                            _legacyDriver.Update(data);
+                    }
+                    else
+                    {
+                        _legacyDriver.Update(data);
+                    }
+                }
+                _legacyBlanked = false;
+            }
+            else if (_legacyDriver != null && !_legacyBlanked && !displayTest)
+            {
+                // Switched to None / Off — blank the legacy page once. Only latch when
+                // the blanking write was accepted, so a transient transport failure gets
+                // retried instead of leaving the page frozen on its last value.
+                _legacyBlanked = _legacyDriver.Clear();
+            }
         }
 
         // ── Display customization (rules) ────────────────────────────────
