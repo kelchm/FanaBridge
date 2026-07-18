@@ -398,7 +398,7 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void ItmDisabled_ClearsTheRulePart()
+        public void LegacyControl_ClearsTheRulePart()
         {
             var running = Data(NewStatus());
             var s = SyncedSession(new JObject
@@ -408,12 +408,13 @@ namespace FanaBridge.Tests.Display
             }, running);
             Assert.NotNull(s.Host.Snapshot!.Rules);
 
-            // Rules only drive an ITM display — turning ITM off tears the stack down
-            // even though the customization document is still stored.
+            // Rules only drive the ITM world. DisplayControl is authoritative even when
+            // the downgrade mirror disagrees, and the customization document stays stored.
             s.Instance.SetSettings(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["itmEnabled"] = false,
+                ["displayControl"] = DisplaySettings.ControlLegacy,
+                ["itmEnabled"] = true,
                 ["displayCustomization"] = RuleDocument(),
             }, isDefault: false);
             s.Frame(running);

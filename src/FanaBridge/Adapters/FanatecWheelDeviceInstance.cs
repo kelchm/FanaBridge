@@ -296,13 +296,10 @@ namespace FanaBridge.Adapters
             {
                 ["wheelType"] = _config.WheelCode ?? "",
                 ["moduleType"] = _config.ModuleCode ?? "",
-                ["displayMode"] = DisplaySettings.DefaultMode,
-                ["itmEnabled"] = DisplaySettings.DefaultItmEnabled,
-                ["itmShowLapTotal"] = DisplaySettings.DefaultShowLapTotal,
-                ["itmShowPositionTotal"] = DisplaySettings.DefaultShowPositionTotal,
-                ["itmDefaultPage"] = DisplaySettings.DefaultItmDefaultPage,
             };
-            _displaySettings = new DisplaySettings();
+            bool itmCapable = ResolvedDisplayCaps.Display == DisplayType.Itm;
+            DisplaySettingsCodec.WriteDefaults(_customSettings, itmCapable);
+            _displaySettings = DisplaySettingsCodec.Read(_customSettings, itmCapable);
             _displayRuntime.ClearConfig();   // no displayCustomization key = no customization
 
             if (_ledModule != null)
@@ -403,7 +400,7 @@ namespace FanaBridge.Adapters
 
             // Extract custom settings
             _customSettings = new JObject();
-            foreach (var key in new[] { "wheelType", "moduleType", "displayMode", "itmEnabled",
+            foreach (var key in new[] { "wheelType", "moduleType", "displayMode", "displayControl", "itmEnabled",
                                         "itmShowLapTotal", "itmShowPositionTotal", "itmDefaultPage" })
             {
                 if (obj[key] != null)
@@ -434,14 +431,8 @@ namespace FanaBridge.Adapters
             // guarantees a frame that sees the new config also sees the settings that arrived
             // with it. The rule stack captures ItmDefaultPage at build time — a torn pair
             // would latch a stale base page until the next rebuild.
-            _displaySettings = new DisplaySettings
-            {
-                DisplayMode = (string)_customSettings["displayMode"] ?? DisplaySettings.DefaultMode,
-                ItmEnabled = (bool?)_customSettings["itmEnabled"] ?? DisplaySettings.DefaultItmEnabled,
-                ItmShowLapTotal = (bool?)_customSettings["itmShowLapTotal"] ?? DisplaySettings.DefaultShowLapTotal,
-                ItmShowPositionTotal = (bool?)_customSettings["itmShowPositionTotal"] ?? DisplaySettings.DefaultShowPositionTotal,
-                ItmDefaultPage = (byte?)_customSettings["itmDefaultPage"] ?? DisplaySettings.DefaultItmDefaultPage,
-            };
+            _displaySettings = DisplaySettingsCodec.Read(_customSettings,
+                ResolvedDisplayCaps.Display == DisplayType.Itm);
 
             // Display customization document (whitelisted nested key; absent = none).
             // Parsed leniently on this thread — Load never throws — and handed to the
@@ -574,7 +565,7 @@ namespace FanaBridge.Adapters
                     // latch mirrors the runtime's _itmErrorLogged (reset on disconnect/rebind).
                     try
                     {
-                        if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+                        if (_displaySettings.LegacyPageActive)
                         {
                             if (_displayManager == null)
                                 _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
@@ -685,11 +676,7 @@ namespace FanaBridge.Adapters
         {
             // Sync the panel-edited DisplaySettings back to the JObject SimHub
             // persists — the same flow the old Screen panel's callback rode.
-            _customSettings["displayMode"] = _displaySettings.DisplayMode;
-            _customSettings["itmEnabled"] = _displaySettings.ItmEnabled;
-            _customSettings["itmShowLapTotal"] = _displaySettings.ItmShowLapTotal;
-            _customSettings["itmShowPositionTotal"] = _displaySettings.ItmShowPositionTotal;
-            _customSettings["itmDefaultPage"] = _displaySettings.ItmDefaultPage;
+            DisplaySettingsCodec.Write(_customSettings, _displaySettings);
             _displayManager?.UpdateSettings(_displaySettings);
             // ITM driver reads _displaySettings live each frame.
         }

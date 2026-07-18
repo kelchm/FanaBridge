@@ -253,8 +253,8 @@ namespace FanaBridge.Display.Runtime
                 var config = _displayConfig;
                 var settingsSnap = settings();
 
-                _itmDisplay.Enabled = settingsSnap.ItmEnabled;
-                if (settingsSnap.ItmEnabled)
+                _itmDisplay.Enabled = settingsSnap.ItmActive;
+                if (settingsSnap.ItmActive)
                     _itmDisplay.Start();   // idempotent — re-arms bring-up after a disconnect
                 _itmDisplay.ShowLapTotal = settingsSnap.ItmShowLapTotal;
                 _itmDisplay.ShowPositionTotal = settingsSnap.ItmShowPositionTotal;
@@ -514,7 +514,7 @@ namespace FanaBridge.Display.Runtime
         private void UpdateDisplayRules(DisplayCustomizationConfig config,
             PluginManager pluginManager, GameData data, DisplaySettings settings)
         {
-            if (config == null || config.IsEmpty || !settings.ItmEnabled)
+            if (config == null || config.IsEmpty || !settings.ItmActive)
             {
                 // Customization removed (or ITM turned off): drop the runtime and its
                 // published snapshot so nothing stale lingers, and hand page policy back to

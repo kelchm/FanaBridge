@@ -153,6 +153,12 @@ namespace FanaBridge.UI.Display
             if (_settings.ItmEnabled == enabled)
                 return;
 
+            // DisplayControl is authoritative now (the codec re-mirrors ItmEnabled from
+            // it on write) — the pair toggle maps onto the Itm/Legacy controls until the
+            // tri-state header replaces this method.
+            _settings.DisplayControl = enabled
+                ? DisplaySettings.ControlItm
+                : DisplaySettings.ControlLegacy;
             _settings.ItmEnabled = enabled;
             UpdateModeState();
             _host?.NotifySettingsChanged();

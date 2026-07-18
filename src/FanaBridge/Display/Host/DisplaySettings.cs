@@ -8,6 +8,13 @@ namespace FanaBridge.Display.Host
     {
         public const string DefaultMode = "Gear";
 
+        public const string ControlItm = "Itm";
+        public const string ControlLegacy = "Legacy";
+        public const string ControlOff = "Off";
+
+        /// <summary>Which world owns the display: "Itm", "Legacy", or "Off".</summary>
+        public string DisplayControl { get; set; } = ControlItm;
+
         /// <summary>
         /// Sentinel <see cref="DisplayMode"/> meaning "no legacy page". Offered only on ITM
         /// wheels, where the legacy gear/speed page is optional; selecting it turns the
@@ -27,10 +34,17 @@ namespace FanaBridge.Display.Host
 
         public const bool DefaultItmEnabled = true;
         /// <summary>
-        /// Whether the ITM telemetry display is enabled. Unchecking sends the firmware
-        /// "ITM off" command (as the Fanatec software does); rechecking re-enables it.
+        /// Downgrade-safety mirror for one release. Consumed by pre-tristate builds only;
+        /// every write path keeps this equal to <c>DisplayControl == ControlItm</c>.
         /// </summary>
         public bool ItmEnabled { get; set; } = DefaultItmEnabled;
+
+        /// <summary>ITM world active (replaces raw ItmEnabled reads on the frame path).</summary>
+        public bool ItmActive => DisplayControl == ControlItm;
+
+        /// <summary>The legacy 3-char page should be driven this frame.</summary>
+        public bool LegacyPageActive => DisplayControl != ControlOff
+            && DisplayMode != ModeNone;
 
         // Some games don't report a usable total laps or field size, producing misleading
         // "/0" or "/2" suffixes. These let the user turn the totals off per total.
