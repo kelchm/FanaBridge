@@ -8,6 +8,7 @@ using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 using FanaBridge.UI.Display;
+using FanaBridge.UI.Display.Shared;
 using Xunit;
 
 namespace FanaBridge.Tests.UI
@@ -87,6 +88,47 @@ namespace FanaBridge.Tests.UI
 
             // Labels pass through the snapshot verbatim.
             Assert.Equal("Fuel < 10 → Fuel / ERS / DRS", rows[0].Label);
+        }
+
+        [Fact]
+        public void PriorityRows_StructuredWhenFields_DerivedFromConfigRulesById()
+        {
+            var snapshot = Snapshot(new[]
+            {
+                new DisplayRuleRow("r1", "Fuel > 10 → Fuel / ERS / DRS", RuleStatus.OnScreen, 3200),
+                new DisplayRuleRow("r2", "Up Shift is on → Tire Temps", RuleStatus.Armed, null),
+            });
+            var config = DisplayConfigSerializer.Load(
+                "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" } }, "
+                + "{ \"id\": \"r2\", \"when\": { \"kind\": \"isTrue\", "
+                + "\"source\": { \"kind\": \"simHubProperty\", "
+                + "\"name\": \"InputStatus.ControlMapperPlugin.Up Shift\" } }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" } } ] } }", _ => { });
+
+            var rows = DisplayOverviewRender.PriorityRows(snapshot, "Lap Info", config.Itm.Rules);
+
+            Assert.Equal("Fuel", rows[0].PropertyName);
+            Assert.Equal(PropertyDisplayKind.BuiltIn, rows[0].DisplayKind);
+            Assert.Equal(">", rows[0].Operator);
+            Assert.Equal("10", rows[0].ValueText);
+            Assert.Equal("Fuel / ERS / DRS", rows[0].TargetText);
+
+            Assert.Equal("InputStatus.ControlMapperPlugin.Up Shift", rows[1].PropertyName);
+            Assert.Equal(PropertyDisplayKind.SimHubProperty, rows[1].DisplayKind);
+            Assert.Equal("is on", rows[1].Operator);
+            Assert.Equal("", rows[1].ValueText);
+            Assert.Equal("Tire Temps", rows[1].TargetText);
+
+            // The base row never carries structured fields.
+            Assert.Null(rows[2].PropertyName);
+
+            // Back-compatible: without config rules the rows are label-only (no grammar).
+            var plain = DisplayOverviewRender.PriorityRows(snapshot, "Lap Info");
+            Assert.Null(plain[0].PropertyName);
+            Assert.Equal("Fuel > 10 → Fuel / ERS / DRS", plain[0].Label);
         }
 
         [Fact]

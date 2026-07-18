@@ -8,6 +8,7 @@ using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 using FanaBridge.UI.Display;
+using FanaBridge.UI.Display.Shared;
 using Xunit;
 
 namespace FanaBridge.Tests.Display
@@ -432,7 +433,18 @@ namespace FanaBridge.Tests.Display
             Assert.True(rows[0].Draggable);
             Assert.True(rows[0].Expandable);
             Assert.Equal("In-game", rows[0].Eligibility);
+            // Structured v9 WHEN: a built-in shows a bare leaf; operator/value/target split out.
+            Assert.Equal("Fuel", rows[0].PropertyName);
+            Assert.Equal(PropertyDisplayKind.BuiltIn, rows[0].DisplayKind);
+            Assert.Equal(">", rows[0].Operator);
+            Assert.Equal("10", rows[0].ValueText);
+            Assert.Equal("Fuel / ERS / DRS", rows[0].TargetText);
 
+            // Row 1: mapped control — SimHub property, boolean operator (no value).
+            Assert.Equal("InputStatus.ControlMapperPlugin.A", rows[1].PropertyName);
+            Assert.Equal(PropertyDisplayKind.SimHubProperty, rows[1].DisplayKind);
+            Assert.Equal("is on", rows[1].Operator);
+            Assert.Equal("", rows[1].ValueText);
             Assert.Equal("waiting", rows[1].Chip);
 
             // Base row pinned last: device 3 default wire 1 = Lap Info.
@@ -443,6 +455,29 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("base", baseRow.Chip);
             Assert.False(baseRow.Draggable);
             Assert.False(baseRow.Expandable);
+            Assert.Null(baseRow.PropertyName);              // base row renders its Label
+        }
+
+        [Fact]
+        public void OperatorChoices_AreTheOptionsForTheDraft_WithSelection_AndLabels()
+        {
+            var model = new DisplayTriggersEditModel(OneNormalRule(), Device3);
+            var draft = DisplayTriggersEditModel.ToDraft(model.Rules[0]);   // greaterThan
+
+            var choices = DisplayTriggersEditModel.OperatorChoices(draft);
+            Assert.Equal("GreaterThan", choices.SelectedId);
+            Assert.Equal("greater than", choices.Selected.Label);
+            Assert.Equal(DisplayTriggersEditModel.Operators.Count, choices.Items.Count);
+            Assert.Equal("less than", choices.Items[0].Label);
+            Assert.Equal("LessThan", choices.Items[0].Id);
+
+            // A loaded unlisted-but-valid kind is prepended and selected (not mislabeled).
+            draft.Operator = ConditionKind.ActionTriggered;
+            var withEvent = DisplayTriggersEditModel.OperatorChoices(draft);
+            Assert.Equal("ActionTriggered", withEvent.SelectedId);
+            Assert.Equal("action triggered", withEvent.Selected.Label);
+            Assert.Equal(DisplayTriggersEditModel.Operators.Count + 1, withEvent.Items.Count);
+            Assert.Equal("ActionTriggered", withEvent.Items[0].Id);
         }
 
         [Fact]
@@ -459,6 +494,7 @@ namespace FanaBridge.Tests.Display
             Assert.False(degradedRow.Expandable);          // not editable
             Assert.True(degradedRow.Draggable);            // but reorderable
             Assert.Equal("", degradedRow.Eligibility);     // no eligibility chip
+            Assert.Null(degradedRow.PropertyName);         // no structured grammar — uses Label
         }
 
         [Fact]

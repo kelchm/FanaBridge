@@ -7,6 +7,7 @@ using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
+using FanaBridge.UI.Display.Shared;
 
 namespace FanaBridge.UI.Display
 {
@@ -16,8 +17,29 @@ namespace FanaBridge.UI.Display
         /// <summary>"1".."n" for rules, "★" for the pinned base row.</summary>
         public string Rank { get; set; }
 
-        /// <summary>The rule's display text, or "Always → &lt;base page&gt;" for the base row.</summary>
+        /// <summary>The rule's display text, or "Always → &lt;base page&gt;" for the base row.
+        /// The v9 row prefers the structured when-fields below; this is the fallback for the
+        /// base row and user-named rules (<see cref="PropertyName"/> null there).</summary>
         public string Label { get; set; }
+
+        // ── Structured WHEN (v9 property grammar), populated when the config rule is
+        //    available, non-degraded, unnamed, and has a source; null PropertyName → use Label. ──
+
+        /// <summary>The condition's source property, for <see cref="Shared.PropertyGrammar"/>;
+        /// null → render <see cref="Label"/>.</summary>
+        public string PropertyName { get; set; }
+
+        /// <summary>How <see cref="PropertyName"/> namespaces for display.</summary>
+        public PropertyDisplayKind DisplayKind { get; set; }
+
+        /// <summary>The operator glyph, or "".</summary>
+        public string Operator { get; set; } = "";
+
+        /// <summary>The comparison value text, or "".</summary>
+        public string ValueText { get; set; } = "";
+
+        /// <summary>The SHOW target text, or "".</summary>
+        public string TargetText { get; set; } = "";
 
         /// <summary>State chip text: "on screen", "waiting", "n/a on this wheel", "base",
         /// or "" (armed, and the chip-less muted states).</summary>
@@ -110,13 +132,28 @@ namespace FanaBridge.UI.Display
         /// yet) yields just the base row.
         /// </summary>
         public static List<PriorityRowModel> PriorityRows(DisplayRuleSnapshot snapshot,
-            string basePageName)
+            string basePageName, IReadOnlyList<DisplayRule> configRules = null)
         {
             var rows = new List<PriorityRowModel>();
             var rules = snapshot?.ItmRules;
             if (rules != null)
+            {
+                Dictionary<string, DisplayRule> byId = null;
+                if (configRules != null)
+                {
+                    byId = new Dictionary<string, DisplayRule>(StringComparer.Ordinal);
+                    foreach (var r in configRules)
+                        if (r.Id != null)
+                            byId[r.Id] = r;
+                }
                 for (int i = 0; i < rules.Count; i++)
-                    rows.Add(RuleRow(i + 1, rules[i]));
+                {
+                    DisplayRule config = null;
+                    if (byId != null && rules[i].RuleId != null)
+                        byId.TryGetValue(rules[i].RuleId, out config);
+                    rows.Add(RuleRow(i + 1, rules[i], config));
+                }
+            }
             rows.Add(new PriorityRowModel
             {
                 Rank = "★",
@@ -127,10 +164,13 @@ namespace FanaBridge.UI.Display
             return rows;
         }
 
-        private static PriorityRowModel RuleRow(int rank, DisplayRuleRow rule)
+        // The v9 structured WHEN, derived from the config rule (the snapshot row carries only a
+        // label). Shown for a non-degraded, unnamed rule with a source property — otherwise the
+        // row falls back to the snapshot's own label, exactly as the Triggers editor does.
+        private static PriorityRowModel RuleRow(int rank, DisplayRuleRow rule, DisplayRule config)
         {
             var chip = StateChip(rule.Status, rule.RemainingMs);
-            return new PriorityRowModel
+            var row = new PriorityRowModel
             {
                 Rank = rank.ToString(),
                 Label = rule.Label,
@@ -139,6 +179,19 @@ namespace FanaBridge.UI.Display
                 OnScreen = chip.OnScreen,
                 Muted = chip.Muted,
             };
+            if (config != null
+                && !config.DegradedAtLoad
+                && string.IsNullOrWhiteSpace(config.Name)
+                && config.When?.Source?.Name != null)
+            {
+                var w = WhenFields.From(config.When);
+                row.PropertyName = w.PropertyName;
+                row.DisplayKind = w.DisplayKind;
+                row.Operator = w.Operator;
+                row.ValueText = w.ValueText;
+                row.TargetText = DisplayRuleFormatter.DescribeTarget(config.Show);
+            }
+            return row;
         }
 
         /// <summary>The live-state chip for one rule, shared by the Overview priority list

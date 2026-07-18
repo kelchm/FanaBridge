@@ -6,6 +6,7 @@ using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
+using FanaBridge.UI.Display.Shared;
 
 namespace FanaBridge.UI.Display
 {
@@ -64,8 +65,30 @@ namespace FanaBridge.UI.Display
         /// <summary>"1".."n" for rules, "★" for the base row.</summary>
         public string Rank;
 
-        /// <summary>Row label (<see cref="DisplayRuleFormatter.Label"/>), or "Always → &lt;base&gt;".</summary>
+        /// <summary>Row label (<see cref="DisplayRuleFormatter.Label"/>), or "Always → &lt;base&gt;".
+        /// The v9 row header prefers the structured when-fields below; <see cref="Label"/> is the
+        /// fallback for the base row, degraded rows, and user-named rules
+        /// (<see cref="PropertyName"/> null in those cases).</summary>
         public string Label;
+
+        // ── Structured WHEN (v9 property grammar). Populated only for a non-degraded,
+        //    unnamed rule with a source property; null PropertyName means "use Label". ──
+
+        /// <summary>The condition's source property, for <see cref="Shared.PropertyGrammar"/>;
+        /// null on base / degraded / user-named rows (render <see cref="Label"/> then).</summary>
+        public string PropertyName;
+
+        /// <summary>How <see cref="PropertyName"/> namespaces for display.</summary>
+        public PropertyDisplayKind DisplayKind;
+
+        /// <summary>The operator glyph ("&gt;", "is on", "changes"), or "".</summary>
+        public string Operator = "";
+
+        /// <summary>The comparison value text, or "".</summary>
+        public string ValueText = "";
+
+        /// <summary>The SHOW target text ("Fuel / ERS / DRS"), or "".</summary>
+        public string TargetText = "";
 
         /// <summary>Live-state chip ("on screen"/"waiting"/…/"base"), merged from the snapshot by id.</summary>
         public string Chip = "";
@@ -325,6 +348,7 @@ namespace FanaBridge.UI.Display
                     Expandable = !rule.DegradedAtLoad,
                     Eligibility = rule.DegradedAtLoad ? "" : EligibilityLabel(rule.Eligible),
                 };
+                ApplyStructuredWhen(row, rule);
                 if (live != null && rule.Id != null && live.TryGetValue(rule.Id, out var state))
                 {
                     var chip = DisplayOverviewRender.StateChip(state.Status, state.RemainingMs);
@@ -349,6 +373,23 @@ namespace FanaBridge.UI.Display
                 Expandable = false,
             });
             return rows;
+        }
+
+        // The v9 structured WHEN: shown for a non-degraded, unnamed rule that has a source
+        // property. A user-named rule keeps its name (via Label) and a degraded/base row has
+        // no editable condition, so those leave PropertyName null and the view uses Label.
+        internal static void ApplyStructuredWhen(TriggerRowModel row, DisplayRule rule)
+        {
+            if (rule.DegradedAtLoad
+                || !string.IsNullOrWhiteSpace(rule.Name)
+                || rule.When?.Source?.Name == null)
+                return;
+            var w = WhenFields.From(rule.When);
+            row.PropertyName = w.PropertyName;
+            row.DisplayKind = w.DisplayKind;
+            row.Operator = w.Operator;
+            row.ValueText = w.ValueText;
+            row.TargetText = DisplayRuleFormatter.DescribeTarget(rule.Show);
         }
 
         // ── UI option mappings (operator / hold / eligibility / pages) ────
@@ -400,6 +441,19 @@ namespace FanaBridge.UI.Display
             var list = new List<ConditionKind>(Operators.Count + 1) { current };
             list.AddRange(Operators);
             return list;
+        }
+
+        /// <summary>The operator dropdown for a draft as a <see cref="ChoiceList"/> (the
+        /// <see cref="DropDownCell"/> model): the options <see cref="OperatorOptionsFor"/> gives
+        /// for the draft's current operator, each id'd by its enum name and labelled by
+        /// <see cref="OperatorLabel"/>, with the draft's operator selected.</summary>
+        public static ChoiceList OperatorChoices(RuleEdit draft)
+        {
+            var builder = ChoiceList.Build();
+            ConditionKind current = draft != null ? draft.Operator : ConditionKind.Unknown;
+            foreach (var op in OperatorOptionsFor(current))
+                builder.Add(op.ToString(), OperatorLabel(op));
+            return builder.Selected(current.ToString());
         }
 
         /// <summary>Whether a draft is complete enough to commit without the load-time

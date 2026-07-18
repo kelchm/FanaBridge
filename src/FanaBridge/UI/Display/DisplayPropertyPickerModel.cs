@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using FanaBridge.Display.Rules;
+using FanaBridge.UI.Display.Shared;
 
 namespace FanaBridge.UI.Display
 {
@@ -34,6 +35,16 @@ namespace FanaBridge.UI.Display
 
         public bool IsHeader => Kind == PickerRowKind.GroupHeader;
         public bool IsProperty => Kind == PickerRowKind.Property;
+
+        /// <summary>The label content bound by the (virtualized) list template: the v9 property
+        /// grammar for a property row (dim-ns/bright-leaf, budget generous so the picker never
+        /// left-elides), or a single plain run of the group name for a header (which keeps its
+        /// inherited bold-uppercase styling). Computed lazily; recycled containers re-read it.</summary>
+        public PropertyLabelContent LabelContent
+            => IsProperty
+                ? PropertyGrammar.ContentFor(PropertyName, PropertyGrammar.KindFor(PropertyKind), int.MaxValue)
+                : new PropertyLabelContent(
+                    new[] { new GrammarRun(Text ?? "", GrammarEmphasis.Plain) }, null);
     }
 
     /// <summary>

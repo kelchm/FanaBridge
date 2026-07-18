@@ -69,6 +69,32 @@ namespace FanaBridge.Display.Rules
         public static string PageName(ItmPage? page)
             => page == null ? "?" : ItmTelemetry.NameOf(page.Value);
 
+        /// <summary>The operator glyph/word for a condition kind ("&lt;", "≥", "is on",
+        /// "changes", "triggered") — the structured-row counterpart of the phrases baked into
+        /// <see cref="DescribeCondition"/>, so the two share one operator vocabulary.</summary>
+        public static string OperatorText(ConditionKind kind)
+        {
+            switch (kind)
+            {
+                case ConditionKind.LessThan: return "<";
+                case ConditionKind.LessOrEqual: return "≤";
+                case ConditionKind.GreaterThan: return ">";
+                case ConditionKind.GreaterOrEqual: return "≥";
+                case ConditionKind.Equals: return "=";
+                case ConditionKind.NotEquals: return "≠";
+                case ConditionKind.IsTrue: return "is on";
+                case ConditionKind.IsFalse: return "is off";
+                case ConditionKind.Changes: return "changes";
+                case ConditionKind.Increases: return "increases";
+                case ConditionKind.Decreases: return "decreases";
+                case ConditionKind.ActionTriggered: return "triggered";
+                default: return "";
+            }
+        }
+
+        /// <summary>A comparison value formatted for display ("10", "0.5"), or "?" when null.</summary>
+        public static string FormatValue(double? value) => Num(value);
+
         private static string Num(double? value)
             => value == null ? "?" : value.Value.ToString("0.###", CultureInfo.InvariantCulture);
     }

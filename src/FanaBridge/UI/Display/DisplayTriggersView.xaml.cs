@@ -37,6 +37,12 @@ namespace FanaBridge.UI.Display
     {
         private enum AddTriggerType { Telemetry, MappedControl }
 
+        // Generous character budgets before the property grammar left-elides (the WPF
+        // CharacterEllipsis is the visual backstop past these): the collapsed row shares its
+        // width, the detail button gets its own line.
+        private const int RowPropertyBudget = 34;
+        private const int DetailPropertyBudget = 42;
+
         // ── Bound members (the shell's own instances, wired in Bind) ───────
         private IDisplayPanelHost _host;
         private IDisplayPropertyCatalog _propertyCatalog;
@@ -343,16 +349,46 @@ namespace FanaBridge.UI.Display
             Grid.SetColumn(rank, 1);
             grid.Children.Add(rank);
 
-            var label = new TextBlock
+            // The label column: the v9 structured WHEN (dim-ns/bright-leaf property + plain
+            // operator/value/target spans) when the model populated it, else the plain label
+            // (base/degraded/user-named rows). `label` is the span the on-screen accent recolours.
+            FrameworkElement labelColumn;
+            TextBlock label;
+            if (!string.IsNullOrEmpty(row.PropertyName))
             {
-                Text = row.Label,
-                FontSize = 12.5,
-                Foreground = DisplayPalette.RowText,   // on-screen accent applied via ApplyRowAccent below
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(label, 2);
-            grid.Children.Add(label);
+                var strip = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                strip.Children.Add(PropertyLabel.ForProperty(
+                    row.PropertyName, row.DisplayKind, RowPropertyBudget));
+                label = new TextBlock
+                {
+                    Text = RestText(row),
+                    FontSize = 12.5,
+                    Foreground = DisplayPalette.RowText,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(6, 0, 0, 0),
+                };
+                strip.Children.Add(label);
+                labelColumn = strip;
+            }
+            else
+            {
+                label = new TextBlock
+                {
+                    Text = row.Label,
+                    FontSize = 12.5,
+                    Foreground = DisplayPalette.RowText,   // on-screen accent applied via ApplyRowAccent below
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                labelColumn = label;
+            }
+            Grid.SetColumn(labelColumn, 2);
+            grid.Children.Add(labelColumn);
 
             if (!string.IsNullOrEmpty(row.Eligibility))
             {
@@ -616,12 +652,12 @@ namespace FanaBridge.UI.Display
 
         private FrameworkElement BuildPropertyButton(RuleEdit draft, Action commit)
         {
+            // The button caption is the v9 property grammar (an empty source renders the
+            // grammar's "(pick property)" placeholder).
             var btn = new Button
             {
-                Content = string.IsNullOrEmpty(draft.SourceName) ? "(pick property)" : draft.SourceName,
-                FontFamily = DisplayPalette.Mono,
-                FontSize = 11,
-                Foreground = DisplayPalette.PropMono,
+                Content = PropertyLabel.ForProperty(draft.SourceName,
+                    PropertyGrammar.KindFor(draft.SourceKind), DetailPropertyBudget),
                 Padding = new Thickness(8, 5, 8, 5),
                 HorizontalContentAlignment = HorizontalAlignment.Left,
                 Cursor = Cursors.Hand,
@@ -634,27 +670,22 @@ namespace FanaBridge.UI.Display
             return btn;
         }
 
-        private ComboBox BuildOperatorCombo(RuleEdit draft, string ruleId)
+        // The operator field: the first DropDownCell consumer. Options (incl. a loaded
+        // unlisted-but-valid ActionTriggered kind, shown honestly) come from the edit model as
+        // a ChoiceList; a commit maps the id back to the enum and republishes the rule.
+        private FrameworkElement BuildOperatorCombo(RuleEdit draft, string ruleId)
         {
-            var combo = new ComboBox { Width = 130 };
-            // A loaded rule using an unlisted-but-valid kind (ActionTriggered) is shown by
-            // its own operator, not silently mislabeled as the first item.
-            foreach (var op in DisplayTriggersEditModel.OperatorOptionsFor(draft.Operator))
-                combo.Items.Add(new ComboBoxItem
-                {
-                    Content = DisplayTriggersEditModel.OperatorLabel(op),
-                    Tag = op,
-                });
-            SelectByTagValue(combo, draft.Operator);
-            combo.SelectionChanged += (s, e) =>
+            var cell = new DropDownCell();
+            cell.SetChoices(DisplayTriggersEditModel.OperatorChoices(draft));
+            cell.SelectionCommitted += (s, id) =>
             {
-                if (combo.SelectedItem is ComboBoxItem item && item.Tag is ConditionKind op)
+                if (Enum.TryParse(id, out ConditionKind op) && op != draft.Operator)
                 {
                     draft.Operator = op;
                     CommitUpdate(draft, ruleId);
                 }
             };
-            return combo;
+            return cell;
         }
 
         private TextBox BuildValueBox(RuleEdit draft, string ruleId)
@@ -1465,6 +1496,17 @@ namespace FanaBridge.UI.Display
                     e.Handled = true;
                 }
             };
+        }
+
+        // The plain remainder of a structured row after the property: "> 10 → Fuel / ERS / DRS".
+        private static string RestText(TriggerRowModel row)
+        {
+            string s = row.Operator ?? "";
+            if (!string.IsNullOrEmpty(row.ValueText))
+                s = s.Length > 0 ? s + " " + row.ValueText : row.ValueText;
+            if (!string.IsNullOrEmpty(row.TargetText))
+                s = s.Length > 0 ? s + " → " + row.TargetText : "→ " + row.TargetText;
+            return s;
         }
 
         private static TextBlock KLabel(string text)

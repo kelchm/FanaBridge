@@ -426,7 +426,7 @@ namespace FanaBridge.UI.Display
                 snapshot, config, _host.ItmDeviceId, _settings.ItmDefaultPage);
 
             panelPriorityRows.Children.Clear();
-            foreach (var row in DisplayOverviewRender.PriorityRows(snapshot, basePage))
+            foreach (var row in DisplayOverviewRender.PriorityRows(snapshot, basePage, config?.Itm?.Rules))
                 panelPriorityRows.Children.Add(BuildPriorityRow(row));
 
             panelNoTriggers.Visibility = DisplayOverviewRender.HasConfiguredTriggers(config)
@@ -446,6 +446,20 @@ namespace FanaBridge.UI.Display
                 count = rows.Count;
             }
             txtNoActivity.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // Generous budget before the property grammar left-elides; CharacterEllipsis backstops.
+        private const int PriorityPropertyBudget = 34;
+
+        // The plain remainder after the property: "< 10 → Fuel / ERS / DRS".
+        private static string PriorityRestText(PriorityRowModel model)
+        {
+            string s = model.Operator ?? "";
+            if (!string.IsNullOrEmpty(model.ValueText))
+                s = s.Length > 0 ? s + " " + model.ValueText : model.ValueText;
+            if (!string.IsNullOrEmpty(model.TargetText))
+                s = s.Length > 0 ? s + " → " + model.TargetText : "→ " + model.TargetText;
+            return s;
         }
 
         // One priority row: [rank] [label ……] [chip] [seconds]. On-screen rows get the
@@ -472,16 +486,42 @@ namespace FanaBridge.UI.Display
             Grid.SetColumn(rank, 0);
             grid.Children.Add(rank);
 
-            var label = new TextBlock
+            var labelBrush = model.OnScreen ? DisplayPalette.OnScreenText : (model.IsBase ? DisplayPalette.BaseText : DisplayPalette.RowText);
+            FrameworkElement labelColumn;
+            if (!string.IsNullOrEmpty(model.PropertyName))
             {
-                Text = model.Label,
-                FontSize = 12.5,
-                Foreground = model.OnScreen ? DisplayPalette.OnScreenText : (model.IsBase ? DisplayPalette.BaseText : DisplayPalette.RowText),
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(label, 1);
-            grid.Children.Add(label);
+                // The v9 structured WHEN: dim-ns/bright-leaf property + plain operator/value/target.
+                var strip = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                strip.Children.Add(PropertyLabel.ForProperty(
+                    model.PropertyName, model.DisplayKind, PriorityPropertyBudget));
+                strip.Children.Add(new TextBlock
+                {
+                    Text = PriorityRestText(model),
+                    FontSize = 12.5,
+                    Foreground = labelBrush,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(6, 0, 0, 0),
+                });
+                labelColumn = strip;
+            }
+            else
+            {
+                labelColumn = new TextBlock
+                {
+                    Text = model.Label,
+                    FontSize = 12.5,
+                    Foreground = labelBrush,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+            }
+            Grid.SetColumn(labelColumn, 1);
+            grid.Children.Add(labelColumn);
 
             if (!string.IsNullOrEmpty(model.Chip))
             {
