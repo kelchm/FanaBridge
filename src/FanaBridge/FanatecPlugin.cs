@@ -190,6 +190,49 @@ namespace FanaBridge
         /// </summary>
         internal Adapters.IDevicePanelFactory PanelFactory { get; set; } = new UI.DevicePanelFactory();
 
+        // Plugin-wide property-picker favorites/recents. Built lazily against the
+        // Settings lists; persists via SaveCommonSettings on every mutation.
+        private Display.Host.IDisplayPickerStore _pickerStore;
+
+        /// <summary>
+        /// Plugin-wide favorites + recents for the property picker (not per-wheel).
+        /// Lazily constructed against <see cref="Settings"/> so tests that skip
+        /// <see cref="Init"/> still get a working store when Settings is present.
+        /// </summary>
+        internal Display.Host.IDisplayPickerStore PickerStore
+        {
+            get
+            {
+                if (_pickerStore != null)
+                    return _pickerStore;
+                if (Settings == null)
+                    Settings = new FanatecPluginSettings();
+                if (Settings.DisplayPickerFavorites == null)
+                    Settings.DisplayPickerFavorites = new List<string>();
+                if (Settings.DisplayPickerRecents == null)
+                    Settings.DisplayPickerRecents = new List<string>();
+                _pickerStore = new Display.Host.DisplayPickerStore(
+                    Settings.DisplayPickerFavorites,
+                    Settings.DisplayPickerRecents,
+                    PersistPickerStore);
+                return _pickerStore;
+            }
+        }
+
+        private void PersistPickerStore()
+        {
+            try
+            {
+                if (Settings != null)
+                    this.SaveCommonSettings("FanaBridgeSettings", Settings);
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn(
+                    "FanaBridge: Failed to save picker favorites/recents: " + ex.Message);
+            }
+        }
+
         /// <summary>Called by each <see cref="Adapters.FanatecWheelDeviceInstance"/> so the
         /// plugin can read the connected wheel's SimHub device name for the Control Mapper
         /// integration. Idempotent.</summary>
@@ -427,6 +470,13 @@ namespace FanaBridge
             Settings = this.ReadCommonSettings<FanatecPluginSettings>(
                 "FanaBridgeSettings",
                 () => new FanatecPluginSettings());
+            // JSON load can null the list properties; keep them ready for the picker store.
+            if (Settings.DisplayPickerFavorites == null)
+                Settings.DisplayPickerFavorites = new List<string>();
+            if (Settings.DisplayPickerRecents == null)
+                Settings.DisplayPickerRecents = new List<string>();
+            // Drop any store built before Settings was loaded (test seams only).
+            _pickerStore = null;
 
             // The wheelbase owns the HID transport and reads the FF 08 identity
             // report through it (no SimHub.FanatecManaged.dll). Encoders share

@@ -48,6 +48,7 @@ namespace FanaBridge.UI.Display
         private IDisplayPanelHost _host;
         private IDisplayPropertyCatalog _propertyCatalog;
         private IMappedRoleCatalog _roleCatalog;
+        private IDisplayPickerStore _pickerStore;
         private DisplaySettings _settings;
         private DisplayRuleSnapshot _lastSnapshot;
 
@@ -78,18 +79,21 @@ namespace FanaBridge.UI.Display
 
         // ── The bind/input surface (the seam) ──────────────────────────────
 
-        // Wires the view to the shell's device host, the two on-demand editor catalogs, and
-        // the SAME mutable DisplaySettings reference the shell holds. Call once after construction.
+        // Wires the view to the shell's device host, the two on-demand editor catalogs, the
+        // plugin-wide picker store (favorites/recents), and the SAME mutable DisplaySettings
+        // reference the shell holds. Call once after construction.
         internal void Bind(
             IDisplayPanelHost host,
             IDisplayPropertyCatalog propertyCatalog,
             IMappedRoleCatalog roleCatalog,
-            DisplaySettings settings)
+            DisplaySettings settings,
+            IDisplayPickerStore pickerStore)
         {
             _host = host;
             _propertyCatalog = propertyCatalog;
             _roleCatalog = roleCatalog;
             _settings = settings;
+            _pickerStore = pickerStore;
         }
 
         // Called when the Triggers view becomes active: cache the current snapshot, build a
@@ -1148,15 +1152,51 @@ namespace FanaBridge.UI.Display
         {
             var owner = Window.GetWindow(this);
             var builtIns = BuiltInProperties.All;
-            var all = _propertyCatalog.GetAllPropertyNames();
+            var all = _propertyCatalog != null
+                ? _propertyCatalog.GetAllPropertyNames()
+                : Array.Empty<string>();
             var mappedRoles = _roleCatalog?.GetMappedRoles()?.Roles;
-            if (PropertyPickerDialog.TryPick(owner, builtIns, all, mappedRoles, draft.SourceName,
-                    out string name, out PropertyKind kind))
+            var itmPages = CollectItmPageProperties();
+            // Live-value reader: defensive — any catalog miss or throw becomes null text.
+            Func<string, object> valueReader = name =>
             {
-                DisplayTriggersEditModel.AdoptPickedProperty(draft, name, kind);
+                if (_propertyCatalog != null
+                    && _propertyCatalog.TryReadPropertyValue(name, out object value))
+                    return value;
+                return null;
+            };
+            if (PropertyPickerDialog.TryPick(owner, builtIns, all, mappedRoles, draft.SourceName,
+                    _pickerStore, itmPages, valueReader,
+                    out string picked, out PropertyKind kind))
+            {
+                DisplayTriggersEditModel.AdoptPickedProperty(draft, picked, kind);
                 return true;
             }
             return false;
+        }
+
+        // FieldMappings sources first (Phase 6 forward-ready), then BuiltInProperties.All,
+        // deduped — today's pages are fed by built-ins.
+        private IReadOnlyList<string> CollectItmPageProperties()
+        {
+            var result = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var mappings = _host?.GetDisplayConfig()?.FieldMappings;
+            if (mappings != null)
+            {
+                foreach (var kv in mappings)
+                {
+                    string name = kv.Value?.Source?.Name;
+                    if (!string.IsNullOrEmpty(name) && seen.Add(name))
+                        result.Add(name);
+                }
+            }
+            foreach (var name in BuiltInProperties.All)
+            {
+                if (seen.Add(name))
+                    result.Add(name);
+            }
+            return result;
         }
 
         private ItmPage DefaultPage()

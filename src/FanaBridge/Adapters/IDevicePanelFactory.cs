@@ -17,11 +17,14 @@ namespace FanaBridge.Adapters
         /// <summary>A bound Display settings panel — the per-device Display tab. The two
         /// editor catalogs are threaded alongside the host so the panel hands each view only
         /// the narrow contract it uses (the picker gets <paramref name="propertyCatalog"/>,
-        /// the mapped-control dropdown gets <paramref name="roleCatalog"/>).</summary>
+        /// the mapped-control dropdown gets <paramref name="roleCatalog"/>). The plugin-wide
+        /// <paramref name="pickerStore"/> (favorites/recents) is shared across all wheels —
+        /// null is tolerated (picker opens with empty rails, no persistence).</summary>
         Control CreateDisplayPanel(
             IDisplayPanelHost host,
             IDisplayPropertyCatalog propertyCatalog,
-            IMappedRoleCatalog roleCatalog);
+            IMappedRoleCatalog roleCatalog,
+            IDisplayPickerStore pickerStore);
 
         /// <summary>A bound Tuning settings panel.</summary>
         Control CreateTuningPanel(JObject customSettings);

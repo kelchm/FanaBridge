@@ -41,6 +41,7 @@ namespace FanaBridge.UI.Display
         private IDisplayPanelHost _host;
         private IDisplayPropertyCatalog _propertyCatalog;
         private IMappedRoleCatalog _roleCatalog;
+        private IDisplayPickerStore _pickerStore;
         private DisplaySettings _settings;
         private bool _suppressEvents;
         private bool _isItm;
@@ -69,16 +70,19 @@ namespace FanaBridge.UI.Display
         /// Binds the panel to its device host and the two on-demand editor catalogs. Call
         /// once after construction, before the panel is displayed (the old Screen panel's
         /// contract). The catalogs are pulled only when a picker/dropdown opens — the
-        /// polling/rendering path uses <paramref name="host"/> alone.
+        /// polling/rendering path uses <paramref name="host"/> alone. The plugin-wide
+        /// <paramref name="pickerStore"/> (favorites/recents) is shared across wheels.
         /// </summary>
         internal void Bind(
             IDisplayPanelHost host,
             IDisplayPropertyCatalog propertyCatalog,
-            IMappedRoleCatalog roleCatalog)
+            IMappedRoleCatalog roleCatalog,
+            IDisplayPickerStore pickerStore)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _propertyCatalog = propertyCatalog ?? throw new ArgumentNullException(nameof(propertyCatalog));
             _roleCatalog = roleCatalog ?? throw new ArgumentNullException(nameof(roleCatalog));
+            _pickerStore = pickerStore;
             _settings = host.DisplaySettings ?? new DisplaySettings();
             _isItm = host.DisplayType == DisplayType.Itm;
             _boundDisplayType = host.DisplayType;
@@ -94,9 +98,10 @@ namespace FanaBridge.UI.Display
             };
 
             // The Triggers editor is its own control now — bind it to the same host, catalogs,
-            // and mutable settings, and wire its two seam events: ‹ back returns to Overview,
-            // and a committed edit refreshes the Overview Monitor list so it stays consistent.
-            viewTriggers.Bind(_host, _propertyCatalog, _roleCatalog, _settings);
+            // picker store, and mutable settings, and wire its two seam events: ‹ back returns
+            // to Overview, and a committed edit refreshes the Overview Monitor list so it
+            // stays consistent.
+            viewTriggers.Bind(_host, _propertyCatalog, _roleCatalog, _settings, _pickerStore);
             viewTriggers.BackRequested += (s, e) => NavigateTo(TabView.Overview);
             viewTriggers.ConfigApplied += (s, e) => RenderMonitor(_lastSnapshot);
 

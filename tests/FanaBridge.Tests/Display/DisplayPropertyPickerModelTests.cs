@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge.Display.Rules;
@@ -187,6 +188,205 @@ namespace FanaBridge.Tests.Display
             // The 2-arg model (no roles) yields no Mapped controls group at all.
             var headers = Headers(Model().Rows(""));
             Assert.DoesNotContain(DisplayPropertyPickerModel.MappedGroup, headers);
+        }
+
+        // ── Rails + scopes (v9 phase 5a) ───────────────────────────────────
+
+        private static DisplayPropertyPickerModel ScopedModel(
+            IReadOnlyList<string> favorites = null,
+            IReadOnlyList<string> recents = null,
+            IReadOnlyList<string> itmPages = null,
+            IReadOnlyList<string> mappedRoles = null)
+            => new DisplayPropertyPickerModel(BuiltIns, AllProps, mappedRoles,
+                favorites, recents, itmPages);
+
+        [Fact]
+        public void Rails_Order_FixedThenSectionThenAllThenPinnedThenAutoRoots()
+        {
+            var rails = ScopedModel(mappedRoles: new[] { "Up Shift" }).Rails();
+            var ids = rails.Select(r => r.Id).ToList();
+
+            Assert.Equal(new[]
+            {
+                DisplayPropertyPickerModel.RailFavoritesId,
+                DisplayPropertyPickerModel.RailRecentsId,
+                DisplayPropertyPickerModel.RailItmPagesId,
+                DisplayPropertyPickerModel.RailSectionRootsId,
+                DisplayPropertyPickerModel.RailAllId,
+                DisplayPropertyPickerModel.RailRootIdPrefix + DisplayPropertyPickerModel.BuiltInGroup,
+                DisplayPropertyPickerModel.RailRootIdPrefix + DisplayPropertyPickerModel.MappedGroup,
+                DisplayPropertyPickerModel.RailRootIdPrefix + "DataCorePlugin",
+                DisplayPropertyPickerModel.RailRootIdPrefix + "GameData",
+                DisplayPropertyPickerModel.RailRootIdPrefix + DisplayPropertyPickerModel.UngroupedName,
+                DisplayPropertyPickerModel.RailRootIdPrefix + "InputStatus",
+            }, ids);
+
+            Assert.True(rails.Single(r => r.Id == DisplayPropertyPickerModel.RailSectionRootsId).IsSection);
+            Assert.Equal(DisplayPropertyPickerModel.RootsSectionLabel,
+                rails.Single(r => r.IsSection).Label);
+            Assert.Equal(DisplayPropertyPickerModel.RailFavoritesGlyph,
+                rails.Single(r => r.Id == DisplayPropertyPickerModel.RailFavoritesId).Glyph);
+            Assert.Equal(DisplayPropertyPickerModel.RailAllGlyph,
+                rails.Single(r => r.Id == DisplayPropertyPickerModel.RailAllId).Glyph);
+        }
+
+        [Fact]
+        public void DefaultScope_FavoritesThenRecentsThenItmPages()
+        {
+            Assert.Equal(PickerScope.ItmPages, ScopedModel().DefaultScope());
+            Assert.Equal(PickerScope.Recents,
+                ScopedModel(recents: new[] { "Gear" }).DefaultScope());
+            Assert.Equal(PickerScope.Favorites,
+                ScopedModel(favorites: new[] { "Fuel" }, recents: new[] { "Gear" }).DefaultScope());
+        }
+
+        [Fact]
+        public void Scope_Favorites_PreservesStoredOrder_NoHeaders_SurvivesCatalogAbsence()
+        {
+            var model = ScopedModel(favorites: new[] { "Gone.Property", "Fuel", "GameData.Fuel" });
+            var rows = model.Rows(PickerScope.Favorites, "");
+            Assert.Empty(Headers(rows));
+            var props = Props(rows);
+            Assert.Equal(new[] { "Gone.Property", "Fuel", "GameData.Fuel" },
+                props.Select(r => r.PropertyName).ToArray());
+            Assert.Equal(PropertyKind.SimHubProperty, props[0].PropertyKind); // absent → SimHub
+            Assert.Equal(PropertyKind.BuiltIn, props[1].PropertyKind);
+            Assert.Equal(PropertyKind.SimHubProperty, props[2].PropertyKind);
+            Assert.All(props, r => Assert.True(r.IsFavorite));
+        }
+
+        [Fact]
+        public void Scope_Recents_PreservesStoredOrder_MarksFavorites()
+        {
+            var model = ScopedModel(
+                favorites: new[] { "Gear" },
+                recents: new[] { "Fuel", "Gear", "Missing.One" });
+            var props = Props(model.Rows(PickerScope.Recents, ""));
+            Assert.Equal(new[] { "Fuel", "Gear", "Missing.One" },
+                props.Select(r => r.PropertyName).ToArray());
+            Assert.False(props[0].IsFavorite);
+            Assert.True(props[1].IsFavorite);
+            Assert.False(props[2].IsFavorite);
+        }
+
+        [Fact]
+        public void Scope_ItmPages_ShowsSuppliedOrder_NoHeaders()
+        {
+            var model = ScopedModel(itmPages: new[] { "Speed", "GameData.SpeedKmh" });
+            var rows = model.Rows(PickerScope.ItmPages, "");
+            Assert.Empty(Headers(rows));
+            Assert.Equal(new[] { "Speed", "GameData.SpeedKmh" },
+                Props(rows).Select(r => r.PropertyName).ToArray());
+        }
+
+        [Fact]
+        public void Scope_Root_FanaBridge_KeepsHeader_OnlyBuiltIns()
+        {
+            var rows = ScopedModel().Rows(PickerScope.Root(DisplayPropertyPickerModel.BuiltInGroup), "");
+            Assert.Equal(new[] { DisplayPropertyPickerModel.BuiltInGroup }, Headers(rows));
+            Assert.Equal(new[] { "Speed", "Gear", "Fuel" },
+                Props(rows).Select(r => r.PropertyName).ToArray());
+        }
+
+        [Fact]
+        public void Scope_Root_AutoGroup_KeepsHeader()
+        {
+            var rows = ScopedModel().Rows(PickerScope.Root("GameData"), "");
+            Assert.Equal(new[] { "GameData" }, Headers(rows));
+            Assert.Equal(new[] { "GameData.Fuel", "GameData.SpeedKmh" },
+                Props(rows).Select(r => r.PropertyName).ToArray());
+        }
+
+        [Fact]
+        public void Scope_AllProperties_MatchesLegacyUnfilteredRows()
+        {
+            var legacy = Props(Model().Rows("")).Select(r => r.PropertyName).ToList();
+            var scoped = Props(ScopedModel().Rows(PickerScope.AllProperties, ""))
+                .Select(r => r.PropertyName).ToList();
+            Assert.Equal(legacy, scoped);
+        }
+
+        [Fact]
+        public void NonEmptyFilter_IsGlobal_RegardlessOfScope_WithMatchSpans()
+        {
+            // Scope is Favorites (empty) — filter still searches the whole catalog.
+            var model = ScopedModel(favorites: new[] { "Speed" });
+            var rows = model.Rows(PickerScope.Favorites, "fuel");
+            var headers = Headers(rows);
+            Assert.Equal(new[] { DisplayPropertyPickerModel.BuiltInGroup, "GameData" }, headers);
+
+            var fuel = Props(rows).Single(r => r.PropertyName == "Fuel");
+            Assert.Equal(0, fuel.MatchStart);
+            Assert.Equal(4, fuel.MatchLength);
+
+            var gd = Props(rows).Single(r => r.PropertyName == "GameData.Fuel");
+            // first case-insensitive hit of "fuel" in "GameData.Fuel" is at index 9
+            Assert.Equal(9, gd.MatchStart);
+            Assert.Equal(4, gd.MatchLength);
+        }
+
+        [Fact]
+        public void EmptyFilter_NoMatchSpans_OnAnyScope()
+        {
+            var model = ScopedModel(favorites: new[] { "Fuel" });
+            Assert.All(Props(model.Rows(PickerScope.Favorites, "")),
+                r => Assert.True(r.MatchStart < 0));
+            Assert.All(Props(model.Rows(PickerScope.AllProperties, "")),
+                r => Assert.True(r.MatchStart < 0));
+        }
+
+        [Fact]
+        public void MatchSpan_CaseInsensitiveFirstHit_AndNamespaceCrossing()
+        {
+            var model = new DisplayPropertyPickerModel(
+                Array.Empty<string>(),
+                new[] { "FooBarFoo", "DataCorePlugin.GameRunning" });
+
+            var foo = Props(model.Rows(PickerScope.AllProperties, "foo")).Single();
+            Assert.Equal(0, foo.MatchStart);          // first hit, not the second "Foo"
+            Assert.Equal(3, foo.MatchLength);
+
+            // "in.G" spans the last-dot boundary of DataCorePlugin.GameRunning
+            var ns = Props(model.Rows(PickerScope.AllProperties, "in.G")).Single();
+            Assert.Equal("DataCorePlugin.GameRunning", ns.PropertyName);
+            int expected = "DataCorePlugin.GameRunning".IndexOf("in.G", StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(expected, ns.MatchStart);
+            Assert.Equal(4, ns.MatchLength);
+        }
+
+        [Fact]
+        public void PropertyCount_MirrorsRows_ForEveryScope()
+        {
+            var model = ScopedModel(
+                favorites: new[] { "Fuel", "Gone.X" },
+                recents: new[] { "Gear" },
+                itmPages: new[] { "Speed" },
+                mappedRoles: new[] { "Up Shift" });
+
+            void AssertParity(PickerScope scope, string filter)
+            {
+                int fromRows = Props(model.Rows(scope, filter)).Count;
+                Assert.Equal(fromRows, model.PropertyCount(scope, filter));
+            }
+
+            AssertParity(PickerScope.Favorites, "");
+            AssertParity(PickerScope.Recents, "");
+            AssertParity(PickerScope.ItmPages, "");
+            AssertParity(PickerScope.AllProperties, "");
+            AssertParity(PickerScope.Root("GameData"), "");
+            AssertParity(PickerScope.Favorites, "fuel");
+            AssertParity(PickerScope.AllProperties, "shift");
+            AssertParity(PickerScope.AllProperties, "zzz-none");
+        }
+
+        [Fact]
+        public void IsFavorite_OnGlobalRows_ReflectsFavoritesSet()
+        {
+            var model = ScopedModel(favorites: new[] { "Fuel", "GameData.Fuel" });
+            var props = Props(model.Rows(PickerScope.AllProperties, ""));
+            Assert.True(props.Single(r => r.PropertyName == "Fuel").IsFavorite);
+            Assert.True(props.Single(r => r.PropertyName == "GameData.Fuel").IsFavorite);
+            Assert.False(props.Single(r => r.PropertyName == "Gear").IsFavorite);
         }
     }
 }

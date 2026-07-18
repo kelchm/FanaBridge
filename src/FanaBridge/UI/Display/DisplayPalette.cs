@@ -71,6 +71,14 @@ namespace FanaBridge.UI.Display
         // ── Property grammar (v9; consumed by the Shared property label in 1b) ──
         internal static readonly SolidColorBrush NsDim = Frozen("#6F6F74");
         internal static readonly SolidColorBrush LeafBright = Frozen("#9FD0E6");
+        /// <summary>Search-match highlight on a property label (mock #ffe9a6).</summary>
+        internal static readonly SolidColorBrush MatchHighlight = Frozen("#FFE9A6");
+
+        // ── Property picker rails (v9 phase 5) ───────────────────────────
+        /// <summary>Favorites rail glyph / star-on (mock #d8c98a).</summary>
+        internal static readonly SolidColorBrush FavoritesGold = Frozen("#D8C98A");
+        /// <summary>"On your ITM pages" rail glyph (mock #7fce9a — same green family as GreenRank).</summary>
+        internal static readonly SolidColorBrush ItmPagesGreen = Frozen("#7FCE9A");
 
         internal static readonly FontFamily Mono = new FontFamily("Consolas");
 

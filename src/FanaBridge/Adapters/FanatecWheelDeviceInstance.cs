@@ -755,6 +755,32 @@ namespace FanaBridge.Adapters
             }
         }
 
+        bool IDisplayPropertyCatalog.TryReadPropertyValue(string name, out object value)
+        {
+            // On demand only (picker open / value-column refresh). Defensive: no plugin
+            // manager, a null/empty name, or a SimHub-side throw yields false — never an
+            // exception at the panel.
+            value = null;
+            if (string.IsNullOrEmpty(name))
+                return false;
+            try
+            {
+                var pm = PluginResolver()?.PluginManager;
+                if (pm == null)
+                    return false;
+                value = pm.GetPropertyValue(name);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Debug(
+                    "FanaBridge: TryReadPropertyValue('" + name + "') failed: "
+                    + ex.GetBaseException().Message);
+                value = null;
+                return false;
+            }
+        }
+
         MappedRoles IMappedRoleCatalog.GetMappedRoles()
         {
             // On demand (mapped-control dropdown open). Read-only: the reader never writes
@@ -832,7 +858,7 @@ namespace FanaBridge.Adapters
             if (panels != null && ShouldOfferDisplayTab)
             {
                 yield return new DeviceSettingControl(
-                    panels.CreateDisplayPanel(this, this, this),
+                    panels.CreateDisplayPanel(this, this, this, PluginResolver()?.PickerStore),
                     1,
                     "Display",
                     DeviceSettingControlKind.None,

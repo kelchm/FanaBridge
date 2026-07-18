@@ -14,10 +14,11 @@ namespace FanaBridge.UI
         public Control CreateDisplayPanel(
             IDisplayPanelHost host,
             IDisplayPropertyCatalog propertyCatalog,
-            IMappedRoleCatalog roleCatalog)
+            IMappedRoleCatalog roleCatalog,
+            IDisplayPickerStore pickerStore)
         {
             var panel = new DisplayTabPanel();
-            panel.Bind(host, propertyCatalog, roleCatalog);
+            panel.Bind(host, propertyCatalog, roleCatalog, pickerStore);
             return panel;
         }
 

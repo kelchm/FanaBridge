@@ -15,6 +15,8 @@ namespace FanaBridge.UI.Display.Shared
         Bright,
         /// <summary>Uncoloured text (the "(pick property)" placeholder) — inherits.</summary>
         Plain,
+        /// <summary>Search-match highlight — bold gold (<see cref="DisplayPalette.MatchHighlight"/>).</summary>
+        Highlight,
     }
 
     /// <summary>One coloured span of a formatted property name.</summary>
@@ -106,6 +108,58 @@ namespace FanaBridge.UI.Display.Shared
         /// property (the property picker's data-bound rows).</summary>
         public static PropertyLabelContent ContentFor(string propertyName, PropertyDisplayKind kind, int charBudget)
             => new PropertyLabelContent(Format(propertyName, kind, charBudget), FullText(propertyName, kind));
+
+        /// <summary>
+        /// Like <see cref="ContentFor(string, PropertyDisplayKind, int)"/>, then overlays a
+        /// match span (<paramref name="matchStart"/>, <paramref name="matchLength"/>) over the
+        /// full property name / formatted display text: any run part inside the span is split
+        /// into a run with <see cref="GrammarEmphasis.Highlight"/>. A non-positive length or
+        /// negative start leaves the runs unchanged (existing single-span callers).
+        /// </summary>
+        public static PropertyLabelContent ContentFor(string propertyName, PropertyDisplayKind kind,
+            int charBudget, int matchStart, int matchLength)
+        {
+            var runs = Format(propertyName, kind, charBudget);
+            if (matchStart >= 0 && matchLength > 0)
+                runs = OverlayHighlight(runs, matchStart, matchLength);
+            return new PropertyLabelContent(runs, FullText(propertyName, kind));
+        }
+
+        // Split each run at the match-span boundaries; characters inside [start, start+length)
+        // of the concatenated run text become Highlight (keeping the rest of each run's
+        // Dim/Bright/Plain emphasis outside the span).
+        private static IReadOnlyList<GrammarRun> OverlayHighlight(
+            IReadOnlyList<GrammarRun> runs, int start, int length)
+        {
+            int end = start + length;
+            var result = new List<GrammarRun>(runs.Count + 2);
+            int pos = 0;
+            foreach (var run in runs)
+            {
+                string text = run.Text ?? string.Empty;
+                int runStart = pos;
+                int runEnd = pos + text.Length;
+                pos = runEnd;
+
+                if (runEnd <= start || runStart >= end || text.Length == 0)
+                {
+                    result.Add(run);
+                    continue;
+                }
+
+                // Portion before the match keeps the original emphasis.
+                int localHi0 = Math.Max(0, start - runStart);
+                int localHi1 = Math.Min(text.Length, end - runStart);
+                if (localHi0 > 0)
+                    result.Add(new GrammarRun(text.Substring(0, localHi0), run.Emphasis));
+                if (localHi1 > localHi0)
+                    result.Add(new GrammarRun(
+                        text.Substring(localHi0, localHi1 - localHi0), GrammarEmphasis.Highlight));
+                if (localHi1 < text.Length)
+                    result.Add(new GrammarRun(text.Substring(localHi1), run.Emphasis));
+            }
+            return result;
+        }
 
         // Split a name into its namespace segments (dot-free) and the leaf.
         private static void GetParts(string name, PropertyDisplayKind kind, out List<string> ns, out string leaf)

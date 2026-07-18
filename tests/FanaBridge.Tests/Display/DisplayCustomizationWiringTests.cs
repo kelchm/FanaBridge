@@ -566,15 +566,18 @@ namespace FanaBridge.Tests.Display
             public IDisplayPanelHost? LastHost;
             public IDisplayPropertyCatalog? LastPropertyCatalog;
             public IMappedRoleCatalog? LastRoleCatalog;
+            public IDisplayPickerStore? LastPickerStore;
 
             public System.Windows.Controls.Control CreateDisplayPanel(
                 IDisplayPanelHost host,
                 IDisplayPropertyCatalog propertyCatalog,
-                IMappedRoleCatalog roleCatalog)
+                IMappedRoleCatalog roleCatalog,
+                IDisplayPickerStore pickerStore)
             {
                 LastHost = host;
                 LastPropertyCatalog = propertyCatalog;
                 LastRoleCatalog = roleCatalog;
+                LastPickerStore = pickerStore;
                 return null!;   // no WPF control off the UI thread; the tab only stores it
             }
 
@@ -622,6 +625,8 @@ namespace FanaBridge.Tests.Display
             // …and it is also the two on-demand editor catalogs threaded alongside.
             Assert.Same(inst, panels.LastPropertyCatalog);
             Assert.Same(inst, panels.LastRoleCatalog);
+            // Plugin-wide picker store (favorites/recents) is threaded from the plugin.
+            Assert.NotNull(panels.LastPickerStore);
             Assert.Equal(expectedType, host.DisplayType);
             Assert.NotNull(host.DisplaySettings);
 

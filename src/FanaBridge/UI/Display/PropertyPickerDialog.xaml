@@ -3,11 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shared="clr-namespace:FanaBridge.UI.Display.Shared"
         Title="Pick a property"
-        Width="460" Height="560"
+        Width="600" Height="560"
+        MinWidth="520" MinHeight="400"
         WindowStartupLocation="CenterOwner"
-        Background="#252527"
+        Background="#2B2B2C"
         Foreground="White"
-        ShowInTaskbar="False">
+        ShowInTaskbar="False"
+        Closed="Window_Closed">
     <Window.Resources>
         <Style TargetType="Button">
             <Setter Property="Background" Value="#3A3A3C" />
@@ -16,62 +18,281 @@
             <Setter Property="Padding" Value="16,6" />
             <Setter Property="Cursor" Value="Hand" />
         </Style>
-        <!-- One list row: a group header (muted, uppercase, non-selectable) or a
-             pickable property name (monospace). -->
+
+        <!-- Left-rail entry: section marker (non-selectable) or a scope (selected = blue). -->
+        <Style x:Key="RailItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="9,6" />
+            <Setter Property="Margin" Value="0,0,0,2" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="#C2C2C2" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="bd" Background="Transparent" CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#1E3A52" />
+                                <Setter Property="Foreground" Value="#E6E6E6" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#323234" />
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="True" />
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="bd" Property="Background" Value="#1E3A52" />
+                            </MultiTrigger>
+                            <DataTrigger Binding="{Binding IsSection}" Value="True">
+                                <Setter Property="Focusable" Value="False" />
+                                <Setter Property="IsHitTestVisible" Value="False" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                                <Setter Property="Padding" Value="9,8,9,3" />
+                                <Setter Property="Foreground" Value="#6F6F74" />
+                                <Setter Property="FontSize" Value="8.5" />
+                                <Setter Property="FontWeight" Value="Bold" />
+                                <Setter TargetName="bd" Property="Background" Value="Transparent" />
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- One results row: group header (muted, uppercase, non-selectable) or a
+             pickable property (grammar + hover ★ + dim live value). -->
         <Style x:Key="PickerItemStyle" TargetType="ListBoxItem">
-            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="Padding" Value="9,7" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="bd" Background="Transparent" CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#1E3A52" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#323234" />
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="True" />
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="bd" Property="Background" Value="#1E3A52" />
+                            </MultiTrigger>
+                            <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                <Setter Property="Focusable" Value="False" />
+                                <Setter Property="IsHitTestVisible" Value="False" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                                <Setter Property="Padding" Value="8,9,8,3" />
+                                <Setter Property="Foreground" Value="#8F8F8F" />
+                                <Setter Property="FontWeight" Value="Bold" />
+                                <Setter Property="FontSize" Value="10" />
+                                <Setter Property="FontFamily" Value="Segoe UI" />
+                                <Setter TargetName="bd" Property="Background" Value="Transparent" />
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ★ / ☆: always visible when favorited (gold); otherwise only on row hover/select. -->
+        <Style x:Key="FavoriteStarStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="8,0,6,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="#8F8F8F" />
+            <Setter Property="Visibility" Value="Hidden" />
             <Style.Triggers>
+                <DataTrigger Binding="{Binding IsFavorite}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Setter Property="Foreground" Value="#D8C98A" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
                 <DataTrigger Binding="{Binding IsHeader}" Value="True">
-                    <Setter Property="Focusable" Value="False" />
-                    <Setter Property="IsHitTestVisible" Value="False" />
-                    <Setter Property="Cursor" Value="Arrow" />
-                    <Setter Property="Padding" Value="8,9,8,3" />
-                    <Setter Property="Foreground" Value="#8F8F8F" />
-                    <Setter Property="FontWeight" Value="Bold" />
-                    <Setter Property="FontSize" Value="10" />
-                    <Setter Property="FontFamily" Value="Segoe UI" />
+                    <Setter Property="Visibility" Value="Collapsed" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
     </Window.Resources>
 
-    <Grid Margin="14">
+    <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TextBox x:Name="txtFilter" Grid.Row="0" Margin="0,0,0,10"
-                 Background="#1A1A1B" Foreground="#EAEAEA" BorderBrush="#45454A"
-                 Padding="8,6" FontSize="13"
-                 TextChanged="Filter_TextChanged" PreviewKeyDown="Filter_PreviewKeyDown" />
+        <!-- Header: title + right-aligned count (mock moves the footer count here). -->
+        <DockPanel Grid.Row="0" Margin="16,12,16,0" LastChildFill="True">
+            <TextBlock DockPanel.Dock="Left" Text="Pick a property"
+                       FontSize="15" FontWeight="SemiBold" Foreground="#F0F0F0"
+                       VerticalAlignment="Center" />
+            <TextBlock x:Name="txtCount" DockPanel.Dock="Right"
+                       FontSize="11" Foreground="#7A7A7A"
+                       VerticalAlignment="Center" Margin="16,0,0,0"
+                       HorizontalAlignment="Right" TextAlignment="Right" />
+        </DockPanel>
+        <Border Grid.Row="0" Height="1" Background="#383838" VerticalAlignment="Bottom"
+                Margin="0,12,0,0" />
 
-        <ListBox x:Name="lstProps" Grid.Row="1"
-                 Background="#1E1E1F" BorderBrush="#3D3D3F" BorderThickness="1"
-                 Foreground="#EAEAEA" FontFamily="Consolas" FontSize="12.5"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                 ScrollViewer.CanContentScroll="True"
-                 VirtualizingStackPanel.IsVirtualizing="True"
-                 VirtualizingStackPanel.VirtualizationMode="Recycling"
-                 ItemContainerStyle="{StaticResource PickerItemStyle}"
-                 MouseDoubleClick="List_MouseDoubleClick">
-            <ListBox.ItemTemplate>
-                <DataTemplate>
-                    <shared:PropertyLabel shared:PropertyLabel.ContentSource="{Binding LabelContent}" />
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
+        <!-- Search box (focus on open; debounce kept in code-behind). -->
+        <Border Grid.Row="1" Margin="16,11,16,0" Padding="10,7"
+                Background="#232324" BorderBrush="#1E8FD5" BorderThickness="1"
+                CornerRadius="4">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" Text="🔍" Foreground="#8F8F8F"
+                           FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center" />
+                <TextBox x:Name="txtFilter" Background="Transparent" Foreground="#E6E6E6"
+                         BorderThickness="0" FontSize="12.5" CaretBrush="#E6E6E6"
+                         VerticalContentAlignment="Center"
+                         TextChanged="Filter_TextChanged" PreviewKeyDown="Filter_PreviewKeyDown" />
+            </DockPanel>
+        </Border>
+        <Border Grid.Row="1" Height="1" Background="#333333" VerticalAlignment="Bottom"
+                Margin="0,11,0,0" />
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right"
-                    Margin="0,12,0,0">
-            <TextBlock x:Name="txtCount" Foreground="#7A7A7A" FontSize="11.5"
-                       VerticalAlignment="Center" Margin="0,0,14,0" />
-            <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0" />
-            <Button x:Name="btnOk" Content="OK" Click="Ok_Click"
-                    Background="#1E8FD5" BorderBrush="#1E8FD5" />
-        </StackPanel>
+        <!-- Body: rail (176px) | results (virtualized). -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="176" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <ListBox x:Name="lstRails" Grid.Column="0"
+                     Background="#262627" BorderThickness="0"
+                     Padding="7" Margin="0"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ItemContainerStyle="{StaticResource RailItemStyle}"
+                     SelectionChanged="Rail_SelectionChanged">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Glyph}" Margin="0,0,6,0"
+                                       VerticalAlignment="Center">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Id}" Value="favorites">
+                                                <Setter Property="Foreground" Value="#D8C98A" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Id}" Value="itmPages">
+                                                <Setter Property="Foreground" Value="#7FCE9A" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsSection}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="{Binding Label}" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="FontSize" Value="11.5" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsSection}" Value="True">
+                                                <Setter Property="FontSize" Value="8.5" />
+                                                <Setter Property="FontWeight" Value="Bold" />
+                                                <Setter Property="Foreground" Value="#6F6F74" />
+                                            </DataTrigger>
+                                            <!-- Auto roots + pinned roots: mono. -->
+                                            <DataTrigger Binding="{Binding Glyph}" Value="{x:Null}">
+                                                <Setter Property="FontFamily" Value="Consolas" />
+                                                <Setter Property="FontSize" Value="11" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Glyph}" Value="">
+                                                <Setter Property="FontFamily" Value="Consolas" />
+                                                <Setter Property="FontSize" Value="11" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <Border Grid.Column="0" Width="1" Background="#333333" HorizontalAlignment="Right" />
+
+            <ListBox x:Name="lstProps" Grid.Column="1"
+                     Background="#2B2B2C" BorderThickness="0"
+                     Foreground="#EAEAEA" FontFamily="Consolas" FontSize="12.5"
+                     Padding="5,5,9,5"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ScrollViewer.CanContentScroll="True"
+                     VirtualizingStackPanel.IsVirtualizing="True"
+                     VirtualizingStackPanel.VirtualizationMode="Recycling"
+                     ItemContainerStyle="{StaticResource PickerItemStyle}"
+                     MouseDoubleClick="List_MouseDoubleClick">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <shared:PropertyLabel Grid.Column="0"
+                                shared:PropertyLabel.ContentSource="{Binding LabelContent}" />
+                            <!-- Favorites toggle: click does not commit the row. -->
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding FavoriteGlyph}"
+                                       Style="{StaticResource FavoriteStarStyle}"
+                                       PreviewMouseLeftButtonDown="Favorite_PreviewMouseLeftButtonDown" />
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding LiveValue}"
+                                       FontFamily="Consolas" FontSize="10.5"
+                                       Foreground="#7A7A7A"
+                                       VerticalAlignment="Center"
+                                       Margin="4,0,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Grid>
+
+        <!-- Footer: Cancel + Select (formula link deferred). -->
+        <Border Grid.Row="3" Background="#282829" BorderBrush="#383838"
+                BorderThickness="0,1,0,0" Padding="16,11">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"
+                        Background="Transparent" BorderThickness="0"
+                        Foreground="#9A9A9A" Padding="12,6" />
+                <Button x:Name="btnOk" Content="Select" Click="Ok_Click"
+                        Background="#1E8FD5" BorderBrush="#1E8FD5" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

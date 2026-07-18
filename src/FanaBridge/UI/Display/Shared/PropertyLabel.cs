@@ -22,6 +22,7 @@ namespace FanaBridge.UI.Display.Shared
     /// <summary>
     /// A thin TextBlock that renders a <see cref="PropertyGrammar"/> run list: dim namespace
     /// (<see cref="DisplayPalette.NsDim"/>), bright leaf (<see cref="DisplayPalette.LeafBright"/>),
+    /// search-match highlight bold gold (<see cref="DisplayPalette.MatchHighlight"/>),
     /// monospace once there is anything to colour, with the full path as its tooltip and a
     /// character-ellipsis backstop. House style — code-built, no DataTemplate; the decision of
     /// WHAT to show lives in the pure grammar.
@@ -35,9 +36,9 @@ namespace FanaBridge.UI.Display.Shared
         }
 
         /// <summary>Fill the label from a run list; <paramref name="fullText"/> becomes the
-        /// tooltip. A monospace face is applied only when a Dim/Bright run is present, so a
-        /// Plain-only label (the placeholder, or a picker group header) keeps its inherited
-        /// font.</summary>
+        /// tooltip. A monospace face is applied only when a Dim/Bright/Highlight run is present,
+        /// so a Plain-only label (the placeholder, or a picker group header) keeps its
+        /// inherited font.</summary>
         public void SetRuns(IReadOnlyList<GrammarRun> runs, string fullText)
         {
             Inlines.Clear();
@@ -55,6 +56,11 @@ namespace FanaBridge.UI.Display.Shared
                             break;
                         case GrammarEmphasis.Bright:
                             r.Foreground = DisplayPalette.LeafBright;
+                            mono = true;
+                            break;
+                        case GrammarEmphasis.Highlight:
+                            r.Foreground = DisplayPalette.MatchHighlight;
+                            r.FontWeight = FontWeights.Bold;
                             mono = true;
                             break;
                         // Plain: no explicit foreground — inherit.

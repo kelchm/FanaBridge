@@ -175,5 +175,50 @@ namespace FanaBridge.Tests.UI.Display.Shared
             Assert.Equal(PropertyDisplayKind.SimHubProperty, PropertyGrammar.KindFor(PropertyKind.SimHubProperty));
             Assert.Equal(PropertyDisplayKind.SimHubProperty, PropertyGrammar.KindFor(PropertyKind.FanaBridgeAction));
         }
+
+        // ── Match-span highlight (v9 phase 5a) ────────────────────────────
+
+        private static (string text, GrammarEmphasis emphasis)[] ContentRuns(
+            string name, int matchStart, int matchLength,
+            PropertyDisplayKind kind = PropertyDisplayKind.SimHubProperty, int budget = 1000)
+            => PropertyGrammar.ContentFor(name, kind, budget, matchStart, matchLength).Runs
+                .Select(r => (r.Text, r.Emphasis)).ToArray();
+
+        [Fact]
+        public void ContentFor_MatchSpan_OverlaysHighlight_CrossingNamespaceBoundary()
+        {
+            // "A.B.leaf": dim "A.B." (4) + bright "leaf" (4). Span [2, 3) = "B.l" crosses
+            // the dim/bright boundary → dim "A." + highlight "B." + highlight "l" + bright "eaf".
+            var runs = ContentRuns("A.B.leaf", matchStart: 2, matchLength: 3);
+            Assert.Equal(new[]
+            {
+                ("A.", GrammarEmphasis.Dim),
+                ("B.", GrammarEmphasis.Highlight),
+                ("l", GrammarEmphasis.Highlight),
+                ("eaf", GrammarEmphasis.Bright),
+            }, runs);
+        }
+
+        [Fact]
+        public void ContentFor_NoMatchSpan_LeavesRunsUnchanged()
+        {
+            // Negative / zero length → identical to the no-span ContentFor.
+            var plain = PropertyGrammar.ContentFor("A.B.leaf", PropertyDisplayKind.SimHubProperty, 1000)
+                .Runs.Select(r => (r.Text, r.Emphasis)).ToArray();
+            Assert.Equal(plain, ContentRuns("A.B.leaf", matchStart: -1, matchLength: 4));
+            Assert.Equal(plain, ContentRuns("A.B.leaf", matchStart: 0, matchLength: 0));
+        }
+
+        [Fact]
+        public void ContentFor_MatchSpan_CaseInsensitiveCallerPositions_HighlightWholeSpan()
+        {
+            // Caller supplies the first-hit span over the full name (e.g. "leaf" at index 4).
+            var runs = ContentRuns("A.B.leaf", matchStart: 4, matchLength: 4);
+            Assert.Equal(new[]
+            {
+                ("A.B.", GrammarEmphasis.Dim),
+                ("leaf", GrammarEmphasis.Highlight),
+            }, runs);
+        }
     }
 }

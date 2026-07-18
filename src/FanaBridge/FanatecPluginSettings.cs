@@ -52,5 +52,19 @@ namespace FanaBridge
         /// <see cref="Adapters.ControlMapperBridge"/>.
         /// </summary>
         public bool EnableControlMapperIntegration { get; set; } = true;
+
+        // ---- Display property picker (plugin-wide, not per-wheel) ----
+
+        /// <summary>
+        /// Favorite property names for the display property picker. Unordered user set
+        /// (list preserves insertion order for stable display). Default empty.
+        /// </summary>
+        public List<string> DisplayPickerFavorites { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Most-recently-used property names from the display property picker, most recent
+        /// first, capped at 15 by the store helper. Default empty.
+        /// </summary>
+        public List<string> DisplayPickerRecents { get; set; } = new List<string>();
     }
 }
