@@ -13,25 +13,46 @@ namespace FanaBridge.Tests.UI
     /// </summary>
     public class DisplayShellRoutingTests
     {
-        [Fact]
-        public void TriggersRuleSet_BasicIsLegacy_ItmIsItm()
-        {
-            Assert.Equal(TriggerRuleSet.Legacy,
-                DisplayShellRouting.TriggersRuleSetFor(DisplayType.Basic));
-            Assert.Equal(TriggerRuleSet.Itm,
-                DisplayShellRouting.TriggersRuleSetFor(DisplayType.Itm));
-        }
+        [Theory]
+        [InlineData(DisplayType.Basic, DisplaySettings.ControlItm, false)]
+        [InlineData(DisplayType.Basic, DisplaySettings.ControlLegacy, false)]
+        [InlineData(DisplayType.Itm, DisplaySettings.ControlItm, true)]
+        [InlineData(DisplayType.Itm, DisplaySettings.ControlLegacy, false)]
+        [InlineData(DisplayType.Itm, DisplaySettings.ControlOff, true)]
+        [InlineData(DisplayType.Itm, null, true)]
+        public void TriggersRuleSet_LegacyUnlessItmWorldActiveOnItmWheel(
+            DisplayType type, string? control, bool expectItmSet)
+            => Assert.Equal(expectItmSet ? TriggerRuleSet.Itm : TriggerRuleSet.Legacy,
+                DisplayShellRouting.TriggersRuleSetFor(type, control));
 
         [Theory]
         [InlineData(DisplayType.Basic, DisplaySettings.ControlLegacy, true)]
         [InlineData(DisplayType.Basic, DisplaySettings.ControlItm, true)]
         [InlineData(DisplayType.Basic, DisplaySettings.ControlOff, false)]
-        [InlineData(DisplayType.Itm, DisplaySettings.ControlLegacy, false)]
+        [InlineData(DisplayType.Itm, DisplaySettings.ControlLegacy, true)]
         [InlineData(DisplayType.Itm, DisplaySettings.ControlItm, false)]
         [InlineData(DisplayType.Itm, DisplaySettings.ControlOff, false)]
-        public void ShowLegacyOverview_BasicWhenNotOff(
+        public void ShowLegacyOverview_BasicNotOff_ItmInLegacyControl(
             DisplayType type, string control, bool expected)
             => Assert.Equal(expected, DisplayShellRouting.ShowLegacyOverview(type, control));
+
+        // ITM wheel + Legacy control: exactly one Overview shows, and it is the legacy one
+        // (the pre-fix shell showed neither — only the old Display Mode section survived).
+        [Fact]
+        public void ItmWheelInLegacyControl_ShowsExactlyTheLegacyOverview()
+        {
+            Assert.False(DisplayShellRouting.ShowItmOverview(
+                DisplayType.Itm, DisplaySettings.ControlLegacy));
+            Assert.True(DisplayShellRouting.ShowLegacyOverview(
+                DisplayType.Itm, DisplaySettings.ControlLegacy));
+        }
+
+        [Fact]
+        public void UseWideLegacyFace_ItmOnly_SamePhysicalDisplay()
+        {
+            Assert.True(DisplayShellRouting.UseWideLegacyFace(DisplayType.Itm));
+            Assert.False(DisplayShellRouting.UseWideLegacyFace(DisplayType.Basic));
+        }
 
         [Theory]
         [InlineData(DisplayType.Itm, DisplaySettings.ControlItm, true)]
@@ -73,6 +94,17 @@ namespace FanaBridge.Tests.UI
                 DisplayShellRouting.LegacyMirrorCaption(null, null));
         }
 
+        // Page off (ITM wheel, DisplayMode "None"): the snapshot's resolve-only screen
+        // name must not be claimed — the caption falls back to the mode ("None" → Blank).
+        [Fact]
+        public void LegacyMirrorCaption_PageInactive_IgnoresScreenName()
+        {
+            Assert.Equal("Blank", DisplayShellRouting.LegacyMirrorCaption(
+                "Pit", "None", legacyPageActive: false));
+            Assert.Equal("Gear", DisplayShellRouting.LegacyMirrorCaption(
+                "Pit", "Gear", legacyPageActive: false));
+        }
+
         [Fact]
         public void UseRuleDrivenSegments_RequiresThreeBytes()
         {
@@ -81,6 +113,13 @@ namespace FanaBridge.Tests.UI
             Assert.True(DisplayShellRouting.UseRuleDrivenSegments(
                 new byte[] { SevenSegment.Digit1, SevenSegment.Digit4, SevenSegment.Digit2 }));
         }
+
+        // Mirror truth = wire truth: resolve-only segments (page off) never paint.
+        [Fact]
+        public void UseRuleDrivenSegments_PageInactive_NeverPaints()
+            => Assert.False(DisplayShellRouting.UseRuleDrivenSegments(
+                new byte[] { SevenSegment.Digit1, SevenSegment.Digit4, SevenSegment.Digit2 },
+                legacyPageActive: false));
 
         // Off / mode-header gates stay on DisplayModeHeaderModel (P3) — pin the seam still holds.
         [Fact]

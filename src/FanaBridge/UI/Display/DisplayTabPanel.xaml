@@ -199,8 +199,10 @@
                         </StackPanel>
                     </styles:SHSubSection>
 
-                    <!-- Basic-wheel Overview: LIVE 3-char mirror + priority list + links
-                         into Virtual pages / Triggers (legacy mode). Hidden on ITM wheels. -->
+                    <!-- Legacy Overview: LIVE mirror + priority list + links into Virtual
+                         pages / Triggers (legacy mode). Shown on basic wheels, and on ITM
+                         wheels in Legacy-only control — there the face is hosted in the
+                         wide ITM-sized panel (same physical display, same card size). -->
                     <StackPanel x:Name="panelLegacyLive" Visibility="Collapsed">
                         <Grid Margin="0,0,0,16">
                             <Grid.ColumnDefinitions>

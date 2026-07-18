@@ -56,6 +56,13 @@ namespace FanaBridge.UI.Display
         private TabView _currentView = TabView.Overview;
         private readonly SevenSegmentFace _legacyFace = new SevenSegmentFace();
 
+        // ITM-wheel chrome for the legacy face: the same 4:1 panel + Min/MaxWidth as
+        // ItmDisplayMirror, with the 3-char face scaled up and centered — the legacy
+        // page lives on the same physical display, so the card must not shrink when
+        // control flips Itm ↔ Legacy. Basic wheels host the face bare (small).
+        private readonly Viewbox _wideFaceSlot;
+        private readonly Viewbox _wideFacePanel;
+
         // ── Polling state ────────────────────────────────────────────────
         private DispatcherTimer _timer;
         private DisplayRuleSnapshot _lastSnapshot;
@@ -65,7 +72,47 @@ namespace FanaBridge.UI.Display
         public DisplayTabPanel()
         {
             InitializeComponent();
+
+            _wideFaceSlot = new Viewbox
+            {
+                Height = 210,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            _wideFacePanel = new Viewbox
+            {
+                Stretch = Stretch.Uniform,
+                MinWidth = 320,   // ItmDisplayMirror's bounds — the two cards must match
+                MaxWidth = 720,
+                Child = new Grid
+                {
+                    Width = 1000,   // ItmDisplayMirror's 4:1 virtual panel
+                    Height = 250,
+                    Background = DisplayPalette.LegacyFaceBg,
+                    ClipToBounds = true,
+                    Children = { _wideFaceSlot },
+                },
+            };
+
             hostLegacyFace.Content = _legacyFace;
+        }
+
+        // (Re)parents the shared face into the host that matches the bound caps: bare
+        // (small) on basic wheels, inside the wide ITM-sized panel on ITM wheels. The
+        // face must be detached from both possible parents before re-attaching.
+        private void ApplyLegacyFaceHost()
+        {
+            hostLegacyFace.Content = null;
+            _wideFaceSlot.Child = null;
+            if (DisplayShellRouting.UseWideLegacyFace(_boundDisplayType))
+            {
+                _wideFaceSlot.Child = _legacyFace;
+                hostLegacyFace.Content = _wideFacePanel;
+            }
+            else
+            {
+                hostLegacyFace.Content = _legacyFace;
+            }
         }
 
         /// <summary>
@@ -162,13 +209,12 @@ namespace FanaBridge.UI.Display
             SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
 
             // ITM wheels get the mode header (via NavigateTo — it shows on Overview
-            // only, plus whenever control is Off), the info banner, and the ITM options;
-            // basic-display wheels get only the (7-segment) Display Mode section — the
-            // same information as the old panel — unless they are trapped in Off.
-            var itmOnly = _isItm ? Visibility.Visible : Visibility.Collapsed;
-            borderItmInfo.Visibility = itmOnly;
-            sectionItmOptions.Visibility = itmOnly;
+            // only, plus whenever control is Off); the info banner and ITM options are
+            // mode-dependent chrome owned by UpdateModeState below. Basic-display wheels
+            // get only the (7-segment) Display Mode section — the same information as
+            // the old panel — unless they are trapped in Off.
             sectionDisplayMode.Title = _isItm ? "Legacy Display Mode" : "Display Mode";
+            ApplyLegacyFaceHost();
 
             NavigateTo(TabView.Overview);
             UpdateModeState();
@@ -235,8 +281,10 @@ namespace FanaBridge.UI.Display
             }
             else
             {
-                // Itm/Legacy: Off card already collapsed; live cards only while ITM is active
-                // (ITM wheels) or the basic-wheel legacy Overview is showing.
+                // Itm/Legacy: Off card already collapsed; live cards per shell routing —
+                // ITM Overview while ITM is the active world, legacy Overview on basic
+                // wheels and on ITM wheels in Legacy-only control (the legacy world is
+                // the whole display then, rendered at the ITM panel size).
                 bool itmUi = DisplayShellRouting.ShowItmOverview(
                     _isItm ? DisplayType.Itm : DisplayType.Basic, control);
                 bool legacyUi = DisplayShellRouting.ShowLegacyOverview(
@@ -248,10 +296,13 @@ namespace FanaBridge.UI.Display
                 if (_isItm && !itmUi && _currentView == TabView.Pages)
                     NavigateTo(TabView.Overview);
 
-                // Restore the cap-dependent chrome Bind/SyncResolvedCaps also set.
-                var itmOnly = _isItm ? Visibility.Visible : Visibility.Collapsed;
-                borderItmInfo.Visibility = itmOnly;
-                sectionItmOptions.Visibility = itmOnly;
+                // The info banner and ITM options are ITM-world chrome: shown only while
+                // the ITM Overview is up, not alongside the legacy Overview in Legacy-only
+                // control. The (Legacy) Display Mode section stays — it picks the fallback
+                // face when the legacy rule world is empty.
+                var itmChrome = itmUi ? Visibility.Visible : Visibility.Collapsed;
+                borderItmInfo.Visibility = itmChrome;
+                sectionItmOptions.Visibility = itmChrome;
                 sectionDisplayMode.Visibility = Visibility.Visible;
 
                 panelDefaultPage.IsEnabled = _settings.ItmActive;
@@ -319,7 +370,8 @@ namespace FanaBridge.UI.Display
 
         private TriggerRuleSet TriggersRuleSet()
             => DisplayShellRouting.TriggersRuleSetFor(
-                _isItm ? DisplayType.Itm : DisplayType.Basic);
+                _isItm ? DisplayType.Itm : DisplayType.Basic,
+                _settings?.DisplayControl);
 
         // The DISPLAY MODE header (segmented ITM/Legacy/Off toggle + divider) shows on the
         // Overview of an ITM wheel, and on any wheel while control is Off (Off-trap guard
@@ -448,15 +500,10 @@ namespace FanaBridge.UI.Display
             _isItm = dt == DisplayType.Itm;
             _suppressEvents = true;
             cmbItemNone.Visibility = _isItm ? Visibility.Visible : Visibility.Collapsed;
-            // When control is Off, UpdateModeState owns the chrome collapse; otherwise
-            // restore the ITM-only sections for the new caps.
-            if (!DisplayModeHeaderModel.IsOff(_settings?.DisplayControl))
-            {
-                var itmOnly = _isItm ? Visibility.Visible : Visibility.Collapsed;
-                borderItmInfo.Visibility = itmOnly;
-                sectionItmOptions.Visibility = itmOnly;
-            }
+            // Mode-dependent chrome (info banner, ITM options, live panels) is re-derived
+            // by the UpdateModeState call below for the new caps.
             sectionDisplayMode.Title = _isItm ? "Legacy Display Mode" : "Display Mode";
+            ApplyLegacyFaceHost();
             PopulateDefaultPages(id);
             SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
             _suppressEvents = false;
@@ -562,20 +609,24 @@ namespace FanaBridge.UI.Display
                 : Visibility.Visible;
         }
 
-        // Basic-wheel Overview: 3-char face from last-sent segments (rule path) or caption
-        // fallback (mode-based face), plus the legacy Monitor priority list.
+        // Legacy Overview (basic wheels; ITM wheels in Legacy-only control): face from
+        // last-sent segments (rule path) or caption fallback (mode-based face), plus the
+        // legacy Monitor priority list. LegacyPageActive gates the face — with the page
+        // off (ITM wheel, DisplayMode "None") the stack resolves segments for the
+        // snapshot only and the mirror must not paint what the wire never wrote.
         private void RenderLegacyOverview(DisplayRuleSnapshot snapshot)
         {
             if (_host == null || panelLegacyLive.Visibility != Visibility.Visible)
                 return;
             var config = _host.GetDisplayConfig();
-            if (DisplayShellRouting.UseRuleDrivenSegments(snapshot?.LegacySegments))
+            bool pageActive = _settings?.LegacyPageActive == true;
+            if (DisplayShellRouting.UseRuleDrivenSegments(snapshot?.LegacySegments, pageActive))
                 _legacyFace.Render(snapshot.LegacySegments);
             else
                 _legacyFace.Render(SevenSegmentFaceRender.BlankFrame());
 
             txtLegacyCaption.Text = DisplayShellRouting.LegacyMirrorCaption(
-                snapshot?.LegacyScreenName, _settings?.DisplayMode);
+                snapshot?.LegacyScreenName, _settings?.DisplayMode, pageActive);
 
             legacyMonitorTable.SetRows(DisplayOverviewRender.MonitorRows(
                 snapshot, config, _host.ItmDeviceId, _settings?.ItmDefaultPage ?? 1,

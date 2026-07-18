@@ -79,6 +79,15 @@ namespace FanaBridge.Tests.Display.Host
         public void IsOff_RecognizesOffOnly(string? control, bool expected)
             => Assert.Equal(expected, DisplayModeHeaderModel.IsOff(control));
 
+        [Theory]
+        [InlineData(DisplaySettings.ControlLegacy, true)]
+        [InlineData("legacy", true)]
+        [InlineData(DisplaySettings.ControlItm, false)]
+        [InlineData(DisplaySettings.ControlOff, false)]
+        [InlineData(null, false)]
+        public void IsLegacy_RecognizesLegacyOnly(string? control, bool expected)
+            => Assert.Equal(expected, DisplayModeHeaderModel.IsLegacy(control));
+
         [Fact]
         public void IsSameControl_ComparesControlOnly_Ordinal()
         {

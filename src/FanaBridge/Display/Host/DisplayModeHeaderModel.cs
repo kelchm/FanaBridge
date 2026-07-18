@@ -54,6 +54,10 @@ namespace FanaBridge.Display.Host
         public static bool IsOff(string displayControl)
             => string.Equals(displayControl, DisplaySettings.ControlOff, StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>True when <paramref name="displayControl"/> is Legacy (case-insensitive).</summary>
+        public static bool IsLegacy(string displayControl)
+            => string.Equals(displayControl, DisplaySettings.ControlLegacy, StringComparison.OrdinalIgnoreCase);
+
         /// <summary>
         /// Target control for the Off card's "Turn the display back on" button: Itm on ITM
         /// wheels, Legacy on basic wheels (the Off-trap recovery path).
