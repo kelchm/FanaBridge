@@ -67,9 +67,15 @@ namespace FanaBridge.Display.Host
                 throw new ArgumentNullException(nameof(destination));
 
             destination["displayMode"] = DisplaySettings.DefaultMode;
-            destination["displayControl"] = itmCapable
-                ? DisplaySettings.ControlItm
-                : DisplaySettings.ControlLegacy;
+            // Only bake displayControl when the device is ITM-capable (Itm is the fixed
+            // point of the migration matrix for default itmEnabled/mode). Non-ITM defaults
+            // leave the key absent so resolve-on-read can still promote to Itm if caps later
+            // become ITM-capable — writing Legacy here would permanently freeze the control
+            // (stored values are honored even when caps change).
+            if (itmCapable)
+                destination["displayControl"] = DisplaySettings.ControlItm;
+            else
+                destination.Remove("displayControl");
             // Preserve the old default byte for downgrade safety. Basic wheels have always
             // persisted true here; the value is capability-gated dead weight in old builds.
             destination["itmEnabled"] = DisplaySettings.DefaultItmEnabled;

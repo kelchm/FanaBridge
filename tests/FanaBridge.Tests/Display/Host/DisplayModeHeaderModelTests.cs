@@ -78,5 +78,22 @@ namespace FanaBridge.Tests.Display.Host
         [InlineData(null, false)]
         public void IsOff_RecognizesOffOnly(string? control, bool expected)
             => Assert.Equal(expected, DisplayModeHeaderModel.IsOff(control));
+
+        [Fact]
+        public void IsSameControl_ComparesControlOnly_Ordinal()
+        {
+            // Spec no-op: re-selecting the same control is a no-op regardless of any
+            // ItmEnabled mirror state the caller may hold separately.
+            Assert.True(DisplayModeHeaderModel.IsSameControl(
+                DisplaySettings.ControlLegacy, DisplaySettings.ControlLegacy));
+            Assert.True(DisplayModeHeaderModel.IsSameControl(
+                DisplaySettings.ControlItm, DisplaySettings.ControlItm));
+            Assert.True(DisplayModeHeaderModel.IsSameControl(
+                DisplaySettings.ControlOff, DisplaySettings.ControlOff));
+            Assert.False(DisplayModeHeaderModel.IsSameControl(
+                DisplaySettings.ControlLegacy, DisplaySettings.ControlItm));
+            // Ordinal: casing mismatch is not the same control (canonicalization happens first).
+            Assert.False(DisplayModeHeaderModel.IsSameControl("legacy", DisplaySettings.ControlLegacy));
+        }
     }
 }

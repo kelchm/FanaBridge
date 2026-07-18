@@ -72,9 +72,13 @@ namespace FanaBridge.Adapters
         // ctor — cheap until Tick constructs a driver.
         private readonly DeviceDisplayRuntime _displayRuntime;
 
-        // True once the legacy page has been blanked after switching to mode "None",
+        // True once the legacy page has been blanked after switching to mode "None"/Off,
         // so it is cleared once on the transition rather than every frame.
         private bool _legacyBlanked;
+        // Last itmCapable snapshot used for resolve-on-read when displayControl is absent
+        // from the blob. Avoids allocating a DisplaySettings every frame; only re-Reads
+        // when live caps flip while migration is still open.
+        private bool? _migratedItmCapable;
         // One-shot guard for the legacy col01 drive: this instance-side drive used to sit
         // inside the runtime's ITM try/catch (sharing its _itmErrorLogged latch) and must
         // keep the same contract now that it runs on the instance — a firmware/transport
@@ -300,6 +304,7 @@ namespace FanaBridge.Adapters
             bool itmCapable = ResolvedDisplayCaps.Display == DisplayType.Itm;
             DisplaySettingsCodec.WriteDefaults(_customSettings, itmCapable);
             _displaySettings = DisplaySettingsCodec.Read(_customSettings, itmCapable);
+            _migratedItmCapable = _customSettings["displayControl"] == null ? itmCapable : (bool?)null;
             _displayRuntime.ClearConfig();   // no displayCustomization key = no customization
 
             if (_ledModule != null)
@@ -431,8 +436,10 @@ namespace FanaBridge.Adapters
             // guarantees a frame that sees the new config also sees the settings that arrived
             // with it. The rule stack captures ItmDefaultPage at build time — a torn pair
             // would latch a stale base page until the next rebuild.
-            _displaySettings = DisplaySettingsCodec.Read(_customSettings,
-                ResolvedDisplayCaps.Display == DisplayType.Itm);
+            bool itmCapable = ResolvedDisplayCaps.Display == DisplayType.Itm;
+            _displaySettings = DisplaySettingsCodec.Read(_customSettings, itmCapable);
+            // Track open migration so DataUpdate can re-Read when live caps flip.
+            _migratedItmCapable = _customSettings["displayControl"] == null ? itmCapable : (bool?)null;
 
             // Display customization document (whitelisted nested key; absent = none).
             // Parsed leniently on this thread — Load never throws — and handed to the
@@ -531,6 +538,22 @@ namespace FanaBridge.Adapters
             var displayCaps = plugin.ResolveCapsFor(_config);
             var displayType = displayCaps.Display;
 
+            // Resolve-on-read self-heal: when displayControl was never persisted (migration
+            // / non-ITM defaults leave the key absent), re-Read with live caps so a later
+            // ITM-capable resolution promotes DisplayControl to Itm without waiting for
+            // another SetSettings. Once the key is written, the stored value is honored.
+            if (_migratedItmCapable.HasValue)
+            {
+                bool itmCapableNow = displayType == DisplayType.Itm;
+                if (itmCapableNow != _migratedItmCapable.Value)
+                {
+                    _displaySettings = DisplaySettingsCodec.Read(
+                        _customSettings ?? new JObject(), itmCapableNow);
+                    _displayManager?.UpdateSettings(_displaySettings);
+                    _migratedItmCapable = itmCapableNow;
+                }
+            }
+
             // Switched away from ITM (e.g. override to a basic-display profile): the
             // runtime stops the session (a no-op when it holds no driver) so the next Itm
             // selection re-runs bring-up, and republishes the now-null envelope.
@@ -575,7 +598,7 @@ namespace FanaBridge.Adapters
                         }
                         else if (_displayManager != null && !_legacyBlanked && !displayTest)
                         {
-                            // Switched to None — blank the legacy page once. Only latch
+                            // Switched to None / Off — blank the legacy page once. Only latch
                             // when the blanking write was accepted, so a transient
                             // transport failure gets retried instead of leaving the
                             // page frozen on its last value.
@@ -596,15 +619,40 @@ namespace FanaBridge.Adapters
             }
             else if (displayType != DisplayType.None)
             {
-                if (_displayManager == null)
+                // Basic / non-ITM 7-seg path: same LegacyPageActive + blank-once gate as the
+                // ITM branch so DisplayControl=Off is honored regardless of caps / rebind
+                // history (Off must blank col01, not keep painting gear/speed).
+                try
                 {
-                    _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
-                    SimHub.Logging.Current.Info(
-                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
-                }
+                    if (_displaySettings.LegacyPageActive)
+                    {
+                        if (_displayManager == null)
+                        {
+                            _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
+                            SimHub.Logging.Current.Info(
+                                "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                                "]: Created display manager");
+                        }
 
-                if (!displayTest)
-                    _displayManager.Update(data);
+                        if (!displayTest)
+                            _displayManager.Update(data);
+                        _legacyBlanked = false;
+                    }
+                    else if (_displayManager != null && !_legacyBlanked && !displayTest)
+                    {
+                        _legacyBlanked = _displayManager.Clear();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (!_legacyErrorLogged)
+                    {
+                        _legacyErrorLogged = true;
+                        SimHub.Logging.Current.Error(
+                            "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                            "]: display update failed (LEDs unaffected): " + ex);
+                    }
+                }
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
@@ -677,6 +725,8 @@ namespace FanaBridge.Adapters
             // Sync the panel-edited DisplaySettings back to the JObject SimHub
             // persists — the same flow the old Screen panel's callback rode.
             DisplaySettingsCodec.Write(_customSettings, _displaySettings);
+            // Write bakes displayControl — migration is closed until the next load.
+            _migratedItmCapable = null;
             _displayManager?.UpdateSettings(_displaySettings);
             // ITM driver reads _displaySettings live each frame.
         }

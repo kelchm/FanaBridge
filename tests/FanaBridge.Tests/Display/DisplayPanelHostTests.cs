@@ -51,7 +51,16 @@ namespace FanaBridge.Tests.Display
                 return true;
             }
 
-            public bool SendCol01(byte[] data) => true;
+            public List<byte[]> SentCol01 { get; } = new List<byte[]>();
+
+            public bool SendCol01(byte[] data)
+            {
+                var copy = new byte[data.Length];
+                Array.Copy(data, copy, data.Length);
+                SentCol01.Add(copy);
+                return true;
+            }
+
             public IReportStream IdentityReports => Identity;
             public IReportStream ItmReports => Itm;
             public IReportStream SrmReports => FakeReportStream.Empty;
@@ -436,6 +445,97 @@ namespace FanaBridge.Tests.Display
             var envelope = s.Host.Snapshot;
             Assert.NotNull(envelope);
             Assert.Null(envelope!.Values);           // a stopped session shows no values
+        }
+
+        // ── DisplayControl Off + migration self-heal ──────────────────────
+
+        private static void SetStatusProp(object status, string property, object value)
+            => status.GetType().GetProperty(property)!.GetSetMethod(true)!
+                .Invoke(status, new[] { value });
+
+        private static GameData GearRunning(string gear = "3")
+        {
+            var status = NewStatus();
+            SetStatusProp(status, "Gear", gear);
+            return Data(status);
+        }
+
+        [Fact]
+        public void BasicPath_OffControl_DoesNotPaintCol01()
+        {
+            // Basic 7-seg must honor DisplayControl=Off the same way the ITM branch does:
+            // blank once, then hands-off — never keep driving gear/speed under Off.
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "PSWBMW",
+                ["displayControl"] = DisplaySettings.ControlOff,
+                ["displayMode"] = "Gear",
+                ["itmEnabled"] = false,
+            }, WheelWire("PSWBMW"), "PSWBMW");
+
+            Assert.Equal(DisplayType.Basic, s.Host.DisplayType);
+            Assert.False(s.Host.DisplaySettings.LegacyPageActive);
+
+            s.Frame(GearRunning("3"));
+            s.Frame(GearRunning("4"));
+            s.Frame(GearRunning("5"));
+
+            // At most one blank (Clear) is allowed; no gear-digit content after Off.
+            Assert.True(s.Transport.SentCol01.Count <= 1,
+                "Off must not keep painting col01 on the basic path");
+            foreach (var report in s.Transport.SentCol01)
+            {
+                // ClearDisplay writes blank segments (positions 5-7).
+                Assert.Equal(SevenSegment.Blank, report[5]);
+                Assert.Equal(SevenSegment.Blank, report[6]);
+                Assert.Equal(SevenSegment.Blank, report[7]);
+            }
+        }
+
+        [Fact]
+        public void BasicPath_LegacyControl_PaintsGearOnCol01()
+        {
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "PSWBMW",
+                ["displayControl"] = DisplaySettings.ControlLegacy,
+                ["displayMode"] = "Gear",
+                ["itmEnabled"] = false,
+            }, WheelWire("PSWBMW"), "PSWBMW");
+
+            s.Frame(GearRunning("4"));
+
+            Assert.NotEmpty(s.Transport.SentCol01);
+            var last = s.Transport.SentCol01[s.Transport.SentCol01.Count - 1];
+            Assert.Equal(SevenSegment.Digit4, last[6]);
+        }
+
+        [Fact]
+        public void MigratedSettings_PromoteToItm_WhenCapsBecomeItmCapable()
+        {
+            // Pre-tristate blob loaded while non-ITM → Legacy in memory; profile override
+            // to an ITM wheel re-Reads (displayControl still absent) and promotes to Itm.
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "PSWBMW",
+                ["displayMode"] = "Gear",
+                ["itmEnabled"] = true,
+            }, WheelWire("PSWBMW"), "PSWBMW");
+
+            Assert.Equal(DisplaySettings.ControlLegacy, s.Host.DisplaySettings.DisplayControl);
+            Assert.False(s.Host.DisplaySettings.ItmActive);
+
+            var itm = WheelProfileStore.FindByWheelType("CSSWFORMV3");
+            Assert.NotNull(itm);
+            s.Wheelbase.ProfileOverrideResolver = _ => itm!.Id;
+            s.Wheelbase.RefreshCapabilities();
+            s.Frame(GearRunning("2"));
+
+            Assert.Equal(DisplayType.Itm, s.Host.DisplayType);
+            Assert.Equal(DisplaySettings.ControlItm, s.Host.DisplaySettings.DisplayControl);
+            Assert.True(s.Host.DisplaySettings.ItmActive);
+            // Resolve-on-read: still not rewritten until the next Write.
+            Assert.Null(((JObject)s.Instance.GetSettings(false, false))["displayControl"]);
         }
 
         // ── Interface round-trip ──────────────────────────────────────────

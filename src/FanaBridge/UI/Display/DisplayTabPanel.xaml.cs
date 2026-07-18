@@ -164,8 +164,9 @@ namespace FanaBridge.UI.Display
             else
                 control = DisplaySettings.ControlItm;
 
-            if (string.Equals(_settings.DisplayControl, control, StringComparison.Ordinal)
-                && _settings.ItmEnabled == (control == DisplaySettings.ControlItm))
+            // Control-only no-op per spec: do not rewrite / Notify when the control is
+            // already selected, even if the downgrade ItmEnabled mirror disagrees.
+            if (DisplayModeHeaderModel.IsSameControl(_settings.DisplayControl, control))
                 return;
 
             _settings.DisplayControl = control;

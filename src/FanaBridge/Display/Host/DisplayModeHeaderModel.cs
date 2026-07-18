@@ -60,5 +60,13 @@ namespace FanaBridge.Display.Host
         /// </summary>
         public static string TurnBackOnControl(bool isItm)
             => isItm ? DisplaySettings.ControlItm : DisplaySettings.ControlLegacy;
+
+        /// <summary>
+        /// Spec no-op for SetDisplayControl: true when the control value is already the
+        /// target. Compared on DisplayControl alone — a disagreeing ItmEnabled mirror must
+        /// not force a rewrite on a re-click of the already-selected segment.
+        /// </summary>
+        public static bool IsSameControl(string current, string target)
+            => string.Equals(current, target, StringComparison.Ordinal);
     }
 }

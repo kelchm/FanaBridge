@@ -122,21 +122,77 @@ namespace FanaBridge.Tests.Display.Host
 
         [Theory]
         [InlineData(true, DisplaySettings.ControlItm)]
-        [InlineData(false, DisplaySettings.ControlLegacy)]
+        [InlineData(false, null)]
         public void WriteDefaults_SelectsControl_ButPreservesOldItmEnabledDefault(
-            bool itmCapable, string expectedControl)
+            bool itmCapable, string? expectedControl)
         {
             var document = new JObject();
 
             DisplaySettingsCodec.WriteDefaults(document, itmCapable);
 
             Assert.Equal(DisplaySettings.DefaultMode, (string?)document["displayMode"]);
+            // Non-ITM defaults leave displayControl absent so a later ITM-capable Read can
+            // still migrate to Itm (baking Legacy would permanently freeze stored control).
             Assert.Equal(expectedControl, (string?)document["displayControl"]);
             Assert.True((bool)document["itmEnabled"]!);
             Assert.Equal(DisplaySettings.DefaultShowLapTotal, (bool)document["itmShowLapTotal"]!);
             Assert.Equal(DisplaySettings.DefaultShowPositionTotal,
                 (bool)document["itmShowPositionTotal"]!);
             Assert.Equal(DisplaySettings.DefaultItmDefaultPage, (byte)document["itmDefaultPage"]!);
+        }
+
+        [Fact]
+        public void WriteDefaults_NonItm_DoesNotFreezeLaterItmCapableRead()
+        {
+            var document = new JObject();
+            DisplaySettingsCodec.WriteDefaults(document, itmCapable: false);
+            Assert.Null(document["displayControl"]);
+
+            var whenCapable = DisplaySettingsCodec.Read(document, itmCapable: true);
+
+            Assert.Equal(DisplaySettings.ControlItm, whenCapable.DisplayControl);
+            Assert.True(whenCapable.ItmActive);
+            // Still resolve-on-read: the defaults blob is not rewritten by Read.
+            Assert.Null(document["displayControl"]);
+        }
+
+        [Fact]
+        public void Read_AbsentControl_RemigratesWhenCapsBecomeItmCapable()
+        {
+            // Pre-tristate blob: itmEnabled true + Gear, no displayControl.
+            var source = new JObject
+            {
+                ["displayMode"] = "Gear",
+                ["itmEnabled"] = true,
+            };
+
+            var nonItm = DisplaySettingsCodec.Read(source, itmCapable: false);
+            Assert.Equal(DisplaySettings.ControlLegacy, nonItm.DisplayControl);
+            Assert.False(nonItm.ItmActive);
+            Assert.Null(source["displayControl"]);
+
+            // Later caps resolve as ITM-capable: same blob remigrates to Itm.
+            var itm = DisplaySettingsCodec.Read(source, itmCapable: true);
+            Assert.Equal(DisplaySettings.ControlItm, itm.DisplayControl);
+            Assert.True(itm.ItmActive);
+            Assert.Null(source["displayControl"]);
+        }
+
+        [Fact]
+        public void Read_StoredLegacy_IsHonoredEvenWhenItmCapable()
+        {
+            // Explicit user/store choice of Legacy (mirror may disagree) stays Legacy.
+            var source = new JObject
+            {
+                ["displayControl"] = DisplaySettings.ControlLegacy,
+                ["displayMode"] = "Gear",
+                ["itmEnabled"] = true,
+            };
+
+            var result = DisplaySettingsCodec.Read(source, itmCapable: true);
+
+            Assert.Equal(DisplaySettings.ControlLegacy, result.DisplayControl);
+            Assert.False(result.ItmActive);
         }
 
         [Theory]
