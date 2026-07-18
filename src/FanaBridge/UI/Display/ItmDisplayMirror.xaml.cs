@@ -145,6 +145,8 @@ namespace FanaBridge.UI.Display
                 var field = slot.Fields[0];
                 AddText(slot.Label ?? field.Label, zoneX, labelY, LabelFontSize, zoneWidth, align);
                 AddText(field.Value, zoneX, valueY, ValueFontSize, zoneWidth, align);
+                DrawFieldChrome(field.VisualState, zoneX - 6, labelY - 4,
+                    zoneWidth + 12, (valueY - labelY) + ValueFontSize + 8);
             }
             else if (slot.Fields[0].IsDot && slot.Fields[1].IsDot)
             {
@@ -157,6 +159,13 @@ namespace FanaBridge.UI.Display
                     : ZonePad + DotDiameter / 2;
                 AddDot(first, cy, slot.Fields[0].DotFilled);
                 AddDot(first + DotSpacing, cy, slot.Fields[1].DotFilled);
+                // Per-dot chrome so each DRS field can be selected independently.
+                DrawFieldChrome(slot.Fields[0].VisualState,
+                    first - DotDiameter / 2 - 6, labelY - 4,
+                    DotDiameter + 12, (cy - labelY) + DotDiameter / 2 + 10);
+                DrawFieldChrome(slot.Fields[1].VisualState,
+                    first + DotSpacing - DotDiameter / 2 - 6, labelY - 4,
+                    DotDiameter + 12, (cy - labelY) + DotDiameter / 2 + 10);
             }
             else
             {
@@ -173,11 +182,47 @@ namespace FanaBridge.UI.Display
                     if (field.Label != null)
                         AddText(field.Label, x, labelY, LabelFontSize, DualFieldWidth, align);
                     AddText(field.Value, x, valueY, ValueFontSize, DualFieldWidth, align);
+                    DrawFieldChrome(field.VisualState, x - 4, labelY - 4,
+                        DualFieldWidth + 8, (valueY - labelY) + ValueFontSize + 8);
                 }
             }
 
             if (IsInteractive)
                 AddHitRegions(slot, isRight, isTop);
+        }
+
+        // Selection chrome for the Pages interactive twin. Overview fields are
+        // Normal and skip this (no border). Selected = 2px solid accent; Selectable
+        // = 1px dashed muted — mock lines :603/:608.
+        private void DrawFieldChrome(SlotVisualState state, double x, double y,
+            double width, double height)
+        {
+            if (state == SlotVisualState.Normal || width <= 0 || height <= 0)
+                return;
+            var rect = new Rectangle
+            {
+                Width = width,
+                Height = height,
+                Fill = Brushes.Transparent,
+                RadiusX = 5,
+                RadiusY = 5,
+                IsHitTestVisible = false,
+            };
+            if (state == SlotVisualState.Selected)
+            {
+                rect.Stroke = DisplayPalette.SlotSelectedBorder;
+                rect.StrokeThickness = 2;
+            }
+            else
+            {
+                rect.Stroke = DisplayPalette.SlotSelectableBorder;
+                rect.StrokeThickness = 1;
+                rect.StrokeDashArray = new DoubleCollection { 3, 2 };
+            }
+            Canvas.SetLeft(rect, x);
+            Canvas.SetTop(rect, y);
+            canvas.Children.Add(rect);
+            _dynamic.Add(rect);
         }
 
         // ── Center zone: the segmented gear glyph ────────────────────────

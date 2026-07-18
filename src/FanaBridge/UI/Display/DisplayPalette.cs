@@ -80,6 +80,26 @@ namespace FanaBridge.UI.Display
         /// <summary>"On your ITM pages" rail glyph (mock #7fce9a — same green family as GreenRank).</summary>
         internal static readonly SolidColorBrush ItmPagesGreen = Frozen("#7FCE9A");
 
+        // ── Pages editor (v9 phase 6c) ───────────────────────────────────
+        /// <summary>Selected field border on the interactive twin (mock #1E8FD5 — same as AccentBg).</summary>
+        internal static readonly SolidColorBrush SlotSelectedBorder = Frozen("#1E8FD5");
+        /// <summary>Selectable (not selected) field border on the interactive twin (mock #4D4D4F).</summary>
+        internal static readonly SolidColorBrush SlotSelectableBorder = Frozen("#4D4D4F");
+        /// <summary>DEFAULT provenance badge fill (mock #3A3A3C).</summary>
+        internal static readonly SolidColorBrush ProvenanceDefaultBg = Frozen("#3A3A3C");
+        /// <summary>DEFAULT provenance badge text (mock #A8A8A8).</summary>
+        internal static readonly SolidColorBrush ProvenanceDefaultFg = Frozen("#A8A8A8");
+        /// <summary>THIS WHEEL provenance badge fill (mock #38321F).</summary>
+        internal static readonly SolidColorBrush ProvenanceWheelBg = Frozen("#38321F");
+        /// <summary>THIS WHEEL provenance badge text (mock #D9B96A).</summary>
+        internal static readonly SolidColorBrush ProvenanceWheelFg = Frozen("#D9B96A");
+        /// <summary>Page pill idle background (mock page pill off state).</summary>
+        internal static readonly SolidColorBrush PagePillIdleBg = Frozen("#2A2A2B");
+        /// <summary>Page pill idle border.</summary>
+        internal static readonly SolidColorBrush PagePillIdleBorder = Frozen("#3D3D3F");
+        /// <summary>Dark face placeholder for the Page-6 mini 3-char surface (Phase 7).</summary>
+        internal static readonly SolidColorBrush LegacyFacePlaceholder = Frozen("#0B0D0F");
+
         internal static readonly FontFamily Mono = new FontFamily("Consolas");
 
         private static SolidColorBrush Frozen(string hex)

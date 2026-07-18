@@ -218,18 +218,12 @@
                      navigation/poll snapshots in — see DisplayTriggersView). -->
                 <ui:DisplayTriggersView x:Name="viewTriggers" Visibility="Collapsed" />
 
+                <!-- Pages & fields editor (Bind/Enter/Poll/BackRequested — same seam as
+                     Triggers). EditPages and EditUnits both land here. -->
+                <ui:DisplayPagesView x:Name="viewPages" Visibility="Collapsed" />
+
                 <!-- Placeholder editor views: honest navigation, no fake UI. Each keeps
                      the design's editor header — ‹ ghost back button + title. -->
-                <StackPanel x:Name="viewPages" Visibility="Collapsed">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                        <Button Style="{StaticResource GhostBack}" Click="Back_Click">
-                            <TextBlock Style="{StaticResource GhostBackGlyph}" />
-                        </Button>
-                        <TextBlock Text="Pages &amp; fields" Style="{StaticResource EditorTitle}" />
-                    </StackPanel>
-                    <TextBlock Text="The Pages &amp; fields editor (including units &amp; format) is coming in a later update."
-                               FontSize="12" Foreground="#8F8F8F" Margin="0,4,0,0" />
-                </StackPanel>
                 <StackPanel x:Name="viewLegacy" Visibility="Collapsed">
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                         <Button Style="{StaticResource GhostBack}" Click="Back_Click">

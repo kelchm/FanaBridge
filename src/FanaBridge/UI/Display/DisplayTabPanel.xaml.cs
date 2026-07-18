@@ -105,6 +105,15 @@ namespace FanaBridge.UI.Display
             viewTriggers.BackRequested += (s, e) => NavigateTo(TabView.Overview);
             viewTriggers.ConfigApplied += (s, e) => RenderMonitor(_lastSnapshot);
 
+            // Pages & fields editor — same Bind/Enter/Poll/BackRequested seam. ConfigApplied
+            // is a no-op for Overview chrome today (field mappings don't change the priority
+            // list); wired for symmetry / future live-mirror refresh. LegacyRequested lands
+            // on the Virtual pages placeholder (Page 6 delegation card).
+            viewPages.Bind(_host, _propertyCatalog, _roleCatalog, _settings, _pickerStore);
+            viewPages.BackRequested += (s, e) => NavigateTo(TabView.Overview);
+            viewPages.ConfigApplied += (s, e) => { /* field mappings — Overview rows unchanged */ };
+            viewPages.LegacyRequested += (s, e) => NavigateTo(TabView.Legacy);
+
             // The Overview priority list IS the shared trigger table in Monitor mode: a
             // read-only "what's in play" list. A row click lands in the Triggers editor with
             // that rule expanded (the EnterAndSelect seam).
@@ -270,6 +279,11 @@ namespace FanaBridge.UI.Display
                     viewTriggers.Enter(_lastSnapshot);
             }
 
+            // Pages editor: same clean-slate Enter on activation (uses the values snapshot
+            // the Overview mirror already holds).
+            if (view == TabView.Pages && _host != null)
+                viewPages.Enter(_lastValues);
+
             // The DISPLAY MODE header belongs to the hub — it shows on Overview (ITM) and
             // whenever control is Off, never inside an editor unless Off keeps it up.
             RefreshModeHeader();
@@ -419,6 +433,8 @@ namespace FanaBridge.UI.Display
             RenderMonitor(_lastSnapshot);    // Overview base-name/rows for the new device
             if (_currentView == TabView.Triggers)
                 viewTriggers.Enter(_lastSnapshot);   // rebuild the editor for the new device; drops any open draft
+            if (_currentView == TabView.Pages)
+                viewPages.Enter(_lastValues);        // rebuild pills/inspector for the new device
         }
 
         private void Poll(bool force = false)
@@ -449,6 +465,7 @@ namespace FanaBridge.UI.Display
 
             // The LIVE card: the mirror redraws only on a values-snapshot reference
             // change; the captions also follow the status line (their fallback path).
+            // Overview mirror stays read-only (IsInteractive defaults false).
             if (force || valuesChanged)
                 displayMirror.Render(values);
             if (force || valuesChanged || statusChanged)
@@ -457,6 +474,10 @@ namespace FanaBridge.UI.Display
                     values, status, _host.ItmDeviceId);
                 txtMirrorState.Text = ItmDisplayMirrorRender.StateCaption(values) ?? "";
             }
+
+            // Pages editor twin: same values snapshot, selection chrome on its own mirror.
+            if (_currentView == TabView.Pages && (force || valuesChanged))
+                viewPages.Poll(values);
 
             if (force || snapshotChanged || statusChanged)
             {

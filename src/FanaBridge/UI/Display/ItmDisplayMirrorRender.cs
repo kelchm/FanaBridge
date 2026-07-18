@@ -25,6 +25,22 @@ namespace FanaBridge.UI.Display
         Live,
     }
 
+    /// <summary>Selection chrome for a mirror field in the Pages editor. Overview
+    /// (read-only) always paints <see cref="Normal"/>; the interactive twin paints
+    /// every remappable field as <see cref="Selectable"/> and the active one as
+    /// <see cref="Selected"/>.</summary>
+    internal enum SlotVisualState
+    {
+        /// <summary>No selection chrome (Overview read-only twin).</summary>
+        Normal,
+
+        /// <summary>Interactive twin, not the active field — 1px dashed border.</summary>
+        Selectable,
+
+        /// <summary>Interactive twin, the active field — 2px solid accent border.</summary>
+        Selected,
+    }
+
     /// <summary>One field of a mirror slot, ready to draw: its own label (dual TC/ABS
     /// style, null otherwise), the display string, and the DRS-dot flag (dots draw as
     /// circles, not text).</summary>
@@ -43,6 +59,9 @@ namespace FanaBridge.UI.Display
 
         /// <summary>For dot fields: filled (on) vs hollow (off).</summary>
         public bool DotFilled { get; set; }
+
+        /// <summary>Selection chrome for the Pages interactive twin; Normal on Overview.</summary>
+        public SlotVisualState VisualState { get; set; } = SlotVisualState.Normal;
     }
 
     /// <summary>One of the four field slots, ready to draw.</summary>
@@ -86,9 +105,22 @@ namespace FanaBridge.UI.Display
         /// telemetry page (values or placeholders — the snapshot's field strings already
         /// carry whichever applies), the legacy caption on the legacy page, and the
         /// dimmed empty panel for everything else (off, bring-up, switching, recovery —
-        /// the header's state caption tells the user why).
+        /// the header's state caption tells the user why). Overview path — all fields
+        /// <see cref="SlotVisualState.Normal"/>.
         /// </summary>
         public static MirrorModel Build(DisplayValuesSnapshot snapshot)
+            => Build(snapshot, selectedParamId: null, interactive: false);
+
+        /// <summary>
+        /// Snapshot → render model with optional Pages-editor selection chrome.
+        /// When <paramref name="interactive"/> is true, every field is
+        /// <see cref="SlotVisualState.Selectable"/> except the one matching
+        /// <paramref name="selectedParamId"/> (<see cref="SlotVisualState.Selected"/>).
+        /// Overview keeps <paramref name="interactive"/> false so hit regions stay
+        /// dormant and fields stay <see cref="SlotVisualState.Normal"/>.
+        /// </summary>
+        public static MirrorModel Build(DisplayValuesSnapshot snapshot,
+            ushort? selectedParamId, bool interactive)
         {
             var model = new MirrorModel();
             if (snapshot == null || snapshot.State != ItmLifecycleState.Synced)
@@ -105,17 +137,44 @@ namespace FanaBridge.UI.Display
                 return model;   // synced but no page adopted yet — nothing to draw
 
             model.PanelState = MirrorPanelState.Live;
-            AddSlot(model, ItmSlotPosition.LeftTop, snapshot.LeftTop);
-            AddSlot(model, ItmSlotPosition.LeftBottom, snapshot.LeftBottom);
-            AddSlot(model, ItmSlotPosition.RightTop, snapshot.RightTop);
-            AddSlot(model, ItmSlotPosition.RightBottom, snapshot.RightBottom);
+            AddSlot(model, ItmSlotPosition.LeftTop, snapshot.LeftTop, selectedParamId, interactive);
+            AddSlot(model, ItmSlotPosition.LeftBottom, snapshot.LeftBottom, selectedParamId, interactive);
+            AddSlot(model, ItmSlotPosition.RightTop, snapshot.RightTop, selectedParamId, interactive);
+            AddSlot(model, ItmSlotPosition.RightBottom, snapshot.RightBottom, selectedParamId, interactive);
             model.GearText = snapshot.GearText;
             model.SpeedText = snapshot.SpeedText;
             return model;
         }
 
+        /// <summary>
+        /// Layout-only model for a page the live snapshot is not currently on (Pages
+        /// editor pill navigation). Empty values, selection chrome when interactive.
+        /// </summary>
+        public static MirrorModel BuildLayout(ItmPage page, ushort? selectedParamId,
+            bool interactive)
+        {
+            var model = new MirrorModel();
+            if (page == ItmPage.Legacy)
+            {
+                model.PanelState = MirrorPanelState.Legacy;
+                return model;
+            }
+            var layout = ItmDisplayLayout.For(page);
+            if (!layout.HasSlots)
+                return model;
+
+            model.PanelState = MirrorPanelState.Live;
+            AddLayoutSlot(model, ItmSlotPosition.LeftTop, layout.LeftTop, selectedParamId, interactive);
+            AddLayoutSlot(model, ItmSlotPosition.LeftBottom, layout.LeftBottom, selectedParamId, interactive);
+            AddLayoutSlot(model, ItmSlotPosition.RightTop, layout.RightTop, selectedParamId, interactive);
+            AddLayoutSlot(model, ItmSlotPosition.RightBottom, layout.RightBottom, selectedParamId, interactive);
+            model.GearText = "";
+            model.SpeedText = "";
+            return model;
+        }
+
         private static void AddSlot(MirrorModel model, ItmSlotPosition position,
-            DisplayValueSlot slot)
+            DisplayValueSlot slot, ushort? selectedParamId, bool interactive)
         {
             if (slot == null)
                 return;
@@ -131,9 +190,41 @@ namespace FanaBridge.UI.Display
                     Value = field.Value,
                     IsDot = isDot,
                     DotFilled = field.Value == ItmValueRenderer.DrsDotOn,
+                    VisualState = FieldVisualState(field.ParamId, selectedParamId, interactive),
                 });
             }
             model.Slots.Add(slotModel);
+        }
+
+        private static void AddLayoutSlot(MirrorModel model, ItmSlotPosition position,
+            ItmDisplaySlot slot, ushort? selectedParamId, bool interactive)
+        {
+            if (slot == null)
+                return;
+            var slotModel = new MirrorSlotModel { Position = position, Label = slot.Label };
+            foreach (var field in slot.Fields)
+            {
+                slotModel.Fields.Add(new MirrorFieldModel
+                {
+                    ParamId = field.ParamId,
+                    Label = field.Label,
+                    Value = "",
+                    IsDot = false,
+                    DotFilled = false,
+                    VisualState = FieldVisualState(field.ParamId, selectedParamId, interactive),
+                });
+            }
+            model.Slots.Add(slotModel);
+        }
+
+        private static SlotVisualState FieldVisualState(ushort paramId,
+            ushort? selectedParamId, bool interactive)
+        {
+            if (!interactive)
+                return SlotVisualState.Normal;
+            if (selectedParamId.HasValue && selectedParamId.Value == paramId)
+                return SlotVisualState.Selected;
+            return SlotVisualState.Selectable;
         }
 
         /// <summary>

@@ -65,10 +65,76 @@ namespace FanaBridge.Tests.UI
             Assert.Equal("15 /73", leftTop.Fields[0].Value);
             Assert.Equal(ItmParam.Lap, leftTop.Fields[0].ParamId);
             Assert.False(leftTop.Fields[0].IsDot);
+            // Overview path: every field Normal (no selection chrome).
+            Assert.Equal(SlotVisualState.Normal, leftTop.Fields[0].VisualState);
 
             var rightBottom = model.Slots.Single(s => s.Position == ItmSlotPosition.RightBottom);
             Assert.Equal("LAST LAP:", rightBottom.Label);
             Assert.Equal("02:14.169", rightBottom.Fields[0].Value);
+        }
+
+        // ── SlotVisualState (Pages interactive twin) ─────────────────────
+
+        [Fact]
+        public void Build_Interactive_SelectedAndSelectable()
+        {
+            var model = ItmDisplayMirrorRender.Build(
+                LapInfoSnapshot(), selectedParamId: ItmParam.Lap, interactive: true);
+
+            Assert.Equal(MirrorPanelState.Live, model.PanelState);
+            var fields = model.Slots.SelectMany(s => s.Fields).ToList();
+            Assert.Equal(4, fields.Count);
+            Assert.Equal(SlotVisualState.Selected,
+                fields.Single(f => f.ParamId == ItmParam.Lap).VisualState);
+            Assert.All(
+                fields.Where(f => f.ParamId != ItmParam.Lap),
+                f => Assert.Equal(SlotVisualState.Selectable, f.VisualState));
+        }
+
+        [Fact]
+        public void Build_Interactive_NoSelection_AllSelectable()
+        {
+            var model = ItmDisplayMirrorRender.Build(
+                LapInfoSnapshot(), selectedParamId: null, interactive: true);
+
+            Assert.All(
+                model.Slots.SelectMany(s => s.Fields),
+                f => Assert.Equal(SlotVisualState.Selectable, f.VisualState));
+        }
+
+        [Fact]
+        public void Build_NonInteractive_AlwaysNormal_EvenWithSelectedId()
+        {
+            // Overview: interactive=false forces Normal regardless of selectedParamId.
+            var model = ItmDisplayMirrorRender.Build(
+                LapInfoSnapshot(), selectedParamId: ItmParam.Position, interactive: false);
+
+            Assert.All(
+                model.Slots.SelectMany(s => s.Fields),
+                f => Assert.Equal(SlotVisualState.Normal, f.VisualState));
+        }
+
+        [Fact]
+        public void BuildLayout_ProducesLiveSlots_WithSelectionChrome()
+        {
+            var model = ItmDisplayMirrorRender.BuildLayout(
+                ItmPage.FuelErsDrs, selectedParamId: ItmParam.Fuel, interactive: true);
+
+            Assert.Equal(MirrorPanelState.Live, model.PanelState);
+            Assert.Equal(4, model.Slots.Count);
+            var fuel = model.Slots.SelectMany(s => s.Fields)
+                .Single(f => f.ParamId == ItmParam.Fuel);
+            Assert.Equal(SlotVisualState.Selected, fuel.VisualState);
+            Assert.Equal("", fuel.Value);   // layout-only — no live values
+        }
+
+        [Fact]
+        public void BuildLayout_Legacy_IsLegacyPanel()
+        {
+            var model = ItmDisplayMirrorRender.BuildLayout(
+                ItmPage.Legacy, selectedParamId: null, interactive: true);
+            Assert.Equal(MirrorPanelState.Legacy, model.PanelState);
+            Assert.Empty(model.Slots);
         }
 
         [Fact]
