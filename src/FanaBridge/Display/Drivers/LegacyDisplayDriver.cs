@@ -41,6 +41,17 @@ namespace FanaBridge.Display.Drivers
         // be inferred from the data itself.
         private bool _needExitBlank;
 
+        /// <summary>True while the page holds content this driver painted (any mode or
+        /// rule-segment write) that has not yet been successfully blanked. The device
+        /// instance's empty-world blank-once keys off this — the single source of truth,
+        /// so a page already blanked at game exit is never re-blanked at idle.</summary>
+        internal bool NeedsExitBlank => _needExitBlank;
+
+        /// <summary>Arms the exit-blank latch for content this driver did NOT paint (the
+        /// settings page's display test writes col01 directly) so a declined handback
+        /// <see cref="Clear"/> keeps retrying instead of leaving the residue frozen.</summary>
+        internal void ArmExitBlank() => _needExitBlank = true;
+
         // Rule-path segment latch (TryShowSegments): change-gate identical resolved
         // frames so effect clocks only re-send when the visible window actually moves.
         private byte _lastSeg0, _lastSeg1, _lastSeg2;
@@ -85,7 +96,7 @@ namespace FanaBridge.Display.Drivers
                 // write nothing while idle — the firmware may be using the display
                 // itself (e.g. the tuning menu).
                 if (_needExitBlank)
-                    _needExitBlank = !Clear();
+                    Clear();   // resets the latch only when accepted — declined retries
                 return;
             }
             _needExitBlank = true;
@@ -168,6 +179,10 @@ namespace FanaBridge.Display.Drivers
         public bool Clear()
         {
             bool sent = _display.ClearDisplay();
+            // The content latch clears only on an ACCEPTED blank — a declined write must
+            // leave NeedsExitBlank armed so every retry path keeps retrying.
+            if (sent)
+                _needExitBlank = false;
             _currentText = "";
             _currentGear = "";
             _lastSentGear = int.MinValue;

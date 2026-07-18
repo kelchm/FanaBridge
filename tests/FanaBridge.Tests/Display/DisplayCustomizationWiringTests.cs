@@ -781,6 +781,28 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void ExitBlankedPage_ThenWorldEmptied_NoRedundantBlank()
+        {
+            // A page already blanked by the game-exit handoff must NOT be blanked again
+            // when the world empties at idle — idle col01 silence (the firmware may be
+            // using the display, e.g. its tuning menu). The driver's exit-blank latch is
+            // the single source of truth for "page holds our content".
+            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            var status = NewStatus();
+            Set(status, "Gear", "3");
+
+            s.Frame(Data(status));                          // migrated Gear world paints
+            Assert.NotEmpty(s.Transport.SentCol01);
+            s.Frame(Data(status, gameRunning: false));      // game exit → blank-once
+            int afterExit = s.Transport.SentCol01.Count;
+
+            s.Instance.ApplyDisplayConfig(new DisplayCustomizationConfig());
+            s.Frame(Data(status, gameRunning: false));      // world emptied at idle
+            s.Frame(Data(status, gameRunning: false));
+            Assert.Equal(afterExit, s.Transport.SentCol01.Count);   // silence — no re-blank
+        }
+
+        [Fact]
         public void FrozenNone_EmptyWorld_NeverWritesCol01()
         {
             // Fresh session with a frozen "None" mode: nothing is synthesized, the page

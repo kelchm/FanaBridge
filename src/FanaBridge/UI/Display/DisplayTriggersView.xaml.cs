@@ -1178,8 +1178,11 @@ namespace FanaBridge.UI.Display
         {
             _host.ApplyDisplayConfig(cfg);
             _editModelSource = _host.GetDisplayConfig();
+            // _ruleSet MUST be carried into the rebuilt model — omitting it fell back to
+            // the ctor's Itm default, so the first commit in the legacy editor silently
+            // swapped the whole row list to the ITM rules.
             _editModel = new DisplayTriggersEditModel(_editModelSource, _host.ItmDeviceId,
-                _settings?.ItmDefaultPage ?? (byte)1);
+                _settings?.ItmDefaultPage ?? (byte)1, _ruleSet);
             ConfigApplied?.Invoke(this, EventArgs.Empty);
         }
 

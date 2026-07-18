@@ -259,7 +259,10 @@ namespace FanaBridge.Display.Runtime
                 // device's wire (and falls to the default wire's identity when this device
                 // lacks the configured base). The rebuilt stack re-takes policy later this
                 // frame; this keeps the boundary coherent until it does.
-                if (_displayStack != null)
+                // Same takeover condition as UpdateDisplayRules: only a stack with ITM rule
+                // content owns page policy. A migrated-legacy-only stack must not pin the
+                // rebuilt driver's cold bring-up to a build-latched default page.
+                if (_displayStack != null && TakesItmPagePolicy(_displayStack.Config))
                 {
                     var resolved = ItmPageTable.ForDevice(_itmDeviceId)
                         .ResolveBase(_displayStack.ConfiguredBase, _displayStack.DefaultWirePage);
@@ -617,7 +620,7 @@ namespace FanaBridge.Display.Runtime
             // ITM page policy only while ITM is the active world AND the document has
             // ITM rule content. A migrated-legacy-only stack must not pin the lifecycle
             // to the stack's base (built-in page policy + live default-page stay).
-            if (settings.ItmActive && (config.Itm?.Rules?.Count ?? 0) > 0)
+            if (settings.ItmActive && TakesItmPagePolicy(config))
                 _itmDisplay.SetPagePolicy(_displayStack.BaseWirePage);
             else if (_itmDisplay.HasExternalPagePolicy)
                 _itmDisplay.RestoreBuiltInPagePolicy();
@@ -683,6 +686,13 @@ namespace FanaBridge.Display.Runtime
             MaybePublishPanelSnapshot();
             AfterTickForTest?.Invoke();
         }
+
+        /// <summary>The one page-policy takeover condition (both the steady-state grant in
+        /// UpdateDisplayRules and the display-id hot-swap carry-over): the document must
+        /// have ITM rule content. Migrated-legacy-only / fieldMappings-only stacks leave
+        /// built-in policy and live default-page semantics untouched.</summary>
+        private static bool TakesItmPagePolicy(DisplayCustomizationConfig config)
+            => (config?.Itm?.Rules?.Count ?? 0) > 0;
 
         /// <summary>No-op ITM page control for basic-wheel rule stacks (no lifecycle).</summary>
         private sealed class NoOpPageControl : IItmPageControl

@@ -75,11 +75,6 @@ namespace FanaBridge.Adapters
         // True once the legacy page has been blanked after switching to mode "None"/Off,
         // so it is cleared once on the transition rather than every frame.
         private bool _legacyBlanked;
-        // True while the legacy page carries content from this session's rule or classic
-        // drive. Flag-on + empty world is silence, but a world emptied LIVE (last virtual
-        // page deleted) must blank the page once instead of freezing on its final frame;
-        // a fresh session with an empty world (frozen "None") never writes.
-        private bool _legacyPagePainted;
         // Last itmCapable snapshot used for resolve-on-read when displayControl is absent
         // from the blob. Avoids allocating a DisplaySettings every frame; only re-Reads
         // when live caps flip while migration is still open.
@@ -283,7 +278,6 @@ namespace FanaBridge.Adapters
             // the twin is dropped WITHOUT a detach — the old tap is already gone).
             _displayRuntime.OnGenerationRebind();
             _legacyBlanked = false;
-            _legacyPagePainted = false;
             // The col01 driver is dropped/rebuilt against the new generation below — re-arm
             // its one-shot failure latch too, matching the runtime's _itmErrorLogged reset.
             _legacyErrorLogged = false;
@@ -515,7 +509,6 @@ namespace FanaBridge.Adapters
                 // legacy page when control is Off and can log a fresh col01 failure
                 // (mirrors the runtime clearing its own _itmErrorLogged on disconnect).
                 _legacyBlanked = false;
-                _legacyPagePainted = false;
                 _legacyErrorLogged = false;
             }
 
@@ -544,8 +537,14 @@ namespace FanaBridge.Adapters
             // latches, so the live gear/speed repaints immediately instead of
             // waiting for the next value change.
             bool displayTest = plugin.DisplayTestActive;
-            if (!displayTest && _displayTestWasActive)
-                _legacyDriver?.Clear();
+            if (!displayTest && _displayTestWasActive && _legacyDriver != null
+                && !_legacyDriver.Clear())
+            {
+                // Declined handback blank: arm the driver's exit-blank latch so a retry
+                // path exists even in a flag-on empty world (where nothing else repaints
+                // over the test residue).
+                _legacyDriver.ArmExitBlank();
+            }
             _displayTestWasActive = displayTest;
 
             // Resolve THIS descriptor's caps override-aware — the same rule the
@@ -765,16 +764,14 @@ namespace FanaBridge.Adapters
 
                 if (!displayTest)
                 {
-                    bool telemetryLive = data != null && data.GameRunning
-                        && data.NewData != null;
                     if (UseLegacyRulePath)
                     {
                         // Rule path owns live frames (stack already wrote). Idle: blank-once
                         // via the driver's Update gate — same telemetryLive contract.
+                        bool telemetryLive = data != null && data.GameRunning
+                            && data.NewData != null;
                         if (!telemetryLive)
                             _legacyDriver.Update(data);
-                        else
-                            _legacyPagePainted = true;
                     }
                     else if (!DisplayRuleStack.LegacyRuleWrites
                         && _displaySettings.DisplayMode != DisplaySettings.ModeNone)
@@ -783,17 +780,16 @@ namespace FanaBridge.Adapters
                         // The mode != None gate lives here because LegacyPageActive no longer
                         // carries it.
                         _legacyDriver.Update(data);
-                        if (telemetryLive)
-                            _legacyPagePainted = true;
                     }
-                    else if (DisplayRuleStack.LegacyRuleWrites && _legacyPagePainted)
+                    else if (DisplayRuleStack.LegacyRuleWrites && _legacyDriver.NeedsExitBlank)
                     {
-                        // Flag-on + empty world is silence — but a page this session painted
-                        // (rule or classic tenure) is blanked once when the world empties
-                        // live, so deleting the last virtual page cannot leave col01 frozen
-                        // on its final frame. Declined sends retry (latch only on accept).
-                        if (_legacyDriver.Clear())
-                            _legacyPagePainted = false;
+                        // Flag-on + empty world is silence — but a page still holding this
+                        // session's content (driver latch: any paint not yet successfully
+                        // blanked) is blanked once when the world empties live, so deleting
+                        // the last virtual page cannot leave col01 frozen. Declined sends
+                        // retry via the latch; a page already blanked at game exit is never
+                        // re-blanked, and fresh empty-world sessions never write.
+                        _legacyDriver.Clear();
                     }
                 }
                 _legacyBlanked = false;
