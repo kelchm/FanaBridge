@@ -99,7 +99,10 @@ namespace FanaBridge.UI.Display
 
         // (Re)parents the shared face into the host that matches the bound caps: bare
         // (small) on basic wheels, inside the wide ITM-sized panel on ITM wheels. The
-        // face must be detached from both possible parents before re-attaching.
+        // face must be detached from both possible parents before re-attaching. The
+        // border chrome follows: wide gets ItmDisplayMirror's exact frame (1px #262C31,
+        // no padding) so the mirror region is pixel-identical between Itm and Legacy
+        // control; the small face keeps its padded #0B0D0F frame.
         private void ApplyLegacyFaceHost()
         {
             hostLegacyFace.Content = null;
@@ -108,10 +111,16 @@ namespace FanaBridge.UI.Display
             {
                 _wideFaceSlot.Child = _legacyFace;
                 hostLegacyFace.Content = _wideFacePanel;
+                borderLegacyFace.Background = null;
+                borderLegacyFace.CornerRadius = new CornerRadius(0);
+                borderLegacyFace.Padding = new Thickness(0);
             }
             else
             {
                 hostLegacyFace.Content = _legacyFace;
+                borderLegacyFace.Background = DisplayPalette.LegacyFacePlaceholder;
+                borderLegacyFace.CornerRadius = new CornerRadius(6);
+                borderLegacyFace.Padding = new Thickness(9);
             }
         }
 
@@ -398,6 +407,11 @@ namespace FanaBridge.UI.Display
             {
                 _settings.DisplayMode = (string)selected.Tag;
                 _host?.NotifySettingsChanged();
+                // The legacy Overview reads this setting (caption fallback and the
+                // LegacyPageActive face gate) but the poll loop only re-renders on
+                // snapshot/status changes — refresh now so a None ↔ mode flip shows
+                // immediately (same pattern as the default-page RenderMonitor refresh).
+                RenderLegacyOverview(_lastSnapshot);
             }
         }
 
@@ -498,6 +512,10 @@ namespace FanaBridge.UI.Display
             _boundDisplayType = dt;
             _boundItmDeviceId = id;
             _isItm = dt == DisplayType.Itm;
+            // The caps flip that got us here may have made the device re-decode (and
+            // replace) its DisplaySettings instance — re-capture it, or the routing below
+            // reads a stale control and option edits mutate an orphaned object.
+            _settings = _host.DisplaySettings ?? _settings;
             _suppressEvents = true;
             cmbItemNone.Visibility = _isItm ? Visibility.Visible : Visibility.Collapsed;
             // Mode-dependent chrome (info banner, ITM options, live panels) is re-derived

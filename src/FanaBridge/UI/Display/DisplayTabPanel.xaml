@@ -225,7 +225,12 @@
                                                        Click="EditLegacy_Click">Edit virtual pages →</Hyperlink>
                                         </TextBlock>
                                     </Grid>
-                                    <Border Background="#0B0D0F" BorderBrush="#262C31" BorderThickness="1"
+                                    <!-- Face chrome is caps-dependent (ApplyLegacyFaceHost): the small
+                                         basic face keeps this padded #0B0D0F frame; the wide ITM-sized
+                                         face gets the ItmDisplayMirror border exactly (no padding), so
+                                         the mirror region matches the ITM card pixel-for-pixel. -->
+                                    <Border x:Name="borderLegacyFace" Background="#0B0D0F"
+                                            BorderBrush="#262C31" BorderThickness="1"
                                             CornerRadius="6" Padding="9" Margin="0,9,0,8"
                                             HorizontalAlignment="Center">
                                         <ContentControl x:Name="hostLegacyFace" HorizontalAlignment="Center" />
