@@ -17,14 +17,16 @@ using FanaBridge.UI.Display.Shared;
 namespace FanaBridge.UI.Display
 {
     /// <summary>
-    /// The per-device Display tab: a DISPLAY MODE header (ITM display / Legacy only)
+    /// The per-device Display tab: a DISPLAY MODE header (ITM display / Legacy only / Off)
     /// and hub-and-spoke views — Overview is the landing view (current-page caption,
     /// recent activity, the read-only display priority list, and the option controls
     /// the old Screen tab carried, same settings and semantics), and the editor views
     /// (Triggers, Pages &amp; fields, Legacy screens — placeholders in this piece) are
     /// reached only through Overview's contextual links, each returning via a ‹ ghost
     /// back button. There is no persistent tab strip; the mode header shows on
-    /// Overview only.
+    /// Overview (ITM wheels) and whenever control is Off (so the user can leave Off).
+    /// Off collapses normal content in favour of a dedicated Off card (mode state, not
+    /// a navigation view).
     ///
     /// Threading: everything live is read through the <see cref="IDisplayPanelHost"/>
     /// members — the snapshot accessor returns the ONE immutable envelope the device
@@ -104,15 +106,18 @@ namespace FanaBridge.UI.Display
             monitorTable.Mode = TriggerTableMode.Monitor;
             monitorTable.RowActivated += id => NavigateTo(TabView.Triggers, id);
 
-            // DISPLAY MODE segments — the ITM/Legacy pair, driven by DisplaySettings.ItmEnabled.
-            // SelectionChanged fires on user activation only; UpdateModeState mirrors the
-            // setting back into SelectedId without re-entering the event.
-            segMode.SetItems(new (string, string)[]
+            // DISPLAY MODE segments — tri-state ITM / Legacy / Off, driven by
+            // DisplaySettings.DisplayControl. Off's selected fill is amber; the others
+            // keep the default accent. SelectionChanged fires on user activation only;
+            // UpdateModeState mirrors the setting back into SelectedId without re-entering.
+            segMode.SetItems(new (string, string, Brush)[]
             {
-                ("itm", "ITM display"),
-                ("legacy", "Legacy only"),
+                (DisplayModeHeaderModel.SegmentItm, "ITM display", null),
+                (DisplayModeHeaderModel.SegmentLegacy, "Legacy only", null),
+                (DisplayModeHeaderModel.SegmentOff, "Off", DisplayPalette.OffAccentBg),
             });
-            segMode.SelectionChanged += (s, id) => SetItmEnabled(id == "itm");
+            segMode.SelectionChanged += (s, id) =>
+                SetDisplayControl(DisplayModeHeaderModel.ControlForSegment(id));
 
             // Option controls — identical semantics to the old Screen tab. "None"
             // (legacy page off) is an ITM-only display-mode choice.
@@ -129,9 +134,9 @@ namespace FanaBridge.UI.Display
             SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
 
             // ITM wheels get the mode header (via NavigateTo — it shows on Overview
-            // only), the info banner, and the ITM options; basic-display wheels get
-            // only the (7-segment) Display Mode section — the same information as the
-            // old panel.
+            // only, plus whenever control is Off), the info banner, and the ITM options;
+            // basic-display wheels get only the (7-segment) Display Mode section — the
+            // same information as the old panel — unless they are trapped in Off.
             var itmOnly = _isItm ? Visibility.Visible : Visibility.Collapsed;
             borderItmInfo.Visibility = itmOnly;
             sectionItmOptions.Visibility = itmOnly;
@@ -144,49 +149,81 @@ namespace FanaBridge.UI.Display
             Poll(force: true);
         }
 
-        // ── DISPLAY MODE toggle (owns DisplaySettings.ItmEnabled) ────────
+        // ── DISPLAY MODE toggle (owns DisplaySettings.DisplayControl) ────
 
-        private void SetItmEnabled(bool enabled)
+        private void SetDisplayControl(string control)
         {
-            if (_suppressEvents || _settings == null)
-                return;
-            if (_settings.ItmEnabled == enabled)
+            if (_suppressEvents || _settings == null || string.IsNullOrEmpty(control))
                 return;
 
-            // DisplayControl is authoritative now (the codec re-mirrors ItmEnabled from
-            // it on write) — the pair toggle maps onto the Itm/Legacy controls until the
-            // tri-state header replaces this method.
-            _settings.DisplayControl = enabled
-                ? DisplaySettings.ControlItm
-                : DisplaySettings.ControlLegacy;
-            _settings.ItmEnabled = enabled;
+            // Canonical casing (segment ids map through DisplayModeHeaderModel).
+            if (string.Equals(control, DisplaySettings.ControlLegacy, StringComparison.OrdinalIgnoreCase))
+                control = DisplaySettings.ControlLegacy;
+            else if (string.Equals(control, DisplaySettings.ControlOff, StringComparison.OrdinalIgnoreCase))
+                control = DisplaySettings.ControlOff;
+            else
+                control = DisplaySettings.ControlItm;
+
+            if (string.Equals(_settings.DisplayControl, control, StringComparison.Ordinal)
+                && _settings.ItmEnabled == (control == DisplaySettings.ControlItm))
+                return;
+
+            _settings.DisplayControl = control;
+            // Downgrade-safety mirror: every write keeps ItmEnabled == (control == Itm).
+            _settings.ItmEnabled = control == DisplaySettings.ControlItm;
             UpdateModeState();
             _host?.NotifySettingsChanged();
             Poll(force: true);
         }
 
+        // Off card: hand control back to FanaBridge (Itm on ITM wheels, Legacy on basic).
+        private void TurnDisplayOn_Click(object sender, RoutedEventArgs e)
+            => SetDisplayControl(DisplayModeHeaderModel.TurnBackOnControl(_isItm));
+
         // Mode-dependent chrome: toggle visuals, hint text, which panels exist, and the
-        // old panel's grey-out of the ITM sub-options while the ITM display is off.
+        // old panel's grey-out of the ITM sub-options while the ITM display is off. Off
+        // collapses all normal content and shows the Off card (mode state, not a view).
         private void UpdateModeState()
         {
-            bool on = _settings.ItmEnabled;
+            string control = _settings?.DisplayControl ?? DisplaySettings.ControlItm;
+            bool isOff = DisplayModeHeaderModel.IsOff(control);
 
-            segMode.SelectedId = on ? "itm" : "legacy";
-            txtModeHint.Text = on
-                ? "Legacy-only hides the ITM pages and shows just the 3-character display."
-                : "ITM pages are off. Switch to ITM display to use them.";
+            segMode.SelectedId = DisplayModeHeaderModel.SegmentIdFor(control);
+            txtModeHint.Text = DisplayModeHeaderModel.ModeHint(control);
 
-            // The live Overview cards — and with them every link into an editor —
-            // exist only while this wheel is actually driving an ITM display;
-            // Legacy-only (and basic wheels) keep the Overview-equivalent content:
-            // the options below.
-            bool itmUi = _isItm && on;
-            panelItmLive.Visibility = itmUi ? Visibility.Visible : Visibility.Collapsed;
-            if (!itmUi)
+            panelOffCard.Visibility = isOff ? Visibility.Visible : Visibility.Collapsed;
+
+            if (isOff)
+            {
+                // Off is mode state: force Overview, hide every normal Overview section
+                // (and with it every link into an editor), show only the Off card + header.
                 NavigateTo(TabView.Overview);
+                panelItmLive.Visibility = Visibility.Collapsed;
+                borderItmInfo.Visibility = Visibility.Collapsed;
+                sectionItmOptions.Visibility = Visibility.Collapsed;
+                sectionDisplayMode.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                // Itm/Legacy: Off card already collapsed; live cards only while ITM is active.
+                bool on = _settings.ItmActive;
+                bool itmUi = _isItm && on;
+                panelItmLive.Visibility = itmUi ? Visibility.Visible : Visibility.Collapsed;
+                if (!itmUi)
+                    NavigateTo(TabView.Overview);
 
-            panelDefaultPage.IsEnabled = on;
-            panelTotals.IsEnabled = on;
+                // Restore the cap-dependent chrome Bind/SyncResolvedCaps also set.
+                var itmOnly = _isItm ? Visibility.Visible : Visibility.Collapsed;
+                borderItmInfo.Visibility = itmOnly;
+                sectionItmOptions.Visibility = itmOnly;
+                sectionDisplayMode.Visibility = Visibility.Visible;
+
+                panelDefaultPage.IsEnabled = on;
+                panelTotals.IsEnabled = on;
+            }
+
+            // Header visibility depends on control as well as view/_isItm.
+            RefreshModeHeader();
         }
 
         // ── View navigation (hub-and-spoke, wizard-style panel visibility):
@@ -228,19 +265,19 @@ namespace FanaBridge.UI.Display
                     viewTriggers.Enter(_lastSnapshot);
             }
 
-            // The DISPLAY MODE header belongs to the hub — it shows on Overview only
-            // (and only on ITM wheels), never inside an editor.
+            // The DISPLAY MODE header belongs to the hub — it shows on Overview (ITM) and
+            // whenever control is Off, never inside an editor unless Off keeps it up.
             RefreshModeHeader();
         }
 
-        // The DISPLAY MODE header (segmented ITM/Legacy toggle + divider) shows on the
-        // Overview of an ITM wheel only. Its visibility depends on both _isItm and the
-        // current view, so it must be re-derived whenever either changes — NavigateTo
-        // covers view changes; SyncResolvedCaps covers a live basic↔ITM caps rebind that
-        // doesn't renavigate.
+        // The DISPLAY MODE header (segmented ITM/Legacy/Off toggle + divider) shows on the
+        // Overview of an ITM wheel, and on any wheel while control is Off (Off-trap guard
+        // after a live ITM→basic caps rebind). Re-derived on view changes and caps rebinds.
         private void RefreshModeHeader()
         {
-            var headerVisibility = _isItm && _currentView == TabView.Overview
+            string control = _settings?.DisplayControl ?? DisplaySettings.ControlItm;
+            var headerVisibility = DisplayModeHeaderModel.ShowModeHeader(
+                    _isItm, _currentView == TabView.Overview, control)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             panelModeHeader.Visibility = headerVisibility;
@@ -370,15 +407,20 @@ namespace FanaBridge.UI.Display
             _isItm = dt == DisplayType.Itm;
             _suppressEvents = true;
             cmbItemNone.Visibility = _isItm ? Visibility.Visible : Visibility.Collapsed;
-            var itmOnly = _isItm ? Visibility.Visible : Visibility.Collapsed;
-            borderItmInfo.Visibility = itmOnly;
-            sectionItmOptions.Visibility = itmOnly;
+            // When control is Off, UpdateModeState owns the chrome collapse; otherwise
+            // restore the ITM-only sections for the new caps.
+            if (!DisplayModeHeaderModel.IsOff(_settings?.DisplayControl))
+            {
+                var itmOnly = _isItm ? Visibility.Visible : Visibility.Collapsed;
+                borderItmInfo.Visibility = itmOnly;
+                sectionItmOptions.Visibility = itmOnly;
+            }
             sectionDisplayMode.Title = _isItm ? "Legacy Display Mode" : "Display Mode";
             PopulateDefaultPages(id);
             SelectByPageNumber(cmbDefaultPage, _settings.ItmDefaultPage);
             _suppressEvents = false;
-            UpdateModeState();               // recomputes panelItmLive visibility; navigates to Overview if no longer ITM
-            RefreshModeHeader();             // basic→ITM live rebind reveals the DISPLAY MODE toggle without a renavigate
+            UpdateModeState();               // recomputes panelItmLive / Off card; navigates to Overview if no longer ITM-active
+            RefreshModeHeader();             // basic↔ITM live rebind + Off-trap header visibility
             RenderMonitor(_lastSnapshot);    // Overview base-name/rows for the new device
             if (_currentView == TabView.Triggers)
                 viewTriggers.Enter(_lastSnapshot);   // rebuild the editor for the new device; drops any open draft

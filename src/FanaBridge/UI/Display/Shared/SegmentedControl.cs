@@ -10,23 +10,26 @@ namespace FanaBridge.UI.Display.Shared
     /// <summary>
     /// A code-built segmented toggle (the design's segmented control): a rounded dark
     /// container holding N side-by-side segments with exactly one selected — the selected
-    /// segment fills <see cref="DisplayPalette.AccentBg"/> with white text, the rest sit on
-    /// transparent with <see cref="DisplayPalette.ToggleIdleText"/>. It replaces the two
-    /// hand-rolled segmented implementations behaviour-preservingly: the Display tab's
-    /// DISPLAY MODE header pair and the Triggers editor's ELIGIBLE strip. House style — no
-    /// DataTemplate, no styles; the visual tree is built in code and every segment is
-    /// keyboard-activatable (Enter/Space), exactly as the originals were.
+    /// segment fills its selected brush (default <see cref="DisplayPalette.AccentBg"/>)
+    /// with white text, the rest sit on transparent with
+    /// <see cref="DisplayPalette.ToggleIdleText"/>. It replaces the two hand-rolled
+    /// segmented implementations behaviour-preservingly: the Display tab's DISPLAY MODE
+    /// header pair and the Triggers editor's ELIGIBLE strip. House style — no DataTemplate,
+    /// no styles; the visual tree is built in code and every segment is keyboard-activatable
+    /// (Enter/Space), exactly as the originals were.
     ///
     /// Selection is identity-based: <see cref="SetItems"/> takes (id, label) pairs,
     /// <see cref="SelectedId"/> reflects and sets the chosen segment, and
     /// <see cref="SelectionChanged"/> fires on user activation ONLY. A programmatic
     /// SelectedId set re-styles without raising the event, so a caller can mirror external
-    /// state (e.g. DisplaySettings.ItmEnabled) into the control without re-entrancy.
+    /// state (e.g. DisplaySettings.DisplayControl) into the control without re-entrancy.
     ///
     /// The two call sites differ only in chrome the originals set inline — segment padding,
     /// label font size, and whether the end segments round their outer corners — exposed
     /// here as <see cref="SegmentPadding"/>, <see cref="SegmentFontSize"/>, and
     /// <see cref="OuterCornerRadius"/> so each reproduces its shipped look pixel-for-pixel.
+    /// An optional per-segment selected brush lets the Off segment use amber without
+    /// changing the default accent for every other consumer.
     /// </summary>
     public class SegmentedControl : Border
     {
@@ -39,6 +42,8 @@ namespace FanaBridge.UI.Display.Shared
             public string Id;
             public Border Host;
             public TextBlock Text;
+            /// <summary>Selected fill; null → <see cref="DisplayPalette.AccentBg"/>.</summary>
+            public Brush SelectedBg;
         }
 
         public SegmentedControl()
@@ -81,10 +86,28 @@ namespace FanaBridge.UI.Display.Shared
             }
         }
 
-        /// <summary>Populate the segments in order. Re-reads the chrome properties, so set
+        /// <summary>Populate the segments in order with the default selected brush
+        /// (<see cref="DisplayPalette.AccentBg"/>). Re-reads the chrome properties, so set
         /// <see cref="SegmentPadding"/> / <see cref="SegmentFontSize"/> /
         /// <see cref="OuterCornerRadius"/> first.</summary>
         public void SetItems(IReadOnlyList<(string id, string label)> items)
+        {
+            if (items == null)
+            {
+                SetItems((IReadOnlyList<(string id, string label, Brush selectedBg)>)null);
+                return;
+            }
+            var mapped = new (string id, string label, Brush selectedBg)[items.Count];
+            for (int i = 0; i < items.Count; i++)
+                mapped[i] = (items[i].id, items[i].label, null);
+            SetItems(mapped);
+        }
+
+        /// <summary>Populate the segments in order. A null <c>selectedBg</c> uses
+        /// <see cref="DisplayPalette.AccentBg"/> (identical to the 2-tuple overload).
+        /// Re-reads the chrome properties, so set <see cref="SegmentPadding"/> /
+        /// <see cref="SegmentFontSize"/> / <see cref="OuterCornerRadius"/> first.</summary>
+        public void SetItems(IReadOnlyList<(string id, string label, Brush selectedBg)> items)
         {
             _row.Children.Clear();
             _segments.Clear();
@@ -116,7 +139,13 @@ namespace FanaBridge.UI.Display.Shared
                         e.Handled = true;
                     }
                 };
-                _segments.Add(new Segment { Id = segId, Host = host, Text = text });
+                _segments.Add(new Segment
+                {
+                    Id = segId,
+                    Host = host,
+                    Text = text,
+                    SelectedBg = items[i].selectedBg,
+                });
                 _row.Children.Add(host);
             }
             ApplySelection();
@@ -146,7 +175,8 @@ namespace FanaBridge.UI.Display.Shared
             foreach (var seg in _segments)
             {
                 bool active = string.Equals(seg.Id, _selectedId, StringComparison.Ordinal);
-                seg.Host.Background = active ? DisplayPalette.AccentBg : Brushes.Transparent;
+                Brush selected = seg.SelectedBg ?? DisplayPalette.AccentBg;
+                seg.Host.Background = active ? selected : Brushes.Transparent;
                 seg.Text.Foreground = active ? Brushes.White : DisplayPalette.ToggleIdleText;
             }
         }

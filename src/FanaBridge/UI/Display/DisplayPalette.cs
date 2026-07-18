@@ -12,6 +12,8 @@ namespace FanaBridge.UI.Display
     {
         // ── Shell / Overview brushes ─────────────────────────────────────
         internal static readonly SolidColorBrush AccentBg = Frozen("#1E8FD5");
+        /// <summary>Selected-state fill for the DISPLAY MODE "Off" segment (mock #8a5a2a).</summary>
+        internal static readonly SolidColorBrush OffAccentBg = Frozen("#8A5A2A");
         internal static readonly SolidColorBrush ToggleIdleText = Frozen("#B6B6B6");
         internal static readonly SolidColorBrush RowBg = Frozen("#303032");
         internal static readonly SolidColorBrush RowBorder = Frozen("#3D3D3F");
