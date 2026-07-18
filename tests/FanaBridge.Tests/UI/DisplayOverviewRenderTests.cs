@@ -35,63 +35,57 @@ namespace FanaBridge.Tests.UI
                 composedAtMs: composedAtMs,
                 composedAtUtc: composedAtUtc);
 
-        // ── Priority rows ────────────────────────────────────────────────
+        // ── State chip: the shared live-state helper ─────────────────────
+        //    (StateChip is the one live producer of chip text / countdown / accent / muted,
+        //    consumed by DisplayTriggersEditModel.Rows for both Workbench and Monitor.)
 
         [Fact]
-        public void PriorityRows_MapsEveryStatus_InSnapshotOrder_BaseRowLast()
+        public void StateChip_MapsEveryStatus()
         {
-            var snapshot = Snapshot(new[]
-            {
-                new DisplayRuleRow("r1", "Fuel < 10 → Fuel / ERS / DRS", RuleStatus.OnScreen, 3200),
-                new DisplayRuleRow("r2", "Speed > 100 → Tire Temps", RuleStatus.Waiting, null),
-                new DisplayRuleRow("r3", "Lap changes → Lap Info", RuleStatus.Armed, null),
-                new DisplayRuleRow("r4", "Gap ≤ 0.5 → Car Settings", RuleStatus.Unavailable, null),
-                new DisplayRuleRow("r5", "Oil > 120 → Car Settings", RuleStatus.Disabled, null),
-                new DisplayRuleRow("r6", "Pit → Fuel / ERS / DRS", RuleStatus.Ineligible, null),
-            });
-
-            var rows = DisplayOverviewRender.PriorityRows(snapshot, "Lap Info");
-
-            Assert.Equal(7, rows.Count);
-            Assert.Equal(new[] { "1", "2", "3", "4", "5", "6", "★" },
-                rows.Select(r => r.Rank).ToArray());
-
             // On screen: chip + accent + countdown (3.2 s reads as 4s, ceiling).
-            Assert.Equal("on screen", rows[0].Chip);
-            Assert.True(rows[0].OnScreen);
-            Assert.Equal("4s", rows[0].Seconds);
-            Assert.False(rows[0].Muted);
+            var onScreen = DisplayOverviewRender.StateChip(RuleStatus.OnScreen, 3200);
+            Assert.Equal("on screen", onScreen.Chip);
+            Assert.True(onScreen.OnScreen);
+            Assert.Equal("4s", onScreen.Seconds);
+            Assert.False(onScreen.Muted);
 
-            Assert.Equal("waiting", rows[1].Chip);
-            Assert.False(rows[1].OnScreen);
-            Assert.Null(rows[1].Seconds);
+            var waiting = DisplayOverviewRender.StateChip(RuleStatus.Waiting, null);
+            Assert.Equal("waiting", waiting.Chip);
+            Assert.False(waiting.OnScreen);
+            Assert.Null(waiting.Seconds);
 
             // Armed: blank chip, default styling.
-            Assert.Equal("", rows[2].Chip);
-            Assert.False(rows[2].Muted);
+            var armed = DisplayOverviewRender.StateChip(RuleStatus.Armed, null);
+            Assert.Equal("", armed.Chip);
+            Assert.False(armed.Muted);
+            Assert.False(armed.OnScreen);
 
-            Assert.Equal("n/a on this wheel", rows[3].Chip);
-            Assert.False(rows[3].Muted);
+            var unavailable = DisplayOverviewRender.StateChip(RuleStatus.Unavailable, null);
+            Assert.Equal("n/a on this wheel", unavailable.Chip);
+            Assert.False(unavailable.Muted);
 
             // Disabled and Ineligible: no chip, muted row.
-            Assert.Equal("", rows[4].Chip);
-            Assert.True(rows[4].Muted);
-            Assert.Equal("", rows[5].Chip);
-            Assert.True(rows[5].Muted);
-
-            // The pinned base row.
-            var baseRow = rows[6];
-            Assert.True(baseRow.IsBase);
-            Assert.Equal("Always → Lap Info", baseRow.Label);
-            Assert.Equal("base", baseRow.Chip);
-            Assert.False(baseRow.OnScreen);
-
-            // Labels pass through the snapshot verbatim.
-            Assert.Equal("Fuel < 10 → Fuel / ERS / DRS", rows[0].Label);
+            var disabled = DisplayOverviewRender.StateChip(RuleStatus.Disabled, null);
+            Assert.Equal("", disabled.Chip);
+            Assert.True(disabled.Muted);
+            var ineligible = DisplayOverviewRender.StateChip(RuleStatus.Ineligible, null);
+            Assert.Equal("", ineligible.Chip);
+            Assert.True(ineligible.Muted);
         }
 
         [Fact]
-        public void PriorityRows_StructuredWhenFields_DerivedFromConfigRulesById()
+        public void StateChip_CountdownEdges()
+        {
+            Assert.Equal("0s", DisplayOverviewRender.StateChip(RuleStatus.OnScreen, 0).Seconds);
+            // On screen with no timer (indefinite hold) → no countdown.
+            Assert.Null(DisplayOverviewRender.StateChip(RuleStatus.OnScreen, null).Seconds);
+            Assert.Equal("5s", DisplayOverviewRender.StateChip(RuleStatus.OnScreen, 5000).Seconds);
+        }
+
+        // ── Monitor rows (the v9 converged Overview list — the LIVE Overview projection) ──
+
+        [Fact]
+        public void MonitorRows_StructuredWhenFields_DerivedFromConfig()
         {
             var snapshot = Snapshot(new[]
             {
@@ -108,38 +102,35 @@ namespace FanaBridge.Tests.UI
                 + "\"name\": \"InputStatus.ControlMapperPlugin.Up Shift\" } }, "
                 + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" } } ] } }", _ => { });
 
-            var rows = DisplayOverviewRender.PriorityRows(snapshot, "Lap Info", config.Itm.Rules);
+            // r1 on screen + r2 armed both survive the Monitor filter; base row pinned last.
+            var rows = DisplayOverviewRender.MonitorRows(snapshot, config, itmDeviceId: 3, defaultWirePage: 1);
 
             Assert.Equal("Fuel", rows[0].PropertyName);
             Assert.Equal(PropertyDisplayKind.BuiltIn, rows[0].DisplayKind);
             Assert.Equal(">", rows[0].Operator);
             Assert.Equal("10", rows[0].ValueText);
-            Assert.Equal("Fuel / ERS / DRS", rows[0].TargetText);
+            Assert.Contains("Fuel / ERS / DRS", rows[0].ShowText);
 
             Assert.Equal("InputStatus.ControlMapperPlugin.Up Shift", rows[1].PropertyName);
             Assert.Equal(PropertyDisplayKind.SimHubProperty, rows[1].DisplayKind);
             Assert.Equal("is on", rows[1].Operator);
             Assert.Equal("", rows[1].ValueText);
-            Assert.Equal("Tire Temps", rows[1].TargetText);
+            Assert.Contains("Tire Temps", rows[1].ShowText);
 
             // The base row never carries structured fields.
+            Assert.True(rows[2].IsBase);
             Assert.Null(rows[2].PropertyName);
-
-            // Back-compatible: without config rules the rows are label-only (no grammar).
-            var plain = DisplayOverviewRender.PriorityRows(snapshot, "Lap Info");
-            Assert.Null(plain[0].PropertyName);
-            Assert.Equal("Fuel > 10 → Fuel / ERS / DRS", plain[0].Label);
         }
 
         [Fact]
-        public void PriorityRows_UserNamedRule_NoStructuredGrammar_UsesSnapshotLabel()
+        public void MonitorRows_UserNamedRule_NoStructuredGrammar_UsesLabel()
         {
             // Mirror of the Triggers editor: a user-named rule keeps its Label (deviation #1),
-            // never the "prop op value" grammar. Guarded by IsNullOrWhiteSpace(config.Name) in
-            // RuleRow — remove it and PropertyName populates, failing this test.
+            // never the "prop op value" grammar. Guarded by IsNullOrWhiteSpace(rule.Name) in
+            // ApplyStructuredWhen — remove it and PropertyName populates, failing this test.
             var snapshot = Snapshot(new[]
             {
-                new DisplayRuleRow("r1", "My Fuel Rule", RuleStatus.Armed, null),
+                new DisplayRuleRow("r1", "ignored snapshot label", RuleStatus.Armed, null),
             });
             var config = DisplayConfigSerializer.Load(
                 "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
@@ -147,21 +138,21 @@ namespace FanaBridge.Tests.UI
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
                 + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" } } ] } }", _ => { });
 
-            var rows = DisplayOverviewRender.PriorityRows(snapshot, "Lap Info", config.Itm.Rules);
+            var rows = DisplayOverviewRender.MonitorRows(snapshot, config, itmDeviceId: 3, defaultWirePage: 1);
 
             Assert.Null(rows[0].PropertyName);              // named → no grammar
-            Assert.Equal("My Fuel Rule", rows[0].Label);
+            Assert.Equal("My Fuel Rule", rows[0].Label);    // the config name, via Label
         }
 
         [Fact]
-        public void PriorityRows_ActionTriggeredRule_NoStructuredGrammar_UsesSnapshotLabel()
+        public void MonitorRows_ActionTriggeredRule_NoStructuredGrammar_UsesLabel()
         {
             // ActionTriggered is excluded from structured rendering (its quoted framing would
-            // be dropped) — the row keeps the snapshot's own label. Without the ActionTriggered
-            // guard in RuleRow, PropertyName populates and this test fails.
+            // be dropped) — the row keeps its Label. Without the ActionTriggered guard in
+            // ApplyStructuredWhen, PropertyName populates and this test fails.
             var snapshot = Snapshot(new[]
             {
-                new DisplayRuleRow("r1", "'ShowTyres' triggered → Tire Temps", RuleStatus.Armed, null),
+                new DisplayRuleRow("r1", "ignored snapshot label", RuleStatus.Armed, null),
             });
             var config = DisplayConfigSerializer.Load(
                 "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
@@ -169,41 +160,34 @@ namespace FanaBridge.Tests.UI
                 + "\"source\": { \"kind\": \"simHubProperty\", \"name\": \"ShowTyres\" } }, "
                 + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" } } ] } }", _ => { });
 
-            var rows = DisplayOverviewRender.PriorityRows(snapshot, "Lap Info", config.Itm.Rules);
+            var rows = DisplayOverviewRender.MonitorRows(snapshot, config, itmDeviceId: 3, defaultWirePage: 1);
 
             Assert.Null(rows[0].PropertyName);              // ActionTriggered → label fallback
-            Assert.Equal("'ShowTyres' triggered → Tire Temps", rows[0].Label);
+            Assert.Contains("'ShowTyres' triggered", rows[0].Label);
         }
 
         [Fact]
-        public void PriorityRows_NullSnapshot_JustTheBaseRow()
+        public void MonitorRows_NullSnapshotWithConfig_RulesRenderLabelOnly_BaseLast()
         {
-            var rows = DisplayOverviewRender.PriorityRows(null, "Tire Temps");
+            // No snapshot (customization not composed yet): rules render with no live chip,
+            // structured When still derives from config, and the base row pins last.
+            var config = DisplayConfigSerializer.Load(
+                "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" } } ] } }", _ => { });
 
-            var row = Assert.Single(rows);
-            Assert.True(row.IsBase);
-            Assert.Equal("★", row.Rank);
-            Assert.Equal("Always → Tire Temps", row.Label);
+            var rows = DisplayOverviewRender.MonitorRows(null, config, itmDeviceId: 3, defaultWirePage: 2);
+
+            Assert.Equal(2, rows.Count);
+            Assert.Equal("r1", rows[0].RuleId);
+            Assert.Equal("", rows[0].Chip);                 // no live state merged
+            Assert.Equal("Fuel", rows[0].PropertyName);
+            Assert.True(rows[1].IsBase);
+            Assert.Equal("Fuel / ERS / DRS", rows[1].ShowText);   // wire 2 on device 3
         }
 
-        [Fact]
-        public void PriorityRows_CountdownEdges()
-        {
-            var snapshot = Snapshot(new[]
-            {
-                new DisplayRuleRow("a", "A", RuleStatus.OnScreen, 0),
-                new DisplayRuleRow("b", "B", RuleStatus.OnScreen, null),   // indefinite hold
-                new DisplayRuleRow("c", "C", RuleStatus.OnScreen, 5000),
-            });
-
-            var rows = DisplayOverviewRender.PriorityRows(snapshot, "Lap Info");
-
-            Assert.Equal("0s", rows[0].Seconds);
-            Assert.Null(rows[1].Seconds);      // on screen with no timer → no countdown
-            Assert.Equal("5s", rows[2].Seconds);
-        }
-
-        // ── Monitor rows (the v9 converged Overview list) ────────────────
+        // ── Monitor rows: the filter + renumber path ─────────────────────
 
         [Fact]
         public void MonitorRows_DropsDisabledAndIneligible_RenumbersContiguously_BaseLast()

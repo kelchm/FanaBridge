@@ -11,53 +11,6 @@ using FanaBridge.UI.Display.Shared;
 
 namespace FanaBridge.UI.Display
 {
-    /// <summary>One priority-list row, ready to draw: rank, label, and state styling.</summary>
-    internal sealed class PriorityRowModel
-    {
-        /// <summary>"1".."n" for rules, "★" for the pinned base row.</summary>
-        public string Rank { get; set; }
-
-        /// <summary>The rule's display text, or "Always → &lt;base page&gt;" for the base row.
-        /// The v9 row prefers the structured when-fields below; this is the fallback for the
-        /// base row and user-named rules (<see cref="PropertyName"/> null there).</summary>
-        public string Label { get; set; }
-
-        // ── Structured WHEN (v9 property grammar), populated when the config rule is
-        //    available, non-degraded, unnamed, and has a source; null PropertyName → use Label. ──
-
-        /// <summary>The condition's source property, for <see cref="Shared.PropertyGrammar"/>;
-        /// null → render <see cref="Label"/>.</summary>
-        public string PropertyName { get; set; }
-
-        /// <summary>How <see cref="PropertyName"/> namespaces for display.</summary>
-        public PropertyDisplayKind DisplayKind { get; set; }
-
-        /// <summary>The operator glyph, or "".</summary>
-        public string Operator { get; set; } = "";
-
-        /// <summary>The comparison value text, or "".</summary>
-        public string ValueText { get; set; } = "";
-
-        /// <summary>The SHOW target text, or "".</summary>
-        public string TargetText { get; set; } = "";
-
-        /// <summary>State chip text: "on screen", "waiting", "n/a on this wheel", "base",
-        /// or "" (armed, and the chip-less muted states).</summary>
-        public string Chip { get; set; } = "";
-
-        /// <summary>Hold countdown ("4s"), only while on screen with a timed hold.</summary>
-        public string Seconds { get; set; }
-
-        /// <summary>The winning rule — green accent and left bar.</summary>
-        public bool OnScreen { get; set; }
-
-        /// <summary>Disabled or ineligible — the row renders dimmed.</summary>
-        public bool Muted { get; set; }
-
-        /// <summary>The pinned "Always" row — dashed border, always last.</summary>
-        public bool IsBase { get; set; }
-    }
-
     /// <summary>The live-state styling for one rule row (see
     /// <see cref="DisplayOverviewRender.StateChip"/>) — shared by the Overview priority
     /// list and the Triggers editor so both speak the same row language.</summary>
@@ -139,77 +92,6 @@ namespace FanaBridge.UI.Display
             DisplayCustomizationConfig config, byte itmDeviceId, byte defaultWirePage)
             => new DisplayTriggersEditModel(config, itmDeviceId, defaultWirePage)
                 .Rows(snapshot, defaultWirePage, TriggerTableMode.Monitor);
-
-        /// <summary>
-        /// The priority list: one row per ITM rule in snapshot (priority) order, then the
-        /// base row pinned last. A null snapshot (no customization active, or none composed
-        /// yet) yields just the base row.
-        /// </summary>
-        public static List<PriorityRowModel> PriorityRows(DisplayRuleSnapshot snapshot,
-            string basePageName, IReadOnlyList<DisplayRule> configRules = null)
-        {
-            var rows = new List<PriorityRowModel>();
-            var rules = snapshot?.ItmRules;
-            if (rules != null)
-            {
-                Dictionary<string, DisplayRule> byId = null;
-                if (configRules != null)
-                {
-                    byId = new Dictionary<string, DisplayRule>(StringComparer.Ordinal);
-                    foreach (var r in configRules)
-                        if (r.Id != null)
-                            byId[r.Id] = r;
-                }
-                for (int i = 0; i < rules.Count; i++)
-                {
-                    DisplayRule config = null;
-                    if (byId != null && rules[i].RuleId != null)
-                        byId.TryGetValue(rules[i].RuleId, out config);
-                    rows.Add(RuleRow(i + 1, rules[i], config));
-                }
-            }
-            rows.Add(new PriorityRowModel
-            {
-                Rank = "★",
-                Label = "Always → " + basePageName,
-                Chip = "base",
-                IsBase = true,
-            });
-            return rows;
-        }
-
-        // The v9 structured WHEN, derived from the config rule (the snapshot row carries only a
-        // label). Shown for a non-degraded, unnamed rule with a source property — otherwise the
-        // row falls back to the snapshot's own label, exactly as the Triggers editor does.
-        // ActionTriggered is excluded (mirror of DisplayTriggersEditModel.ApplyStructuredWhen):
-        // its label keeps the quoted "'Action' triggered" framing the grammar would drop.
-        private static PriorityRowModel RuleRow(int rank, DisplayRuleRow rule, DisplayRule config)
-        {
-            var chip = StateChip(rule.Status, rule.RemainingMs);
-            var row = new PriorityRowModel
-            {
-                Rank = rank.ToString(),
-                Label = rule.Label,
-                Chip = chip.Chip,
-                Seconds = chip.Seconds,
-                OnScreen = chip.OnScreen,
-                Muted = chip.Muted,
-            };
-            if (config != null
-                && !config.DegradedAtLoad
-                && string.IsNullOrWhiteSpace(config.Name)
-                && config.When?.Source?.Name != null
-                && config.When.Kind != ConditionKind.ActionTriggered)
-            {
-                var w = WhenFields.From(config.When);
-                row.PropertyName = w.PropertyName;
-                row.DisplayKind = w.DisplayKind;
-                row.Operator = w.Operator;
-                row.ValueText = w.ValueText;
-                row.TargetText = DisplayRuleFormatter.DescribeTarget(config.Show);
-            }
-            return row;
-        }
 
         /// <summary>The live-state chip for one rule, shared by the Overview priority list
         /// and the Triggers editor rows so their row language cannot drift: chip text,
