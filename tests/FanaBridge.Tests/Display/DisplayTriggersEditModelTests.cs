@@ -548,5 +548,254 @@ namespace FanaBridge.Tests.Display
             Assert.Null(row.PropertyName);              // fell back to Label, no grammar
             Assert.Contains("'ShowTyres' triggered", row.Label);
         }
+
+        // ── v9 Workbench: columns, no base row in the stack ───────────────
+
+        private static DisplayCustomizationConfig TwoRulesWithEligibility()
+            => Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" }, "
+                + "\"hold\": { \"kind\": \"forDuration\", \"durationMs\": 5000 }, \"eligible\": \"idle\" }, "
+                + "{ \"id\": \"r2\", \"enabled\": false, \"when\": { \"kind\": \"isTrue\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" }, \"eligible\": \"any\" } ] } }");
+
+        [Fact]
+        public void Rows_Workbench_DropsTheBaseRow_AndFillsTheDenseColumns()
+        {
+            var model = new DisplayTriggersEditModel(TwoRulesWithEligibility(), Device3);
+
+            var rows = model.Rows(null, defaultWirePage: 1, TriggerTableMode.Workbench);
+
+            Assert.Equal(2, rows.Count);                       // no base row in the workbench stack
+            Assert.DoesNotContain(rows, r => r.IsBase);
+
+            // r1: idle, enabled, ForDuration 5 s, page target → "Page 2 · Fuel / ERS / DRS".
+            Assert.Equal("Page 2 · Fuel / ERS / DRS", rows[0].ShowText);
+            Assert.Equal("5 s", rows[0].Timeout);
+            Assert.Equal("☾", rows[0].RunGlyph);
+            Assert.Equal("Idle", rows[0].RunLabel);
+            Assert.Equal("", rows[0].StateText);               // armed (no snapshot)
+
+            // r2: disabled → Runs "⊘ Disabled", State "off", dimmed; WhileActive timeout.
+            Assert.Equal("While active", rows[1].Timeout);
+            Assert.Equal("⊘", rows[1].RunGlyph);
+            Assert.Equal("Disabled", rows[1].RunLabel);
+            Assert.Equal("off", rows[1].StateText);
+            Assert.True(rows[1].Muted);                        // disabled dims even with no snapshot
+            Assert.False(rows[0].Muted);
+        }
+
+        [Fact]
+        public void Rows_Monitor_StillEmitsTheBaseRowLast()
+        {
+            // The default (Monitor) projection is unchanged — the base row is pinned last.
+            var model = new DisplayTriggersEditModel(OneNormalRule(), Device3);
+            var rows = model.Rows(null, defaultWirePage: 1, TriggerTableMode.Monitor);
+            Assert.True(rows[rows.Count - 1].IsBase);
+        }
+
+        [Fact]
+        public void Rows_Workbench_AlternateTarget_ShowsShortPair()
+        {
+            var cfg = Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\", "
+                + "\"periodMs\": 3000 }, \"hold\": { \"kind\": \"whileActive\" } } ] } }");
+            var model = new DisplayTriggersEditModel(cfg, Device3);
+
+            var row = model.Rows(null, defaultWirePage: 1, TriggerTableMode.Workbench)[0];
+            // Device 3: Fuel/ERS/DRS wire 2, Tyre Temps wire 5.
+            Assert.Equal("P2 ⇄ P5", row.ShowText);
+        }
+
+        // ── Runs mapping (enable × eligibility fold, plan B6) ─────────────
+
+        [Fact]
+        public void RunsChoices_HasTheFourRuns_WithGlyphs_AndTheDraftsSelection()
+        {
+            var choices = DisplayTriggersEditModel.RunsChoices(
+                new RuleEdit { Enabled = true, Eligibility = RuleEligibility.Any });
+
+            Assert.Equal(new[] { "in", "idle", "any", "disabled" },
+                choices.Items.Select(i => i.Id).ToArray());
+            Assert.Equal("In game", choices.Items[0].Label);
+            Assert.Equal("⚑", choices.Items[0].Glyph);
+            Assert.Equal("Idle", choices.Items[1].Label);
+            Assert.Equal("☾", choices.Items[1].Glyph);
+            Assert.Equal("Always", choices.Items[2].Label);
+            Assert.Equal("∞", choices.Items[2].Glyph);
+            Assert.Equal("Disabled", choices.Items[3].Label);
+            Assert.Equal("⊘", choices.Items[3].Glyph);
+            Assert.Equal("any", choices.SelectedId);
+
+            // A disabled draft selects Disabled regardless of its stored eligibility.
+            Assert.Equal("disabled", DisplayTriggersEditModel.RunsChoices(
+                new RuleEdit { Enabled = false, Eligibility = RuleEligibility.Idle }).SelectedId);
+        }
+
+        [Fact]
+        public void SetRun_Disabled_TurnsOff_ButKeepsEligibleRawVerbatim()
+        {
+            var model = new DisplayTriggersEditModel(TwoRulesWithEligibility(), Device3);
+
+            var cfg = model.SetRun("r1", DisplayTriggersEditModel.RunDisabled);
+
+            var r1 = cfg.Itm.Rules[0];
+            Assert.False(r1.Enabled);
+            Assert.Equal("idle", r1.EligibleRaw);        // untouched — re-enabling restores it
+            Assert.Equal(RuleEligibility.Idle, r1.Eligible);
+            // The untouched sibling is carried through by reference (byte-identical).
+            Assert.Same(model.Config.Itm.Rules[1], cfg.Itm.Rules[1]);
+        }
+
+        [Fact]
+        public void SetRun_Scope_TurnsOn_AndSetsEligibility()
+        {
+            var model = new DisplayTriggersEditModel(TwoRulesWithEligibility(), Device3);
+
+            var cfg = model.SetRun("r2", DisplayTriggersEditModel.RunInGame);   // r2 was disabled/any
+
+            var r2 = cfg.Itm.Rules[1];
+            Assert.True(r2.Enabled);
+            Assert.Equal(RuleEligibility.InGame, r2.Eligible);
+        }
+
+        [Fact]
+        public void SetRun_DisableThenReEnableToPriorScope_RestoresIt_ByteIdentical()
+        {
+            var start = TwoRulesWithEligibility();
+            string before = DisplayConfigSerializer.Save(start);
+            var model = new DisplayTriggersEditModel(start, Device3);
+
+            model.SetRun("r1", DisplayTriggersEditModel.RunDisabled);    // off, eligibility kept
+            var restored = model.SetRun("r1", DisplayTriggersEditModel.RunIdle);   // r1's prior scope
+
+            Assert.True(restored.Itm.Rules[0].Enabled);
+            Assert.Equal(RuleEligibility.Idle, restored.Itm.Rules[0].Eligible);
+            // The whole document round-trips byte-for-byte back to the start.
+            Assert.Equal(before, DisplayConfigSerializer.Save(restored));
+        }
+
+        // ── Base page ─────────────────────────────────────────────────────
+
+        [Fact]
+        public void SetBasePage_EditsBasePage_CarriesRulesThrough()
+        {
+            var model = new DisplayTriggersEditModel(OneNormalRule(), Device3);
+
+            var cfg = model.SetBasePage(ItmPage.TyreTemps);
+
+            Assert.Equal(ItmPage.TyreTemps, cfg.Itm.BasePage);
+            var rule = Assert.Single(cfg.Itm.Rules);
+            Assert.Equal("r1", rule.Id);
+            Assert.Same(cfg, model.Config);
+        }
+
+        [Fact]
+        public void EffectiveBasePage_UsesConfigBase_ThenDefaultWire()
+        {
+            var configured = new DisplayTriggersEditModel(
+                Load("{ \"schemaVersion\": 1, \"itm\": { \"basePage\": \"lapTimes\", \"rules\": [] } }"), Device3);
+            Assert.Equal(ItmPage.LapTimes, configured.EffectiveBasePage(defaultWirePage: 1));
+
+            var fallback = new DisplayTriggersEditModel(OneNormalRule(), Device3);
+            Assert.Equal(ItmPage.FuelErsDrs, fallback.EffectiveBasePage(defaultWirePage: 2));  // wire 2
+        }
+
+        // ── Duplicate / insert-at-top (the ⋯ menu + add flow) ─────────────
+
+        [Fact]
+        public void DuplicateRule_InsertsACopyBelow_WithAFreshId_NoSuffixForUnnamed()
+        {
+            var model = new DisplayTriggersEditModel(OneNormalRule(), Device3);
+
+            var cfg = model.DuplicateRule("r1", out string newId);
+
+            Assert.Equal(2, cfg.Itm.Rules.Count);
+            Assert.Equal("r1", cfg.Itm.Rules[0].Id);
+            Assert.Equal(newId, cfg.Itm.Rules[1].Id);
+            Assert.NotEqual("r1", newId);
+            Assert.Equal(32, newId.Length);                    // fresh GUID "N"
+            Assert.Null(cfg.Itm.Rules[1].Name);                // unnamed source → no "(copy)"
+            Assert.Equal("Fuel", cfg.Itm.Rules[1].When.Source.Name);   // same condition
+        }
+
+        [Fact]
+        public void DuplicateRule_NamedRule_SuffixesTheCopyName()
+        {
+            var cfg0 = Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"name\": \"My Fuel Rule\", \"when\": { \"kind\": \"greaterThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" } } ] } }");
+            var model = new DisplayTriggersEditModel(cfg0, Device3);
+
+            var cfg = model.DuplicateRule("r1", out _);
+
+            Assert.Equal("My Fuel Rule (copy)", cfg.Itm.Rules[1].Name);
+        }
+
+        [Fact]
+        public void DuplicateRule_UnknownId_IsNoOp()
+        {
+            var model = new DisplayTriggersEditModel(OneNormalRule(), Device3);
+            var same = model.DuplicateRule("nope", out string newId);
+            Assert.Same(model.Config, same);
+            Assert.Null(newId);
+        }
+
+        [Fact]
+        public void InsertRuleAtTop_PutsTheDraftFirst()
+        {
+            var model = new DisplayTriggersEditModel(OneNormalRule(), Device3);
+            var draft = model.NewTelemetryDraft();
+            draft.SourceName = "P";
+            draft.Operator = ConditionKind.GreaterThan;
+            draft.Value = 3;
+
+            var cfg = model.InsertRuleAtTop(draft, out string newId);
+
+            Assert.Equal(2, cfg.Itm.Rules.Count);
+            Assert.Equal(newId, cfg.Itm.Rules[0].Id);          // draft at the TOP
+            Assert.Equal("r1", cfg.Itm.Rules[1].Id);
+        }
+
+        // ── Property-pick shaping ─────────────────────────────────────────
+
+        [Fact]
+        public void AdoptPickedProperty_MappedControl_TakesTheMappedShape()
+        {
+            var model = new DisplayTriggersEditModel(null, Device3);
+            var draft = model.NewTelemetryDraft();          // greaterThan telemetry default
+
+            DisplayTriggersEditModel.AdoptPickedProperty(draft,
+                DisplayTriggersEditModel.MappedControlPropertyName("Up Shift"),
+                PropertyKind.SimHubProperty);
+
+            var reference = model.NewMappedControlDraft("Up Shift");
+            Assert.Equal(reference.SourceName, draft.SourceName);
+            Assert.Equal(ConditionKind.IsTrue, draft.Operator);
+            Assert.Equal(HoldKind.WhileActive, draft.Hold);
+            Assert.Equal(RuleEligibility.Any, draft.Eligibility);
+            Assert.Null(draft.Value);
+            Assert.True(DisplayTriggersEditModel.IsMappedControlProperty(draft.SourceName));
+        }
+
+        [Fact]
+        public void AdoptPickedProperty_Telemetry_LeavesTheOperatorAlone()
+        {
+            var model = new DisplayTriggersEditModel(null, Device3);
+            var draft = model.NewTelemetryDraft();
+            draft.Operator = ConditionKind.LessThan;
+
+            DisplayTriggersEditModel.AdoptPickedProperty(draft, "GameData.Fuel", PropertyKind.SimHubProperty);
+
+            Assert.Equal("GameData.Fuel", draft.SourceName);
+            Assert.Equal(ConditionKind.LessThan, draft.Operator);   // untouched
+            Assert.False(DisplayTriggersEditModel.IsMappedControlProperty(draft.SourceName));
+        }
     }
 }

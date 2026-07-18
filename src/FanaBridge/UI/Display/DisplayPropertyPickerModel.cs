@@ -62,17 +62,25 @@ namespace FanaBridge.UI.Display
         /// display itself shows (<see cref="BuiltInProperties"/>).</summary>
         public const string BuiltInGroup = "FanaBridge";
 
+        /// <summary>The curated Control Mapper roles group, pinned second — each role maps to
+        /// its live property (<see cref="DisplayTriggersEditModel.MappedControlPropertyName"/>),
+        /// so picking one authors a mapped-control trigger.</summary>
+        public const string MappedGroup = "Mapped controls";
+
         /// <summary>Group for a property name with no dotted namespace.</summary>
         public const string UngroupedName = "General";
 
         private readonly IReadOnlyList<string> _builtIns;
+        // Mapped-control rows (role → property), curated, in supplied order.
+        private readonly IReadOnlyList<string> _mappedRoles;
         // SimHub groups: group name → its property names, both in stable (ordinal) order.
         private readonly List<KeyValuePair<string, List<string>>> _groups;
 
         public DisplayPropertyPickerModel(IReadOnlyList<string> builtIns,
-            IReadOnlyList<string> allProperties)
+            IReadOnlyList<string> allProperties, IReadOnlyList<string> mappedRoles = null)
         {
             _builtIns = Dedup(builtIns);
+            _mappedRoles = Dedup(mappedRoles);
             _groups = BuildGroups(allProperties);
         }
 
@@ -104,6 +112,25 @@ namespace FanaBridge.UI.Display
             {
                 rows.Add(Header(BuiltInGroup));
                 rows.AddRange(builtIn);
+            }
+
+            // Mapped controls second: each role's live property, matched on the role name so
+            // the filter reads naturally ("shift" finds Up Shift). A picked mapped property is
+            // reshaped to the mapped-control defaults by DisplayTriggersEditModel.
+            List<PickerRow> mapped = null;
+            foreach (var role in _mappedRoles)
+                if (!hasFilter || Match(role, f))
+                    (mapped ?? (mapped = new List<PickerRow>())).Add(new PickerRow
+                    {
+                        Kind = PickerRowKind.Property,
+                        Text = role,
+                        PropertyName = DisplayTriggersEditModel.MappedControlPropertyName(role),
+                        PropertyKind = PropertyKind.SimHubProperty,
+                    });
+            if (mapped != null)
+            {
+                rows.Add(Header(MappedGroup));
+                rows.AddRange(mapped);
             }
 
             foreach (var group in _groups)

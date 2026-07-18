@@ -1,3 +1,4 @@
+using System.Globalization;
 using FanaBridge.Display.Rules;
 
 namespace FanaBridge.UI.Display.Shared
@@ -51,8 +52,30 @@ namespace FanaBridge.UI.Display.Shared
         /// <summary>The comparison value text, or "".</summary>
         public string ValueText = "";
 
-        /// <summary>The SHOW target text ("Fuel / ERS / DRS"), or "".</summary>
+        /// <summary>The SHOW target text ("Fuel / ERS / DRS"), or "". The v9 dense-grid
+        /// Show column uses <see cref="ShowText"/> instead; this stays for the inline
+        /// "→ target" the old collapsed row appended.</summary>
         public string TargetText = "";
+
+        // ── v9 dense-grid columns (Workbench). Populated by the row producer; the
+        //    Monitor/old-look renderers ignore them. ──
+
+        /// <summary>The Show column: "Page N · Name", "P2 ⇄ P5", or "screen 'X'".</summary>
+        public string ShowText = "";
+
+        /// <summary>The Timeout column: "While active" / "&lt;n&gt; s" / "Until replaced".</summary>
+        public string Timeout = "";
+
+        /// <summary>The Runs column glyph (⚑ / ☾ / ∞ / ⊘), or "".</summary>
+        public string RunGlyph = "";
+
+        /// <summary>The Runs column label ("In game" / "Idle" / "Always" / "Disabled"), or "".</summary>
+        public string RunLabel = "";
+
+        /// <summary>The State column text for the non-on-screen case ("waiting" / "off" /
+        /// "n/a on this wheel" / ""); the on-screen row shows the green dot + "on screen"
+        /// + <see cref="Seconds"/> ring instead.</summary>
+        public string StateText = "";
 
         /// <summary>Live-state chip ("on screen"/"waiting"/…/"base"), merged from the snapshot by id.</summary>
         public string Chip = "";
@@ -84,5 +107,54 @@ namespace FanaBridge.UI.Display.Shared
 
         /// <summary>Whether the chevron opens an editor (every non-degraded rule row).</summary>
         public bool Expandable;
+    }
+
+    /// <summary>
+    /// The pure v9 dense-grid column projections (Timeout / State) — no WPF, no config
+    /// mutation — so the workbench columns' wording is unit-pinned and single-sourced for
+    /// both the Triggers editor rows and (in Monitor mode) the Overview. The Runs mapping
+    /// lives with the edit model (<c>DisplayTriggersEditModel.RunGlyph</c>/<c>RunLabel</c>),
+    /// which owns the enable/eligibility semantics behind that column.
+    /// </summary>
+    internal static class TriggerTableModel
+    {
+        /// <summary>The Timeout column text for a hold: <see cref="HoldKind.WhileActive"/> →
+        /// "While active", <see cref="HoldKind.Indefinite"/> → "Until replaced" (serialization
+        /// untouched — the display word only), <see cref="HoldKind.ForDuration"/> →
+        /// "&lt;seconds&gt; s". An unset/unknown hold reads as "While active" (the level default).</summary>
+        public static string TimeoutText(HoldKind kind, int durationMs)
+        {
+            switch (kind)
+            {
+                case HoldKind.Indefinite:
+                    return "Until replaced";
+                case HoldKind.ForDuration:
+                    return SecondsText(durationMs) + " s";
+                case HoldKind.WhileActive:
+                default:
+                    return "While active";
+            }
+        }
+
+        /// <summary>The State column text for the non-on-screen presentation: a disabled rule
+        /// reads "off"; otherwise the live status maps to "waiting" / "n/a on this wheel" / ""
+        /// (armed and the muted states are blank). The on-screen row draws the green dot +
+        /// "on screen" + countdown instead, so this returns "on screen" there for completeness
+        /// but the renderer supplies the dot and ring.</summary>
+        public static string StateText(RuleStatus status, bool enabled)
+        {
+            if (!enabled)
+                return "off";
+            switch (status)
+            {
+                case RuleStatus.OnScreen: return "on screen";
+                case RuleStatus.Waiting: return "waiting";
+                case RuleStatus.Unavailable: return "n/a on this wheel";
+                default: return "";
+            }
+        }
+
+        private static string SecondsText(int durationMs)
+            => (durationMs / 1000.0).ToString("0.###", CultureInfo.InvariantCulture);
     }
 }

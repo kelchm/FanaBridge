@@ -243,6 +243,115 @@ namespace FanaBridge.UI.Display
             return Commit(rules);
         }
 
+        /// <summary>
+        /// Applies a "Run this trigger" choice (plan B6): <see cref="RunDisabled"/> flips the
+        /// rule off while leaving its serialized eligibility (<c>EligibleRaw</c>) untouched, so
+        /// re-enabling restores the prior scope; any scope id turns the rule on AND sets that
+        /// eligibility. Byte-faithful otherwise — a rule only toggled/re-enabled to its prior
+        /// scope round-trips identically. No-op when the id is unknown.
+        /// </summary>
+        public DisplayCustomizationConfig SetRun(string id, string runId)
+        {
+            var rules = CurrentRules();
+            int i = IndexOf(rules, id);
+            if (i < 0)
+                return _config;
+            if (string.Equals(runId, RunDisabled, StringComparison.Ordinal))
+                rules[i] = CloneRuleWithRun(rules[i], enabled: false, eligibility: null);
+            else
+            {
+                RuleEligibility scope =
+                    string.Equals(runId, RunIdle, StringComparison.Ordinal) ? RuleEligibility.Idle :
+                    string.Equals(runId, RunAny, StringComparison.Ordinal) ? RuleEligibility.Any :
+                    RuleEligibility.InGame;
+                rules[i] = CloneRuleWithRun(rules[i], enabled: true, eligibility: scope);
+            }
+            return Commit(rules);
+        }
+
+        /// <summary>Sets the ITM base ("Always") page, editing <see cref="ItmRuleSet.BasePage"/>
+        /// while carrying every rule and the rest of the document through unchanged.</summary>
+        public DisplayCustomizationConfig SetBasePage(ItmPage page)
+            => Commit(CurrentRules(), EnumText.Write(page));
+
+        /// <summary>
+        /// The base page currently in effect for this device — the configured base when the
+        /// config pins one AND this device offers it, else the identity at the device's
+        /// default-page wire. Drives the footer page dropdown's selection so it agrees with
+        /// the "Always →" row.
+        /// </summary>
+        public ItmPage EffectiveBasePage(byte defaultWirePage)
+        {
+            ItmPage? configuredBase = _config?.Itm != null && _config.Itm.BasePageRaw != null
+                ? _config.Itm.BasePage
+                : (ItmPage?)null;
+            return _pageTable.ResolveBase(configuredBase, defaultWirePage).Identity;
+        }
+
+        /// <summary>
+        /// Inserts a copy of a rule directly below it (the ⋯ menu's Duplicate): a fresh id, a
+        /// byte-faithful clone of every other field (so a degraded rule duplicates verbatim),
+        /// and — only for a user-named rule — a " (copy)" name suffix. The new rule's id is
+        /// returned so the caller can select it. No-op returning the current config (and a
+        /// null id) when the source id is unknown.
+        /// </summary>
+        public DisplayCustomizationConfig DuplicateRule(string id, out string newId)
+        {
+            newId = null;
+            var rules = CurrentRules();
+            int i = IndexOf(rules, id);
+            if (i < 0)
+                return _config;
+            var source = rules[i];
+            var copy = CloneRuleWithRun(source, source.Enabled, eligibility: null);
+            copy.Id = newId = Guid.NewGuid().ToString("N");
+            if (!string.IsNullOrWhiteSpace(source.Name))
+                copy.Name = source.Name + " (copy)";
+            rules.Insert(i + 1, copy);
+            return Commit(rules);
+        }
+
+        /// <summary>Inserts a new rule built from <paramref name="draft"/> at the TOP of the
+        /// stack (highest priority) — the v9 add flow's draft-at-top. A GUID is assigned and
+        /// returned. Contrast <see cref="AddRule"/>, which appends at the bottom.</summary>
+        public DisplayCustomizationConfig InsertRuleAtTop(RuleEdit draft, out string newId)
+        {
+            var rules = CurrentRules();
+            var rule = BuildRule(draft, forceNewId: true);
+            newId = rule.Id;
+            rules.Insert(0, rule);
+            return Commit(rules);
+        }
+
+        // ── Property-pick shaping (the unified add + edit property picker) ──
+
+        /// <summary>Whether a property name is a Control Mapper role property
+        /// (<see cref="MappedControlPropertyName"/>) — a wheel button/control, not telemetry.</summary>
+        public static bool IsMappedControlProperty(string name)
+            => name != null && name.StartsWith("InputStatus.ControlMapperPlugin.", StringComparison.Ordinal);
+
+        /// <summary>
+        /// Stamps a freshly-picked property onto a draft and coerces the draft to the shape
+        /// that property implies. A mapped-control property (a wheel button) adopts the
+        /// <c>isTrue</c> + <c>whileActive</c> + any-time defaults so picking a control in the
+        /// unified picker produces the same rule shape the old dedicated mapped-control add
+        /// did; a telemetry property leaves the operator/hold/eligibility as they are.
+        /// </summary>
+        public static void AdoptPickedProperty(RuleEdit draft, string name, PropertyKind kind)
+        {
+            if (draft == null)
+                return;
+            draft.SourceKind = kind;
+            draft.SourceName = name;
+            if (IsMappedControlProperty(name))
+            {
+                draft.Operator = ConditionKind.IsTrue;
+                draft.Value = null;
+                draft.Hold = HoldKind.WhileActive;
+                draft.Eligibility = RuleEligibility.Any;
+            }
+        }
+
         // ── Row model ─────────────────────────────────────────────────────
 
         /// <summary>
@@ -252,7 +361,8 @@ namespace FanaBridge.UI.Display
         /// rows, and the base row's page name follows the running stack's own resolution
         /// exactly as the Overview does.
         /// </summary>
-        public IReadOnlyList<TriggerTableRow> Rows(DisplayRuleSnapshot snapshot, byte defaultWirePage)
+        public IReadOnlyList<TriggerTableRow> Rows(DisplayRuleSnapshot snapshot, byte defaultWirePage,
+            TriggerTableMode mode = TriggerTableMode.Monitor)
         {
             var rows = new List<TriggerTableRow>();
             var rules = Rules;
@@ -281,8 +391,10 @@ namespace FanaBridge.UI.Display
                     Eligibility = rule.DegradedAtLoad ? "" : EligibilityLabel(rule.Eligible),
                 };
                 ApplyStructuredWhen(row, rule);
+                RuleStatus liveStatus = RuleStatus.Armed;
                 if (live != null && rule.Id != null && live.TryGetValue(rule.Id, out var state))
                 {
+                    liveStatus = state.Status;
                     var chip = DisplayOverviewRender.StateChip(state.Status, state.RemainingMs);
                     row.Chip = chip.Chip;
                     row.Seconds = chip.Seconds;
@@ -291,20 +403,82 @@ namespace FanaBridge.UI.Display
                 }
                 if (rule.DegradedAtLoad)
                     row.Muted = true;      // always dimmed, regardless of live state
+                else
+                {
+                    ApplyWorkbenchColumns(row, rule, liveStatus);
+                    if (!rule.Enabled)
+                        row.Muted = true;  // a disabled rule dims even with no live snapshot
+                }
                 rows.Add(row);
             }
 
-            rows.Add(new TriggerTableRow
-            {
-                Rank = "★",
-                Label = "Always → " + DisplayOverviewRender.BasePageName(
-                    snapshot, _config, _itmDeviceId, defaultWirePage),
-                Chip = "base",
-                IsBase = true,
-                Draggable = false,
-                Expandable = false,
-            });
+            // The pinned base row: shown as the last stack row in Monitor (the Overview's
+            // "what's in play" list) but pulled OUT of the Workbench stack — the editor
+            // renders it as a dedicated BASE PAGE footer instead (spec 2b §5).
+            if (mode == TriggerTableMode.Monitor)
+                rows.Add(new TriggerTableRow
+                {
+                    Rank = "★",
+                    Label = "Always → " + DisplayOverviewRender.BasePageName(
+                        snapshot, _config, _itmDeviceId, defaultWirePage),
+                    Chip = "base",
+                    IsBase = true,
+                    Draggable = false,
+                    Expandable = false,
+                });
             return rows;
+        }
+
+        // Fill the v9 dense-grid columns (Show / Timeout / Runs / State) for a non-degraded
+        // rule from its own fields plus the live status. Pure text — the same wording the
+        // TriggerTableModel projection helpers pin.
+        private void ApplyWorkbenchColumns(TriggerTableRow row, DisplayRule rule, RuleStatus liveStatus)
+        {
+            row.ShowText = ShowTextFor(rule.Show);
+            row.Timeout = TriggerTableModel.TimeoutText(
+                rule.Hold?.Kind ?? HoldKind.WhileActive,
+                rule.Hold?.DurationMs ?? HoldSpec.DefaultDurationMs);
+            string runId = !rule.Enabled ? RunDisabled : RunIdFor(rule.Eligible);
+            row.RunGlyph = RunGlyph(runId);
+            row.RunLabel = RunLabel(runId);
+            row.StateText = TriggerTableModel.StateText(liveStatus, rule.Enabled);
+        }
+
+        /// <summary>The Show column text for a target: "Page N · Name" (single page, wire
+        /// number from this device's page table), "P2 ⇄ P5" (alternate), "screen 'X'"
+        /// (legacy), or "" when the target is missing/unresolved.</summary>
+        public string ShowTextFor(RuleTarget show)
+        {
+            if (show == null)
+                return "";
+            switch (show.Kind)
+            {
+                case TargetKind.Page:
+                    return show.Page == null ? "" : PageLabel(show.Page.Value);
+                case TargetKind.Alternate:
+                    return PageShort(show.PageA) + " ⇄ " + PageShort(show.PageB);
+                case TargetKind.LegacyScreen:
+                    return "screen '" + (show.ScreenId ?? "?") + "'";
+                default:
+                    return "";
+            }
+        }
+
+        private string PageLabel(ItmPage page)
+        {
+            string name = ItmTelemetry.NameOf(page);
+            return _pageTable.TryGetWire(page, out byte wire)
+                ? "Page " + wire + " · " + name
+                : name;
+        }
+
+        private string PageShort(ItmPage? page)
+        {
+            if (page == null)
+                return "?";
+            return _pageTable.TryGetWire(page.Value, out byte wire)
+                ? "P" + wire
+                : ItmTelemetry.NameOf(page.Value);
         }
 
         // The v9 structured WHEN: shown for a non-degraded, unnamed rule that has a source
@@ -448,6 +622,67 @@ namespace FanaBridge.UI.Display
             }
         }
 
+        // ── "Run this trigger" (the v9 enable × eligibility fold, plan B6) ────
+
+        /// <summary>Run-scope ids for the Runs column / dropdown. "disabled" is not an
+        /// eligibility — it flips the rule's own enable switch while leaving its stored
+        /// eligibility untouched (re-enabling restores it).</summary>
+        public const string RunInGame = "in";
+        public const string RunIdle = "idle";
+        public const string RunAny = "any";
+        public const string RunDisabled = "disabled";
+
+        /// <summary>The run id for an eligibility (the enabled cases).</summary>
+        public static string RunIdFor(RuleEligibility eligibility)
+        {
+            switch (eligibility)
+            {
+                case RuleEligibility.Idle: return RunIdle;
+                case RuleEligibility.Any: return RunAny;
+                default: return RunInGame;
+            }
+        }
+
+        /// <summary>The leading glyph for a run id (⚑ in game, ☾ idle, ∞ always, ⊘ disabled).</summary>
+        public static string RunGlyph(string runId)
+        {
+            switch (runId)
+            {
+                case RunIdle: return "☾";
+                case RunAny: return "∞";
+                case RunDisabled: return "⊘";
+                default: return "⚑";
+            }
+        }
+
+        /// <summary>The label for a run id.</summary>
+        public static string RunLabel(string runId)
+        {
+            switch (runId)
+            {
+                case RunIdle: return "Idle";
+                case RunAny: return "Always";
+                case RunDisabled: return "Disabled";
+                default: return "In game";
+            }
+        }
+
+        /// <summary>The "Run this trigger" options as a <see cref="ChoiceList"/> (glyph +
+        /// label per id), with the draft's current run selected: Disabled when the draft is
+        /// turned off, else the scope its eligibility maps to.</summary>
+        public static ChoiceList RunsChoices(RuleEdit draft)
+        {
+            var builder = ChoiceList.Build();
+            builder.Add(RunInGame, RunLabel(RunInGame), RunGlyph(RunInGame));
+            builder.Add(RunIdle, RunLabel(RunIdle), RunGlyph(RunIdle));
+            builder.Add(RunAny, RunLabel(RunAny), RunGlyph(RunAny));
+            builder.Add(RunDisabled, RunLabel(RunDisabled), RunGlyph(RunDisabled));
+            string selected = draft != null && !draft.Enabled
+                ? RunDisabled
+                : RunIdFor(draft?.Eligibility ?? RuleEligibility.InGame);
+            return builder.Selected(selected);
+        }
+
         /// <summary>The single-page SHOW options this device offers (legacy page excluded —
         /// legacy targets are a later phase). Content identities, resolved to wire numbers
         /// at the edge.</summary>
@@ -473,6 +708,9 @@ namespace FanaBridge.UI.Display
         // (schema, profile hook, base page, the whole legacy set, field mappings) forward
         // by reference. The caller applies it; ApplyDisplayConfig re-normalizes.
         private DisplayCustomizationConfig Commit(List<DisplayRule> rules)
+            => Commit(rules, _config?.Itm?.BasePageRaw);
+
+        private DisplayCustomizationConfig Commit(List<DisplayRule> rules, string basePageRaw)
         {
             var src = _config;
             var cfg = new DisplayCustomizationConfig
@@ -482,7 +720,7 @@ namespace FanaBridge.UI.Display
                 Itm = new ItmRuleSet
                 {
                     Rules = rules,
-                    BasePageRaw = src?.Itm?.BasePageRaw,
+                    BasePageRaw = basePageRaw,
                 },
                 Legacy = src?.Legacy ?? new LegacyRuleSet(),
                 FieldMappings = src?.FieldMappings ?? new Dictionary<ushort, FieldMapping>(),
@@ -554,10 +792,18 @@ namespace FanaBridge.UI.Display
             };
         }
 
-        // A byte-faithful copy with Enabled flipped: copies every serialized (*Raw) field
-        // verbatim so a value only a future version understands survives the toggle. Used
-        // only for the user's enable switch, which the editor shows on non-degraded rules.
+        // A byte-faithful copy with Enabled flipped, eligibility preserved verbatim.
         private static DisplayRule CloneRuleWithEnabled(DisplayRule rule, bool enabled)
+            => CloneRuleWithRun(rule, enabled, eligibility: null);
+
+        // A byte-faithful copy with Enabled set and, optionally, eligibility set: copies
+        // every serialized (*Raw) field verbatim so a value only a future version understands
+        // survives, then overrides Enabled and — when <paramref name="eligibility"/> is given
+        // — the eligibility. A null eligibility preserves the rule's stored EligibleRaw
+        // exactly (the disable / duplicate path), so a mere on/off flip round-trips
+        // identically and re-enabling to the prior scope restores it byte-for-byte.
+        private static DisplayRule CloneRuleWithRun(DisplayRule rule, bool enabled,
+            RuleEligibility? eligibility)
         {
             var clone = new DisplayRule
             {
@@ -566,6 +812,8 @@ namespace FanaBridge.UI.Display
                 Enabled = enabled,
                 EligibleRaw = rule.EligibleRaw,
             };
+            if (eligibility != null)
+                clone.Eligible = eligibility.Value;
             if (rule.When != null)
                 clone.When = new RuleCondition
                 {

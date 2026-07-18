@@ -5,7 +5,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Shapes;
 using FanaBridge.Adapters;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Runtime;
@@ -17,29 +16,30 @@ using FanaBridge.UI.Display.Shared;
 namespace FanaBridge.UI.Display
 {
     /// <summary>
-    /// The Triggers editor of the Display tab (design's ITM Triggers editor): the
-    /// add-trigger card, the priority-ordered expandable rule rows with the full
-    /// WHEN/IS/VALUE/SHOW/HOLD/ELIGIBLE detail, drag + keyboard/context-menu reorder, the
-    /// pinned base row, and the live-state merge that patches chips in place without ever
-    /// disturbing an open editor row. Every committed edit flows through the SimHub-free
-    /// <see cref="DisplayTriggersEditModel"/> into <c>host.ApplyDisplayConfig</c> — this
-    /// view is only the WPF that builds and commits, exactly the pattern the collapsed
-    /// Overview rows already use.
+    /// The Triggers editor of the Display tab (design's ITM Triggers workbench): the dense
+    /// rule grid (rank · When · Show · Timeout · Runs · State · ⋯) with the expand-to-edit
+    /// drawer, the draft-at-top add flow (property picker opens straight away, mapped controls
+    /// included), the ⋯ overflow (Duplicate / Move to top / Delete), the BASE PAGE footer, and
+    /// the live-state merge that patches State cells in place without ever disturbing an open
+    /// drawer. Every committed edit flows through the SimHub-free
+    /// <see cref="DisplayTriggersEditModel"/> into <c>host.ApplyDisplayConfig</c> — this view
+    /// is only the WPF that builds and commits; the shared <see cref="TriggerTableControl"/>
+    /// owns the row machinery (build/drag/menu/keyboard/poll).
     ///
     /// The Display tab shell owns navigation and polling: it calls <see cref="Bind"/> once,
     /// <see cref="Enter"/> when this view becomes active, <see cref="Poll"/> each tick while
     /// it is, and <see cref="BeginAdd"/> from the Overview empty-state. The view signals back
     /// through <see cref="BackRequested"/> (the ‹ ghost back button) and
-    /// <see cref="ConfigApplied"/> (after a committed edit republishes the config, so the
-    /// shell can refresh its Overview priority list).
+    /// <see cref="ConfigApplied"/> (after a committed edit republishes the config).
     /// </summary>
     public partial class DisplayTriggersView : UserControl
     {
-        private enum AddTriggerType { Telemetry, MappedControl }
+        // The synthetic id of the draft-at-top row while the add flow is open. Never a real
+        // rule id (the model assigns GUIDs), so it can't collide.
+        private const string DraftRowId = "__draft__";
 
-        // Generous character budget before the property grammar left-elides in the detail
-        // button (the WPF CharacterEllipsis is the visual backstop past it) — the detail
-        // button gets its own line. The collapsed-row budget lives in TriggerTableControl.
+        // Generous character budget before the property grammar left-elides in the drawer's
+        // property field (the WPF CharacterEllipsis is the visual backstop past it).
         private const int DetailPropertyBudget = 42;
 
         // ── Bound members (the shell's own instances, wired in Bind) ───────
@@ -52,11 +52,11 @@ namespace FanaBridge.UI.Display
         // ── Editor state ──────────────────────────────────────────────────
         private DisplayTriggersEditModel _editModel;
         private DisplayCustomizationConfig _editModelSource;   // the config the model was built from
-        private string _expandedRuleId;                        // the one open editor row, or null
+        private string _expandedRuleId;                        // the one open drawer's rule, or null
         private RuleEdit _expandedDraft;                       // the open row's working draft (survives re-renders)
-        private bool _addOpen;
-        private AddTriggerType _addType = AddTriggerType.Telemetry;
-        private RuleEdit _addDraft;
+        private bool _addOpen;                                 // the draft-at-top add flow is active
+        private RuleEdit _addDraft;                            // the pending, uncommitted draft
+        private string _baseFooterSelected;                    // the base-footer cell's built selection (rebuild gate)
 
         // ── Seam events (the shell subscribes once in its Bind) ────────────
         internal event EventHandler BackRequested;
@@ -77,8 +77,7 @@ namespace FanaBridge.UI.Display
         // ── The bind/input surface (the seam) ──────────────────────────────
 
         // Wires the view to the shell's device host, the two on-demand editor catalogs, and
-        // the SAME mutable DisplaySettings reference the shell holds (the view reads
-        // ItmDefaultPage live at model-build/render time). Call once after construction.
+        // the SAME mutable DisplaySettings reference the shell holds. Call once after construction.
         internal void Bind(
             IDisplayPanelHost host,
             IDisplayPropertyCatalog propertyCatalog,
@@ -100,15 +99,9 @@ namespace FanaBridge.UI.Display
             EnterTriggersEditor();
         }
 
-        // The Overview empty-state "＋ Add trigger" path: open the add card straight away with
-        // a fresh telemetry draft. The shell has already navigated here (rebuilding the model).
-        internal void BeginAdd()
-        {
-            _addOpen = true;
-            _addType = AddTriggerType.Telemetry;
-            _addDraft = _editModel.NewTelemetryDraft();
-            RenderAddCard();
-        }
+        // The Overview empty-state "＋ Add trigger" path: open the draft-at-top add flow. The
+        // shell has already navigated here (rebuilding the model).
+        internal void BeginAdd() => StartAddDraft();
 
         private void Back_Click(object sender, RoutedEventArgs e)
             => BackRequested?.Invoke(this, EventArgs.Empty);
@@ -123,26 +116,38 @@ namespace FanaBridge.UI.Display
             _expandedDraft = null;
             _addOpen = false;
             _addDraft = null;
+            _baseFooterSelected = null;   // force a footer rebuild for the (possibly new) device
             _editModelSource = _host?.GetDisplayConfig();
             _editModel = new DisplayTriggersEditModel(_editModelSource, _host?.ItmDeviceId ?? 0,
                 _settings?.ItmDefaultPage ?? (byte)1);
-            RenderAddCard();
             RenderTriggerRows(_lastSnapshot);
         }
 
-        private void TriggersAdd_Click(object sender, RoutedEventArgs e)
+        private void TriggersAdd_Click(object sender, RoutedEventArgs e) => StartAddDraft();
+
+        // The v9 add flow: a fresh telemetry draft becomes the expanded top row and the
+        // property picker opens immediately (mock addTrigger). Picking a property completes
+        // (mapped controls) or reveals the value field; cancelling leaves the empty draft open
+        // (collapsing it discards it). Any abandoned incomplete draft never commits.
+        private void StartAddDraft()
         {
-            _addOpen = !_addOpen;
-            if (_addOpen)
-            {
-                _addType = AddTriggerType.Telemetry;
-                _addDraft = _editModel.NewTelemetryDraft();
-            }
+            if (_editModel == null)
+                return;
+            _expandedRuleId = null;
+            _expandedDraft = null;
+            _addOpen = true;
+            _addDraft = _editModel.NewTelemetryDraft();
+            if (PickProperty(_addDraft))
+                CommitField(_addDraft, DraftRowId, isDraft: true);   // may promote (mapped) or reveal the value box
             else
-            {
-                _addDraft = null;
-            }
-            RenderAddCard();
+                RenderTriggerRows(_lastSnapshot);                    // keep the empty draft open
+        }
+
+        private void DiscardDraft()
+        {
+            _addOpen = false;
+            _addDraft = null;
+            RenderTriggerRows(_lastSnapshot);
         }
 
         // ── Poll integration (called from the shell's Poll while active) ───
@@ -154,11 +159,9 @@ namespace FanaBridge.UI.Display
                 return;
             // A drag in progress must never be interrupted by a rebuild: it holds mouse
             // capture on a ⠿ handle, and clearing the table's children unparents that handle,
-            // dropping the capture — the gesture strands and the drag sticks, killing
-            // subsequent row clicks. Chip patching never touches the children collection, so
-            // it stays safe; defer every rebuild (and any external reconcile) until the drop.
+            // dropping the capture. Chip patching never touches the children collection, so it
+            // stays safe; defer every rebuild until the drop.
             bool dragInProgress = triggerTable.IsDragging;
-            // An external config change (generation rebind, another surface) → rebuild.
             if (!ReferenceEquals(_host.GetDisplayConfig(), _editModelSource))
             {
                 if (dragInProgress)
@@ -167,8 +170,9 @@ namespace FanaBridge.UI.Display
                 return;
             }
             // Not editing: a full rebuild is harmless and keeps the row look fully live.
-            // Editing (an open editor or add card) or mid-drag: only patch the chips, so the
-            // open controls, focus, text-in-progress, and the drag gesture are never disturbed.
+            // Editing (an open drawer or the add draft) or mid-drag: only patch the State
+            // cells, so the open controls, focus, text-in-progress, and the drag gesture are
+            // never disturbed.
             if (!dragInProgress && _expandedRuleId == null && !_addOpen)
                 RenderTriggerRows(snapshot);
             else
@@ -180,41 +184,180 @@ namespace FanaBridge.UI.Display
         private void RenderTriggerRows(DisplayRuleSnapshot snapshot)
         {
             byte wire = _settings != null ? _settings.ItmDefaultPage : (byte)1;
-            triggerTable.ExpandedRuleId = _expandedRuleId;
-            triggerTable.SetRows(_editModel.Rows(snapshot, wire));
-            txtTriggersEmpty.Visibility = _editModel.Rules.Count == 0
+            triggerTable.ExpandedRuleId = _addOpen ? DraftRowId : _expandedRuleId;
+
+            var rows = new List<TriggerTableRow>();
+            if (_addOpen && _addDraft != null)
+                rows.Add(BuildDraftRow(_addDraft));
+            rows.AddRange(_editModel.Rows(snapshot, wire, TriggerTableMode.Workbench));
+            triggerTable.SetRows(rows);
+
+            txtTriggersEmpty.Visibility = (_editModel.Rules.Count == 0 && !_addOpen)
                 ? Visibility.Visible : Visibility.Collapsed;
+            UpdateBaseFooter(wire);
         }
 
-        // In-place chip patch: recompute the row projection (chip/countdown/accent) from the
-        // fresh snapshot and let the table patch each rule row in place, so an open editor row
-        // keeps its controls and focus and an in-flight drag is never disturbed.
+        // In-place State patch: recompute the row projection from the fresh snapshot and let
+        // the table patch each rule row in place, so an open drawer keeps its controls and
+        // focus and an in-flight drag is never disturbed. The draft row (not in the model) is
+        // left with a cleared State cell, which is correct — a draft has no live state.
         private void PatchTriggerChips(DisplayRuleSnapshot snapshot)
         {
             byte wire = _settings != null ? _settings.ItmDefaultPage : (byte)1;
-            triggerTable.PatchLive(_editModel.Rows(snapshot, wire));
+            triggerTable.PatchLive(_editModel.Rows(snapshot, wire, TriggerTableMode.Workbench));
         }
 
-        // The table asks for the expansion drawer of the open row; the host builds it from
-        // the live edit model (a degraded/unknown row yields none, as before).
-        private UIElement BuildExpansionContent(string ruleId)
+        // The synthetic top row for the pending draft: expanded, its When cell reflecting the
+        // draft so far (or a "pick a property" prompt), Show/Timeout/Runs previewed from the
+        // draft. Not draggable (an uncommitted rule has no priority slot yet).
+        private TriggerTableRow BuildDraftRow(RuleEdit draft)
         {
-            var rule = FindRule(ruleId);
-            return rule != null ? BuildDetail(rule) : null;
+            var row = new TriggerTableRow
+            {
+                RuleId = DraftRowId,
+                Rank = "•",
+                Enabled = draft.Enabled,
+                Draggable = false,
+                Expandable = true,
+            };
+            if (!string.IsNullOrEmpty(draft.SourceName))
+            {
+                row.PropertyName = draft.SourceName;
+                row.DisplayKind = PropertyGrammar.KindFor(draft.SourceKind);
+                row.Operator = DisplayRuleFormatter.OperatorText(draft.Operator);
+                row.ValueText = draft.Operator.RequiresValue()
+                    ? DisplayRuleFormatter.FormatValue(draft.Value) : "";
+            }
+            else
+            {
+                row.Label = "New trigger — pick a property";
+            }
+            row.ShowText = _editModel.ShowTextFor(DraftTarget(draft));
+            HoldKind hold = draft.Hold != HoldKind.Unknown
+                ? draft.Hold
+                : (draft.Operator.IsLevel() ? HoldKind.WhileActive : HoldKind.ForDuration);
+            row.Timeout = TriggerTableModel.TimeoutText(hold, draft.HoldDurationMs);
+            string runId = !draft.Enabled
+                ? DisplayTriggersEditModel.RunDisabled
+                : DisplayTriggersEditModel.RunIdFor(draft.Eligibility);
+            row.RunGlyph = DisplayTriggersEditModel.RunGlyph(runId);
+            row.RunLabel = DisplayTriggersEditModel.RunLabel(runId);
+            return row;
+        }
+
+        private static RuleTarget DraftTarget(RuleEdit draft)
+            => new RuleTarget
+            {
+                Kind = draft.TargetKind,
+                Page = draft.Page,
+                PageA = draft.PageA,
+                PageB = draft.PageB,
+                ScreenId = draft.ScreenId,
+            };
+
+        // ── Base page footer ──────────────────────────────────────────────
+
+        private void UpdateBaseFooter(byte wire)
+        {
+            // Rebuild only when the resting base actually changes (a config edit / device
+            // switch) — never on a plain live poll tick, so an open base-page dropdown the
+            // user is interacting with is not yanked out from under them mid-selection.
+            string selected = _editModel.EffectiveBasePage(wire).ToString();
+            if (panelBaseFooter.Children.Count > 0
+                && string.Equals(selected, _baseFooterSelected, StringComparison.Ordinal))
+                return;
+            _baseFooterSelected = selected;
+
+            panelBaseFooter.Children.Clear();
+
+            panelBaseFooter.Children.Add(new TextBlock
+            {
+                Text = "BASE PAGE",
+                FontSize = 11,
+                FontWeight = FontWeights.Bold,
+                Foreground = DisplayPalette.ThLabel,
+                Margin = new Thickness(0, 0, 0, 7),
+            });
+
+            var line = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            line.Children.Add(new TextBlock
+            {
+                Text = "★",
+                Foreground = DisplayPalette.BaseRank,
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            line.Children.Add(new TextBlock
+            {
+                Text = "When nothing's firing → rest on",
+                FontSize = 12.5,
+                Foreground = DisplayPalette.BaseText,
+                Margin = new Thickness(0, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            var pageCell = new DropDownCell { Width = 210, VerticalAlignment = VerticalAlignment.Center };
+            pageCell.SetChoices(BasePageChoices(wire));
+            pageCell.SelectionCommitted += (s, id) => OnBasePageChosen(id);
+            line.Children.Add(pageCell);
+            panelBaseFooter.Children.Add(line);
+
+            panelBaseFooter.Children.Add(new TextBlock
+            {
+                Text = "Where the display rests between triggers. Idle behavior is just a "
+                    + "trigger with Run = ☾ Idle.",
+                FontSize = 11,
+                Foreground = DisplayPalette.KLabelBrush,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 7, 0, 0),
+            });
+        }
+
+        private ChoiceList BasePageChoices(byte wire)
+        {
+            var builder = ChoiceList.Build();
+            foreach (var p in _editModel.PageOptions())
+                builder.Add(p.ToString(), PageChoiceLabel(p));
+            return builder.Selected(_editModel.EffectiveBasePage(wire).ToString());
+        }
+
+        private string PageChoiceLabel(ItmPage page)
+            => _editModel.ShowTextFor(new RuleTarget { Kind = TargetKind.Page, Page = page });
+
+        private void OnBasePageChosen(string id)
+        {
+            if (!Enum.TryParse(id, out ItmPage page))
+                return;
+            if (ReconcileIfExternallyChanged())
+                return;
+            var cfg = _editModel.SetBasePage(page);
+            ApplyAndReload(cfg);
+            RenderTriggerRows(_lastSnapshot);
         }
 
         // ── Table gesture handlers (each routes to a commit path) ──────────
 
-        private void OnRowActivated(string ruleId) => ToggleExpanded(ruleId);
+        private void OnRowActivated(string ruleId)
+        {
+            if (string.Equals(ruleId, DraftRowId, StringComparison.Ordinal))
+            {
+                DiscardDraft();   // collapsing an incomplete draft discards it
+                return;
+            }
+            ToggleExpanded(ruleId);
+        }
 
-        // A reorder gesture (drag drop, Alt+arrow, context-menu move) targets a new index
-        // among the rule rows; translate it to the edit model's relative move. A move to the
-        // same slot is a no-op (no republish), exactly as the drag path was before.
+        // A reorder gesture (drag drop, Alt+arrow, context-menu Move to top) targets a new
+        // index among the rule rows; translate it to the edit model's relative move. A move to
+        // the same slot is a no-op (no republish), exactly as the drag path was before.
         private void OnRowMoved(string ruleId, int newIndex)
         {
             int from = IndexOfRule(ruleId);
             if (from < 0)
-                return;
+                return;                    // the draft row (not in the model) is not reorderable
             int delta = newIndex - from;
             if (delta == 0)
                 return;
@@ -223,87 +366,190 @@ namespace FanaBridge.UI.Display
 
         private void OnRowAction(string ruleId, string actionId)
         {
+            if (string.Equals(ruleId, DraftRowId, StringComparison.Ordinal))
+            {
+                if (string.Equals(actionId, "remove", StringComparison.Ordinal))
+                    DiscardDraft();
+                return;
+            }
             if (string.Equals(actionId, "remove", StringComparison.Ordinal))
                 RemoveRule(ruleId);
+            else if (string.Equals(actionId, "duplicate", StringComparison.Ordinal))
+                DuplicateRule(ruleId);
         }
 
-        // ── The expanded detail editor ────────────────────────────────────
+        // ── The expand-to-edit drawer ─────────────────────────────────────
 
-        private UIElement BuildDetail(DisplayRule rule)
+        // The table asks for the drawer of the selected row. The draft row builds from the
+        // pending _addDraft; a committed row builds from a per-row working draft (kept across
+        // re-renders); a degraded/unknown row yields none.
+        private UIElement BuildExpansionContent(string ruleId)
         {
-            // One working draft per open row, kept across re-renders (an operator switch that
-            // reveals the VALUE box re-renders without committing — see CommitUpdate). Rebuilt
-            // only when a different row opens or a commit reloads the normalized rule.
+            if (string.Equals(ruleId, DraftRowId, StringComparison.Ordinal))
+                return _addDraft != null ? BuildDrawer(DraftRowId, _addDraft, isDraft: true) : null;
+
+            var rule = FindRule(ruleId);
+            if (rule == null || rule.DegradedAtLoad)
+                return null;
             if (_expandedDraft == null
                 || !string.Equals(_expandedDraft.Id, rule.Id, StringComparison.Ordinal))
                 _expandedDraft = DisplayTriggersEditModel.ToDraft(rule);
-            var draft = _expandedDraft;
-            string ruleId = rule.Id;
+            return BuildDrawer(ruleId, _expandedDraft, isDraft: false);
+        }
 
-            var body = new StackPanel();
+        // The two-column drawer: IF (◆ When to fire) on the left, THEN (▶ What to show) on the
+        // right, live-committing (no Done/Close button). NO Property/Formula segment (formula
+        // UI deferred), NO Remove link (moved to ⋯), NO Enabled checkbox (Runs carries it).
+        private UIElement BuildDrawer(string ruleId, RuleEdit draft, bool isDraft)
+        {
+            Action commit = () => CommitField(draft, ruleId, isDraft);
 
-            // WHEN row: property picker + operator + value + (hysteresis for thresholds).
-            var when = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
-            when.Children.Add(FieldColumn("WHEN — SIMHUB PROPERTY",
-                BuildPropertyButton(draft, () => CommitUpdate(draft, ruleId)), 240));
-            when.Children.Add(FieldColumn("IS",
-                BuildOperatorCombo(draft, ruleId), 130));
-            if (draft.Operator.RequiresValue())
-                when.Children.Add(FieldColumn("VALUE",
-                    BuildValueBox(draft, ruleId), 90));
-            if (draft.Operator.RequiresValue())
-                when.Children.Add(FieldColumn("HYSTERESIS (±)",
-                    BuildHysteresisBox(draft, ruleId), 90));
-            body.Children.Add(when);
+            var columns = new Grid();
+            columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+            columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            // SHOW + HOLD row.
-            var show = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
-            show.Children.Add(FieldColumn("SHOW", BuildShowCombo(draft, ruleId), 250));
-            show.Children.Add(FieldColumn("HOLD", BuildHoldEditor(draft, ruleId), 200));
-            body.Children.Add(show);
+            var left = BuildWhenColumn(draft, commit);
+            Grid.SetColumn(left, 0);
+            columns.Children.Add(left);
 
-            // ELIGIBLE segmented control.
-            body.Children.Add(FieldColumn("ELIGIBLE", BuildEligibleSegments(draft, ruleId), double.NaN));
-
-            // Footer: Remove … Enabled … Close.
-            body.Children.Add(BuildDetailFooter(rule, ruleId));
+            var right = BuildShowColumn(draft, commit);
+            Grid.SetColumn(right, 1);
+            columns.Children.Add(right);
 
             return new Border
             {
-                Background = DisplayPalette.DetailBg,
-                BorderBrush = DisplayPalette.RowBorder,
-                BorderThickness = new Thickness(1, 0, 1, 1),
-                CornerRadius = new CornerRadius(0, 0, 4, 4),
-                Padding = new Thickness(14, 13, 15, 15),
-                Margin = new Thickness(0, 0, 0, 0),
-                Child = body,
+                Background = DisplayPalette.DrawerBg,
+                BorderBrush = DisplayPalette.DrawerBar,
+                BorderThickness = new Thickness(3, 0, 0, 0),
+                Padding = new Thickness(34, 14, 16, 16),
+                Child = columns,
             };
         }
 
-        private FrameworkElement BuildPropertyButton(RuleEdit draft, Action commit)
+        private FrameworkElement BuildWhenColumn(RuleEdit draft, Action commit)
         {
-            // The button caption is the v9 property grammar (an empty source renders the
-            // grammar's "(pick property)" placeholder).
-            var btn = new Button
+            var col = new StackPanel { Margin = new Thickness(0, 0, 18, 0) };
+            col.Children.Add(SectionTitle("◆ WHEN TO FIRE", DisplayPalette.WhenTitle));
+
+            col.Children.Add(FieldLabel("Trigger — the event"));
+
+            // Property (star) · operator (96) · value (84, only when the operator needs one).
+            var fieldRow = new Grid { Margin = new Thickness(0, 4, 0, 0) };
+            fieldRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            fieldRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            fieldRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var prop = BuildPropertyField(draft, commit);
+            Grid.SetColumn(prop, 0);
+            fieldRow.Children.Add(prop);
+
+            var op = BuildOperatorCell(draft, commit);
+            op.Width = 96;
+            op.Margin = new Thickness(7, 0, 0, 0);
+            Grid.SetColumn(op, 1);
+            fieldRow.Children.Add(op);
+
+            if (draft.Operator.RequiresValue())
             {
-                Content = PropertyLabel.ForProperty(draft.SourceName,
-                    PropertyGrammar.KindFor(draft.SourceKind), DetailPropertyBudget),
-                Padding = new Thickness(8, 5, 8, 5),
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Cursor = Cursors.Hand,
-            };
-            btn.Click += (s, e) =>
+                var val = BuildValueBox(draft, commit);
+                val.Margin = new Thickness(7, 0, 0, 0);
+                Grid.SetColumn(val, 2);
+                fieldRow.Children.Add(val);
+            }
+            col.Children.Add(fieldRow);
+
+            // Hysteresis — the existing advanced field, restyled to fit under the trigger row.
+            if (draft.Operator.RequiresValue())
             {
-                if (PickProperty(draft))
-                    commit();
-            };
-            return btn;
+                col.Children.Add(FieldLabel("Hysteresis (±)", top: 11));
+                col.Children.Add(BuildHysteresisBox(draft, commit));
+            }
+
+            col.Children.Add(FieldLabel("Run this trigger", top: 13));
+            col.Children.Add(BuildRunCell(draft, commit));
+            return col;
         }
 
-        // The operator field: the first DropDownCell consumer. Options (incl. a loaded
-        // unlisted-but-valid ActionTriggered kind, shown honestly) come from the edit model as
-        // a ChoiceList; a commit maps the id back to the enum and republishes the rule.
-        private FrameworkElement BuildOperatorCombo(RuleEdit draft, string ruleId)
+        private FrameworkElement BuildShowColumn(RuleEdit draft, Action commit)
+        {
+            var inner = new StackPanel();
+            inner.Children.Add(SectionTitle("▶ WHAT TO SHOW", DisplayPalette.ShowTitle));
+
+            inner.Children.Add(FieldLabel("Action"));
+            inner.Children.Add(BuildActionCell(draft, commit));
+
+            if (draft.TargetKind == TargetKind.Alternate)
+            {
+                var a = BuildPageCell(draft.PageA, id => { draft.PageA = ParsePage(id); commit(); });
+                a.Margin = new Thickness(0, 7, 0, 0);
+                inner.Children.Add(a);
+                var b = BuildPageCell(draft.PageB, id => { draft.PageB = ParsePage(id); commit(); });
+                b.Margin = new Thickness(0, 6, 0, 0);
+                inner.Children.Add(b);
+            }
+            else
+            {
+                var page = BuildPageCell(draft.Page, id => { draft.Page = ParsePage(id); commit(); });
+                page.Margin = new Thickness(0, 7, 0, 0);
+                inner.Children.Add(page);
+            }
+
+            inner.Children.Add(FieldLabel("Timeout", top: 13));
+            inner.Children.Add(BuildTimeoutRow(draft, commit));
+
+            return new Border
+            {
+                BorderBrush = DisplayPalette.DrawerSep,
+                BorderThickness = new Thickness(1, 0, 0, 0),
+                Padding = new Thickness(18, 0, 0, 0),
+                Child = inner,
+            };
+        }
+
+        // The property field: the mono grammar + ✎ affordance; a click opens the property
+        // picker (mapped controls included). An empty source shows the "(pick property)"
+        // placeholder.
+        private FrameworkElement BuildPropertyField(RuleEdit draft, Action commit)
+        {
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var label = PropertyLabel.ForProperty(draft.SourceName,
+                PropertyGrammar.KindFor(draft.SourceKind), DetailPropertyBudget);
+            label.Margin = new Thickness(10, 0, 6, 0);
+            label.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(label, 0);
+            grid.Children.Add(label);
+
+            var pencil = new TextBlock
+            {
+                Text = "✎",
+                Foreground = DisplayPalette.PencilBlue,
+                Margin = new Thickness(0, 0, 10, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(pencil, 1);
+            grid.Children.Add(pencil);
+
+            var border = new Border
+            {
+                Background = DisplayPalette.FieldBg,
+                BorderBrush = DisplayPalette.FieldBorder,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Height = 30,
+                Cursor = Cursors.Hand,
+                Focusable = true,
+                Child = grid,
+            };
+            Action pick = () => { if (PickProperty(draft)) commit(); };
+            border.MouseLeftButtonUp += (s, e) => pick();
+            MakeKeyActivatable(border, pick);
+            return border;
+        }
+
+        private DropDownCell BuildOperatorCell(RuleEdit draft, Action commit)
         {
             var cell = new DropDownCell();
             cell.SetChoices(DisplayTriggersEditModel.OperatorChoices(draft));
@@ -312,146 +558,178 @@ namespace FanaBridge.UI.Display
                 if (Enum.TryParse(id, out ConditionKind op) && op != draft.Operator)
                 {
                     draft.Operator = op;
-                    CommitUpdate(draft, ruleId);
+                    commit();
                 }
             };
             return cell;
         }
 
-        private TextBox BuildValueBox(RuleEdit draft, string ruleId)
+        private TextBox BuildValueBox(RuleEdit draft, Action commit)
         {
             var box = new TextBox
             {
-                Width = 90,
+                Width = 84,
+                Height = 30,
+                VerticalContentAlignment = VerticalAlignment.Center,
                 Text = draft.Value?.ToString(CultureInfo.InvariantCulture) ?? "",
             };
             CommitOnLeave(box, () =>
             {
                 draft.Value = ParseNum(box.Text);
-                CommitUpdate(draft, ruleId);
+                commit();
             });
             return box;
         }
 
-        private TextBox BuildHysteresisBox(RuleEdit draft, string ruleId)
+        private TextBox BuildHysteresisBox(RuleEdit draft, Action commit)
         {
             var box = new TextBox
             {
-                Width = 90,
+                Width = 120,
+                Height = 30,
+                Margin = new Thickness(0, 4, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalContentAlignment = VerticalAlignment.Center,
                 Text = draft.Hysteresis?.ToString(CultureInfo.InvariantCulture) ?? "",
                 ToolTip = "Deadband that stops a value hovering at the threshold from flapping.",
             };
             CommitOnLeave(box, () =>
             {
                 draft.Hysteresis = ParseNum(box.Text);
-                CommitUpdate(draft, ruleId);
+                commit();
             });
             return box;
         }
 
-        // One SHOW dropdown: every single page this device offers, then the alternating
-        // pairs. Legacy-screen targets are a later phase and not offered here.
-        private ComboBox BuildShowCombo(RuleEdit draft, string ruleId)
+        // "Run this trigger": the enable × eligibility fold. On the draft it mutates the draft
+        // (a brand-new rule has no stored eligibility to preserve); on a committed rule it goes
+        // through SetRun so a Disabled choice keeps the rule's stored eligibility for re-enable.
+        private DropDownCell BuildRunCell(RuleEdit draft, Action commit)
         {
-            var combo = new ComboBox { Width = 250 };
-            var pages = _editModel.PageOptions();
-            // A rule already targeting a legacy screen (v1 does not author these — P3 owns
-            // that) is shown honestly by its current target rather than falling back to the
-            // first page, and keeps its id unless the user deliberately picks a page here.
-            if (draft.TargetKind == TargetKind.LegacyScreen && !string.IsNullOrEmpty(draft.ScreenId))
-                combo.Items.Add(new ComboBoxItem
-                {
-                    Content = "Legacy screen: " + draft.ScreenId,
-                    Tag = new ShowOption { Kind = TargetKind.LegacyScreen, ScreenId = draft.ScreenId },
-                });
-            foreach (var p in pages)
-                combo.Items.Add(new ComboBoxItem
-                {
-                    Content = ItmTelemetry.NameOf(p),
-                    Tag = new ShowOption { Kind = TargetKind.Page, Page = p },
-                });
-            for (int i = 0; i < pages.Count; i++)
-                for (int j = i + 1; j < pages.Count; j++)
-                    combo.Items.Add(new ComboBoxItem
-                    {
-                        Content = "Alternate: " + ItmTelemetry.NameOf(pages[i]) + " ⇄ "
-                                  + ItmTelemetry.NameOf(pages[j]),
-                        Tag = new ShowOption { Kind = TargetKind.Alternate, PageA = pages[i], PageB = pages[j] },
-                    });
-            SelectShowOption(combo, draft);
-            combo.SelectionChanged += (s, e) =>
+            var cell = new DropDownCell { Margin = new Thickness(0, 4, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, Width = 200 };
+            cell.SetChoices(DisplayTriggersEditModel.RunsChoices(draft));
+            cell.SelectionCommitted += (s, runId) =>
             {
-                if (combo.SelectedItem is ComboBoxItem item && item.Tag is ShowOption opt)
+                if (draft == _addDraft)
                 {
-                    draft.TargetKind = opt.Kind;
-                    if (opt.Kind == TargetKind.Page)
-                    {
-                        draft.Page = opt.Page;
-                    }
-                    else if (opt.Kind == TargetKind.LegacyScreen)
-                    {
-                        draft.ScreenId = opt.ScreenId;   // re-selecting the current target is a no-op
-                    }
-                    else
-                    {
-                        draft.PageA = opt.PageA;
-                        draft.PageB = opt.PageB;
-                    }
-                    CommitUpdate(draft, ruleId);
+                    ApplyRunToDraft(draft, runId);
+                    commit();
+                }
+                else
+                {
+                    SetRun(draft.Id, runId);
                 }
             };
-            return combo;
+            return cell;
         }
 
-        // HOLD: kind dropdown (While active offered for level kinds only), with a seconds
-        // box beside it when For duration is chosen.
-        private FrameworkElement BuildHoldEditor(RuleEdit draft, string ruleId)
+        private static void ApplyRunToDraft(RuleEdit draft, string runId)
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            var combo = new ComboBox { Width = 130 };
-            bool level = draft.Operator.IsLevel();
-            foreach (var hold in DisplayTriggersEditModel.Holds)
+            if (string.Equals(runId, DisplayTriggersEditModel.RunDisabled, StringComparison.Ordinal))
             {
-                if (hold == HoldKind.WhileActive && !level)
-                    continue;   // an edge/event condition has no "still active" to hold on
-                combo.Items.Add(new ComboBoxItem
-                {
-                    Content = DisplayTriggersEditModel.HoldLabel(hold),
-                    Tag = hold,
-                });
+                draft.Enabled = false;
+                return;
             }
-            HoldKind effective = draft.Hold;
-            if (effective == HoldKind.Unknown)
-                effective = level ? HoldKind.WhileActive : HoldKind.ForDuration;
-            SelectByTagValue(combo, effective);
-            row.Children.Add(combo);
+            draft.Enabled = true;
+            draft.Eligibility =
+                string.Equals(runId, DisplayTriggersEditModel.RunIdle, StringComparison.Ordinal) ? RuleEligibility.Idle :
+                string.Equals(runId, DisplayTriggersEditModel.RunAny, StringComparison.Ordinal) ? RuleEligibility.Any :
+                RuleEligibility.InGame;
+        }
+
+        // The Action dropdown: the two target kinds v9 authors (cycle/special are Phase 4).
+        private DropDownCell BuildActionCell(RuleEdit draft, Action commit)
+        {
+            var cell = new DropDownCell { Width = 200, HorizontalAlignment = HorizontalAlignment.Left };
+            var choices = ChoiceList.Build()
+                .Add("page", "Show an ITM page")
+                .Add("alt", "Alternate two pages")
+                .Selected(draft.TargetKind == TargetKind.Alternate ? "alt" : "page");
+            cell.SetChoices(choices);
+            cell.SelectionCommitted += (s, id) =>
+            {
+                if (string.Equals(id, "alt", StringComparison.Ordinal))
+                {
+                    if (draft.TargetKind == TargetKind.Alternate)
+                        return;
+                    draft.TargetKind = TargetKind.Alternate;
+                    if (draft.PageA == null)
+                        draft.PageA = draft.Page ?? DefaultPage();
+                    if (draft.PageB == null)
+                        draft.PageB = OtherPage(draft.PageA);
+                }
+                else
+                {
+                    if (draft.TargetKind == TargetKind.Page)
+                        return;
+                    draft.TargetKind = TargetKind.Page;
+                    if (draft.Page == null)
+                        draft.Page = draft.PageA ?? DefaultPage();
+                }
+                commit();
+            };
+            return cell;
+        }
+
+        private DropDownCell BuildPageCell(ItmPage? selected, Action<string> onCommit)
+        {
+            var cell = new DropDownCell { Width = 200, HorizontalAlignment = HorizontalAlignment.Left };
+            var builder = ChoiceList.Build();
+            foreach (var p in _editModel.PageOptions())
+                builder.Add(p.ToString(), PageChoiceLabel(p));
+            cell.SetChoices(builder.Selected(selected?.ToString()));
+            cell.SelectionCommitted += (s, id) => onCommit(id);
+            return cell;
+        }
+
+        // Timeout: mode dropdown (While active for level kinds only) + a seconds field shown
+        // only for "For a set time".
+        private FrameworkElement BuildTimeoutRow(RuleEdit draft, Action commit)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+
+            bool level = draft.Operator.IsLevel();
+            HoldKind effective = draft.Hold != HoldKind.Unknown
+                ? draft.Hold
+                : (level ? HoldKind.WhileActive : HoldKind.ForDuration);
+
+            var mode = new DropDownCell { Width = 150 };
+            var builder = ChoiceList.Build();
+            if (level)
+                builder.Add(HoldId(HoldKind.WhileActive), "While active");
+            builder.Add(HoldId(HoldKind.ForDuration), "For a set time");
+            builder.Add(HoldId(HoldKind.Indefinite), "Until replaced");
+            mode.SetChoices(builder.Selected(HoldId(effective)));
+            row.Children.Add(mode);
 
             var seconds = new TextBox
             {
                 Width = 56,
-                Margin = new Thickness(8, 0, 0, 0),
+                Height = 30,
+                Margin = new Thickness(7, 0, 0, 0),
+                VerticalContentAlignment = VerticalAlignment.Center,
                 Text = (draft.HoldDurationMs / 1000.0).ToString("0.###", CultureInfo.InvariantCulture),
                 ToolTip = "Seconds to hold the page after each fire.",
                 Visibility = effective == HoldKind.ForDuration ? Visibility.Visible : Visibility.Collapsed,
-                VerticalAlignment = VerticalAlignment.Center,
             };
             row.Children.Add(seconds);
-            var secondsSuffix = new TextBlock
+            row.Children.Add(new TextBlock
             {
-                Text = "s",
-                Foreground = DisplayPalette.KLabelBrush,
-                Margin = new Thickness(4, 0, 0, 0),
+                Text = "seconds",
+                FontSize = 11,
+                Foreground = DisplayPalette.SubLabel,
+                Margin = new Thickness(6, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 Visibility = effective == HoldKind.ForDuration ? Visibility.Visible : Visibility.Collapsed,
-            };
-            row.Children.Add(secondsSuffix);
+            });
 
-            combo.SelectionChanged += (s, e) =>
+            mode.SelectionCommitted += (s, id) =>
             {
-                if (combo.SelectedItem is ComboBoxItem item && item.Tag is HoldKind hold)
+                HoldKind chosen = ParseHold(id);
+                if (chosen != draft.Hold)
                 {
-                    draft.Hold = hold;
-                    CommitUpdate(draft, ruleId);
+                    draft.Hold = chosen;
+                    commit();
                 }
             };
             CommitOnLeave(seconds, () =>
@@ -460,356 +738,55 @@ namespace FanaBridge.UI.Display
                 if (secs != null && secs.Value > 0)
                 {
                     draft.HoldDurationMs = (int)Math.Round(secs.Value * 1000.0);
-                    CommitUpdate(draft, ruleId);
+                    commit();
                 }
             });
             return row;
         }
 
-        private FrameworkElement BuildEligibleSegments(RuleEdit draft, string ruleId)
+        private static string HoldId(HoldKind kind) => kind.ToString();
+        private static HoldKind ParseHold(string id)
+            => Enum.TryParse(id, out HoldKind k) ? k : HoldKind.WhileActive;
+
+        // ── Commit paths (every one goes through ApplyDisplayConfig) ───────
+
+        // One field commit for either the pending draft or a committed rule. For the draft: a
+        // committable draft is promoted to a real top-of-stack rule (and editing continues on
+        // it); an incomplete draft just re-renders so the value box appears and the pending
+        // change is retained. For a committed rule: the existing update path (which itself
+        // gates on committability so an empty VALUE box never degrades the rule).
+        private void CommitField(RuleEdit draft, string ruleId, bool isDraft)
         {
-            // Shared segmented control at its default ELIGIBLE chrome (padding 13,5; font
-            // 11.5; square segments in the rounded container) — the same look the strip
-            // shipped inline.
-            var seg = new SegmentedControl();
-            var items = new List<(string, string)>();
-            foreach (var elig in DisplayTriggersEditModel.Eligibilities)
-                items.Add((elig.ToString(), DisplayTriggersEditModel.EligibilityLabel(elig)));
-            seg.SetItems(items);
-            seg.SelectedId = draft.Eligibility.ToString();
-            seg.SelectionChanged += (s, id) =>
+            if (!isDraft)
             {
-                draft.Eligibility = (RuleEligibility)Enum.Parse(typeof(RuleEligibility), id);
                 CommitUpdate(draft, ruleId);
-            };
-            return seg;
-        }
-
-        private FrameworkElement BuildDetailFooter(DisplayRule rule, string ruleId)
-        {
-            var grid = new Grid { Margin = new Thickness(0, 13, 0, 0) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var top = new Border
-            {
-                BorderBrush = DisplayPalette.RowBorder,
-                BorderThickness = new Thickness(0, 1, 0, 0),
-                Padding = new Thickness(0, 11, 0, 0),
-            };
-            Grid.SetColumnSpan(top, 4);
-            grid.Children.Add(top);
-
-            var remove = new TextBlock
-            {
-                Text = "Remove",
-                FontSize = 12,
-                Foreground = DisplayPalette.RemoveText,
-                Cursor = Cursors.Hand,
-                Margin = new Thickness(0, 11, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            remove.MouseLeftButtonUp += (s, e) => RemoveRule(ruleId);
-            MakeKeyActivatable(remove, () => RemoveRule(ruleId));
-            Grid.SetColumn(remove, 0);
-            grid.Children.Add(remove);
-
-            var enabled = new CheckBox
-            {
-                Content = "Enabled",
-                IsChecked = rule.Enabled,
-                Margin = new Thickness(0, 11, 14, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            enabled.Checked += (s, e) => SetEnabled(ruleId, true);
-            enabled.Unchecked += (s, e) => SetEnabled(ruleId, false);
-            Grid.SetColumn(enabled, 2);
-            grid.Children.Add(enabled);
-
-            var close = new TextBlock
-            {
-                Text = "Close",
-                FontSize = 12,
-                Foreground = DisplayPalette.ToggleIdleText,
-                Cursor = Cursors.Hand,
-                Margin = new Thickness(0, 11, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            close.MouseLeftButtonUp += (s, e) => ToggleExpanded(ruleId);
-            MakeKeyActivatable(close, () => ToggleExpanded(ruleId));
-            Grid.SetColumn(close, 3);
-            grid.Children.Add(close);
-
-            return grid;
-        }
-
-        // ── The add-trigger card ──────────────────────────────────────────
-
-        private void RenderAddCard()
-        {
-            panelAddCard.Children.Clear();
-            panelAddCard.Visibility = _addOpen ? Visibility.Visible : Visibility.Collapsed;
-            if (!_addOpen)
                 return;
-
-            var body = new StackPanel();
-            body.Children.Add(new TextBlock
-            {
-                Text = "New trigger",
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = DisplayPalette.AddTitle,
-                Margin = new Thickness(0, 0, 0, 12),
-            });
-
-            // Type chips: Telemetry | Mapped control (the design's "Idle event" is covered
-            // by the ELIGIBLE control on every rule, so no third chip).
-            var chips = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 12) };
-            chips.Children.Add(TypeChip("Telemetry", AddTriggerType.Telemetry));
-            chips.Children.Add(TypeChip("Mapped control", AddTriggerType.MappedControl));
-            body.Children.Add(chips);
-
-            if (_addType == AddTriggerType.Telemetry)
-                body.Children.Add(BuildAddTelemetryFields());
-            else
-                body.Children.Add(BuildAddMappedFields());
-
-            body.Children.Add(BuildAddFooter());
-
-            panelAddCard.Children.Add(new Border
-            {
-                Background = DisplayPalette.AddCardBg,
-                BorderBrush = DisplayPalette.AddCardBorder,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(5),
-                Padding = new Thickness(14, 13, 15, 13),
-                Child = body,
-            });
-        }
-
-        private Border TypeChip(string text, AddTriggerType type)
-        {
-            bool active = _addType == type;
-            var chip = new Border
-            {
-                Background = active ? DisplayPalette.AccentBg : Brushes.Transparent,
-                BorderBrush = active ? DisplayPalette.AccentBg : DisplayPalette.SegBorder,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(12, 5, 12, 5),
-                Margin = new Thickness(0, 0, 8, 0),
-                Cursor = Cursors.Hand,
-                Child = new TextBlock
-                {
-                    Text = text,
-                    FontSize = 12,
-                    Foreground = active ? Brushes.White : DisplayPalette.ToggleIdleText,
-                },
-            };
-            Action choose = () =>
-            {
-                if (_addType == type)
-                    return;
-                _addType = type;
-                _addDraft = type == AddTriggerType.Telemetry
-                    ? _editModel.NewTelemetryDraft()
-                    : null;   // mapped: the draft is built when a role is chosen
-                RenderAddCard();
-            };
-            chip.MouseLeftButtonUp += (s, e) => choose();
-            MakeKeyActivatable(chip, choose);
-            return chip;
-        }
-
-        private FrameworkElement BuildAddTelemetryFields()
-        {
-            var when = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
-            when.Children.Add(FieldColumn("WHEN — PROPERTY",
-                BuildPropertyButton(_addDraft, () => { UpdateAddFooterState(); }), 230));
-            when.Children.Add(FieldColumn("IS", BuildAddOperatorCombo(), 130));
-            if (_addDraft.Operator.RequiresValue())
-                when.Children.Add(FieldColumn("VALUE", BuildAddValueBox(), 90));
-            return when;
-        }
-
-        private ComboBox BuildAddOperatorCombo()
-        {
-            var combo = new ComboBox { Width = 130 };
-            foreach (var op in DisplayTriggersEditModel.Operators)
-                combo.Items.Add(new ComboBoxItem
-                {
-                    Content = DisplayTriggersEditModel.OperatorLabel(op),
-                    Tag = op,
-                });
-            SelectByTagValue(combo, _addDraft.Operator);
-            combo.SelectionChanged += (s, e) =>
-            {
-                if (combo.SelectedItem is ComboBoxItem item && item.Tag is ConditionKind op)
-                {
-                    _addDraft.Operator = op;
-                    RenderAddCard();   // VALUE column appears/disappears with the kind
-                }
-            };
-            return combo;
-        }
-
-        private TextBox BuildAddValueBox()
-        {
-            var box = new TextBox
-            {
-                Width = 90,
-                Text = _addDraft.Value?.ToString(CultureInfo.InvariantCulture) ?? "",
-            };
-            CommitOnLeave(box, () =>
-            {
-                _addDraft.Value = ParseNum(box.Text);
-                UpdateAddFooterState();
-            });
-            return box;
-        }
-
-        private FrameworkElement BuildAddMappedFields()
-        {
-            var roles = _roleCatalog.GetMappedRoles();
-            var col = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
-            col.Children.Add(KLabel("ROLE"));
-
-            if (roles.Roles.Count == 0)
-            {
-                col.Children.Add(new TextBlock
-                {
-                    Text = "No Control Mapper roles available for this wheel.",
-                    FontSize = 12,
-                    Foreground = DisplayPalette.KLabelBrush,
-                    Margin = new Thickness(0, 4, 0, 0),
-                });
-                return col;
             }
-
-            var combo = new ComboBox { Width = 230, Margin = new Thickness(0, 4, 0, 0) };
-            foreach (var role in roles.Roles)
-                combo.Items.Add(new ComboBoxItem { Content = role, Tag = role });
-            // Preselect a role already chosen (re-render after a pick keeps it).
-            if (_addDraft != null && !string.IsNullOrEmpty(_addDraft.SourceName))
-                for (int i = 0; i < combo.Items.Count; i++)
-                    if (((ComboBoxItem)combo.Items[i]).Tag is string r &&
-                        DisplayTriggersEditModel.MappedControlPropertyName(r) == _addDraft.SourceName)
-                        combo.SelectedIndex = i;
-            combo.SelectionChanged += (s, e) =>
+            if (!DisplayTriggersEditModel.IsCommittable(_addDraft))
             {
-                if (combo.SelectedItem is ComboBoxItem item && item.Tag is string role)
-                {
-                    _addDraft = _editModel.NewMappedControlDraft(role);
-                    UpdateAddFooterState();
-                }
-            };
-            col.Children.Add(combo);
-
-            col.Children.Add(new TextBlock
-            {
-                Text = roles.Source == MappedRolesSource.MappedOnThisWheel
-                    ? "Roles mapped on this wheel."
-                    : roles.Source == MappedRolesSource.AggregatedAcrossBases
-                        ? "Roles mapped across your Fanatec bases (turn on “Recognize "
-                            + "Individual Wheels” in Control Mapper to tell them apart)."
-                        : "All assignable roles (none mapped on this wheel yet).",
-                FontSize = 11,
-                Foreground = DisplayPalette.KLabelBrush,
-                Margin = new Thickness(0, 5, 0, 0),
-            });
-            return col;
-        }
-
-        private FrameworkElement BuildAddFooter()
-        {
-            var grid = new Grid { Margin = new Thickness(0, 11, 0, 0) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var top = new Border
-            {
-                BorderBrush = DisplayPalette.SegBorder,
-                BorderThickness = new Thickness(0, 1, 0, 0),
-                Padding = new Thickness(0, 11, 0, 0),
-            };
-            Grid.SetColumnSpan(top, 3);
-            grid.Children.Add(top);
-
-            var cancel = new TextBlock
-            {
-                Text = "Cancel",
-                FontSize = 12,
-                Foreground = DisplayPalette.ToggleIdleText,
-                Cursor = Cursors.Hand,
-                Margin = new Thickness(0, 11, 14, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Action doCancel = () =>
-            {
-                _addOpen = false;
-                _addDraft = null;
-                RenderAddCard();
-            };
-            cancel.MouseLeftButtonUp += (s, e) => doCancel();
-            MakeKeyActivatable(cancel, doCancel);
-            Grid.SetColumn(cancel, 1);
-            grid.Children.Add(cancel);
-
-            _btnAddCommit = new Button
-            {
-                Content = "Add",
-                Padding = new Thickness(14, 5, 14, 5),
-                Margin = new Thickness(0, 11, 0, 0),
-                IsEnabled = CanCommitAdd(),
-            };
-            _btnAddCommit.Click += (s, e) => CommitAdd();
-            Grid.SetColumn(_btnAddCommit, 2);
-            grid.Children.Add(_btnAddCommit);
-
-            return grid;
-        }
-
-        private Button _btnAddCommit;
-
-        private bool CanCommitAdd()
-            => DisplayTriggersEditModel.IsCommittable(_addDraft);
-
-        private void UpdateAddFooterState()
-        {
-            if (_btnAddCommit != null)
-                _btnAddCommit.IsEnabled = CanCommitAdd();
-            // The property button caption also has to refresh after a pick.
-            RenderAddCard();
-        }
-
-        private void CommitAdd()
-        {
-            if (!CanCommitAdd())
+                RenderTriggerRows(_lastSnapshot);   // keep the draft open; reveal the value box
                 return;
+            }
             if (ReconcileIfExternallyChanged())
                 return;
-            var cfg = _editModel.AddRule(_addDraft);
+            var cfg = _editModel.InsertRuleAtTop(_addDraft, out string newId);
             _addOpen = false;
             _addDraft = null;
             ApplyAndReload(cfg);
-            RenderAddCard();
+            _expandedRuleId = newId;
+            var reloaded = FindRule(newId);
+            _expandedDraft = reloaded != null ? DisplayTriggersEditModel.ToDraft(reloaded) : null;
             RenderTriggerRows(_lastSnapshot);
         }
-
-        // ── Commit paths (every one goes through ApplyDisplayConfig) ───────
 
         private void CommitUpdate(RuleEdit draft, string ruleId)
         {
             if (ReconcileIfExternallyChanged())
                 return;
             // Gate exactly like the add flow: a draft that would degrade the rule (a
-            // value-requiring operator with no value yet — an empty VALUE box, or an operator
-            // just switched to a comparison) is NOT applied. Re-render so the VALUE box
-            // appears and the working draft carries the pending change; the rule on disk
-            // stays intact until the edit is complete.
+            // value-requiring operator with no value yet) is NOT applied. Re-render so the
+            // VALUE box appears and the working draft carries the pending change; the rule on
+            // disk stays intact until the edit is complete.
             if (!DisplayTriggersEditModel.IsCommittable(draft))
             {
                 RenderTriggerRows(_lastSnapshot);
@@ -824,12 +801,14 @@ namespace FanaBridge.UI.Display
             RenderTriggerRows(_lastSnapshot);   // keeps _expandedRuleId open, fresh draft
         }
 
-        private void SetEnabled(string ruleId, bool enabled)
+        private void SetRun(string ruleId, string runId)
         {
             if (ReconcileIfExternallyChanged())
                 return;
-            var cfg = _editModel.SetRuleEnabled(ruleId, enabled);
+            var cfg = _editModel.SetRun(ruleId, runId);
             ApplyAndReload(cfg);
+            var reloaded = FindRule(ruleId);
+            _expandedDraft = reloaded != null ? DisplayTriggersEditModel.ToDraft(reloaded) : null;
             RenderTriggerRows(_lastSnapshot);
         }
 
@@ -847,6 +826,23 @@ namespace FanaBridge.UI.Display
             RenderTriggerRows(_lastSnapshot);
         }
 
+        private void DuplicateRule(string ruleId)
+        {
+            if (ReconcileIfExternallyChanged())
+                return;
+            var cfg = _editModel.DuplicateRule(ruleId, out string newId);
+            ApplyAndReload(cfg);
+            // The copy opens, selected (spec) — drop any pending draft.
+            _addOpen = false;
+            _addDraft = null;
+            if (newId != null)
+            {
+                _expandedRuleId = newId;
+                _expandedDraft = null;
+            }
+            RenderTriggerRows(_lastSnapshot);
+        }
+
         private void MoveRule(string ruleId, int delta)
         {
             if (ReconcileIfExternallyChanged())
@@ -859,7 +855,6 @@ namespace FanaBridge.UI.Display
         // If the host's document changed out from under the editor (a generation rebind or
         // another surface republished it) between the last reload and this commit, adopt the
         // external document instead of overwriting it with one built from the now-stale model.
-        // The pending edit is dropped rather than silently clobbering the external write.
         private bool ReconcileIfExternallyChanged()
         {
             if (_host == null || ReferenceEquals(_host.GetDisplayConfig(), _editModelSource))
@@ -869,8 +864,8 @@ namespace FanaBridge.UI.Display
         }
 
         // Publish the edit, then rebuild the model from the normalized, republished config
-        // (ids survive normalization, so the expanded row and the snapshot agree), and signal
-        // the shell so it can keep the Overview's empty-state/priority list consistent.
+        // (ids survive normalization), and signal the shell so it can keep the Overview
+        // consistent.
         private void ApplyAndReload(DisplayCustomizationConfig cfg)
         {
             _host.ApplyDisplayConfig(cfg);
@@ -882,6 +877,10 @@ namespace FanaBridge.UI.Display
 
         private void ToggleExpanded(string ruleId)
         {
+            // Opening (or toggling) a committed row discards a pending draft — clicking away
+            // from the add draft is a form of collapse, and the draft never commits.
+            _addOpen = false;
+            _addDraft = null;
             if (string.Equals(ruleId, _expandedRuleId, StringComparison.Ordinal))
             {
                 _expandedRuleId = null;
@@ -892,10 +891,13 @@ namespace FanaBridge.UI.Display
                 // reaches every focusable row, degraded ones included).
                 var rule = FindRule(ruleId);
                 if (rule == null || rule.DegradedAtLoad)
+                {
+                    RenderTriggerRows(_lastSnapshot);
                     return;
+                }
                 _expandedRuleId = ruleId;
             }
-            _expandedDraft = null;   // BuildDetail builds a fresh draft for the newly open row
+            _expandedDraft = null;   // BuildDrawer builds a fresh draft for the newly open row
             RenderTriggerRows(_lastSnapshot);
         }
 
@@ -921,36 +923,60 @@ namespace FanaBridge.UI.Display
         }
 
         // Opens the property picker for a draft's WHEN source; returns true when the user
-        // picked one (and the draft was updated).
+        // picked one (and the draft was updated — a mapped control also adopts its shape).
         private bool PickProperty(RuleEdit draft)
         {
             var owner = Window.GetWindow(this);
             var builtIns = BuiltInProperties.All;
             var all = _propertyCatalog.GetAllPropertyNames();
-            if (PropertyPickerDialog.TryPick(owner, builtIns, all, draft.SourceName,
+            var mappedRoles = _roleCatalog?.GetMappedRoles()?.Roles;
+            if (PropertyPickerDialog.TryPick(owner, builtIns, all, mappedRoles, draft.SourceName,
                     out string name, out PropertyKind kind))
             {
-                draft.SourceKind = kind;
-                draft.SourceName = name;
+                DisplayTriggersEditModel.AdoptPickedProperty(draft, name, kind);
                 return true;
             }
             return false;
         }
 
-        private StackPanel FieldColumn(string label, FrameworkElement control, double controlWidth)
+        private ItmPage DefaultPage()
         {
-            var col = new StackPanel { Margin = new Thickness(0, 0, 10, 0) };
-            col.Children.Add(KLabel(label));
-            control.Margin = new Thickness(0, 4, 0, 0);
-            if (!double.IsNaN(controlWidth))
-                control.Width = controlWidth;
-            col.Children.Add(control);
-            return col;
+            var pages = _editModel.PageOptions();
+            return pages.Count > 0 ? pages[0] : ItmPage.LapInfo;
         }
 
+        private ItmPage OtherPage(ItmPage? notThis)
+        {
+            foreach (var p in _editModel.PageOptions())
+                if (p != notThis)
+                    return p;
+            return DefaultPage();
+        }
+
+        private static ItmPage? ParsePage(string id)
+            => Enum.TryParse(id, out ItmPage p) ? p : (ItmPage?)null;
+
+        private static TextBlock SectionTitle(string text, Brush color)
+            => new TextBlock
+            {
+                Text = text,
+                FontSize = 10,
+                FontWeight = FontWeights.Bold,
+                Foreground = color,
+                Margin = new Thickness(0, 0, 0, 12),
+            };
+
+        private static TextBlock FieldLabel(string text, double top = 0)
+            => new TextBlock
+            {
+                Text = text,
+                FontSize = 11,
+                Foreground = DisplayPalette.SubLabel,
+                Margin = new Thickness(0, top, 0, 0),
+            };
+
         // Give a Border/TextBlock "link" the same activation from the keyboard as from a
-        // click: focusable, and Enter/Space run the same action, so none of these controls is
-        // mouse-only.
+        // click: focusable, and Enter/Space run the same action.
         private static void MakeKeyActivatable(FrameworkElement el, Action activate)
         {
             el.Focusable = true;
@@ -963,61 +989,6 @@ namespace FanaBridge.UI.Display
                 }
             };
         }
-
-        private static TextBlock KLabel(string text)
-            => new TextBlock
-            {
-                Text = text,
-                FontSize = 10,
-                FontWeight = FontWeights.Bold,
-                Foreground = DisplayPalette.KLabelBrush,
-            };
-
-        private static void SelectByTagValue<T>(ComboBox combo, T value)
-        {
-            foreach (ComboBoxItem item in combo.Items)
-                if (item.Tag is T t && EqualityComparer<T>.Default.Equals(t, value))
-                {
-                    combo.SelectedItem = item;
-                    return;
-                }
-            if (combo.Items.Count > 0)
-                combo.SelectedIndex = 0;
-        }
-
-        private static void SelectShowOption(ComboBox combo, RuleEdit draft)
-        {
-            foreach (ComboBoxItem item in combo.Items)
-            {
-                if (!(item.Tag is ShowOption opt))
-                    continue;
-                bool match;
-                switch (draft.TargetKind)
-                {
-                    case TargetKind.Alternate:
-                        match = opt.Kind == TargetKind.Alternate && SamePair(opt, draft);
-                        break;
-                    case TargetKind.LegacyScreen:
-                        match = opt.Kind == TargetKind.LegacyScreen
-                            && string.Equals(opt.ScreenId, draft.ScreenId, StringComparison.Ordinal);
-                        break;
-                    default:
-                        match = opt.Kind == TargetKind.Page && opt.Page == draft.Page;
-                        break;
-                }
-                if (match)
-                {
-                    combo.SelectedItem = item;
-                    return;
-                }
-            }
-            if (combo.Items.Count > 0)
-                combo.SelectedIndex = 0;
-        }
-
-        private static bool SamePair(ShowOption opt, RuleEdit draft)
-            => (opt.PageA == draft.PageA && opt.PageB == draft.PageB)
-            || (opt.PageA == draft.PageB && opt.PageB == draft.PageA);
 
         // Commit a text edit on focus loss or Enter (never per keystroke).
         private static void CommitOnLeave(TextBox box, Action commit)
@@ -1036,15 +1007,5 @@ namespace FanaBridge.UI.Display
         private static double? ParseNum(string s)
             => double.TryParse(s?.Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out double v)
                 ? v : (double?)null;
-
-        // A single SHOW dropdown choice (a page or an alternating pair).
-        private sealed class ShowOption
-        {
-            public TargetKind Kind;
-            public ItmPage? Page;
-            public ItmPage? PageA;
-            public ItmPage? PageB;
-            public string ScreenId;
-        }
     }
 }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -9,39 +10,40 @@ using System.Windows.Shapes;
 namespace FanaBridge.UI.Display.Shared
 {
     /// <summary>
-    /// The shared trigger table: the priority-ordered rule rows (rank, structured/plain
-    /// WHEN label, live-state chip + countdown, eligibility), the pinned base row, drag +
-    /// keyboard/context-menu reorder, and the live-chip patch that never disturbs an open
-    /// editor row or an in-flight drag. Extracted from the Triggers editor (Phase 2 commit
-    /// 2a) so the same row machinery can serve both the Workbench editor and the Overview
-    /// Monitor list; 2a wires only <see cref="TriggerTableMode.Workbench"/>, rendering
-    /// exactly the shipped row look.
+    /// The shared trigger table: the v9 dense grid of priority-ordered rule rows
+    /// (rank · When · Show · Timeout · Runs · State · ⋯), the expand-to-edit drawer beneath
+    /// the selected row, drag + keyboard/context-menu reorder, and the live-state patch that
+    /// never disturbs an open editor row or an in-flight drag. Extracted from the Triggers
+    /// editor (Phase 2 commit 2a) so the same row machinery can serve both the Workbench
+    /// editor (2b) and the Overview Monitor list (2c).
     ///
     /// The control is pure WPF over the <see cref="TriggerTableRow"/> projection — it holds
     /// no config, engine, or snapshot vocabulary. The host owns the edit model and commit
     /// paths and drives the control through <see cref="SetRows"/> (full rebuild) and
-    /// <see cref="PatchLive"/> (in-place chip/accent/seconds patch), providing the expansion
-    /// detail through <see cref="ExpansionContent"/>. Every user gesture surfaces back as an
-    /// event: <see cref="RowActivated"/> (click / Enter / Space), <see cref="RowMoved"/>
-    /// (drag drop, Alt+arrows, context-menu move — carrying the target index), and
-    /// <see cref="RowAction"/> (context-menu action, e.g. "remove").
+    /// <see cref="PatchLive"/> (in-place State/accent/countdown patch), providing the
+    /// expansion drawer through <see cref="ExpansionContent"/>. Every user gesture surfaces
+    /// back as an event: <see cref="RowActivated"/> (click / Enter / Space),
+    /// <see cref="RowMoved"/> (drag drop, Alt+arrows, context-menu Move to top — carrying the
+    /// target index), and <see cref="RowAction"/> (context-menu action, e.g. "duplicate" /
+    /// "remove").
     /// </summary>
     internal class TriggerTableControl : StackPanel
     {
         // Generous character budget before the property grammar left-elides (the WPF
-        // CharacterEllipsis is the visual backstop past this): the collapsed row shares its
-        // width with the operator/value spans.
-        private const int RowPropertyBudget = 34;
+        // CharacterEllipsis is the visual backstop past this): the When cell shares its
+        // width with the operator/value span.
+        private const int RowPropertyBudget = 30;
 
-        // Per-row live-chip handles, keyed by rule id, so a poll can patch the state chip
-        // and countdown in place (never rebuilding an open editor row).
+        // Per-row live handles, keyed by rule id, so a poll can patch the State cell,
+        // countdown, and accent in place (never rebuilding an open editor row).
         private sealed class RowChips
         {
             public Border Container;
-            public TextBlock Chip;
+            public TextBlock Chip;     // the State-cell text ("on screen" / "waiting" / "off")
+            public UIElement Dot;      // the on-screen green dot
             public CountdownRing Seconds;
             public TextBlock Rank;
-            public TextBlock Label;
+            public TextBlock Label;    // the When-cell operator/value span (accent-recoloured)
             public bool Degraded;
         }
         private readonly Dictionary<string, RowChips> _rowChips =
@@ -59,17 +61,18 @@ namespace FanaBridge.UI.Display.Shared
         private UIElement _dragHandle;
         private Rectangle _dropIndicator;
 
-        /// <summary>The table's mode. 2a wires only <see cref="TriggerTableMode.Workbench"/>
-        /// (the extracted editor); Monitor lands in 2c.</summary>
+        /// <summary>The table's mode. 2b wires only <see cref="TriggerTableMode.Workbench"/>
+        /// (the expand-to-edit editor); Monitor (the Overview list with the loud winning
+        /// emphasis) lands in 2c.</summary>
         public TriggerTableMode Mode { get; set; } = TriggerTableMode.Workbench;
 
         /// <summary>The one rule id whose editor drawer is open, or null. Set by the host
-        /// before <see cref="SetRows"/>; the matching row renders expanded (rounded top,
-        /// chevron down) and its <see cref="ExpansionContent"/> is appended.</summary>
+        /// before <see cref="SetRows"/>; the matching row renders selected (blue left bar,
+        /// caret down) and its <see cref="ExpansionContent"/> is appended beneath it.</summary>
         public string ExpandedRuleId { get; set; }
 
-        /// <summary>Builds the expansion detail for the expanded row (the host owns the
-        /// editor drawer). Returns null to render no drawer (e.g. a degraded/unknown row).</summary>
+        /// <summary>Builds the expansion drawer for the selected row (the host owns the
+        /// editor). Returns null to render no drawer (e.g. a degraded/unknown row).</summary>
         public Func<string, UIElement> ExpansionContent { get; set; }
 
         /// <summary>Raised when a row is activated (header click, or Enter/Space) with its
@@ -78,12 +81,12 @@ namespace FanaBridge.UI.Display.Shared
         public event Action<string> RowActivated;
 
         /// <summary>Raised when a reorder gesture (drag drop, Alt+Up/Down, context-menu
-        /// Move up/down) targets a new position: the rule id and the desired index among the
+        /// Move to top) targets a new position: the rule id and the desired index among the
         /// rule rows. The host translates it to its edit-model move.</summary>
         public event Action<string, int> RowMoved;
 
         /// <summary>Raised for a per-row action from the overflow/context menu: the rule id
-        /// and an action id (e.g. "remove").</summary>
+        /// and an action id ("duplicate" / "remove").</summary>
         public event Action<string, string> RowAction;
 
         /// <summary>True while a drag gesture holds the ⠿ handle capture. The host's poll
@@ -95,7 +98,8 @@ namespace FanaBridge.UI.Display.Shared
 
         /// <summary>Full rebuild: clears the rows (and any in-flight drag) and rebuilds from
         /// <paramref name="rows"/> in order, appending the expansion drawer to the row whose
-        /// id matches <see cref="ExpandedRuleId"/>.</summary>
+        /// id matches <see cref="ExpandedRuleId"/>. In Workbench a dense-grid header strip
+        /// leads the stack.</summary>
         public void SetRows(IReadOnlyList<TriggerTableRow> rows)
         {
             // A rebuild invalidates any in-progress drag (its captured handle is about to be
@@ -112,6 +116,9 @@ namespace FanaBridge.UI.Display.Shared
             _rowChips.Clear();
             _ruleRowOrder.Clear();
 
+            if (Mode == TriggerTableMode.Workbench)
+                Children.Add(BuildHeaderStrip());
+
             if (rows == null)
                 return;
             foreach (var row in rows)
@@ -125,10 +132,10 @@ namespace FanaBridge.UI.Display.Shared
             }
         }
 
-        /// <summary>In-place chip patch: only the live-state chip, countdown, accent, and
-        /// muted dimming for each existing rule row (matched by id), so an open editor row
-        /// keeps its controls and focus and an in-flight drag is never disturbed. Never
-        /// touches the children collection.</summary>
+        /// <summary>In-place live patch: only the State text, on-screen dot, countdown, accent,
+        /// and muted dimming for each existing rule row (matched by id), so an open editor row
+        /// keeps its controls and focus and an in-flight drag is never disturbed. Never touches
+        /// the children collection.</summary>
         public void PatchLive(IReadOnlyList<TriggerTableRow> rows)
         {
             var live = new Dictionary<string, TriggerTableRow>(StringComparer.Ordinal);
@@ -139,45 +146,45 @@ namespace FanaBridge.UI.Display.Shared
 
             foreach (var kv in _rowChips)
             {
-                var holder = kv.Value;
-                var chip = live.TryGetValue(kv.Key, out var state)
-                    ? new RuleStateChip
-                    {
-                        Chip = state.Chip,
-                        Seconds = state.Seconds,
-                        OnScreen = state.OnScreen,
-                        Muted = state.Muted,
-                    }
-                    : default(RuleStateChip);
-                ApplyChip(holder, chip);
+                live.TryGetValue(kv.Key, out var state);
+                ApplyRowLive(kv.Value, state);
             }
         }
 
-        private static void ApplyChip(RowChips holder, RuleStateChip chip)
+        // The single definition of a row's live presentation — the State cell text + colour,
+        // the on-screen dot, the countdown ring, and (Monitor only) the loud winning accent —
+        // shared by first build and every in-place patch so the two can't drift. In Workbench
+        // the on-screen state is a quiet dot + green text (colour = status); the loud green
+        // bar/bg is Monitor-only (kelchm call).
+        private void ApplyRowLive(RowChips holder, TriggerTableRow row)
         {
+            string stateText = row?.StateText ?? "";
+            bool onScreen = row?.OnScreen ?? false;
+            string seconds = row?.Seconds;
+            bool muted = row?.Muted ?? false;
+
             if (holder.Chip != null)
             {
-                holder.Chip.Text = chip.Chip ?? "";
-                holder.Chip.Visibility = string.IsNullOrEmpty(chip.Chip)
+                holder.Chip.Text = stateText;
+                holder.Chip.Visibility = string.IsNullOrEmpty(stateText)
                     ? Visibility.Collapsed : Visibility.Visible;
-                holder.Chip.Foreground = chip.OnScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText;
+                holder.Chip.Foreground = onScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText;
             }
+            if (holder.Dot != null)
+                holder.Dot.Visibility = onScreen ? Visibility.Visible : Visibility.Collapsed;
             if (holder.Seconds != null)
-                holder.Seconds.Update(double.NaN, chip.Seconds);
-            // The on-screen accent spans the WHOLE row, not just the chip — patch the rank,
-            // label, and border together so an off→on transition during an in-place poll
-            // (which runs while a different row's editor is open) can't leave a green
-            // "on screen" chip on an otherwise-inactive row body. Degraded rows never go
-            // on-screen, so they keep their fixed styling.
-            if (!holder.Degraded)
-                ApplyRowAccent(holder, chip.OnScreen);
-            if (holder.Container != null)
-                holder.Container.Opacity = (chip.Muted || holder.Degraded) ? 0.5 : 1.0;
+                holder.Seconds.Update(double.NaN, seconds);
+
+            if (Mode == TriggerTableMode.Monitor && !holder.Degraded)
+                ApplyRowAccent(holder, onScreen);
+            else if (holder.Container != null && !holder.Degraded)
+                // Workbench: the selection (blue bar/bg) owns the row chrome; only the muted
+                // dimming tracks live state here.
+                holder.Container.Opacity = muted ? 0.5 : 1.0;
         }
 
-        // The single definition of a rule row's on-screen accent — rank + label colour and
-        // the border's background / brush / left accent bar — shared by first build and every
-        // in-place patch so the two can't drift.
+        // Monitor-only loud winning accent — green row bg, green left bar, green rank and
+        // label. Reserved for 2c; not used in the Workbench.
         private static void ApplyRowAccent(RowChips holder, bool onScreen)
         {
             if (holder.Rank != null)
@@ -187,23 +194,70 @@ namespace FanaBridge.UI.Display.Shared
             if (holder.Container != null)
             {
                 holder.Container.Background = onScreen ? DisplayPalette.OnScreenBg : DisplayPalette.RowBg;
-                holder.Container.BorderBrush = onScreen ? DisplayPalette.OnScreenBorder : DisplayPalette.RowBorder;
-                holder.Container.BorderThickness = onScreen ? new Thickness(3, 1, 1, 1) : new Thickness(1);
+                holder.Container.BorderBrush = onScreen ? DisplayPalette.OnScreenBorder : DisplayPalette.TableDivider;
+                holder.Container.BorderThickness = onScreen ? new Thickness(3, 1, 0, 0) : new Thickness(0, 1, 0, 0);
             }
         }
 
-        // One editable rule row: a clickable collapsed header, plus the expansion drawer when
-        // this is the open row.
+        // ── The dense grid ────────────────────────────────────────────────
+
+        // The 7 columns of the v9 dense grid: [handle+rank] When · Show · Timeout · Runs ·
+        // State · ⋯. Star weights mirror the mock (2.4 / 1.5 / .9 / 1.05 / .95); the two
+        // fixed columns hold the handle/rank cluster and the overflow trigger.
+        private static void AddDenseColumns(Grid grid)
+        {
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.05, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.95, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+        }
+
+        private UIElement BuildHeaderStrip()
+        {
+            var grid = new Grid { Background = DisplayPalette.ThHeaderBg };
+            AddDenseColumns(grid);
+            AddHeaderLabel(grid, 1, "When");
+            AddHeaderLabel(grid, 2, "Show");
+            AddHeaderLabel(grid, 3, "Timeout");
+            AddHeaderLabel(grid, 4, "Runs");
+            AddHeaderLabel(grid, 5, "State");
+            return grid;
+        }
+
+        private static void AddHeaderLabel(Grid grid, int col, string text)
+        {
+            var tb = new TextBlock
+            {
+                Text = text.ToUpperInvariant(),
+                FontSize = 10,
+                FontWeight = FontWeights.Bold,
+                Foreground = DisplayPalette.ThLabel,
+                Margin = new Thickness(11, 9, 11, 9),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(tb, col);
+            grid.Children.Add(tb);
+        }
+
+        // One editable rule row: the clickable dense header, plus the expansion drawer when
+        // this is the selected row.
         private UIElement BuildRuleRow(TriggerTableRow row)
         {
             bool expanded = string.Equals(row.RuleId, ExpandedRuleId, StringComparison.Ordinal);
 
-            var container = new StackPanel { Margin = new Thickness(0, 0, 0, 7) };
+            var container = new StackPanel();
 
             var header = BuildRowHeader(row, expanded, out var chips);
             container.Children.Add(header);
             _rowChips[row.RuleId] = chips;
-            _ruleRowOrder.Add(new KeyValuePair<string, FrameworkElement>(row.RuleId, container));
+            // Only reorderable rows join the drag/keyboard geometry — the uncommitted draft
+            // row (Draggable=false) is excluded, so its transient presence never shifts the
+            // committed rules' index space.
+            if (row.Draggable)
+                _ruleRowOrder.Add(new KeyValuePair<string, FrameworkElement>(row.RuleId, container));
 
             if (expanded)
             {
@@ -215,145 +269,194 @@ namespace FanaBridge.UI.Display.Shared
             return container;
         }
 
-        // The collapsed header: [⠿ handle] [rank] [label] [eligibility] [state chip]
-        // [countdown] [chevron]. Clicking anywhere but the handle toggles the editor.
         private Border BuildRowHeader(TriggerTableRow row, bool expanded, out RowChips chips)
         {
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // handle
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // rank
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // label
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // eligibility
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // chip
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // seconds
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // chevron
+            AddDenseColumns(grid);
 
-            var handle = new TextBlock
+            // col0 — handle + rank.
+            var lead = new StackPanel
             {
-                Text = "⠿",
-                FontSize = 13,
-                Foreground = DisplayPalette.HandColor,
-                Cursor = Cursors.SizeAll,
-                ToolTip = "Drag to reorder priority",
-                Margin = new Thickness(0, 0, 9, 0),
+                Orientation = Orientation.Horizontal,
                 VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 0, 0, 0),
             };
-            AttachDragHandle(handle, row.RuleId);
-            Grid.SetColumn(handle, 0);
-            grid.Children.Add(handle);
-
+            if (row.Draggable)
+            {
+                var handle = new TextBlock
+                {
+                    Text = "⠿",
+                    FontSize = 12,
+                    Foreground = DisplayPalette.HandColor,
+                    Cursor = Cursors.SizeAll,
+                    ToolTip = "Drag to reorder priority",
+                    Margin = new Thickness(0, 0, 6, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                AttachDragHandle(handle, row.RuleId);
+                lead.Children.Add(handle);
+            }
             var rank = new TextBlock
             {
                 Text = row.Rank,
                 FontSize = 11,
                 FontWeight = FontWeights.Bold,
-                Foreground = DisplayPalette.MutedRank,   // on-screen accent applied via ApplyRowAccent below
-                Width = 16,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 0, 8, 0),
+                Foreground = DisplayPalette.MutedRank,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            Grid.SetColumn(rank, 1);
-            grid.Children.Add(rank);
+            lead.Children.Add(rank);
+            Grid.SetColumn(lead, 0);
+            grid.Children.Add(lead);
 
-            // The label column: the v9 structured WHEN (dim-ns/bright-leaf property + plain
-            // operator/value/target spans) when the model populated it, else the plain label
-            // (base/degraded/user-named rows). `label` is the span the on-screen accent recolours.
-            FrameworkElement labelColumn;
+            // col1 — When: caret + structured property (or plain label) + operator/value span.
+            var when = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 8, 6, 8),
+            };
+            when.Children.Add(new TextBlock
+            {
+                Text = expanded ? "▾" : "▸",
+                FontSize = 10,
+                Foreground = DisplayPalette.Caret,
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
             TextBlock label;
             if (!string.IsNullOrEmpty(row.PropertyName))
             {
-                var strip = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                strip.Children.Add(PropertyLabel.ForProperty(
+                when.Children.Add(PropertyLabel.ForProperty(
                     row.PropertyName, row.DisplayKind, RowPropertyBudget));
                 label = new TextBlock
                 {
-                    Text = RestText(row),
-                    FontSize = 12.5,
-                    Foreground = DisplayPalette.RowText,
+                    Text = WhenRest(row),
+                    FontSize = 12,
+                    Foreground = DisplayPalette.BaseText,
                     TextTrimming = TextTrimming.CharacterEllipsis,
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(6, 0, 0, 0),
                 };
-                strip.Children.Add(label);
-                labelColumn = strip;
             }
             else
             {
                 label = new TextBlock
                 {
                     Text = row.Label,
-                    FontSize = 12.5,
-                    Foreground = DisplayPalette.RowText,   // on-screen accent applied via ApplyRowAccent below
+                    FontSize = 12,
+                    Foreground = DisplayPalette.RowText,
                     TextTrimming = TextTrimming.CharacterEllipsis,
                     VerticalAlignment = VerticalAlignment.Center,
                 };
-                labelColumn = label;
             }
-            Grid.SetColumn(labelColumn, 2);
-            grid.Children.Add(labelColumn);
+            when.Children.Add(label);
+            Grid.SetColumn(when, 1);
+            grid.Children.Add(when);
 
-            if (!string.IsNullOrEmpty(row.Eligibility))
+            // col2 — Show.
+            var show = new TextBlock
             {
-                var elig = new TextBlock
-                {
-                    Text = row.Eligibility,
-                    FontSize = 10.5,
-                    Foreground = DisplayPalette.EligChip,
-                    Margin = new Thickness(10, 0, 0, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                Grid.SetColumn(elig, 3);
-                grid.Children.Add(elig);
-            }
-
-            var chip = new TextBlock
-            {
-                Text = row.Chip ?? "",
-                FontSize = 10.5,
-                Foreground = row.OnScreen ? DisplayPalette.GreenAccent : DisplayPalette.ChipText,
-                Margin = new Thickness(10, 0, 0, 0),
+                Text = row.ShowText,
+                FontSize = 12,
+                Foreground = DisplayPalette.TargetText,
+                TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center,
-                Visibility = string.IsNullOrEmpty(row.Chip) ? Visibility.Collapsed : Visibility.Visible,
+                Margin = new Thickness(11, 8, 6, 8),
             };
-            Grid.SetColumn(chip, 4);
-            grid.Children.Add(chip);
+            Grid.SetColumn(show, 2);
+            grid.Children.Add(show);
 
+            // col3 — Timeout.
+            var timeout = new TextBlock
+            {
+                Text = row.Timeout,
+                FontSize = 11.5,
+                Foreground = DisplayPalette.TargetText,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 8, 6, 8),
+            };
+            Grid.SetColumn(timeout, 3);
+            grid.Children.Add(timeout);
+
+            // col4 — Runs.
+            var runs = new TextBlock
+            {
+                Text = (row.RunGlyph + " " + row.RunLabel).Trim(),
+                FontSize = 11.5,
+                Foreground = DisplayPalette.TargetText,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 8, 6, 8),
+            };
+            Grid.SetColumn(runs, 4);
+            grid.Children.Add(runs);
+
+            // col5 — State: green dot (on screen) + text + countdown ring.
+            var statePanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 8, 6, 8),
+            };
+            var dot = new Border
+            {
+                Width = 6,
+                Height = 6,
+                CornerRadius = new CornerRadius(3),
+                Background = DisplayPalette.GreenDot,
+                Margin = new Thickness(0, 0, 5, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Visibility = Visibility.Collapsed,
+            };
+            statePanel.Children.Add(dot);
+            var stateText = new TextBlock
+            {
+                FontSize = 10.5,
+                Foreground = DisplayPalette.ChipText,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            statePanel.Children.Add(stateText);
             var seconds = new CountdownRing
             {
-                Margin = new Thickness(8, 0, 0, 0),
+                Margin = new Thickness(6, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            seconds.Update(double.NaN, row.Seconds);
-            Grid.SetColumn(seconds, 5);
-            grid.Children.Add(seconds);
+            statePanel.Children.Add(seconds);
+            Grid.SetColumn(statePanel, 5);
+            grid.Children.Add(statePanel);
 
-            var chevron = new TextBlock
+            // col6 — overflow ⋯.
+            var menu = BuildRowContextMenu(row.RuleId);
+            var overflow = new TextBlock
             {
-                Text = expanded ? "▾" : "▸",
-                FontSize = 12,
-                Foreground = DisplayPalette.ChevronBrush,
-                Margin = new Thickness(11, 0, 0, 0),
+                Text = "⋯",
+                FontSize = 16,
+                Foreground = DisplayPalette.ChipText,
+                Cursor = Cursors.Hand,
+                HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
+                Focusable = true,
+                ToolTip = "More…",
             };
-            Grid.SetColumn(chevron, 6);
-            grid.Children.Add(chevron);
+            overflow.MouseLeftButtonUp += (s, e) => { e.Handled = true; OpenMenu(overflow, menu); };
+            overflow.KeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Enter || e.Key == Key.Space)
+                {
+                    OpenMenu(overflow, menu);
+                    e.Handled = true;
+                }
+            };
+            Grid.SetColumn(overflow, 6);
+            grid.Children.Add(overflow);
 
             var border = new Border
             {
-                Background = DisplayPalette.RowBg,           // on-screen accent applied via ApplyRowAccent below
-                BorderBrush = DisplayPalette.RowBorder,
-                BorderThickness = new Thickness(1),
-                CornerRadius = expanded ? new CornerRadius(4, 4, 0, 0) : new CornerRadius(4),
-                Padding = new Thickness(10, 8, 10, 8),
+                Background = expanded ? DisplayPalette.DrawerBg : DisplayPalette.RowBg,
+                BorderBrush = expanded ? DisplayPalette.DrawerBar : DisplayPalette.TableDivider,
+                BorderThickness = expanded ? new Thickness(3, 1, 0, 0) : new Thickness(0, 1, 0, 0),
                 Cursor = Cursors.Hand,
                 Focusable = true,
                 Child = grid,
-                Opacity = row.Muted ? 0.5 : 1.0,
             };
             string ruleId = row.RuleId;
             border.MouseLeftButtonUp += (s, e) =>
@@ -362,10 +465,18 @@ namespace FanaBridge.UI.Display.Shared
                 RowActivated?.Invoke(ruleId);
             };
             border.KeyDown += (s, e) => RowKeyDown(ruleId, e);
-            border.ContextMenu = BuildRowContextMenu(ruleId, canRemove: true);
+            border.ContextMenu = menu;
 
-            chips = new RowChips { Container = border, Chip = chip, Seconds = seconds, Rank = rank, Label = label };
-            ApplyRowAccent(chips, row.OnScreen);
+            chips = new RowChips
+            {
+                Container = border,
+                Chip = stateText,
+                Dot = dot,
+                Seconds = seconds,
+                Rank = rank,
+                Label = label,
+            };
+            ApplyRowLive(chips, row);
             return border;
         }
 
@@ -374,40 +485,40 @@ namespace FanaBridge.UI.Display.Shared
         private UIElement BuildDegradedRow(TriggerTableRow row)
         {
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
 
+            var lead = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(11, 0, 0, 0),
+            };
             var handle = new TextBlock
             {
                 Text = "⠿",
-                FontSize = 13,
+                FontSize = 12,
                 Foreground = DisplayPalette.HandColor,
                 Cursor = Cursors.SizeAll,
                 ToolTip = "Drag to reorder priority",
-                Margin = new Thickness(0, 0, 9, 0),
+                Margin = new Thickness(0, 0, 6, 0),
                 VerticalAlignment = VerticalAlignment.Center,
             };
             AttachDragHandle(handle, row.RuleId);
-            Grid.SetColumn(handle, 0);
-            grid.Children.Add(handle);
-
-            var rank = new TextBlock
+            lead.Children.Add(handle);
+            lead.Children.Add(new TextBlock
             {
                 Text = row.Rank,
                 FontSize = 11,
                 FontWeight = FontWeights.Bold,
                 Foreground = DisplayPalette.MutedRank,
-                Width = 16,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 0, 8, 0),
                 VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(rank, 1);
-            grid.Children.Add(rank);
+            });
+            Grid.SetColumn(lead, 0);
+            grid.Children.Add(lead);
 
-            var text = new StackPanel();
+            var text = new StackPanel { Margin = new Thickness(11, 8, 6, 8) };
             text.Children.Add(new TextBlock
             {
                 Text = row.Label,
@@ -422,38 +533,35 @@ namespace FanaBridge.UI.Display.Shared
                 Foreground = DisplayPalette.KLabelBrush,
                 Margin = new Thickness(0, 2, 0, 0),
             });
-            Grid.SetColumn(text, 2);
+            Grid.SetColumn(text, 1);
             grid.Children.Add(text);
 
+            var menu = BuildRowContextMenu(row.RuleId);
             var border = new Border
             {
                 Background = DisplayPalette.RowBg,
-                BorderBrush = DisplayPalette.RowBorder,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(10, 8, 10, 8),
+                BorderBrush = DisplayPalette.TableDivider,
+                BorderThickness = new Thickness(0, 1, 0, 0),
                 Opacity = 0.5,
                 Focusable = true,
-                Margin = new Thickness(0, 0, 0, 7),
                 Child = grid,
             };
             string ruleId = row.RuleId;
             border.KeyDown += (s, e) => RowKeyDown(ruleId, e);
-            border.ContextMenu = BuildRowContextMenu(ruleId, canRemove: true);
+            border.ContextMenu = menu;
 
             _rowChips[row.RuleId] = new RowChips { Container = border, Degraded = true };
             _ruleRowOrder.Add(new KeyValuePair<string, FrameworkElement>(row.RuleId, border));
             return border;
         }
 
-        // The pinned "★ Always → <base>" row: dashed, last, not draggable, not expandable —
-        // its page is edited on the Overview (Starting page).
+        // The pinned "★ Always → <base>" row (Monitor only in 2c — the Workbench renders the
+        // base as a footer instead): dashed, last, not draggable, not expandable.
         private UIElement BuildBaseRow(TriggerTableRow row)
         {
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             var rank = new TextBlock
             {
@@ -479,18 +587,7 @@ namespace FanaBridge.UI.Display.Shared
             Grid.SetColumn(label, 1);
             grid.Children.Add(label);
 
-            var hint = new TextBlock
-            {
-                Text = "edit on Overview",
-                FontSize = 10.5,
-                Foreground = DisplayPalette.KLabelBrush,
-                Margin = new Thickness(10, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Grid.SetColumn(hint, 2);
-            grid.Children.Add(hint);
-
-            var host = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            var host = new Grid { Margin = new Thickness(0, 6, 0, 0) };
             host.Children.Add(new Rectangle
             {
                 Stroke = DisplayPalette.BaseDash,
@@ -504,25 +601,31 @@ namespace FanaBridge.UI.Display.Shared
             return host;
         }
 
-        // ── Reorder: context menu + keyboard ──────────────────────────────
+        // ── Reorder: overflow / context menu ──────────────────────────────
 
-        private ContextMenu BuildRowContextMenu(string ruleId, bool canRemove)
+        // The v9 overflow menu (⋯ and right-click): Duplicate · Move to top · (divider) ·
+        // Delete. Delete is immediate — no confirm (kelchm call).
+        private ContextMenu BuildRowContextMenu(string ruleId)
         {
             var menu = new ContextMenu();
-            var up = new MenuItem { Header = "Move up" };
-            up.Click += (s, e) => RaiseMove(ruleId, -1);
-            menu.Items.Add(up);
-            var down = new MenuItem { Header = "Move down" };
-            down.Click += (s, e) => RaiseMove(ruleId, +1);
-            menu.Items.Add(down);
-            if (canRemove)
-            {
-                menu.Items.Add(new Separator());
-                var remove = new MenuItem { Header = "Remove" };
-                remove.Click += (s, e) => RowAction?.Invoke(ruleId, "remove");
-                menu.Items.Add(remove);
-            }
+            var dup = new MenuItem { Header = "⧉  Duplicate" };
+            dup.Click += (s, e) => RowAction?.Invoke(ruleId, "duplicate");
+            menu.Items.Add(dup);
+            var top = new MenuItem { Header = "↑  Move to top" };
+            top.Click += (s, e) => RowMoved?.Invoke(ruleId, 0);
+            menu.Items.Add(top);
+            menu.Items.Add(new Separator());
+            var del = new MenuItem { Header = "Delete", Foreground = DisplayPalette.DeleteText };
+            del.Click += (s, e) => RowAction?.Invoke(ruleId, "remove");
+            menu.Items.Add(del);
             return menu;
+        }
+
+        private static void OpenMenu(UIElement anchor, ContextMenu menu)
+        {
+            menu.PlacementTarget = anchor;
+            menu.Placement = PlacementMode.Bottom;
+            menu.IsOpen = true;
         }
 
         // Enter / Space activate (open/close) a focused row's editor — the keyboard
@@ -550,8 +653,8 @@ namespace FanaBridge.UI.Display.Shared
             }
         }
 
-        // A relative move (Alt+arrow / context menu): resolve the row's current index among
-        // the rule rows and surface the desired index. The host clamps and no-ops as needed.
+        // A relative move (Alt+arrow): resolve the row's current index among the rule rows
+        // and surface the desired index. The host clamps and no-ops as needed.
         private void RaiseMove(string ruleId, int delta)
         {
             int from = IndexInOrder(ruleId);
@@ -661,9 +764,19 @@ namespace FanaBridge.UI.Display.Shared
                 Fill = DisplayPalette.AccentBg,
                 Margin = new Thickness(2, 0, 2, 0),
             };
-            int at = Math.Max(0, Math.Min(slot, _ruleRowOrder.Count));
-            // Rule rows occupy the first children; the base row follows. Insert the
-            // indicator just above the row at `slot` (or above the base row at the end).
+            // Map the rule slot to a real child index by locating the target rule's own
+            // container — robust to whatever non-rule children (header strip, draft row) lead
+            // or interleave the stack. Insert just above the row at `slot`, or after the last
+            // rule row at the end.
+            int at;
+            if (_ruleRowOrder.Count == 0)
+                at = Children.Count;
+            else if (slot < _ruleRowOrder.Count)
+                at = Children.IndexOf((UIElement)_ruleRowOrder[slot].Value);
+            else
+                at = Children.IndexOf((UIElement)_ruleRowOrder[_ruleRowOrder.Count - 1].Value) + 1;
+            if (at < 0)
+                at = Children.Count;
             at = Math.Min(at, Children.Count);
             Children.Insert(at, _dropIndicator);
         }
@@ -688,14 +801,13 @@ namespace FanaBridge.UI.Display.Shared
 
         // ── Small helpers ─────────────────────────────────────────────────
 
-        // The plain remainder of a structured row after the property: "> 10 → Fuel / ERS / DRS".
-        private static string RestText(TriggerTableRow row)
+        // The When cell's plain remainder after the property: "> 10" (operator + value). The
+        // target lives in its own Show column now, so it is not appended here.
+        private static string WhenRest(TriggerTableRow row)
         {
             string s = row.Operator ?? "";
             if (!string.IsNullOrEmpty(row.ValueText))
                 s = s.Length > 0 ? s + " " + row.ValueText : row.ValueText;
-            if (!string.IsNullOrEmpty(row.TargetText))
-                s = s.Length > 0 ? s + " → " + row.TargetText : "→ " + row.TargetText;
             return s;
         }
     }

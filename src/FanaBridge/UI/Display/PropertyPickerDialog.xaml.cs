@@ -47,10 +47,10 @@ namespace FanaBridge.UI.Display
         /// Returns false when the user cancels.
         /// </summary>
         internal static bool TryPick(Window owner, IReadOnlyList<string> builtIns,
-            IReadOnlyList<string> allProperties, string current,
+            IReadOnlyList<string> allProperties, IReadOnlyList<string> mappedRoles, string current,
             out string name, out PropertyKind kind)
         {
-            var model = new DisplayPropertyPickerModel(builtIns, allProperties);
+            var model = new DisplayPropertyPickerModel(builtIns, allProperties, mappedRoles);
             var dialog = new PropertyPickerDialog(model, current) { Owner = owner };
             bool ok = dialog.ShowDialog() == true;
             name = dialog._resultName;

@@ -17,7 +17,7 @@
                     <TextBlock Style="{StaticResource GhostBackGlyph}" />
                 </Button>
                 <TextBlock Text="Triggers" Style="{StaticResource EditorTitle}" />
-                <TextBlock Text="drag ⠿ to reorder priority" FontSize="12"
+                <TextBlock Text="click a trigger to edit · drag ⠿ to reorder" FontSize="12"
                            Foreground="#8F8F8F" Margin="12,0,0,0"
                            VerticalAlignment="Center" />
             </StackPanel>
@@ -26,15 +26,17 @@
                     HorizontalAlignment="Right" VerticalAlignment="Center" />
         </Grid>
 
-        <!-- Add-trigger card (built in code-behind; collapsed until opened) -->
-        <StackPanel x:Name="panelAddCard" Visibility="Collapsed" Margin="0,0,0,12" />
-
-        <!-- Priority-ordered rule rows + the pinned base row: the shared trigger table
+        <!-- The dense v9 trigger grid + expand-to-edit drawer: the shared trigger table
              (row machinery lives in the control; this view feeds it rows + drawer) -->
         <shared:TriggerTableControl x:Name="triggerTable" />
 
         <TextBlock x:Name="txtTriggersEmpty" Visibility="Collapsed"
                    Text="No triggers yet — use ＋ Add trigger to create one."
                    FontSize="12" Foreground="#8F8F8F" Margin="0,2,0,0" />
+
+        <!-- BASE PAGE footer (built in code-behind): the "Always" resting page -->
+        <Border BorderBrush="#333333" BorderThickness="0,1,0,0" Margin="0,13,0,0" Padding="0,13,0,0">
+            <StackPanel x:Name="panelBaseFooter" />
+        </Border>
     </StackPanel>
 </UserControl>

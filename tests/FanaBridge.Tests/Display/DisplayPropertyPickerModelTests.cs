@@ -139,5 +139,54 @@ namespace FanaBridge.Tests.Display
             Assert.Empty(model.Rows(""));
             Assert.Equal(0, model.PropertyCount(""));
         }
+
+        // ── Mapped controls group (v9 unified add flow) ───────────────────
+
+        private static DisplayPropertyPickerModel MappedModel()
+            => new DisplayPropertyPickerModel(BuiltIns, AllProps,
+                new[] { "Up Shift", "Headlights" });
+
+        [Fact]
+        public void MappedControls_GroupIsSecond_MappingRoleToItsProperty()
+        {
+            var rows = MappedModel().Rows("");
+            var headers = Headers(rows);
+
+            // FanaBridge first, Mapped controls second, then the alphabetical SimHub groups.
+            Assert.Equal(DisplayPropertyPickerModel.BuiltInGroup, headers[0]);
+            Assert.Equal(DisplayPropertyPickerModel.MappedGroup, headers[1]);
+
+            // Each role maps to its live Control Mapper property, committed as a SimHub
+            // property. The first property row under the Mapped controls header is Up Shift.
+            var list = rows.ToList();
+            int mappedHeader = list.FindIndex(r =>
+                r.IsHeader && r.Text == DisplayPropertyPickerModel.MappedGroup);
+            var first = list[mappedHeader + 1];
+            Assert.Equal("InputStatus.ControlMapperPlugin.Up Shift", first.PropertyName);
+            Assert.Equal(PropertyKind.SimHubProperty, first.PropertyKind);
+            var second = list[mappedHeader + 2];
+            Assert.Equal("InputStatus.ControlMapperPlugin.Headlights", second.PropertyName);
+        }
+
+        [Fact]
+        public void MappedControls_FilterMatchesTheRoleName_AcrossGroups()
+        {
+            // "shift" now matches the mapped role AND the InputStatus CM property name.
+            var rows = MappedModel().Rows("shift");
+            var headers = Headers(rows);
+            Assert.Equal(new[] { DisplayPropertyPickerModel.MappedGroup, "InputStatus" }, headers);
+
+            var props = Props(rows);
+            Assert.Equal(2, props.Count);
+            Assert.All(props, r => Assert.Contains("Shift", r.PropertyName));
+        }
+
+        [Fact]
+        public void MappedControls_AbsentWhenNoRoles_LeavesTheOtherGroupsUnchanged()
+        {
+            // The 2-arg model (no roles) yields no Mapped controls group at all.
+            var headers = Headers(Model().Rows(""));
+            Assert.DoesNotContain(DisplayPropertyPickerModel.MappedGroup, headers);
+        }
     }
 }
