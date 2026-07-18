@@ -23,6 +23,7 @@ namespace FanaBridge.UI.Display.Shared
     {
         private readonly TextBlock _value;
         private readonly Popup _popup;
+        private readonly Border _popupRoot;
         private readonly StackPanel _menu;
         private readonly List<Row> _rows = new List<Row>();
         private ChoiceList _choices = new ChoiceList(new Choice[0], null);
@@ -73,27 +74,37 @@ namespace FanaBridge.UI.Display.Shared
             Child = grid;
 
             _menu = new StackPanel();
+            // The popup root must be Focusable so Open() can move keyboard focus INTO the
+            // popup's HWND; a plain Border is Focusable=false by default and .Focus() would
+            // silently fail, leaving focus on the cell and Popup_KeyDown unreachable.
+            _popupRoot = new Border
+            {
+                Background = DisplayPalette.SegBarBg,
+                BorderBrush = DisplayPalette.SegBorder,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(2),
+                Focusable = true,
+                Child = _menu,
+            };
             _popup = new Popup
             {
                 Placement = PlacementMode.Bottom,
                 PlacementTarget = this,
                 StaysOpen = false,
                 AllowsTransparency = true,
-                Child = new Border
-                {
-                    Background = DisplayPalette.SegBarBg,
-                    BorderBrush = DisplayPalette.SegBorder,
-                    BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(4),
-                    Padding = new Thickness(2),
-                    Child = _menu,
-                },
+                Child = _popupRoot,
             };
             _popup.KeyDown += Popup_KeyDown;
 
             MouseLeftButtonUp += (s, e) => Toggle();
             KeyDown += Cell_KeyDown;
             Unloaded += (s, e) => _popup.IsOpen = false;
+            // Issue #37 companion: a programmatic view switch (DisplayTabPanel collapses the
+            // outgoing view's Visibility rather than detaching it) does NOT raise Unloaded on
+            // descendants and would leave an open popup floating over the new view. Close on
+            // any transition to not-visible so a keyboard-opened menu can't orphan.
+            IsVisibleChanged += (s, e) => { if (!IsVisible) _popup.IsOpen = false; };
         }
 
         /// <summary>Populate the cell from a choice list and reflect its selection.</summary>
@@ -165,11 +176,15 @@ namespace FanaBridge.UI.Display.Shared
                 return;
             ApplyHighlight();
             _popup.IsOpen = true;
-            _popup.Child.Focus();
+            // Focus the (now Focusable) popup root so Up/Down/Enter/Esc route to Popup_KeyDown
+            // through the popup's own HWND instead of staying on the cell in the main window.
+            _popupRoot.Focus();
         }
 
         private void Cell_KeyDown(object sender, KeyEventArgs e)
         {
+            if (_popup.IsOpen)
+                return;   // navigation while open is Popup_KeyDown's job; don't re-Open()
             if (e.Key == Key.Enter || e.Key == Key.Space || e.Key == Key.Down)
             {
                 Open();
