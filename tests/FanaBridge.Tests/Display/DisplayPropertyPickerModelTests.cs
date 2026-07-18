@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using FanaBridge.Display.Rules;
 using FanaBridge.UI.Display;
+using FanaBridge.UI.Display.Shared;
 using Xunit;
 
 namespace FanaBridge.Tests.Display
@@ -387,6 +388,110 @@ namespace FanaBridge.Tests.Display
             Assert.True(props.Single(r => r.PropertyName == "Fuel").IsFavorite);
             Assert.True(props.Single(r => r.PropertyName == "GameData.Fuel").IsFavorite);
             Assert.False(props.Single(r => r.PropertyName == "Gear").IsFavorite);
+        }
+
+        // ── Match spans on collapsed display text (review 0f6e26f) ─────────
+
+        [Fact]
+        public void MatchSpan_CollapsedGameData_HighlightsLeafInDisplayForm()
+        {
+            // Raw "DataCorePlugin.GameData.Fuel" displays as "GameData.Fuel"; "fuel" must
+            // highlight the leaf in that form (index 9), not a raw-name offset.
+            var model = new DisplayPropertyPickerModel(
+                Array.Empty<string>(),
+                new[] { "DataCorePlugin.GameData.Fuel" });
+            var row = Props(model.Rows(PickerScope.AllProperties, "fuel")).Single();
+            Assert.Equal("DataCorePlugin.GameData.Fuel", row.PropertyName);
+
+            string display = PropertyGrammar.FullText(
+                row.PropertyName, PropertyDisplayKind.SimHubProperty);
+            Assert.Equal("GameData.Fuel", display);
+            Assert.Equal(display.IndexOf("fuel", StringComparison.OrdinalIgnoreCase), row.MatchStart);
+            Assert.Equal(4, row.MatchLength);
+        }
+
+        [Fact]
+        public void MatchSpan_CollapsedAwayPrefixOnly_ListsRowWithNoHighlight()
+        {
+            // "DataCore" matches only the collapsed-away raw prefix — row still appears
+            // (listing uses the raw name) but MatchStart is -1 (nothing to highlight).
+            var model = new DisplayPropertyPickerModel(
+                Array.Empty<string>(),
+                new[] { "DataCorePlugin.GameData.Fuel" });
+            var row = Props(model.Rows(PickerScope.AllProperties, "DataCore")).Single();
+            Assert.Equal("DataCorePlugin.GameData.Fuel", row.PropertyName);
+            Assert.True(row.MatchStart < 0);
+            Assert.Equal(0, row.MatchLength);
+        }
+
+        [Fact]
+        public void MatchSpan_MappedRole_PrefersRoleOverControlMapperNamespace()
+        {
+            // Role "Control Mode" + filter "control": highlight the role, not the
+            // collapsed "ControlMapper." prefix that IndexOf would hit first.
+            var model = new DisplayPropertyPickerModel(
+                Array.Empty<string>(), Array.Empty<string>(),
+                new[] { "Control Mode" });
+            var row = Props(model.Rows(PickerScope.AllProperties, "control")).Single();
+            Assert.Equal("InputStatus.ControlMapperPlugin.Control Mode", row.PropertyName);
+
+            string display = PropertyGrammar.FullText(
+                row.PropertyName, PropertyDisplayKind.SimHubProperty);
+            Assert.Equal("ControlMapper.Control Mode", display);
+            // Role starts after "ControlMapper." (14 chars); "control" in the role is at +0.
+            int roleStart = display.Length - "Control Mode".Length;
+            Assert.Equal(roleStart, row.MatchStart);
+            Assert.Equal(7, row.MatchLength); // "control".Length
+            Assert.True(row.MatchStart > 0);  // not the namespace hit at 0
+        }
+
+        // ── FanaBridge rail merge (review 0f6e26f) ─────────────────────────
+
+        [Fact]
+        public void Rails_FanaBridgeCatalogProperty_DoesNotDuplicatePinnedRail()
+        {
+            // Plugin publishes FanaBridge.Connected — still exactly one FanaBridge rail
+            // (the pinned curated one); no second auto-root of the same name.
+            var model = new DisplayPropertyPickerModel(
+                BuiltIns, new[] { "FanaBridge.Connected", "GameData.Fuel" });
+            var rails = model.Rails();
+            var fanaRails = rails.Where(r =>
+                !r.IsSection
+                && string.Equals(r.Label, DisplayPropertyPickerModel.BuiltInGroup,
+                    StringComparison.OrdinalIgnoreCase)).ToList();
+            Assert.Single(fanaRails);
+            Assert.Equal(
+                DisplayPropertyPickerModel.RailRootIdPrefix + DisplayPropertyPickerModel.BuiltInGroup,
+                fanaRails[0].Id);
+            // GameData still appears as an auto root.
+            Assert.Contains(rails, r => r.Id == DisplayPropertyPickerModel.RailRootIdPrefix + "GameData");
+        }
+
+        [Fact]
+        public void Scope_Root_FanaBridge_MergesCuratedBuiltInsThenSameNamedAutoGroup()
+        {
+            // Opening the FanaBridge rail: curated built-ins first, then the auto-group
+            // that holds FanaBridge.Connected under its own header.
+            var model = new DisplayPropertyPickerModel(
+                BuiltIns, new[] { "FanaBridge.Connected", "GameData.Fuel" });
+            var rows = model.Rows(PickerScope.Root(DisplayPropertyPickerModel.BuiltInGroup), "")
+                .ToList();
+
+            Assert.Equal(new[]
+            {
+                DisplayPropertyPickerModel.BuiltInGroup,
+                DisplayPropertyPickerModel.BuiltInGroup,
+            }, Headers(rows));
+
+            Assert.Equal(new[] { "Speed", "Gear", "Fuel", "FanaBridge.Connected" },
+                Props(rows).Select(r => r.PropertyName).ToArray());
+
+            // First header block is built-ins; second is the SimHub auto group.
+            int h0 = rows.FindIndex(r => r.IsHeader);
+            Assert.Equal(PropertyKind.BuiltIn, rows[h0 + 1].PropertyKind);
+            int h1 = rows.FindIndex(h0 + 1, r => r.IsHeader);
+            Assert.Equal("FanaBridge.Connected", rows[h1 + 1].PropertyName);
+            Assert.Equal(PropertyKind.SimHubProperty, rows[h1 + 1].PropertyKind);
         }
     }
 }

@@ -200,6 +200,9 @@ namespace FanaBridge.UI.Display
                 _filterDebounce.Stop();
             }
             Rebuild(selectCurrent: false);
+            // Search-first: rail is mouse-only, return focus so typing continues without
+            // another click. Enter/Escape still work from any focus via IsDefault/IsCancel.
+            txtFilter.Focus();
         }
 
         private void List_MouseDoubleClick(object sender, MouseButtonEventArgs e)

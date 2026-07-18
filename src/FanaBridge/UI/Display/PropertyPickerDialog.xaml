@@ -288,9 +288,11 @@
                 BorderThickness="0,1,0,0" Padding="16,11">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0"
+                        IsCancel="True"
                         Background="Transparent" BorderThickness="0"
                         Foreground="#9A9A9A" Padding="12,6" />
                 <Button x:Name="btnOk" Content="Select" Click="Ok_Click"
+                        IsDefault="True"
                         Background="#1E8FD5" BorderBrush="#1E8FD5" />
             </StackPanel>
         </Border>

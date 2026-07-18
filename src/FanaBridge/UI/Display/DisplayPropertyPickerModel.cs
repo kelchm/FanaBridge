@@ -301,8 +301,14 @@ namespace FanaBridge.UI.Display
                 },
             };
 
+            // Skip auto roots that collide with a pinned curated group (FanaBridge publishes
+            // real SimHub properties under FanaBridge.* — without this the rail would list
+            // two identical "FanaBridge" entries and RootRows would only ever serve the
+            // curated branch). Same-named auto content is merged under the pinned rail.
             foreach (var group in _groups)
             {
+                if (IsPinnedGroupName(group.Key))
+                    continue;
                 rails.Add(new PickerRail
                 {
                     Id = RailRootIdPrefix + group.Key,
@@ -420,6 +426,8 @@ namespace FanaBridge.UI.Display
         }
 
         // Empty-filter content of one root rail (pinned curated group or auto SimHub group).
+        // BuiltInGroup merges: curated built-ins first, then any same-named auto-group
+        // (FanaBridge.*) beneath it with its own header so plugin properties stay reachable.
         private IReadOnlyList<PickerRow> RootRows(string rootName)
         {
             if (string.IsNullOrEmpty(rootName))
@@ -427,11 +435,14 @@ namespace FanaBridge.UI.Display
 
             if (string.Equals(rootName, BuiltInGroup, StringComparison.Ordinal))
             {
-                if (_builtIns.Count == 0)
-                    return Array.Empty<PickerRow>();
-                var rows = new List<PickerRow>(_builtIns.Count + 1) { Header(BuiltInGroup) };
-                foreach (var name in _builtIns)
-                    rows.Add(PropertyRow(name, name, PropertyKind.BuiltIn, null, false));
+                var rows = new List<PickerRow>();
+                if (_builtIns.Count > 0)
+                {
+                    rows.Add(Header(BuiltInGroup));
+                    foreach (var name in _builtIns)
+                        rows.Add(PropertyRow(name, name, PropertyKind.BuiltIn, null, false));
+                }
+                AppendAutoGroupRows(rows, BuiltInGroup);
                 return rows;
             }
 
@@ -459,6 +470,26 @@ namespace FanaBridge.UI.Display
 
             return Array.Empty<PickerRow>();
         }
+
+        // Append the auto-catalog group that shares a pinned name (if any), with its own header.
+        private void AppendAutoGroupRows(List<PickerRow> rows, string groupName)
+        {
+            foreach (var group in _groups)
+            {
+                if (!string.Equals(group.Key, groupName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (group.Value.Count == 0)
+                    return;
+                rows.Add(Header(group.Key));
+                foreach (var name in group.Value)
+                    rows.Add(PropertyRow(name, name, PropertyKind.SimHubProperty, null, false));
+                return;
+            }
+        }
+
+        private static bool IsPinnedGroupName(string name)
+            => string.Equals(name, BuiltInGroup, StringComparison.OrdinalIgnoreCase)
+               || string.Equals(name, MappedGroup, StringComparison.OrdinalIgnoreCase);
 
         // Favorites / Recents / ITM pages: stored order, optional headers (never for those
         // three rails). Names no longer in the catalog still appear.
@@ -488,11 +519,14 @@ namespace FanaBridge.UI.Display
             int matchLength = 0;
             if (hasFilter)
             {
-                // Span over the property name (first case-insensitive hit). For names that
-                // collapse under the grammar (GameData / ControlMapper), the overlay still
-                // applies to the formatted runs by the same indices when the display form
-                // aligns; the picker primarily highlights non-collapsed names.
-                matchStart = propertyName.IndexOf(filter, StringComparison.OrdinalIgnoreCase);
+                // Span over the formatted DISPLAY text (concatenation of the grammar runs),
+                // not the raw property name — OverlayHighlight applies to collapsed runs
+                // (GameData. / ControlMapper.). First case-insensitive hit in the display
+                // form; if the filter only matched a collapsed-away raw prefix the row still
+                // lists (Match() uses the raw name) but MatchStart stays -1 (no highlight).
+                string display = PropertyGrammar.FullText(
+                    propertyName, PropertyGrammar.KindFor(kind));
+                matchStart = display.IndexOf(filter, StringComparison.OrdinalIgnoreCase);
                 if (matchStart >= 0)
                     matchLength = filter.Length;
             }
@@ -516,19 +550,25 @@ namespace FanaBridge.UI.Display
             int matchLength = 0;
             if (hasFilter)
             {
-                // Match + span on the role text; ContentFor highlights against PropertyName
-                // (ControlMapper collapse → "ControlMapper." + role), so shift the span into
-                // the display form used by the unlimited-budget grammar.
+                // Match on the role text; highlight against the collapsed display form
+                // ("ControlMapper." + role). Prefer the role portion so a filter like
+                // "control" hits "Control Mode", not the "ControlMapper." namespace prefix;
+                // fall back to a whole-label search only when the role portion misses.
                 int roleIdx = role.IndexOf(filter, StringComparison.OrdinalIgnoreCase);
                 if (roleIdx >= 0)
                 {
                     string display = PropertyGrammar.FullText(
                         propertyName, PropertyDisplayKind.SimHubProperty);
-                    int displayIdx = display.IndexOf(filter, StringComparison.OrdinalIgnoreCase);
+                    int roleStart = display.Length >= role.Length
+                        ? display.Length - role.Length
+                        : 0;
+                    int displayIdx = roleStart < display.Length
+                        ? display.IndexOf(filter, roleStart, StringComparison.OrdinalIgnoreCase)
+                        : -1;
                     if (displayIdx < 0)
-                        displayIdx = display.Length >= role.Length
-                            ? display.Length - role.Length + roleIdx
-                            : roleIdx;
+                        displayIdx = display.IndexOf(filter, StringComparison.OrdinalIgnoreCase);
+                    if (displayIdx < 0)
+                        displayIdx = roleStart + roleIdx;
                     matchStart = displayIdx;
                     matchLength = filter.Length;
                 }
