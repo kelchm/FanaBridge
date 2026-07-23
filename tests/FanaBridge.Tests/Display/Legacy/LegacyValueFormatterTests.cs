@@ -9,8 +9,8 @@ namespace FanaBridge.Tests.Display.Legacy
     /// <summary>
     /// Byte-level goldens for <see cref="LegacyValueFormatter"/>, in the style of
     /// <c>LegacyDisplayDriverTests</c>: every assertion is against
-    /// <see cref="SevenSegment"/> constants. The four absorbed driver modes must match
-    /// that driver's read/render semantics (SpeedLocal, clamps, ParseGear, brackets).
+    /// <see cref="SevenSegment"/> constants. Pure content kinds must match the driver's
+    /// read/render semantics (SpeedLocal, clamps, ParseGear, always-on brackets).
     /// </summary>
     public class LegacyValueFormatterTests
     {
@@ -120,60 +120,13 @@ namespace FanaBridge.Tests.Display.Legacy
         public void ParseGear_MatchesDriver(string gear, int expected)
             => Assert.Equal(expected, LegacyValueFormatter.ParseGear(gear));
 
-        // ── GearAndSpeed (clock-injected overlay) ────────────────────────
+        // ── GearBrackets (pure render — always brackets; P10a) ───────────
 
         [Fact]
-        public void GearAndSpeed_ShowsGear_InsideOverlayWindow()
+        public void GearBrackets_AlwaysRendersBrackets()
         {
-            // nowMs - gearChangedAtMs < 2000 → gear
-            string text = LegacyValueFormatter.FormatGearAndSpeed(
-                "5", speedLocal: 200, gearChangedAtMs: 1000, nowMs: 2500);
-            Assert.Equal(
-                (SevenSegment.Blank, SevenSegment.Digit5, SevenSegment.Blank),
-                Segs(text));
-        }
-
-        [Fact]
-        public void GearAndSpeed_ShowsSpeed_AfterOverlayExpires()
-        {
-            string text = LegacyValueFormatter.FormatGearAndSpeed(
-                "5", speedLocal: 200, gearChangedAtMs: 1000, nowMs: 3000);
-            Assert.Equal("200", text);
-            Assert.Equal(
-                (SevenSegment.Digit2, SevenSegment.Digit0, SevenSegment.Digit0),
-                Segs(text));
-        }
-
-        [Fact]
-        public void GearAndSpeed_OverlayBoundary_IsExclusiveOfDuration()
-        {
-            // exactly GearOverlayMs after change → speed (driver uses UtcNow < until)
-            string atBoundary = LegacyValueFormatter.FormatGearAndSpeed(
-                "5", 88, gearChangedAtMs: 0, nowMs: LegacyValueFormatter.GearOverlayMs);
-            Assert.Equal("088", atBoundary);
-
-            string justInside = LegacyValueFormatter.FormatGearAndSpeed(
-                "5", 88, gearChangedAtMs: 0, nowMs: LegacyValueFormatter.GearOverlayMs - 1);
-            Assert.Equal(
-                (SevenSegment.Blank, SevenSegment.Digit5, SevenSegment.Blank),
-                Segs(justInside));
-        }
-
-        // ── GearBrackets ─────────────────────────────────────────────────
-
-        [Fact]
-        public void GearBrackets_NoBrackets_BelowRedline()
-        {
-            string text = LegacyValueFormatter.FormatGearBrackets("3", rpms: 6000, redLineReached: 0);
-            Assert.Equal(
-                (SevenSegment.Blank, SevenSegment.Digit3, SevenSegment.Blank),
-                Segs(text));
-        }
-
-        [Fact]
-        public void GearBrackets_ShowsBrackets_AtRedline()
-        {
-            string text = LegacyValueFormatter.FormatGearBrackets("3", rpms: 8000, redLineReached: 1);
+            // Spec P10a: pure render, no redline condition inputs.
+            string text = LegacyValueFormatter.FormatGearBrackets("3");
             Assert.Equal("[3]", text);
             Assert.Equal(
                 (SevenSegment.BracketLeft, SevenSegment.Digit3, SevenSegment.BracketRight),
@@ -181,21 +134,20 @@ namespace FanaBridge.Tests.Display.Legacy
         }
 
         [Fact]
-        public void GearBrackets_NoBrackets_WhenRpmsZero()
+        public void GearBrackets_ReverseWithBrackets()
         {
-            // redline flag set but no rpms → brackets require both
-            string text = LegacyValueFormatter.FormatGearBrackets("3", rpms: 0, redLineReached: 1);
+            string text = LegacyValueFormatter.FormatGearBrackets("R");
             Assert.Equal(
-                (SevenSegment.Blank, SevenSegment.Digit3, SevenSegment.Blank),
+                (SevenSegment.BracketLeft, SevenSegment.R, SevenSegment.BracketRight),
                 Segs(text));
         }
 
         [Fact]
-        public void GearBrackets_ReverseWithBrackets()
+        public void GearBrackets_NeutralWithBrackets()
         {
-            string text = LegacyValueFormatter.FormatGearBrackets("R", rpms: 100, redLineReached: 1);
+            string text = LegacyValueFormatter.FormatGearBrackets("N");
             Assert.Equal(
-                (SevenSegment.BracketLeft, SevenSegment.R, SevenSegment.BracketRight),
+                (SevenSegment.BracketLeft, SevenSegment.N, SevenSegment.BracketRight),
                 Segs(text));
         }
 

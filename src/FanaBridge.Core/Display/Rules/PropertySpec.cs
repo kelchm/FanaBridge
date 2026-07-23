@@ -102,6 +102,9 @@ namespace FanaBridge.Display.Rules
         public const string TyreTempFrontRight = "TyreTempFrontRight";
         public const string TyreTempRearLeft = "TyreTempRearLeft";
         public const string TyreTempRearRight = "TyreTempRearRight";
+        /// <summary>Engine-on redline: Rpms &gt; 0 and CarSettings_RPMRedLineReached &gt; 0
+        /// (mirrors <c>LegacyDisplayDriver</c> GearUpshiftBrackets guard).</summary>
+        public const string RedlineReached = "RedlineReached";
 
         /// <summary>Every built-in name, in a stable order — what a UI picker lists.</summary>
         public static readonly IReadOnlyList<string> All = Array.AsReadOnly(new[]
@@ -112,6 +115,7 @@ namespace FanaBridge.Display.Rules
             TcLevel, AbsLevel, EngineMap, OilTemperature, BrakeBias,
             GapAhead, GapBehind, IsInPitLane, PitLimiterOn,
             TyreTempFrontLeft, TyreTempFrontRight, TyreTempRearLeft, TyreTempRearRight,
+            RedlineReached,
         });
 
         private static readonly HashSet<string> Known =

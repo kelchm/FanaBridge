@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using System.Linq;
 using FanaBridge.Display.Host;
+using FanaBridge.Display.Legacy;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 using Newtonsoft.Json.Linq;
@@ -8,15 +10,13 @@ using Xunit;
 namespace FanaBridge.Tests.Display.Host
 {
     /// <summary>
-    /// Phase 9a pure migration step: frozen DisplayMode → legacy virtual page.
+    /// Phase 9a / P10a pure migration step: frozen DisplayMode → pure screens + overlays.
     /// </summary>
     public class LegacyModeMigrationTests
     {
         [Theory]
         [InlineData("Gear", LegacyContentKind.Gear, "Gear")]
         [InlineData("Speed", LegacyContentKind.Speed, "Speed")]
-        [InlineData("GearAndSpeed", LegacyContentKind.GearAndSpeed, "Gear + Speed")]
-        [InlineData("GearUpshiftBrackets", LegacyContentKind.GearBrackets, "Gear + Upshift Brackets")]
         [InlineData("TotallyBogus", LegacyContentKind.Gear, "Gear")]
         public void SynthesizesScreen_Shape_IdNameKindBase(
             string mode, LegacyContentKind kind, string label)
@@ -31,7 +31,74 @@ namespace FanaBridge.Tests.Display.Host
             Assert.Equal(32, screen.Id.Length); // Guid "N"
             Assert.Equal(label, screen.Name);
             Assert.Equal(kind, screen.ContentKind);
+            Assert.True(screen.InRotation);
             Assert.Equal(screen.Id, config.Legacy.BaseScreenId);
+            Assert.Empty(config.Legacy.Rules);
+        }
+
+        // Spec P10a: composite modes synthesize base + overlay (inRotation false) + rule.
+        [Fact]
+        public void GearAndSpeed_SynthesizesTrio_BaseSpeed_OverlayGear_ChangesRule()
+        {
+            var settings = new DisplaySettings { DisplayMode = "GearAndSpeed" };
+            var config = LegacyModeMigration.Apply(settings, null);
+
+            Assert.True(settings.LegacyModeMigrated);
+            Assert.Equal(2, config.Legacy.Screens.Count);
+            var speed = config.Legacy.Screens[0];
+            var gear = config.Legacy.Screens[1];
+            Assert.Equal("Speed", speed.Name);
+            Assert.Equal(LegacyContentKind.Speed, speed.ContentKind);
+            Assert.True(speed.InRotation);
+            Assert.Equal("Gear", gear.Name);
+            Assert.Equal(LegacyContentKind.Gear, gear.ContentKind);
+            Assert.False(gear.InRotation);
+            Assert.Equal(speed.Id, config.Legacy.BaseScreenId);
+
+            var rule = Assert.Single(config.Legacy.Rules);
+            Assert.Equal(32, rule.Id.Length);
+            Assert.Equal("Gear change", rule.Name);
+            Assert.Equal(ConditionKind.Changes, rule.When.Kind);
+            Assert.Equal(PropertyKind.BuiltIn, rule.When.Source.Kind);
+            Assert.Equal(BuiltInProperties.Gear, rule.When.Source.Name);
+            Assert.Equal(TargetKind.LegacyScreen, rule.Show.Kind);
+            Assert.Equal(gear.Id, rule.Show.ScreenId);
+            Assert.Equal(HoldKind.ForDuration, rule.Hold.Kind);
+            Assert.Equal(LegacyValueFormatter.GearOverlayMs, rule.Hold.DurationMs);
+            // Eligibility omitted → default InGame (telemetry-gated, matches driver).
+            Assert.True(string.IsNullOrEmpty(rule.EligibleRaw));
+            Assert.Equal(RuleEligibility.InGame, rule.Eligible);
+        }
+
+        [Fact]
+        public void GearUpshiftBrackets_SynthesizesTrio_BaseGear_OverlayBrackets_RedlineRule()
+        {
+            var settings = new DisplaySettings { DisplayMode = "GearUpshiftBrackets" };
+            var config = LegacyModeMigration.Apply(settings, null);
+
+            Assert.True(settings.LegacyModeMigrated);
+            Assert.Equal(2, config.Legacy.Screens.Count);
+            var gear = config.Legacy.Screens[0];
+            var brackets = config.Legacy.Screens[1];
+            Assert.Equal("Gear", gear.Name);
+            Assert.Equal(LegacyContentKind.Gear, gear.ContentKind);
+            Assert.True(gear.InRotation);
+            Assert.Equal("Gear (brackets)", brackets.Name);
+            Assert.Equal(LegacyContentKind.GearBrackets, brackets.ContentKind);
+            Assert.False(brackets.InRotation);
+            Assert.Equal(gear.Id, config.Legacy.BaseScreenId);
+
+            var rule = Assert.Single(config.Legacy.Rules);
+            Assert.Equal(32, rule.Id.Length);
+            Assert.Equal("Redline", rule.Name);
+            Assert.Equal(ConditionKind.IsTrue, rule.When.Kind);
+            Assert.Equal(PropertyKind.BuiltIn, rule.When.Source.Kind);
+            Assert.Equal(BuiltInProperties.RedlineReached, rule.When.Source.Name);
+            Assert.Equal(TargetKind.LegacyScreen, rule.Show.Kind);
+            Assert.Equal(brackets.Id, rule.Show.ScreenId);
+            Assert.Equal(HoldKind.WhileActive, rule.Hold.Kind);
+            Assert.True(string.IsNullOrEmpty(rule.EligibleRaw));
+            Assert.Equal(RuleEligibility.InGame, rule.Eligible);
         }
 
         [Fact]
@@ -153,6 +220,28 @@ namespace FanaBridge.Tests.Display.Host
             Assert.Single(a.Legacy.Screens);
             Assert.Single(b.Legacy.Screens);
             Assert.Equal(a.Legacy.Screens[0].Id, b.Legacy.Screens[0].Id);
+        }
+
+        [Fact]
+        public void TrySynthesize_NoneIsFalse_SimpleModesGraftSingleBase()
+        {
+            Assert.False(LegacyModeMigration.TrySynthesize(DisplaySettings.ModeNone, out _));
+
+            var leg = new LegacyRuleSet();
+            Assert.True(LegacyModeMigration.TrySynthesize("Speed", out var graft));
+            graft(leg);
+            Assert.Single(leg.Screens);
+            Assert.Equal(LegacyContentKind.Speed, leg.Screens[0].ContentKind);
+            Assert.True(leg.Screens[0].InRotation);
+            Assert.Equal(leg.Screens[0].Id, leg.BaseScreenId);
+            Assert.Empty(leg.Rules);
+
+            // Unknown mode → Gear single base (driver unknown-mode fallback).
+            var unknown = new LegacyRuleSet();
+            Assert.True(LegacyModeMigration.TrySynthesize("someFutureMode", out var g2));
+            g2(unknown);
+            Assert.Single(unknown.Screens);
+            Assert.Equal(LegacyContentKind.Gear, unknown.Screens[0].ContentKind);
         }
 
         // Local mirror of the runtime gate (Host tests don't need DisplayRuleStack).

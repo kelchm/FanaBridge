@@ -355,22 +355,20 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(1, h.UpdateCalls);
         }
 
-        // ── Migrated mode path vs classic driver byte parity ─────────────
+        // ── Migrated mode path vs classic driver byte parity (P10a re-anchor) ─
 
         [Theory]
         [InlineData("Gear", "1", 0.0, 0.0, 0.0)]
         [InlineData("Gear", "R", 0.0, 0.0, 0.0)]
         [InlineData("Speed", "1", 88.0, 0.0, 0.0)]
         [InlineData("Speed", "1", 120.4, 0.0, 0.0)]
-        [InlineData("GearUpshiftBrackets", "3", 0.0, 5000.0, 0.0)]
-        [InlineData("GearUpshiftBrackets", "3", 0.0, 5000.0, 1.0)]
         public void MigratedRulePath_TimingFreeModes_ByteIdenticalToClassicDriver(
             string mode, string gear, double speedLocal, double rpms, double redLine)
         {
             // Cross-path: classic mode driver sequence vs migrated rule path for the
             // same live frame sequence — RecordingTransport both sides.
-            string kind = mode == "GearUpshiftBrackets" ? "gearBrackets"
-                : mode == "Speed" ? "speed" : "gear";
+            // Spec P10a: Speed/Gear modes — untouched strict parity.
+            string kind = mode == "Speed" ? "speed" : "gear";
             string configJson =
                 "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"m1\", "
                 + "\"screens\": [ { \"id\": \"m1\", \"name\": \"M\", "
@@ -409,38 +407,155 @@ namespace FanaBridge.Tests.Display
             }
         }
 
+        // Spec P10a: GearUpshiftBrackets → Gear base + Redline overlay of GearBrackets.
+        [Theory]
+        [InlineData("3", 5000.0, 0.0)]
+        [InlineData("3", 5000.0, 1.0)]
+        [InlineData("3", 0.0, 1.0)] // engine-off: both paths suppress brackets
+        public void MigratedGearUpshiftBrackets_Trio_ByteIdenticalToClassicDriver(
+            string gear, double rpms, double redLine)
+        {
+            var settings = new DisplaySettings { DisplayMode = "GearUpshiftBrackets" };
+            var migrated = LegacyModeMigration.Apply(settings, null);
+            string configJson = DisplayConfigSerializer.Save(migrated);
+
+            var classic = new RecordingTransport();
+            var classicDriver = new LegacyDisplayDriver(
+                new DisplayEncoder(classic),
+                new DisplaySettings { DisplayMode = "GearUpshiftBrackets" });
+
+            var rule = Harness.Create(configJson, displayMode: "GearUpshiftBrackets");
+            rule.Control.Land(1);
+
+            var frames = new[]
+            {
+                Live(gear: gear, rpms: rpms, redLine: redLine),
+                Live(gear: gear, rpms: rpms, redLine: redLine),
+                Live(gear: "4", rpms: rpms, redLine: redLine),
+                Live(gear: "4", rpms: rpms + 500, redLine: redLine > 0 ? 0.0 : 1.0),
+            };
+
+            foreach (var f in frames)
+            {
+                classicDriver.Update(f);
+                rule.DriveFrame(f, useRulePath: true);
+            }
+
+            Assert.Equal(classic.SentCol01Reports.Count, rule.Transport.SentCol01Reports.Count);
+            for (int i = 0; i < classic.SentCol01Reports.Count; i++)
+            {
+                Assert.Equal(
+                    classic.SentCol01Reports[i],
+                    rule.Transport.SentCol01Reports[i]);
+            }
+        }
+
+        // Spec P10a: GearAndSpeed trio on injected clock — base Speed + Changes 2s overlay,
+        // including mid-window extension on gear change. Edge first-sample never fires
+        // (engine contract); first real change starts the window.
         [Fact]
         public void MigratedGearAndSpeed_RulePath_InjectedClock_Sequence()
         {
-            // Timing-dependent overlay: assert on the rule path's injected clock only
-            // (formatter parity already covers per-frame; strict cross-path equality is
-            // not required because the classic driver uses DateTime.UtcNow).
-            const string configJson =
-                "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"gs\", "
-                + "\"screens\": [ { \"id\": \"gs\", \"name\": \"Gear + Speed\", "
-                + "\"contentKind\": \"gearAndSpeed\" } ] } }";
+            var settings = new DisplaySettings { DisplayMode = "GearAndSpeed" };
+            var migrated = LegacyModeMigration.Apply(settings, null);
+            string configJson = DisplayConfigSerializer.Save(migrated);
 
             var h = Harness.Create(configJson, displayMode: "GearAndSpeed");
             h.Control.Land(1);
 
+            // First sample: Changes never fires → Speed base.
             h.T = 0;
-            h.Tick(Live(gear: "3", speedLocal: 100));
-            // Fresh gear change at T=0 → gear overlay.
-            Assert.Equal(
-                (SevenSegment.Blank, SevenSegment.Digit3, SevenSegment.Blank),
-                h.Transport.LastSegments);
-
-            h.T = LegacyValueFormatter.GearOverlayMs; // overlay expired → speed
             h.Tick(Live(gear: "3", speedLocal: 100));
             Assert.Equal(
                 (SevenSegment.Digit1, SevenSegment.Digit0, SevenSegment.Digit0),
                 h.Transport.LastSegments);
 
-            h.T += 16;
-            h.Tick(Live(gear: "4", speedLocal: 100)); // gear change → overlay again
+            // Gear change → 2s overlay.
+            h.T = 16;
+            h.Tick(Live(gear: "4", speedLocal: 100));
             Assert.Equal(
                 (SevenSegment.Blank, SevenSegment.Digit4, SevenSegment.Blank),
                 h.Transport.LastSegments);
+
+            // Mid-window re-fire extends the hold (ForDuration from each re-fire).
+            h.T = 1000;
+            h.Tick(Live(gear: "5", speedLocal: 100));
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Digit5, SevenSegment.Blank),
+                h.Transport.LastSegments);
+
+            // Still inside the extended window (fired at T=1000, hold 2000).
+            h.T = 2500;
+            h.Tick(Live(gear: "5", speedLocal: 100));
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Digit5, SevenSegment.Blank),
+                h.Transport.LastSegments);
+
+            // Window expired → Speed base.
+            h.T = 1000 + LegacyValueFormatter.GearOverlayMs;
+            h.Tick(Live(gear: "5", speedLocal: 100));
+            Assert.Equal(
+                (SevenSegment.Digit1, SevenSegment.Digit0, SevenSegment.Digit0),
+                h.Transport.LastSegments);
+        }
+
+        // P10a review round: TRUE cross-path GearAndSpeed for every frame whose bytes
+        // cannot depend on wall-clock timing — all writes land milliseconds after their
+        // gear edge, far inside the driver's 2 s window (expiry timing stays
+        // injected-clock-only, above). Also pins the two review findings: the
+        // valid→blank gear fold (blank ≡ neutral on BOTH paths → an edge → overlay)
+        // and the documented first-frame deviation (driver's int.MinValue seed shows
+        // gear on frame 1; the Changes rule never fires on a first sample → Speed).
+        [Fact]
+        public void MigratedGearAndSpeed_CrossPath_WithinWindowFramesByteIdentical()
+        {
+            var settings = new DisplaySettings { DisplayMode = "GearAndSpeed" };
+            var migrated = LegacyModeMigration.Apply(settings, null);
+            string configJson = DisplayConfigSerializer.Save(migrated);
+
+            var classic = new RecordingTransport();
+            var classicDriver = new LegacyDisplayDriver(
+                new DisplayEncoder(classic),
+                new DisplaySettings { DisplayMode = "GearAndSpeed" });
+
+            var h = Harness.Create(configJson, displayMode: "GearAndSpeed");
+            h.Control.Land(1);
+
+            // Frame 1 — the documented deviation (spec §6 / STATUS): gear vs speed.
+            h.T = 0;
+            classicDriver.Update(Live(gear: "3", speedLocal: 100));
+            h.Tick(Live(gear: "3", speedLocal: 100));
+            Assert.Equal(
+                (SevenSegment.Blank, SevenSegment.Digit3, SevenSegment.Blank),
+                classic.LastSegments);
+            Assert.Equal(
+                (SevenSegment.Digit1, SevenSegment.Digit0, SevenSegment.Digit0),
+                h.Transport.LastSegments);
+
+            int classicStart = classic.SentCol01Reports.Count;
+            int ruleStart = h.Transport.SentCol01Reports.Count;
+
+            var frames = new[]
+            {
+                Live(gear: "4", speedLocal: 100),   // change → gear overlay, both paths
+                Live(gear: "4", speedLocal: 100),   // steady in-window → change-gated
+                Live(gear: "", speedLocal: 100),    // valid→blank folds to neutral → edge
+                Live(gear: "5", speedLocal: 100),   // blank→5 → edge
+            };
+            foreach (var f in frames)
+            {
+                h.T += 16;
+                classicDriver.Update(f);
+                h.Tick(f);
+            }
+
+            var classicSeq = classic.SentCol01Reports.GetRange(
+                classicStart, classic.SentCol01Reports.Count - classicStart);
+            var ruleSeq = h.Transport.SentCol01Reports.GetRange(
+                ruleStart, h.Transport.SentCol01Reports.Count - ruleStart);
+            Assert.Equal(classicSeq.Count, ruleSeq.Count);
+            for (int i = 0; i < classicSeq.Count; i++)
+                Assert.Equal(classicSeq[i], ruleSeq[i]);
         }
 
         [Fact]

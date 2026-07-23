@@ -8,16 +8,14 @@ namespace FanaBridge.Display.Legacy
     /// <summary>
     /// Pure content → text / segment formatting for legacy virtual pages. No transport,
     /// no clock, no mutation: callers inject GameData-shaped values (and, for Property,
-    /// an <see cref="IPropertyReader"/>). The four absorbed <see cref="LegacyDisplayDriver"/>
-    /// modes (Speed / Gear / GearAndSpeed / GearBrackets) reproduce that driver's
-    /// read/render semantics exactly (SpeedLocal, clamps, ParseGear, bracket rule); the
-    /// GearAndSpeed 2 s overlay is selected by the injected timestamps rather than
-    /// DateTime.UtcNow.
+    /// an <see cref="IPropertyReader"/>). Pure content kinds (Speed / Gear / GearBrackets
+    /// / …) reproduce the driver's read/render semantics; composite behavior (post-shift
+    /// overlay, redline gate) lives in triggers, not here.
     /// </summary>
     public static class LegacyValueFormatter
     {
-        /// <summary>Duration of the post-shift gear overlay in GearAndSpeed mode —
-        /// matches <c>LegacyDisplayDriver</c>'s 2 s window.</summary>
+        /// <summary>Post-shift gear overlay duration used by migration synthesis
+        /// (ForDuration hold) — matches <c>LegacyDisplayDriver</c>'s 2 s window.</summary>
         public const int GearOverlayMs = 2000;
 
         // ── Per-kind formatters → display string ─────────────────────────
@@ -32,29 +30,14 @@ namespace FanaBridge.Display.Legacy
             => CenterGear(ParseGear(gear));
 
         /// <summary>
-        /// Gear for <see cref="GearOverlayMs"/> after <paramref name="gearChangedAtMs"/>,
-        /// else speed — clock-injected stand-in for the driver's DateTime overlay.
-        /// </summary>
-        public static string FormatGearAndSpeed(
-            string gear, double speedLocal, long gearChangedAtMs, long nowMs)
-        {
-            if (nowMs - gearChangedAtMs < GearOverlayMs)
-                return FormatGear(gear);
-            return FormatSpeed(speedLocal);
-        }
-
-        /// <summary>
-        /// Gear glyph, optionally wrapped in brackets when both RPMs &gt; 0 and the
-        /// redline-reached flag is set (same gate as GearUpshiftBrackets).
+        /// Gear glyph always wrapped in brackets ("[3]", "[R]"). Pure render — the
+        /// redline decision is a trigger (builtIn RedlineReached), not embedded here.
         /// Bracketed form is recognized by <see cref="Render"/>.
         /// </summary>
-        public static string FormatGearBrackets(
-            string gear, double rpms, double redLineReached)
+        public static string FormatGearBrackets(string gear)
         {
-            int g = ParseGear(gear);
-            bool brackets = rpms > 0 && redLineReached > 0;
-            string glyph = GearToString(g);
-            return brackets ? "[" + glyph + "]" : CenterGear(g);
+            string glyph = GearToString(ParseGear(gear));
+            return "[" + glyph + "]";
         }
 
         /// <summary>Rpms/10, clamped 0–999, zero-padded to 3 digits.</summary>

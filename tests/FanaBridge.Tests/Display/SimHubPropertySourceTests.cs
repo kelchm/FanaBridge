@@ -131,6 +131,49 @@ namespace FanaBridge.Tests.Display
             Assert.True(limiter);
         }
 
+        // Spec P10a: RedlineReached mirrors driver guard Rpms > 0 && redline flag.
+        [Theory]
+        [InlineData(0.0, 1.0, false)]   // engine off — no brackets even if flag set
+        [InlineData(5000.0, 0.0, false)] // spinning under redline
+        [InlineData(8000.0, 1.0, true)]  // redline reached with engine on
+        public void RedlineReached_MatchesDriverGuard(double rpms, double redLine, bool expected)
+        {
+            Assert.Contains(BuiltInProperties.RedlineReached, BuiltInProperties.All);
+            Assert.True(BuiltInProperties.IsKnown(BuiltInProperties.RedlineReached));
+
+            var s = NewStatus();
+            Set(s, "Rpms", rpms);
+            Set(s, "CarSettings_RPMRedLineReached", redLine);
+            var source = new SimHubPropertySource();
+            source.BeginFrame(null, Data(s));
+
+            Assert.True(source.TryGetBool(BuiltIn(BuiltInProperties.RedlineReached), out bool value));
+            Assert.Equal(expected, value);
+            Assert.True(source.TryGetNumber(BuiltIn(BuiltInProperties.RedlineReached), out double n));
+            Assert.Equal(expected ? 1.0 : 0.0, n);
+        }
+
+        // P10a review round: blank/unparseable gear folds to neutral — the same fold
+        // as LegacyDisplayDriver.ParseGear, so valid→blank is a gear EDGE on both
+        // paths (the migrated gear-change overlay depends on it). R stays distinct.
+        [Theory]
+        [InlineData("", 0.0)]
+        [InlineData("   ", 0.0)]
+        [InlineData("???", 0.0)]
+        [InlineData("N", 0.0)]
+        [InlineData("R", -1.0)]
+        [InlineData("4", 4.0)]
+        public void Gear_BlankAndUnparseableFoldToNeutral(string gear, double expected)
+        {
+            var s = NewStatus();
+            Set(s, "Gear", gear);
+            var source = new SimHubPropertySource();
+            source.BeginFrame(null, Data(s));
+
+            Assert.True(source.TryGetNumber(BuiltIn(BuiltInProperties.Gear), out double value));
+            Assert.Equal(expected, value);
+        }
+
         [Fact]
         public void BuiltIn_NamesMatchCaseInsensitively()
         {
@@ -166,13 +209,18 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Gear_Unparsable_FailsTheRead()
+        public void Gear_Unparsable_FoldsToNeutral()
         {
+            // Re-anchored in the P10a review round (was: fails the read). Blank and
+            // unparseable gear now fold to neutral, matching LegacyDisplayDriver.ParseGear
+            // — cross-path parity for the migrated gear-change overlay requires the same
+            // edges on both paths (see Gear_BlankAndUnparseableFoldToNeutral).
             var s = FullStatus();
             Set(s, "Gear", "?");
             var source = new SimHubPropertySource();
             source.BeginFrame(null, Data(s));
-            Assert.False(source.TryGetNumber(BuiltIn(BuiltInProperties.Gear), out _));
+            Assert.True(source.TryGetNumber(BuiltIn(BuiltInProperties.Gear), out double value));
+            Assert.Equal(0.0, value);
         }
 
         [Fact]

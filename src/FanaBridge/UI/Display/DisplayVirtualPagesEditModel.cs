@@ -244,8 +244,7 @@ namespace FanaBridge.UI.Display
                 case LegacyContentKind.Text: return "Text";
                 case LegacyContentKind.Speed: return "Speed";
                 case LegacyContentKind.Gear: return "Gear";
-                case LegacyContentKind.GearAndSpeed: return "Gear + Speed";
-                case LegacyContentKind.GearBrackets: return "Gear + Upshift Brackets";
+                case LegacyContentKind.GearBrackets: return "Gear (brackets)";
                 case LegacyContentKind.Rpm: return "RPM";
                 case LegacyContentKind.Position: return "Position";
                 case LegacyContentKind.Fuel: return "Fuel";
@@ -348,7 +347,6 @@ namespace FanaBridge.UI.Display
             LegacyContentKind.Text,
             LegacyContentKind.Speed,
             LegacyContentKind.Gear,
-            LegacyContentKind.GearAndSpeed,
             LegacyContentKind.GearBrackets,
             LegacyContentKind.Rpm,
             LegacyContentKind.Position,
@@ -413,6 +411,7 @@ namespace FanaBridge.UI.Display
                 Text = s.Text,
                 ContentKindRaw = s.ContentKindRaw,
                 EffectRaw = s.EffectRaw,
+                InRotation = s.InRotation,
                 Format = s.Format,
                 ExtensionData = s.ExtensionData,
             };

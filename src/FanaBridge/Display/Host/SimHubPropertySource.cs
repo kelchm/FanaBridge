@@ -154,6 +154,9 @@ namespace FanaBridge.Display.Host
                 [BuiltInProperties.TyreTempFrontRight] = d => d.TyreTemperatureFrontRight,
                 [BuiltInProperties.TyreTempRearLeft] = d => d.TyreTemperatureRearLeft,
                 [BuiltInProperties.TyreTempRearRight] = d => d.TyreTemperatureRearRight,
+                // Mirrors LegacyDisplayDriver GearUpshiftBrackets (Rpms > 0 && redline flag).
+                [BuiltInProperties.RedlineReached] = d =>
+                    d.Rpms > 0 && d.CarSettings_RPMRedLineReached > 0 ? 1.0 : 0.0,
             };
 
         private bool TryGetBuiltIn(string name, out double value)
@@ -171,16 +174,18 @@ namespace FanaBridge.Display.Host
 
         // SimHub's gear is a string ("N", "R", "1".."9"); rules need a number.
         // N = 0, R = -1 (distinct from neutral so "Gear = -1" can watch reverse),
-        // forward gears literal. Anything unparsable fails the read.
+        // forward gears literal. Blank/unparseable coerces to neutral — the same
+        // fold as LegacyDisplayDriver.ParseGear, so a valid→blank transition is a
+        // gear EDGE on both paths (the migrated gear-change overlay depends on it).
         private static double? GearNumber(string gear)
         {
             if (string.IsNullOrEmpty(gear))
-                return null;
+                return 0;
             gear = gear.Trim().ToUpperInvariant();
             if (gear == "N" || gear == "NEUTRAL") return 0;
             if (gear == "R" || gear == "REVERSE") return -1;
             return int.TryParse(gear, NumberStyles.Integer, CultureInfo.InvariantCulture, out int g)
-                ? g : (double?)null;
+                ? g : 0;
         }
 
         // ── Named properties (memoized PluginManager lookup) ─────────────

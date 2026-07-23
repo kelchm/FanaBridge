@@ -109,10 +109,6 @@ namespace FanaBridge.Display.Runtime
         private string _lastSpecialLogged;
         private long _specialSentAtMs;   // last ACCEPTED send (keepalive origin)
 
-        // GearAndSpeed overlay state (clock-injected; matches formatter contract).
-        private int _overlayGear = int.MinValue;
-        private long _overlayGearAtMs;
-
         /// <summary>Production wiring: the director talks to the driver's lifecycle
         /// through <see cref="ItmLifecyclePageControl"/>. The shared
         /// <paramref name="properties"/> is the runtime's SimHubPropertySource (also
@@ -716,24 +712,8 @@ namespace FanaBridge.Display.Runtime
                 case LegacyContentKind.Gear:
                     return d == null ? null : LegacyValueFormatter.FormatGear(d.Gear);
 
-                case LegacyContentKind.GearAndSpeed:
-                    if (d == null)
-                        return null;
-                    int gear = LegacyValueFormatter.ParseGear(d.Gear);
-                    long now = _now();
-                    if (gear != _overlayGear)
-                    {
-                        _overlayGear = gear;
-                        _overlayGearAtMs = now;
-                    }
-                    return LegacyValueFormatter.FormatGearAndSpeed(
-                        d.Gear, d.SpeedLocal, _overlayGearAtMs, now);
-
                 case LegacyContentKind.GearBrackets:
-                    return d == null
-                        ? null
-                        : LegacyValueFormatter.FormatGearBrackets(
-                            d.Gear, d.Rpms, d.CarSettings_RPMRedLineReached);
+                    return d == null ? null : LegacyValueFormatter.FormatGearBrackets(d.Gear);
 
                 case LegacyContentKind.Rpm:
                     return d == null ? null : LegacyValueFormatter.FormatRpm(d.Rpms);

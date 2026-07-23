@@ -904,10 +904,11 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void RoundTrip_LegacyScreen_PreservesEveryContentKindAndEffect()
         {
+            // Spec P10a: GearAndSpeed removed from the closed set (degrades as Unknown).
             var kinds = new[]
             {
                 LegacyContentKind.Text, LegacyContentKind.Speed, LegacyContentKind.Gear,
-                LegacyContentKind.GearAndSpeed, LegacyContentKind.GearBrackets,
+                LegacyContentKind.GearBrackets,
                 LegacyContentKind.Rpm, LegacyContentKind.Position, LegacyContentKind.Fuel,
                 LegacyContentKind.Message, LegacyContentKind.Property,
             };
@@ -988,6 +989,77 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("hologram", reloaded.Legacy.Screens[0].ContentKindRaw);
             Assert.Equal("shimmer", reloaded.Legacy.Screens[0].EffectRaw);
             Assert.Equal(saved, DisplayConfigSerializer.Save(reloaded));
+        }
+
+        // Spec P10a: removed GearAndSpeed spelling degrades like any unknown kind —
+        // screen kept, excluded from survivors, targeting rule degraded; raw survives.
+        [Fact]
+        public void GearAndSpeed_Spelling_DegradesAsUnknown_ByteIdenticalRoundTrip()
+        {
+            string original =
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"gs\", \"name\": \"Gear + Speed\", \"contentKind\": \"gearAndSpeed\" }, "
+                + "{ \"id\": \"ok\", \"text\": \"FN1\" } "
+                + "], \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
+                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"gs\" } } "
+                + "] } }";
+
+            var config = Load(original, out var warnings);
+            Assert.Equal(2, config.Legacy.Screens.Count);
+            var composite = config.Legacy.Screens[0];
+            Assert.Equal("gearAndSpeed", composite.ContentKindRaw);
+            Assert.Equal(LegacyContentKind.Unknown, composite.ContentKind);
+            Assert.Contains(warnings, w => w.Contains("gearAndSpeed"));
+            Assert.True(config.Legacy.Rules[0].DegradedAtLoad);
+            Assert.Contains(warnings, w => w.Contains("gs") && w.Contains("does not exist"));
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"gearAndSpeed\"", saved);
+            var reloaded = Load(saved, out _);
+            Assert.Equal("gearAndSpeed", reloaded.Legacy.Screens[0].ContentKindRaw);
+            Assert.Equal(saved, DisplayConfigSerializer.Save(reloaded));
+        }
+
+        // Spec P10a: inRotation schema — absent → true; false serializes; true suppressed.
+        [Fact]
+        public void InRotation_RoundTrip_AbsentTrue_FalseSerializes_TrueSuppressed()
+        {
+            var absent = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"a\", \"text\": \"AAA\" } ] } }", out _);
+            Assert.True(Assert.Single(absent.Legacy.Screens).InRotation);
+
+            var explicitFalse = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"b\", \"text\": \"BBB\", \"inRotation\": false } ] } }", out _);
+            Assert.False(Assert.Single(explicitFalse.Legacy.Screens).InRotation);
+            string savedFalse = DisplayConfigSerializer.Save(explicitFalse);
+            Assert.Contains("\"inRotation\": false", savedFalse);
+
+            var explicitTrue = new DisplayCustomizationConfig();
+            explicitTrue.Legacy.Screens.Add(new LegacyScreen
+            {
+                Id = "c",
+                Text = "CCC",
+                ContentKind = LegacyContentKind.Text,
+                InRotation = true,
+            });
+            string savedTrue = DisplayConfigSerializer.Save(explicitTrue);
+            Assert.DoesNotContain("inRotation", savedTrue);
+
+            // Unknown members on a screen with inRotation survive (S1 discipline).
+            string withFuture =
+                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                + "{ \"id\": \"d\", \"text\": \"DDD\", \"inRotation\": false, "
+                + "\"futureWidget\": 7 } ] } }";
+            var withExt = Load(withFuture, out _);
+            Assert.False(withExt.Legacy.Screens[0].InRotation);
+            string savedExt = DisplayConfigSerializer.Save(withExt);
+            Assert.Contains("\"inRotation\": false", savedExt);
+            Assert.Contains("\"futureWidget\": 7", savedExt);
+            Assert.Equal(savedExt, DisplayConfigSerializer.Save(Load(savedExt, out _)));
         }
 
         [Fact]

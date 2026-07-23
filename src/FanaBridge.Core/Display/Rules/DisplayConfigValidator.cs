@@ -211,7 +211,6 @@ namespace FanaBridge.Display.Rules
 
                     case LegacyContentKind.Speed:
                     case LegacyContentKind.Gear:
-                    case LegacyContentKind.GearAndSpeed:
                     case LegacyContentKind.GearBrackets:
                     case LegacyContentKind.Rpm:
                     case LegacyContentKind.Position:

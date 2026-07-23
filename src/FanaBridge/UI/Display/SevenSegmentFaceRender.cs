@@ -68,14 +68,8 @@ namespace FanaBridge.UI.Display
                 case LegacyContentKind.Gear:
                     return LegacyValueFormatter.FormatGear(DemoGear);
 
-                case LegacyContentKind.GearAndSpeed:
-                    // Outside the overlay window → speed (demo has no recent shift).
-                    return LegacyValueFormatter.FormatGearAndSpeed(
-                        DemoGear, DemoSpeed, gearChangedAtMs: 0, nowMs: LegacyValueFormatter.GearOverlayMs + 1);
-
                 case LegacyContentKind.GearBrackets:
-                    return LegacyValueFormatter.FormatGearBrackets(
-                        DemoGear, rpms: DemoRpm, redLineReached: 0);
+                    return LegacyValueFormatter.FormatGearBrackets(DemoGear);
 
                 case LegacyContentKind.Rpm:
                     return LegacyValueFormatter.FormatRpm(DemoRpm);

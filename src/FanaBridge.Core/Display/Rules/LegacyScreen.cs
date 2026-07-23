@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.ComponentModel;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using FanaBridge.Protocol;
@@ -23,9 +24,8 @@ namespace FanaBridge.Display.Rules
         Speed,
         /// <summary>Parsed gear glyph, centered (absorbed LegacyDisplayDriver mode).</summary>
         Gear,
-        /// <summary>Speed with a 2 s gear overlay after each shift (clock-injected).</summary>
-        GearAndSpeed,
-        /// <summary>Gear with redline brackets (absorbed GearUpshiftBrackets mode).</summary>
+        /// <summary>Parsed gear glyph always drawn in brackets ("[3]") — pure render;
+        /// redline membership is a trigger, not embedded here.</summary>
         GearBrackets,
         /// <summary>Rpms/10, clamped 0–999.</summary>
         Rpm,
@@ -160,6 +160,15 @@ namespace FanaBridge.Display.Rules
         /// Other kinds ignore this field.</summary>
         [JsonProperty("source")]
         public PropertySpec Source { get; set; }
+
+        /// <summary>
+        /// Rotation membership for the segment display. Default true (absent → true;
+        /// true is suppressed on save). Overlay-only screens set this false — they are
+        /// rule targets that never serve as base. Consumed in P10b; inert this phase.
+        /// </summary>
+        [JsonProperty("inRotation")]
+        [DefaultValue(true)]
+        public bool InRotation { get; set; } = true;
 
         /// <summary>
         /// Reserved format key, uninterpreted in v1. Non-empty unknown text is cleared
