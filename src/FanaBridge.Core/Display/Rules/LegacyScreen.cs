@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using FanaBridge.Protocol;
 
 namespace FanaBridge.Display.Rules
@@ -165,6 +167,12 @@ namespace FanaBridge.Display.Rules
         /// </summary>
         [JsonProperty("format")]
         public string Format { get; set; }
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips — a future version's fields must survive load → save (the
+        /// member-level complement of the EnumText unknown-value discipline).</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
 
         /// <summary>
         /// Whether <paramref name="text"/> renders on the 7-segment display: 1–3 display

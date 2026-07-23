@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using FanaBridge.Protocol;
 
 namespace FanaBridge.Display.Rules
@@ -136,6 +137,12 @@ namespace FanaBridge.Display.Rules
         /// hovering at the threshold cannot flap the display. Default 0 (none).</summary>
         [JsonProperty("hysteresis")]
         public double? Hysteresis { get; set; }
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips — a future version's fields must survive load → save (the
+        /// member-level complement of the EnumText unknown-value discipline).</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 
     /// <summary>What a winning rule shows. Flat and kind-discriminated, like
@@ -299,6 +306,12 @@ namespace FanaBridge.Display.Rules
             get => _command ?? (_command = SpecialCommands.Parse(_commandRaw)).Value;
             set { _command = value; _commandRaw = SpecialCommands.Write(value); }
         }
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips — a future version's fields must survive load → save (the
+        /// member-level complement of the EnumText unknown-value discipline).</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 
     /// <summary>How long an activation lives once its condition fires.</summary>
@@ -354,6 +367,12 @@ namespace FanaBridge.Display.Rules
         [JsonProperty("durationMs")]
         [DefaultValue(DefaultDurationMs)]
         public int DurationMs { get; set; } = DefaultDurationMs;
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips — a future version's fields must survive load → save (the
+        /// member-level complement of the EnumText unknown-value discipline).</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 
     /// <summary>When a rule is allowed to compete: while telemetry flows (in-game), only
@@ -447,5 +466,11 @@ namespace FanaBridge.Display.Rules
         /// <summary>Load-time coercion that changes only what the engine sees; see
         /// <see cref="HoldSpec.CoerceKind"/>.</summary>
         internal void CoerceEligible(RuleEligibility eligible) => _eligible = eligible;
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips — a future version's fields must survive load → save (the
+        /// member-level complement of the EnumText unknown-value discipline).</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 }

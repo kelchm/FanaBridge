@@ -28,6 +28,10 @@ namespace FanaBridge.Display.Host
                     displayControl = DisplaySettings.ControlLegacy;
             }
 
+            // Scalar whitelist: every display settings key this build reads/writes is listed
+            // below (and mirrored in Write / WriteDefaults). Add any new key here — a key
+            // present only on the JObject (near-miss precedent: legacyModeMigrated) is
+            // invisible to the codec until it is.
             return new DisplaySettings
             {
                 DisplayControl = displayControl,
@@ -55,6 +59,8 @@ namespace FanaBridge.Display.Host
             settings.DisplayControl = displayControl;
             settings.ItmEnabled = itmEnabled;
 
+            // Scalar whitelist (must stay in lockstep with Read): every new settings key
+            // must be added here too.
             destination["displayMode"] = settings.DisplayMode;
             destination["displayControl"] = displayControl;
             destination["itmEnabled"] = itmEnabled;

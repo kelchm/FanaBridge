@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using FanaBridge.Protocol;
 
 namespace FanaBridge.Display.Rules
@@ -21,8 +22,10 @@ namespace FanaBridge.Display.Rules
         /// <summary>Current schema version for new documents.</summary>
         public const int CurrentSchemaVersion = 1;
 
-        /// <summary>Document format version — newer versions load leniently (unknown
-        /// fields ignored, unknown enum values degrade per rule) with a warning.</summary>
+        /// <summary>Document format version. Newer versions load leniently (unknown
+        /// members preserved via <see cref="ExtensionData"/>, unknown enum values degrade
+        /// per rule) with a warning. A loaded document keeps its version on save —
+        /// never re-stamp a document this build can only partially represent.</summary>
         [JsonProperty("schemaVersion", Order = -2)]
         public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -46,6 +49,12 @@ namespace FanaBridge.Display.Rules
         [JsonProperty("fieldMappings")]
         public Dictionary<ushort, FieldMapping> FieldMappings { get; set; }
             = new Dictionary<ushort, FieldMapping>();
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips — a future version's fields must survive load → save (the
+        /// member-level complement of the EnumText unknown-value discipline).</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
 
         /// <summary>
         /// True when the document customizes nothing: no rules on either surface, no
@@ -85,6 +94,12 @@ namespace FanaBridge.Display.Rules
             get => EnumText.ParseNullable<ItmPage>(BasePageRaw) ?? ItmPage.LapInfo;
             set => BasePageRaw = EnumText.Write(value);
         }
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips — a future version's fields must survive load → save (the
+        /// member-level complement of the EnumText unknown-value discipline).</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 
     /// <summary>The legacy 7-segment surface's rule list, screen library, and base screen.</summary>
@@ -102,6 +117,12 @@ namespace FanaBridge.Display.Rules
         /// <summary>The screen library rules pick targets from.</summary>
         [JsonProperty("screens")]
         public List<LegacyScreen> Screens { get; set; } = new List<LegacyScreen>();
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips — a future version's fields must survive load → save (the
+        /// member-level complement of the EnumText unknown-value discipline).</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 
     /// <summary>
@@ -125,5 +146,11 @@ namespace FanaBridge.Display.Rules
         /// </summary>
         [JsonProperty("format")]
         public string Format { get; set; }
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips — a future version's fields must survive load → save (the
+        /// member-level complement of the EnumText unknown-value discipline).</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 }

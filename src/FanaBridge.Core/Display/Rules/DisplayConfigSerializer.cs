@@ -6,13 +6,15 @@ namespace FanaBridge.Display.Rules
     /// <summary>
     /// JSON persistence for <see cref="DisplayCustomizationConfig"/>, following the wheel
     /// profile conventions: camelCase property and enum names, null/default suppression,
-    /// and lenient loading — unknown fields are ignored, unknown enum values degrade per
-    /// rule (their text is preserved verbatim, see <see cref="EnumText"/>, so a save
-    /// after a load never destroys what a future version wrote), and a document that
-    /// cannot be parsed at all yields defaults with a warning. Loading never throws: the
-    /// config rides per-device settings, and a bad document must cost its bad elements,
-    /// never the device. Every load runs <see cref="DisplayConfigValidator.Normalize"/>,
-    /// so a loaded config always satisfies the rule engine's invariants as-is.
+    /// and lenient loading — unknown members are preserved via
+    /// <see cref="DisplayCustomizationConfig.ExtensionData"/> (and the same bag on every
+    /// schema-closure type), unknown enum values degrade per rule (their text is preserved
+    /// verbatim, see <see cref="EnumText"/>, so a save after a load never destroys what a
+    /// future version wrote), and a document that cannot be parsed at all yields defaults
+    /// with a warning. Loading never throws: the config rides per-device settings, and a
+    /// bad document must cost its bad elements, never the device. Every load runs
+    /// <see cref="DisplayConfigValidator.Normalize"/>, so a loaded config always satisfies
+    /// the rule engine's invariants as-is.
     /// </summary>
     public static class DisplayConfigSerializer
     {

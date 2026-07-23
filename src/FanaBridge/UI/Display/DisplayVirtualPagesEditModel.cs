@@ -183,7 +183,12 @@ namespace FanaBridge.UI.Display
                 if (string.IsNullOrEmpty(name))
                     s.Source = null;
                 else
-                    s.Source = new PropertySpec { Kind = kind, Name = name };
+                    s.Source = new PropertySpec
+                    {
+                        Kind = kind,
+                        Name = name,
+                        ExtensionData = s.Source?.ExtensionData,
+                    };
             });
 
         /// <summary>Sets the presentation effect (None/Scroll/Blink). Flash is not offered
@@ -380,8 +385,10 @@ namespace FanaBridge.UI.Display
                     Rules = src?.Legacy?.Rules ?? new List<DisplayRule>(),
                     Screens = screens,
                     BaseScreenId = baseScreenId,
+                    ExtensionData = src?.Legacy?.ExtensionData,
                 },
                 FieldMappings = src?.FieldMappings ?? new Dictionary<ushort, FieldMapping>(),
+                ExtensionData = src?.ExtensionData,
             };
             _config = cfg;
             return cfg;
@@ -407,6 +414,7 @@ namespace FanaBridge.UI.Display
                 ContentKindRaw = s.ContentKindRaw,
                 EffectRaw = s.EffectRaw,
                 Format = s.Format,
+                ExtensionData = s.ExtensionData,
             };
             // Force the cached enums from raw so a subsequent ContentKind/Effect set writes
             // both raw and cache (same EnumText pattern as the rest of the schema).
@@ -418,6 +426,7 @@ namespace FanaBridge.UI.Display
                 {
                     KindRaw = s.Source.KindRaw,
                     Name = s.Source.Name,
+                    ExtensionData = s.Source.ExtensionData,
                 };
             }
             return clone;

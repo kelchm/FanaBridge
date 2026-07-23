@@ -254,7 +254,12 @@ namespace FanaBridge.UI.Display
 
             var mappings = CopyMappings();
             mappings.TryGetValue(paramId, out var existing);
-            var source = new PropertySpec { Kind = kind, Name = name };
+            var source = new PropertySpec
+            {
+                Kind = kind,
+                Name = name,
+                ExtensionData = existing?.Source?.ExtensionData,
+            };
             string format = existing?.Format;
 
             // Default source + no non-default format → drop (same prune as SetFormat).
@@ -269,6 +274,7 @@ namespace FanaBridge.UI.Display
             {
                 Source = source,
                 Format = format,
+                ExtensionData = existing?.ExtensionData,
             };
             return Commit(mappings);
         }
@@ -306,6 +312,7 @@ namespace FanaBridge.UI.Display
             {
                 Source = source,
                 Format = format,
+                ExtensionData = existing?.ExtensionData,
             };
             return Commit(mappings);
         }
@@ -402,6 +409,7 @@ namespace FanaBridge.UI.Display
                 Itm = src?.Itm ?? new ItmRuleSet(),
                 Legacy = src?.Legacy ?? new LegacyRuleSet(),
                 FieldMappings = mappings,
+                ExtensionData = src?.ExtensionData,
             };
             _config = cfg;
             return cfg;

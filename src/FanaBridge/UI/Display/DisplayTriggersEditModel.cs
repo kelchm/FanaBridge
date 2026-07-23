@@ -241,7 +241,7 @@ namespace FanaBridge.UI.Display
             int i = IndexOf(rules, draft.Id);
             if (i < 0)
                 return _config;
-            rules[i] = BuildRule(draft, forceNewId: false);
+            rules[i] = BuildRule(draft, forceNewId: false, existing: rules[i]);
             return Commit(rules);
         }
 
@@ -955,9 +955,11 @@ namespace FanaBridge.UI.Display
                 {
                     Rules = rules,
                     BasePageRaw = basePageRaw,
+                    ExtensionData = src?.Itm?.ExtensionData,
                 },
                 Legacy = src?.Legacy ?? new LegacyRuleSet(),
                 FieldMappings = src?.FieldMappings ?? new Dictionary<ushort, FieldMapping>(),
+                ExtensionData = src?.ExtensionData,
             };
             _config = cfg;
             return cfg;
@@ -976,8 +978,10 @@ namespace FanaBridge.UI.Display
                     Rules = rules,
                     Screens = src?.Legacy?.Screens ?? new List<LegacyScreen>(),
                     BaseScreenId = baseScreenId,
+                    ExtensionData = src?.Legacy?.ExtensionData,
                 },
                 FieldMappings = src?.FieldMappings ?? new Dictionary<ushort, FieldMapping>(),
+                ExtensionData = src?.ExtensionData,
             };
             _config = cfg;
             return cfg;
@@ -999,7 +1003,9 @@ namespace FanaBridge.UI.Display
             return -1;
         }
 
-        private DisplayRule BuildRule(RuleEdit e, bool forceNewId)
+        // The draft cannot carry unknown members, so on the update path they ride in from
+        // <paramref name="existing"/> (the rule being replaced), node for node.
+        private DisplayRule BuildRule(RuleEdit e, bool forceNewId, DisplayRule existing = null)
         {
             string id = forceNewId || string.IsNullOrEmpty(e.Id)
                 ? Guid.NewGuid().ToString("N")
@@ -1008,12 +1014,22 @@ namespace FanaBridge.UI.Display
             var when = new RuleCondition
             {
                 Kind = e.Operator,
-                Source = new PropertySpec { Kind = e.SourceKind, Name = e.SourceName },
+                Source = new PropertySpec
+                {
+                    Kind = e.SourceKind,
+                    Name = e.SourceName,
+                    ExtensionData = existing?.When?.Source?.ExtensionData,
+                },
                 Value = e.Operator.RequiresValue() ? e.Value : null,
                 Hysteresis = e.Operator.IsLevel() ? e.Hysteresis : null,
+                ExtensionData = existing?.When?.ExtensionData,
             };
 
-            var show = new RuleTarget { Kind = e.TargetKind };
+            var show = new RuleTarget
+            {
+                Kind = e.TargetKind,
+                ExtensionData = existing?.Show?.ExtensionData,
+            };
             switch (e.TargetKind)
             {
                 case TargetKind.Page:
@@ -1048,7 +1064,12 @@ namespace FanaBridge.UI.Display
             HoldKind holdKind = e.Hold;
             if (holdKind == HoldKind.Unknown)
                 holdKind = e.Operator.IsLevel() ? HoldKind.WhileActive : HoldKind.ForDuration;
-            var hold = new HoldSpec { Kind = holdKind, DurationMs = e.HoldDurationMs };
+            var hold = new HoldSpec
+            {
+                Kind = holdKind,
+                DurationMs = e.HoldDurationMs,
+                ExtensionData = existing?.Hold?.ExtensionData,
+            };
 
             return new DisplayRule
             {
@@ -1059,6 +1080,7 @@ namespace FanaBridge.UI.Display
                 Show = show,
                 Hold = hold,
                 Eligible = e.Eligibility,
+                ExtensionData = existing?.ExtensionData,
             };
         }
 
@@ -1081,6 +1103,7 @@ namespace FanaBridge.UI.Display
                 Name = rule.Name,
                 Enabled = enabled,
                 EligibleRaw = rule.EligibleRaw,
+                ExtensionData = rule.ExtensionData,
             };
             if (eligibility != null)
                 clone.Eligible = eligibility.Value;
@@ -1094,7 +1117,9 @@ namespace FanaBridge.UI.Display
                     {
                         KindRaw = rule.When.Source.KindRaw,
                         Name = rule.When.Source.Name,
+                        ExtensionData = rule.When.Source.ExtensionData,
                     },
+                    ExtensionData = rule.When.ExtensionData,
                 };
             if (rule.Show != null)
                 clone.Show = new RuleTarget
@@ -1111,12 +1136,14 @@ namespace FanaBridge.UI.Display
                         : new List<string>(rule.Show.PagesRaw),
                     PeriodMs = rule.Show.PeriodMs,
                     CommandRaw = rule.Show.CommandRaw,
+                    ExtensionData = rule.Show.ExtensionData,
                 };
             if (rule.Hold != null)
                 clone.Hold = new HoldSpec
                 {
                     KindRaw = rule.Hold.KindRaw,
                     DurationMs = rule.Hold.DurationMs,
+                    ExtensionData = rule.Hold.ExtensionData,
                 };
             return clone;
         }

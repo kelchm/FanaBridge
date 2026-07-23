@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace FanaBridge.Display.Rules
 {
@@ -55,6 +56,12 @@ namespace FanaBridge.Display.Rules
         /// constant, a SimHub property name, or a FanaBridge action name.</summary>
         [JsonProperty("name")]
         public string Name { get; set; }
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips — a future version's fields must survive load → save (the
+        /// member-level complement of the EnumText unknown-value discipline).</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 
     /// <summary>
