@@ -521,7 +521,7 @@ namespace FanaBridge.Display.Runtime
         {
             if (intent.Kind == TargetKind.Special)
                 return SpecialCommands.Label(intent.Command);
-            if (intent.Kind == TargetKind.Screen)
+            if (intent.Kind == TargetKind.SegmentScreen)
                 return "screen '" + (intent.ScreenId ?? "(blank)") + "'";
             return intent.Page == null
                 // Resting without a page intent: the wheel navigated to a page
@@ -652,7 +652,7 @@ namespace FanaBridge.Display.Runtime
         /// </summary>
         private void DriveLegacyCol01(RuleIntent intent, bool inGame, GameData data)
         {
-            string screenId = intent.Kind == TargetKind.Screen ? intent.ScreenId : null;
+            string screenId = intent.Kind == TargetKind.SegmentScreen ? intent.ScreenId : null;
             LegacyScreen screen = null;
             if (!string.IsNullOrEmpty(screenId))
                 _screensById.TryGetValue(screenId, out screen);
@@ -748,7 +748,7 @@ namespace FanaBridge.Display.Runtime
         // Flag-off: exact pre-7b log-only message (byte-identical text).
         private void LogLegacyIntentChange(RuleIntent intent)
         {
-            string screenId = intent.Kind == TargetKind.Screen ? intent.ScreenId : null;
+            string screenId = intent.Kind == TargetKind.SegmentScreen ? intent.ScreenId : null;
             if (string.Equals(screenId, _lastLegacyLogged, StringComparison.Ordinal))
                 return;
             _lastLegacyLogged = screenId;

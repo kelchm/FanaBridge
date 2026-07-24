@@ -155,9 +155,11 @@ namespace FanaBridge.Display.Rules
         /// <summary>A single ITM page (<see cref="RuleTarget.Page"/>).</summary>
         Page,
         /// <summary>A named segment-display screen (<see cref="RuleTarget.ScreenId"/>).
-        /// ITM rules may target this too: it resolves to the device's segment ITM page
-        /// plus that screen on the 7-segment surface.</summary>
-        Screen,
+        /// Qualified spelling on purpose: the target kind travels inside BOTH rule sets,
+        /// so bare "screen" would be under-specified in an ITM rule. ITM rules targeting
+        /// this resolve to the device's Legacy page plus that screen on the segment
+        /// surface.</summary>
+        SegmentScreen,
         /// <summary>An ordered list of ITM pages shown in rotation every
         /// <see cref="RuleTarget.PeriodMs"/>.</summary>
         Cycle,
@@ -215,7 +217,7 @@ namespace FanaBridge.Display.Rules
             set => PageRaw = value == null ? null : EnumText.Write(value.Value);
         }
 
-        /// <summary><see cref="TargetKind.Screen"/>: the <see cref="LegacyScreen.Id"/> to show.</summary>
+        /// <summary><see cref="TargetKind.SegmentScreen"/>: the <see cref="LegacyScreen.Id"/> to show.</summary>
         [JsonProperty("screenId")]
         public string ScreenId { get; set; }
 

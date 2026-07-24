@@ -137,7 +137,7 @@ namespace FanaBridge.UI.Display
             {
                 SourceKind = PropertyKind.SimHubProperty,
                 Operator = ConditionKind.GreaterThan,
-                TargetKind = IsLegacyMode ? TargetKind.Screen : TargetKind.Page,
+                TargetKind = IsLegacyMode ? TargetKind.SegmentScreen : TargetKind.Page,
                 Page = IsLegacyMode ? (ItmPage?)null : DefaultTargetPage(),
                 ScreenId = IsLegacyMode ? DefaultScreenId() : null,
                 Eligibility = RuleEligibility.InGame,
@@ -154,7 +154,7 @@ namespace FanaBridge.UI.Display
                 SourceName = MappedControlPropertyName(role),
                 Operator = ConditionKind.IsTrue,
                 Hold = HoldKind.WhileActive,
-                TargetKind = IsLegacyMode ? TargetKind.Screen : TargetKind.Page,
+                TargetKind = IsLegacyMode ? TargetKind.SegmentScreen : TargetKind.Page,
                 Page = IsLegacyMode ? (ItmPage?)null : DefaultTargetPage(),
                 ScreenId = IsLegacyMode ? DefaultScreenId() : null,
                 Eligibility = RuleEligibility.Always,
@@ -585,7 +585,7 @@ namespace FanaBridge.UI.Display
                         parts[i] = PageShort(pages[i]);
                     return string.Join(" ⇄ ", parts);
                 }
-                case TargetKind.Screen:
+                case TargetKind.SegmentScreen:
                     return LegacyShowGlyph + " " + ScreenDisplayName(show.ScreenId);
                 case TargetKind.Special:
                     return show.Command == SpecialCommand.Unknown
@@ -1038,7 +1038,7 @@ namespace FanaBridge.UI.Display
                     }
                     show.PeriodMs = e.CyclePeriodMs;
                     break;
-                case TargetKind.Screen:
+                case TargetKind.SegmentScreen:
                     // Legacy mode authors virtual-page targets; ITM mode still carries a
                     // loaded legacy-screen id through an unrelated field edit.
                     show.ScreenId = e.ScreenId;

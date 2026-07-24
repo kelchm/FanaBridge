@@ -123,7 +123,7 @@ namespace FanaBridge.Tests.Display
             => new RuleTarget { Kind = TargetKind.Page, Page = page };
 
         private static RuleTarget Screen(string id)
-            => new RuleTarget { Kind = TargetKind.Screen, ScreenId = id };
+            => new RuleTarget { Kind = TargetKind.SegmentScreen, ScreenId = id };
 
         private static RuleTarget Cycle(int periodMs, params ItmPage[] pages)
         {
@@ -667,7 +667,7 @@ namespace FanaBridge.Tests.Display
                     Screen("pit"), While()));
 
             var r = h.Tick();
-            Assert.Equal(TargetKind.Screen, r.Intent.Kind);
+            Assert.Equal(TargetKind.SegmentScreen, r.Intent.Kind);
             Assert.Equal("spd", r.Intent.ScreenId);
             Assert.Null(r.Intent.SourceRuleId);
 
@@ -682,7 +682,7 @@ namespace FanaBridge.Tests.Display
         {
             var h = Legacy(null);
             var r = h.Tick();
-            Assert.Equal(TargetKind.Screen, r.Intent.Kind);
+            Assert.Equal(TargetKind.SegmentScreen, r.Intent.Kind);
             Assert.Null(r.Intent.ScreenId);
         }
 

@@ -556,7 +556,7 @@ namespace FanaBridge.UI.Display
                 cmd.Margin = new Thickness(0, 7, 0, 0);
                 inner.Children.Add(cmd);
             }
-            else if (_editModel.IsLegacyMode || draft.TargetKind == TargetKind.Screen)
+            else if (_editModel.IsLegacyMode || draft.TargetKind == TargetKind.SegmentScreen)
             {
                 // Legacy vocabulary: virtual page + screen DropDownCell (or special above).
                 var screen = BuildScreenCell(draft, commit);
@@ -744,9 +744,9 @@ namespace FanaBridge.UI.Display
                     }
                     else
                     {
-                        if (draft.TargetKind == TargetKind.Screen)
+                        if (draft.TargetKind == TargetKind.SegmentScreen)
                             return;
-                        draft.TargetKind = TargetKind.Screen;
+                        draft.TargetKind = TargetKind.SegmentScreen;
                         if (string.IsNullOrEmpty(draft.ScreenId)
                             && _editModel.ScreenOptions().Count > 0)
                             draft.ScreenId = _editModel.ScreenOptions()[0].Id;
@@ -832,7 +832,7 @@ namespace FanaBridge.UI.Display
             {
                 if (string.Equals(draft.ScreenId, id, StringComparison.Ordinal))
                     return;
-                draft.TargetKind = TargetKind.Screen;
+                draft.TargetKind = TargetKind.SegmentScreen;
                 draft.ScreenId = id;
                 commit();
             };

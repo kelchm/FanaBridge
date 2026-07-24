@@ -101,7 +101,7 @@ namespace FanaBridge.Tests.Display
                 RuleEligibility.Always));
             config.Itm.Rules.Add(Rule("screen",
                 Level(ConditionKind.IsTrue, BuiltInProperties.DrsEnabled),
-                new RuleTarget { Kind = TargetKind.Screen, ScreenId = "fn1" },
+                new RuleTarget { Kind = TargetKind.SegmentScreen, ScreenId = "fn1" },
                 new HoldSpec { Kind = HoldKind.WhileActive },
                 RuleEligibility.Idle));
             config.Itm.Rules.Add(Rule("cycle",
@@ -129,7 +129,7 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(RuleEligibility.Always, page.Eligible);
 
             var screen = loaded.Itm.Rules[1];
-            Assert.Equal(TargetKind.Screen, screen.Show.Kind);
+            Assert.Equal(TargetKind.SegmentScreen, screen.Show.Kind);
             Assert.Equal("fn1", screen.Show.ScreenId);
             Assert.Equal(HoldKind.WhileActive, screen.Hold.Kind);
             Assert.Equal(RuleEligibility.Idle, screen.Eligible);
@@ -151,7 +151,7 @@ namespace FanaBridge.Tests.Display
             config.Legacy.BaseScreenId = "pit";
             config.Legacy.Rules.Add(Rule("l1",
                 Level(ConditionKind.IsTrue, BuiltInProperties.DrsAvailable),
-                new RuleTarget { Kind = TargetKind.Screen, ScreenId = "pit" },
+                new RuleTarget { Kind = TargetKind.SegmentScreen, ScreenId = "pit" },
                 new HoldSpec { Kind = HoldKind.WhileActive }));
             config.FieldMappings[ItmParam.Fuel] = new FieldMapping
             {
@@ -831,7 +831,7 @@ namespace FanaBridge.Tests.Display
         public void ScreenTarget_UnknownScreenId_DisablesRule()
         {
             var config = Load(DocWithItmRule(
-                "{ \"id\": \"r1\", " + ValidWhen + ", \"show\": { \"kind\": \"screen\", \"screenId\": \"ghost\" } }"),
+                "{ \"id\": \"r1\", " + ValidWhen + ", \"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"ghost\" } }"),
                 out var warnings);
 
             Assert.True(config.Itm.Rules[0].DegradedAtLoad);
@@ -978,7 +978,7 @@ namespace FanaBridge.Tests.Display
                 + "], \"rules\": [ "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
-                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"x1\" } } "
+                + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"x1\" } } "
                 + "] } }";
 
             var config = Load(original, out var warnings);
@@ -1016,7 +1016,7 @@ namespace FanaBridge.Tests.Display
                 + "], \"rules\": [ "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
-                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"gs\" } } "
+                + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"gs\" } } "
                 + "] } }";
 
             var config = Load(original, out var warnings);

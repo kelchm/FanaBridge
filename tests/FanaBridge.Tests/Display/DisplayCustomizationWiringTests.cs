@@ -266,7 +266,7 @@ namespace FanaBridge.Tests.Display
             Assert.False(DisplayConfigSerializer.Load(
                 "{ \"segmentDisplay\": { \"screens\": [ { \"id\": \"s\", \"text\": \"P1\" } ], \"rules\": [ "
                 + "{ \"id\": \"l1\", \"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"s\" } } ] } }",
+                + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"s\" } } ] } }",
                 _ => { }).IsEmpty);
         }
 

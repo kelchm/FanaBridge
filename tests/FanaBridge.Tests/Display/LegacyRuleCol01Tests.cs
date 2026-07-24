@@ -217,7 +217,7 @@ namespace FanaBridge.Tests.Display
             + "\"segmentDisplay\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
             + "\"rules\": [ { \"id\": \"l1\", "
             + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-            + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
+            + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"pit\" }, "
             + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
 
         // ── Byte goldens ─────────────────────────────────────────────────
@@ -606,11 +606,11 @@ namespace FanaBridge.Tests.Display
                 + "\"rules\": [ "
                 + "{ \"id\": \"g1\", \"runs\": \"inGame\", "
                 + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
+                + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"pit\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } }, "
                 + "{ \"id\": \"a1\", \"runs\": \"always\", "
                 + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"prk\" }, "
+                + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"prk\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
 
             var h = Harness.Create(cfg);

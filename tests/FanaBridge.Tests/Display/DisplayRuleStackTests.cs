@@ -259,7 +259,7 @@ namespace FanaBridge.Tests.Display
                 "{ \"schemaVersion\": 1, "
                 + "\"itm\": { \"rules\": [ { \"id\": \"r1\", "
                 + "\"when\": { \"kind\": \"greaterThan\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Speed\" }, \"value\": 100 }, "
-                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
+                + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"pit\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] }, "
                 + "\"segmentDisplay\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ] } }";
 
@@ -283,7 +283,7 @@ namespace FanaBridge.Tests.Display
                     + "\"segmentDisplay\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
                     + "\"rules\": [ { \"id\": \"l1\", "
                     + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                    + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
+                    + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"pit\" }, "
                     + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
 
                 var h = Harness.Create(config);
@@ -582,7 +582,7 @@ namespace FanaBridge.Tests.Display
                 + "\"segmentDisplay\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
                 + "\"rules\": [ { \"id\": \"l1\", "
                 + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
+                + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"pit\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
             var h = Harness.Create(config);
             h.Control.Land(1);

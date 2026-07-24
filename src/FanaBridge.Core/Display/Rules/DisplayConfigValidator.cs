@@ -352,7 +352,7 @@ namespace FanaBridge.Display.Rules
                                 : "unrecognized page '" + t.PageRaw + "'");
                         break;
 
-                    case TargetKind.Screen:
+                    case TargetKind.SegmentScreen:
                         if (string.IsNullOrWhiteSpace(t.ScreenId))
                             Disable("no target screen id");
                         else if (!screenIds.Contains(t.ScreenId))

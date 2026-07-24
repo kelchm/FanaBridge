@@ -61,7 +61,7 @@ namespace FanaBridge.Tests.Display.Host
             Assert.Equal(ConditionKind.Changes, rule.When.Kind);
             Assert.Equal(PropertyKind.BuiltIn, rule.When.Source.Kind);
             Assert.Equal(BuiltInProperties.Gear, rule.When.Source.Name);
-            Assert.Equal(TargetKind.Screen, rule.Show.Kind);
+            Assert.Equal(TargetKind.SegmentScreen, rule.Show.Kind);
             Assert.Equal(gear.Id, rule.Show.ScreenId);
             Assert.Equal(HoldKind.ForDuration, rule.Hold.Kind);
             Assert.Equal(LegacyValueFormatter.GearOverlayMs, rule.Hold.DurationMs);
@@ -94,7 +94,7 @@ namespace FanaBridge.Tests.Display.Host
             Assert.Equal(ConditionKind.IsTrue, rule.When.Kind);
             Assert.Equal(PropertyKind.BuiltIn, rule.When.Source.Kind);
             Assert.Equal(BuiltInProperties.RedlineReached, rule.When.Source.Name);
-            Assert.Equal(TargetKind.Screen, rule.Show.Kind);
+            Assert.Equal(TargetKind.SegmentScreen, rule.Show.Kind);
             Assert.Equal(brackets.Id, rule.Show.ScreenId);
             Assert.Equal(HoldKind.WhileActive, rule.Hold.Kind);
             Assert.True(string.IsNullOrEmpty(rule.EligibleRaw));

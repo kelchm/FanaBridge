@@ -37,7 +37,7 @@ namespace FanaBridge.Tests.Display
                 (n, i) => Rule("itm" + i, n, "{ \"kind\": \"page\", \"page\": \"tyreTemps\" }")));
             string? legacyRule = names.Length > 0
                 ? Rule("leg0", names[names.Length - 1],
-                    "{ \"kind\": \"screen\", \"screenId\": \"S1\" }")
+                    "{ \"kind\": \"segmentScreen\", \"screenId\": \"S1\" }")
                 : null;
 
             return Load("{ \"schemaVersion\": 1, "

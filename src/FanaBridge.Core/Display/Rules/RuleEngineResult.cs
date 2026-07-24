@@ -24,14 +24,14 @@ namespace FanaBridge.Display.Rules
             Command = command;
         }
 
-        /// <summary><see cref="TargetKind.Page"/>, <see cref="TargetKind.Screen"/>,
+        /// <summary><see cref="TargetKind.Page"/>, <see cref="TargetKind.SegmentScreen"/>,
         /// or <see cref="TargetKind.Special"/>.</summary>
         public TargetKind Kind { get; }
 
         /// <summary>The page to show, for <see cref="TargetKind.Page"/>.</summary>
         public ItmPage? Page { get; }
 
-        /// <summary>The screen to show, for <see cref="TargetKind.Screen"/>. Null means
+        /// <summary>The screen to show, for <see cref="TargetKind.SegmentScreen"/>. Null means
         /// a blank display (a legacy set with no base screen).</summary>
         public string ScreenId { get; }
 

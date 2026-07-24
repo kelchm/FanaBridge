@@ -24,7 +24,7 @@ namespace FanaBridge.Tests.Display
                 + "], \"rules\": [ "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"PitLimiterOn\" } }, "
-                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
+                + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"pit\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } "
                 + "] } }");
 
@@ -68,7 +68,7 @@ namespace FanaBridge.Tests.Display
                 ruleSet: TriggerRuleSet.Legacy);
             var text = model.ShowTextFor(new RuleTarget
             {
-                Kind = TargetKind.Screen,
+                Kind = TargetKind.SegmentScreen,
                 ScreenId = "pit",
             });
             Assert.Equal(DisplayTriggersEditModel.LegacyShowGlyph + " Pit", text);
@@ -80,7 +80,7 @@ namespace FanaBridge.Tests.Display
             var model = new DisplayTriggersEditModel(LegacyWorld(), 0,
                 ruleSet: TriggerRuleSet.Legacy);
             var draft = model.NewTelemetryDraft();
-            Assert.Equal(TargetKind.Screen, draft.TargetKind);
+            Assert.Equal(TargetKind.SegmentScreen, draft.TargetKind);
             Assert.Equal("spd", draft.ScreenId); // first survivor in document order
             Assert.Null(draft.Page);
         }
@@ -156,7 +156,7 @@ namespace FanaBridge.Tests.Display
             var cfg = model.AddRule(draft);
             Assert.Equal(2, cfg.Legacy.Rules.Count);
             var added = cfg.Legacy.Rules[1];
-            Assert.Equal(TargetKind.Screen, added.Show.Kind);
+            Assert.Equal(TargetKind.SegmentScreen, added.Show.Kind);
             Assert.Equal("pit", added.Show.ScreenId);
         }
 

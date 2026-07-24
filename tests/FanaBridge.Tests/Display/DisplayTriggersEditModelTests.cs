@@ -251,7 +251,7 @@ namespace FanaBridge.Tests.Display
                 + "\"itm\": { \"rules\": [ "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
-                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"fn1\" }, "
+                + "\"show\": { \"kind\": \"segmentScreen\", \"screenId\": \"fn1\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] }, "
                 + "\"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"fn1\", \"name\": \"FN1\", \"text\": \"FN1\" } ] } }");
@@ -265,7 +265,7 @@ namespace FanaBridge.Tests.Display
 
             var draft = DisplayTriggersEditModel.ToDraft(rule);
 
-            Assert.Equal(TargetKind.Screen, draft.TargetKind);
+            Assert.Equal(TargetKind.SegmentScreen, draft.TargetKind);
             Assert.Equal("fn1", draft.ScreenId);
         }
 
@@ -281,7 +281,7 @@ namespace FanaBridge.Tests.Display
             var cfg = model.UpdateRule(draft);
 
             var rule = Assert.Single(cfg.Itm.Rules);
-            Assert.Equal(TargetKind.Screen, rule.Show.Kind);
+            Assert.Equal(TargetKind.SegmentScreen, rule.Show.Kind);
             Assert.Equal("fn1", rule.Show.ScreenId);       // NOT dropped to null
             Assert.Equal(RuleEligibility.Always, rule.Eligible);
         }

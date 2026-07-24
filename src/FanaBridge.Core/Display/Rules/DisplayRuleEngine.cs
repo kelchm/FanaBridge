@@ -171,7 +171,7 @@ namespace FanaBridge.Display.Rules
             string baseScreenId = null, Func<long> nowMs = null, Action<string> log = null)
         {
             return new DisplayRuleEngine(rules, RuleSetKind.Legacy,
-                new RuleIntent(TargetKind.Screen, null, baseScreenId, null), null, nowMs, log);
+                new RuleIntent(TargetKind.SegmentScreen, null, baseScreenId, null), null, nowMs, log);
         }
 
         private static Func<long> DefaultClock()
@@ -551,8 +551,8 @@ namespace FanaBridge.Display.Rules
             var t = _selectionTarget;
             switch (t.Kind)
             {
-                case TargetKind.Screen:
-                    return new RuleIntent(TargetKind.Screen, null, t.ScreenId, _selectionRuleId);
+                case TargetKind.SegmentScreen:
+                    return new RuleIntent(TargetKind.SegmentScreen, null, t.ScreenId, _selectionRuleId);
                 case TargetKind.Special:
                     return new RuleIntent(TargetKind.Special, null, null, _selectionRuleId, t.Command);
                 case TargetKind.Cycle:

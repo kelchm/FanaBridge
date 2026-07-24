@@ -74,7 +74,7 @@ namespace FanaBridge.Tests.Display
           }
         },
         ""show"": {
-          ""kind"": ""screen"",
+          ""kind"": ""segmentScreen"",
           ""screenId"": ""s1""
         },
         ""hold"": {
@@ -115,7 +115,7 @@ namespace FanaBridge.Tests.Display
           }
         },
         ""show"": {
-          ""kind"": ""screen"",
+          ""kind"": ""segmentScreen"",
           ""screenId"": ""s2""
         },
         ""hold"": {
@@ -223,7 +223,7 @@ namespace FanaBridge.Tests.Display
                         Name = BuiltInProperties.BrakeBias,
                     },
                 },
-                Show = new RuleTarget { Kind = TargetKind.Screen, ScreenId = "s1" },
+                Show = new RuleTarget { Kind = TargetKind.SegmentScreen, ScreenId = "s1" },
                 Hold = new HoldSpec { Kind = HoldKind.UntilDismissed },
                 Eligible = RuleEligibility.Idle,
             });
@@ -285,7 +285,7 @@ namespace FanaBridge.Tests.Display
                         Name = BuiltInProperties.DrsAvailable,
                     },
                 },
-                Show = new RuleTarget { Kind = TargetKind.Screen, ScreenId = "s2" },
+                Show = new RuleTarget { Kind = TargetKind.SegmentScreen, ScreenId = "s2" },
                 Hold = new HoldSpec { Kind = HoldKind.WhileActive },
             });
 
