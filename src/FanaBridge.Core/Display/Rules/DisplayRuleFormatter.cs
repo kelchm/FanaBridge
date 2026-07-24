@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using FanaBridge.Protocol;
 
@@ -13,12 +14,12 @@ namespace FanaBridge.Display.Rules
     {
         /// <summary>The rule's display text: its user label when set, else
         /// <see cref="Describe"/>.</summary>
-        public static string Label(DisplayRule rule)
-            => !string.IsNullOrWhiteSpace(rule.Name) ? rule.Name : Describe(rule);
+        public static string Label(DisplayRule rule, Func<string, string> screenName = null)
+            => !string.IsNullOrWhiteSpace(rule.Name) ? rule.Name : Describe(rule, screenName);
 
         /// <summary>The full "condition → target" row for a rule.</summary>
-        public static string Describe(DisplayRule rule)
-            => DescribeCondition(rule.When) + " → " + DescribeTarget(rule.Show);
+        public static string Describe(DisplayRule rule, Func<string, string> screenName = null)
+            => DescribeCondition(rule.When) + " → " + DescribeTarget(rule.Show, screenName);
 
         /// <summary>The condition half of the row, e.g. "Fuel &lt; 10", "BrakeBias changes",
         /// "'ShowTyres' triggered".</summary>
@@ -47,8 +48,11 @@ namespace FanaBridge.Display.Rules
         }
 
         /// <summary>The target half of the row, e.g. "Car Settings",
-        /// "Fuel / ERS / DRS ⇄ Tire Temps", "screen 'FN1'".</summary>
-        public static string DescribeTarget(RuleTarget target)
+        /// "Fuel / ERS / DRS ⇄ Tire Temps", "PIT · segment screen". The optional
+        /// <paramref name="screenName"/> resolves a screen id to its library name
+        /// (callers that hold the document pass it); without one — or when the id is
+        /// unresolved — the id itself is quoted.</summary>
+        public static string DescribeTarget(RuleTarget target, Func<string, string> screenName = null)
         {
             if (target == null)
                 return "(no target)";
@@ -57,7 +61,12 @@ namespace FanaBridge.Display.Rules
                 case TargetKind.Page:
                     return PageName(target.Page);
                 case TargetKind.SegmentScreen:
-                    return "screen '" + (target.ScreenId ?? "?") + "'";
+                {
+                    string name = target.ScreenId == null ? null : screenName?.Invoke(target.ScreenId);
+                    return name != null
+                        ? name + " · segment screen"
+                        : "segment screen '" + (target.ScreenId ?? "?") + "'";
+                }
                 case TargetKind.Special:
                     return SpecialCommands.Label(target.Command);
                 case TargetKind.Cycle:

@@ -275,7 +275,7 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(SpecialCommand.WhiteScreen, loaded.Itm.Rules[2].Show.Command);
             Assert.Equal("white", loaded.Itm.Rules[2].Show.CommandRaw);
             Assert.Equal(SpecialCommand.BlankScreen, loaded.Itm.Rules[3].Show.Command);
-            Assert.Equal("blankScreen", loaded.Itm.Rules[3].Show.CommandRaw);
+            Assert.Equal("blank", loaded.Itm.Rules[3].Show.CommandRaw);
 
             // Unknown command text survives byte-for-byte through degrade + save/load.
             var unknown = Load(DocWithItmRule(
@@ -762,7 +762,7 @@ namespace FanaBridge.Tests.Display
                 + "] } }", out var warnings);
 
             Assert.True(config.Legacy.Rules[0].DegradedAtLoad);
-            Assert.Contains(warnings, w => w.Contains("legacy screens"));
+            Assert.Contains(warnings, w => w.Contains("segment screens"));
         }
 
         [Fact]
@@ -824,7 +824,7 @@ namespace FanaBridge.Tests.Display
                 + "] } }", out var warnings);
 
             Assert.True(config.Legacy.Rules[0].DegradedAtLoad);
-            Assert.Contains(warnings, w => w.Contains("legacy screens"));
+            Assert.Contains(warnings, w => w.Contains("segment screens"));
         }
 
         [Fact]
@@ -1415,6 +1415,22 @@ namespace FanaBridge.Tests.Display
             string saved = DisplayConfigSerializer.Save(config);
             Assert.Contains("\"indefinite\"", saved);
             Assert.Equal(saved, DisplayConfigSerializer.Save(Load(saved, out _)));
+        }
+
+        [Fact]
+        public void PageSegment_MisGuess_GetsTargetedHint()
+        {
+            // "segment" names the surface, not the page — the natural mis-guess.
+            // Consistency-review round: the degrade warning points at the real token.
+            var config = Load(DocWithItmRule(
+                "{ \"id\": \"r1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"segment\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } }"), out var warnings);
+
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.True(rule.DegradedAtLoad);
+            Assert.Contains(warnings,
+                w => w.Contains("page 6 is named 'legacy'"));
         }
 
         [Fact]

@@ -49,7 +49,7 @@ namespace FanaBridge.Display.Rules
                 case SpecialCommand.LogoScreen: return "logo";
                 case SpecialCommand.LogoInvertedScreen: return "logoInverted";
                 case SpecialCommand.WhiteScreen: return "white";
-                case SpecialCommand.BlankScreen: return "blankScreen";
+                case SpecialCommand.BlankScreen: return "blank";
                 default: return null;
             }
         }
@@ -66,7 +66,7 @@ namespace FanaBridge.Display.Rules
                 return SpecialCommand.LogoInvertedScreen;
             if (string.Equals(text, "white", System.StringComparison.OrdinalIgnoreCase))
                 return SpecialCommand.WhiteScreen;
-            if (string.Equals(text, "blankScreen", System.StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(text, "blank", System.StringComparison.OrdinalIgnoreCase))
                 return SpecialCommand.BlankScreen;
             return SpecialCommand.Unknown;
         }

@@ -478,14 +478,14 @@ namespace FanaBridge.UI.Display
                 {
                     RuleId = rule.Id,
                     Rank = (monitor ? rank : i + 1).ToString(),
-                    Label = DisplayRuleFormatter.Label(rule),
+                    Label = DisplayRuleFormatter.Label(rule, ScreenNameById),
                     Enabled = rule.Enabled,
                     Degraded = rule.DegradedAtLoad,
                     Draggable = true,
                     Expandable = !rule.DegradedAtLoad,
                     Eligibility = rule.DegradedAtLoad ? "" : EligibilityLabel(rule.Eligible),
                 };
-                ApplyStructuredWhen(row, rule);
+                ApplyStructuredWhen(row, rule, ScreenNameById);
                 if (haveLive)
                 {
                     var chip = DisplayOverviewRender.StateChip(state.Status, state.RemainingMs);
@@ -656,7 +656,8 @@ namespace FanaBridge.UI.Display
         // ("'Action' triggered", DescribeCondition) that the property/operator/value grammar
         // would drop and re-namespace — such rules (imported only; the editor never authors
         // them) fall back to Label to keep that framing.
-        internal static void ApplyStructuredWhen(TriggerTableRow row, DisplayRule rule)
+        internal static void ApplyStructuredWhen(TriggerTableRow row, DisplayRule rule,
+            Func<string, string> screenName = null)
         {
             if (rule.DegradedAtLoad
                 || !string.IsNullOrWhiteSpace(rule.Name)
@@ -668,7 +669,20 @@ namespace FanaBridge.UI.Display
             row.DisplayKind = w.DisplayKind;
             row.Operator = w.Operator;
             row.ValueText = w.ValueText;
-            row.TargetText = DisplayRuleFormatter.DescribeTarget(rule.Show);
+            row.TargetText = DisplayRuleFormatter.DescribeTarget(rule.Show, screenName);
+        }
+
+        /// <summary>Screen-library name for a segment-screen id (null when unknown) —
+        /// feeds the formatter so SHOW cells read "PIT · segment screen", not raw ids.</summary>
+        private string ScreenNameById(string id)
+        {
+            var screens = _config?.Legacy?.Screens;
+            if (screens == null)
+                return null;
+            foreach (var s in screens)
+                if (string.Equals(s.Id, id, StringComparison.Ordinal))
+                    return s.Name ?? s.Text;
+            return null;
         }
 
         // ── UI option mappings (operator / hold / eligibility / pages) ────

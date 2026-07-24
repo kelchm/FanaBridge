@@ -857,7 +857,7 @@ namespace FanaBridge.Tests.Display
         public void SpecialCommandChoices_FourScreens_Selected()
         {
             var choices = DisplayTriggersEditModel.SpecialCommandChoices(SpecialCommand.LogoScreen);
-            Assert.Equal(new[] { "logo", "logoInverted", "white", "blankScreen" },
+            Assert.Equal(new[] { "logo", "logoInverted", "white", "blank" },
                 choices.Items.Select(i => i.Id).ToArray());
             Assert.Equal("Fanatec logo", choices.Items[0].Label);
             Assert.Equal("logo", choices.SelectedId);

@@ -9,7 +9,7 @@ namespace FanaBridge.Display.Rules
     /// The contract is warn-and-degrade, never throw: the document arrives from
     /// per-device settings (possibly written by a future version), so a bad element costs
     /// exactly that element — an invalid rule is degraded (never dropped), an unrenderable
-    /// legacy screen is skipped, a broken field mapping is dropped — and the rest of the
+    /// segment screen is skipped, a broken field mapping is dropped — and the rest of the
     /// document loads. Degradations of things a FUTURE version may understand are
     /// runtime-only: an unrecognized kind marks the rule
     /// <see cref="DisplayRule.DegradedAtLoad"/> (the persisted
@@ -68,8 +68,8 @@ namespace FanaBridge.Display.Rules
             if (config.Itm.BasePageRaw != null
                 && EnumText.ParseNullable<ItmPage>(config.Itm.BasePageRaw) == null)
             {
-                warn("unrecognized base page '" + config.Itm.BasePageRaw + "' — using "
-                    + config.Itm.BasePage);
+                warn("unrecognized base page '" + config.Itm.BasePageRaw + "'"
+                    + PageHint(config.Itm.BasePageRaw) + " — using " + config.Itm.BasePage);
             }
 
             // Screens first: rules validate their screen targets against the survivors.
@@ -91,12 +91,12 @@ namespace FanaBridge.Display.Rules
                 // BaseScreenId so a load/save round-trip stays byte-for-byte; the runtime
                 // already resolves unknown-kind screens to blank (same as a null base).
                 warn("base screen '" + config.Legacy.BaseScreenId
-                    + "' is not usable on this build — the legacy display will be blank when no rule is active");
+                    + "' is not usable on this build — the segment display will be blank when no rule is active");
             }
             else
             {
                 warn("base screen '" + config.Legacy.BaseScreenId
-                    + "' does not exist — the legacy display will be blank when no rule is active");
+                    + "' does not exist — the segment display will be blank when no rule is active");
                 config.Legacy.BaseScreenId = null;
             }
 
@@ -108,7 +108,7 @@ namespace FanaBridge.Display.Rules
             foreach (var rule in config.Itm.Rules)
                 NormalizeRule(rule, "ITM", isLegacySet: false, screenIds, seenIds, warn);
             foreach (var rule in config.Legacy.Rules)
-                NormalizeRule(rule, "legacy", isLegacySet: true, screenIds, seenIds, warn);
+                NormalizeRule(rule, "segment", isLegacySet: true, screenIds, seenIds, warn);
 
             NormalizeFieldMappings(config.FieldMappings, warn);
             return config;
@@ -141,13 +141,13 @@ namespace FanaBridge.Display.Rules
                     continue;
                 if (string.IsNullOrWhiteSpace(screen.Id))
                 {
-                    warn("legacy screen '" + (screen.Name ?? screen.Text ?? "?")
+                    warn("segment screen '" + (screen.Name ?? screen.Text ?? "?")
                         + "' skipped — no id");
                     continue;
                 }
                 if (!seenIds.Add(screen.Id))
                 {
-                    warn("duplicate legacy screen id '" + screen.Id + "' — keeping the first");
+                    warn("duplicate segment screen id '" + screen.Id + "' — keeping the first");
                     continue;
                 }
 
@@ -155,7 +155,7 @@ namespace FanaBridge.Display.Rules
                 // effect text is left alone (treated as None by the clock, raw survives).
                 if (screen.Effect == LegacyEffect.Flash)
                 {
-                    warn("legacy screen '" + screen.Id
+                    warn("segment screen '" + screen.Id
                         + "': effect 'flash' is not implemented — using blink");
                     screen.CoerceEffect(LegacyEffect.Blink);
                 }
@@ -163,7 +163,7 @@ namespace FanaBridge.Display.Rules
                 // Format is reserved/uninterpreted in v1 — clear any non-empty text.
                 if (!string.IsNullOrEmpty(screen.Format))
                 {
-                    warn("legacy screen '" + screen.Id
+                    warn("segment screen '" + screen.Id
                         + "' — unrecognized format '" + screen.Format + "' cleared");
                     screen.Format = null;
                 }
@@ -174,7 +174,7 @@ namespace FanaBridge.Display.Rules
                     case LegacyContentKind.Text:
                         if (!LegacyScreen.IsRenderableText(screen.Text))
                         {
-                            warn("legacy screen '" + screen.Id + "' skipped — text "
+                            warn("segment screen '" + screen.Id + "' skipped — text "
                                 + (screen.Text == null ? "(none)" : "'" + screen.Text + "'")
                                 + " is not renderable (1-3 seven-segment positions)");
                             // Drop from the document (current-version broken data) and
@@ -189,7 +189,7 @@ namespace FanaBridge.Display.Rules
                     case LegacyContentKind.Message:
                         if (!LegacyScreen.IsRenderableMessage(screen.Text))
                         {
-                            warn("legacy screen '" + screen.Id + "' skipped — message "
+                            warn("segment screen '" + screen.Id + "' skipped — message "
                                 + (screen.Text == null ? "(none)" : "'" + screen.Text + "'")
                                 + " is not renderable (every char must be seven-segment, length ≥ 1)");
                             seenIds.Remove(screen.Id);
@@ -202,7 +202,7 @@ namespace FanaBridge.Display.Rules
                         string badSource = InvalidPropertySourceReason(screen.Source);
                         if (badSource != null)
                         {
-                            warn("legacy screen '" + screen.Id + "' skipped — " + badSource);
+                            warn("segment screen '" + screen.Id + "' skipped — " + badSource);
                             seenIds.Remove(screen.Id);
                             continue;
                         }
@@ -223,7 +223,7 @@ namespace FanaBridge.Display.Rules
                     default:
                         // Future-version kind: keep for the round-trip, exclude from
                         // survivors (rules targeting it degrade like a missing screen).
-                        warn("legacy screen '" + screen.Id + "' skipped — "
+                        warn("segment screen '" + screen.Id + "' skipped — "
                             + (screen.ContentKindRaw == null ? "no content kind"
                                 : "unrecognized content kind '" + screen.ContentKindRaw + "'"));
                         usable = false;
@@ -346,24 +346,24 @@ namespace FanaBridge.Display.Rules
                 {
                     case TargetKind.Page:
                         if (isLegacySet)
-                            Disable("legacy rules can only target legacy screens");
+                            Disable("segment rules can only target segment screens");
                         else if (t.Page == null)
                             Disable(t.PageRaw == null ? "no target page"
-                                : "unrecognized page '" + t.PageRaw + "'");
+                                : "unrecognized page '" + t.PageRaw + "'" + PageHint(t.PageRaw));
                         break;
 
                     case TargetKind.SegmentScreen:
                         if (string.IsNullOrWhiteSpace(t.ScreenId))
                             Disable("no target screen id");
                         else if (!screenIds.Contains(t.ScreenId))
-                            Disable("targets legacy screen '" + t.ScreenId
+                            Disable("targets segment screen '" + t.ScreenId
                                 + "' which does not exist");
                         break;
 
                     case TargetKind.Cycle:
                         if (isLegacySet)
                         {
-                            Disable("legacy rules can only target legacy screens");
+                            Disable("segment rules can only target segment screens");
                         }
                         else
                         {
@@ -387,7 +387,8 @@ namespace FanaBridge.Display.Rules
                                         ? t.PagesRaw[i] : null;
                                     Disable(raw == null
                                         ? "missing or unrecognized cycle page"
-                                        : "missing or unrecognized cycle page '" + raw + "'");
+                                        : "missing or unrecognized cycle page '" + raw + "'"
+                                            + PageHint(raw));
                                     pageOk = false;
                                     break;
                                 }
@@ -522,6 +523,13 @@ namespace FanaBridge.Display.Rules
 
         private static string Label(DisplayRule rule)
             => !string.IsNullOrWhiteSpace(rule.Name) ? rule.Name : (rule.Id ?? "?");
+
+        // "segment" is the surface's name, not a page's — the natural mis-guess since
+        // the UI says "segment display" while page 6 keeps the wheel's own label.
+        private static string PageHint(string raw)
+            => string.Equals(raw, "segment", StringComparison.OrdinalIgnoreCase)
+                ? " (page 6 is named 'legacy' — the wheel's own label)"
+                : "";
 
         // ── Field mappings ───────────────────────────────────────────────
 

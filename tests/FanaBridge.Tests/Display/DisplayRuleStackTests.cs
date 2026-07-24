@@ -267,7 +267,7 @@ namespace FanaBridge.Tests.Display
             h.Control.Land(1);
             h.Tick(SpeedData(150));
             Assert.Equal(new byte[] { 6 }, h.Control.Requests);   // the legacy page
-            Assert.Contains(h.Log, m => m.Contains("legacy screen 'pit'"));
+            Assert.Contains(h.Log, m => m.Contains("segment screen 'pit'"));
         }
 
         [Fact]
@@ -297,7 +297,7 @@ namespace FanaBridge.Tests.Display
                     h.Tick(Data(s));
                 }
                 Assert.Single(h.Log, m => m.Contains(
-                    "legacy surface wants screen 'pit' (text write lands in a later phase)"));
+                    "segment surface wants screen 'pit' (text write lands in a later phase)"));
             }
             finally
             {

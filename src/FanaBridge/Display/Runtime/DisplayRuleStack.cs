@@ -738,7 +738,7 @@ namespace FanaBridge.Display.Runtime
                 return;
             _lastLegacyLogged = screenId;
             if (screenId != null)
-                _log("DisplayRules: legacy surface showing screen '" + screenId
+                _log("DisplayRules: segment surface showing screen '" + screenId
                     + "'" + (screenName != null && screenName != screenId
                         ? " (" + screenName + ")" : ""));
             else
@@ -753,7 +753,7 @@ namespace FanaBridge.Display.Runtime
                 return;
             _lastLegacyLogged = screenId;
             if (screenId != null)
-                _log("DisplayRules: legacy surface wants screen '" + screenId
+                _log("DisplayRules: segment surface wants screen '" + screenId
                     + "' (text write lands in a later phase)");
         }
 
@@ -766,7 +766,7 @@ namespace FanaBridge.Display.Runtime
                 return;
             _lastLegacyScreenLogged = screenId;
             if (screenId != null)
-                _log("DisplayRules: ITM rule targets legacy screen '" + screenId
+                _log("DisplayRules: ITM rule targets segment screen '" + screenId
                     + "' — legacy page requested (text write lands in a later phase)");
         }
 

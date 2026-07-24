@@ -284,7 +284,7 @@ namespace FanaBridge.Tests.Display
 
             Assert.Empty(h.Transport.SentCol01Reports);
             Assert.Contains(h.Log, m => m ==
-                "DisplayRules: legacy surface wants screen 'pit' (text write lands in a later phase)");
+                "DisplayRules: segment surface wants screen 'pit' (text write lands in a later phase)");
         }
 
         [Fact]

@@ -1150,9 +1150,15 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("BrakeBias changes → Car Settings", DisplayRuleFormatter.Describe(
                 Rule("r", Edge(ConditionKind.Changes, BuiltInProperties.BrakeBias),
                     Page(ItmPage.CarSettings), For(2000))));
-            Assert.Equal("DrsEnabled is on → screen 'fn1'", DisplayRuleFormatter.Describe(
+            Assert.Equal("DrsEnabled is on → segment screen 'fn1'", DisplayRuleFormatter.Describe(
                 Rule("r", Level(ConditionKind.IsTrue, BuiltInProperties.DrsEnabled),
                     Screen("fn1"), While())));
+            // With a library resolver the SHOW text uses the screen's name (mock copy).
+            Assert.Equal("DrsEnabled is on → FN1 Layer · segment screen",
+                DisplayRuleFormatter.Describe(
+                    Rule("r", Level(ConditionKind.IsTrue, BuiltInProperties.DrsEnabled),
+                        Screen("fn1"), While()),
+                    id => id == "fn1" ? "FN1 Layer" : null));
             Assert.Equal("'ShowTyres' triggered → Fuel / ERS / DRS ⇄ Tire Temps",
                 DisplayRuleFormatter.Describe(Rule("r", Action("ShowTyres"),
                     Cycle(3000, ItmPage.FuelErsDrs, ItmPage.TyreTemps), For(2000))));
