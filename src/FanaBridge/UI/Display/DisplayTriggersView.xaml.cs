@@ -556,7 +556,7 @@ namespace FanaBridge.UI.Display
                 cmd.Margin = new Thickness(0, 7, 0, 0);
                 inner.Children.Add(cmd);
             }
-            else if (_editModel.IsLegacyMode || draft.TargetKind == TargetKind.LegacyScreen)
+            else if (_editModel.IsLegacyMode || draft.TargetKind == TargetKind.Screen)
             {
                 // Legacy vocabulary: virtual page + screen DropDownCell (or special above).
                 var screen = BuildScreenCell(draft, commit);
@@ -716,7 +716,7 @@ namespace FanaBridge.UI.Display
             draft.Enabled = true;
             draft.Eligibility =
                 string.Equals(runId, DisplayTriggersEditModel.RunIdle, StringComparison.Ordinal) ? RuleEligibility.Idle :
-                string.Equals(runId, DisplayTriggersEditModel.RunAny, StringComparison.Ordinal) ? RuleEligibility.Any :
+                string.Equals(runId, DisplayTriggersEditModel.RunAny, StringComparison.Ordinal) ? RuleEligibility.Always :
                 RuleEligibility.InGame;
         }
 
@@ -744,9 +744,9 @@ namespace FanaBridge.UI.Display
                     }
                     else
                     {
-                        if (draft.TargetKind == TargetKind.LegacyScreen)
+                        if (draft.TargetKind == TargetKind.Screen)
                             return;
-                        draft.TargetKind = TargetKind.LegacyScreen;
+                        draft.TargetKind = TargetKind.Screen;
                         if (string.IsNullOrEmpty(draft.ScreenId)
                             && _editModel.ScreenOptions().Count > 0)
                             draft.ScreenId = _editModel.ScreenOptions()[0].Id;
@@ -832,7 +832,7 @@ namespace FanaBridge.UI.Display
             {
                 if (string.Equals(draft.ScreenId, id, StringComparison.Ordinal))
                     return;
-                draft.TargetKind = TargetKind.LegacyScreen;
+                draft.TargetKind = TargetKind.Screen;
                 draft.ScreenId = id;
                 commit();
             };
@@ -1053,7 +1053,7 @@ namespace FanaBridge.UI.Display
             if (level)
                 builder.Add(HoldId(HoldKind.WhileActive), "While active");
             builder.Add(HoldId(HoldKind.ForDuration), "For a set time");
-            builder.Add(HoldId(HoldKind.Indefinite), "Until replaced");
+            builder.Add(HoldId(HoldKind.UntilDismissed), "Until replaced");
             mode.SetChoices(builder.Selected(HoldId(effective)));
             row.Children.Add(mode);
 

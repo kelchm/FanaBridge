@@ -97,20 +97,22 @@ namespace FanaBridge.Tests.Display
             config.Itm.Rules.Add(Rule("page",
                 Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
                 Page(ItmPage.TyreTemps),
-                new HoldSpec { Kind = HoldKind.Indefinite },
-                RuleEligibility.Any));
+                new HoldSpec { Kind = HoldKind.UntilDismissed },
+                RuleEligibility.Always));
             config.Itm.Rules.Add(Rule("screen",
                 Level(ConditionKind.IsTrue, BuiltInProperties.DrsEnabled),
-                new RuleTarget { Kind = TargetKind.LegacyScreen, ScreenId = "fn1" },
+                new RuleTarget { Kind = TargetKind.Screen, ScreenId = "fn1" },
                 new HoldSpec { Kind = HoldKind.WhileActive },
                 RuleEligibility.Idle));
-            config.Itm.Rules.Add(Rule("alt",
+            config.Itm.Rules.Add(Rule("cycle",
                 Level(ConditionKind.GreaterOrEqual, BuiltInProperties.Position, 3),
                 new RuleTarget
                 {
-                    Kind = TargetKind.Alternate,
-                    PageA = ItmPage.FuelErsDrs,
-                    PageB = ItmPage.TyreTemps,
+                    Kind = TargetKind.Cycle,
+                    PagesRaw = new System.Collections.Generic.List<string>
+                    {
+                        "fuelErsDrs", "tyreTemps",
+                    },
                     PeriodMs = 4000,
                 },
                 new HoldSpec { Kind = HoldKind.ForDuration, DurationMs = 8000 }));
@@ -123,22 +125,22 @@ namespace FanaBridge.Tests.Display
             var page = loaded.Itm.Rules[0];
             Assert.Equal(TargetKind.Page, page.Show.Kind);
             Assert.Equal(ItmPage.TyreTemps, page.Show.Page);
-            Assert.Equal(HoldKind.Indefinite, page.Hold.Kind);
-            Assert.Equal(RuleEligibility.Any, page.Eligible);
+            Assert.Equal(HoldKind.UntilDismissed, page.Hold.Kind);
+            Assert.Equal(RuleEligibility.Always, page.Eligible);
 
             var screen = loaded.Itm.Rules[1];
-            Assert.Equal(TargetKind.LegacyScreen, screen.Show.Kind);
+            Assert.Equal(TargetKind.Screen, screen.Show.Kind);
             Assert.Equal("fn1", screen.Show.ScreenId);
             Assert.Equal(HoldKind.WhileActive, screen.Hold.Kind);
             Assert.Equal(RuleEligibility.Idle, screen.Eligible);
 
-            var alt = loaded.Itm.Rules[2];
-            Assert.Equal(TargetKind.Alternate, alt.Show.Kind);
-            Assert.Equal(ItmPage.FuelErsDrs, alt.Show.PageA);
-            Assert.Equal(ItmPage.TyreTemps, alt.Show.PageB);
-            Assert.Equal(4000, alt.Show.PeriodMs);
-            Assert.Equal(HoldKind.ForDuration, alt.Hold.Kind);
-            Assert.Equal(8000, alt.Hold.DurationMs);
+            var cycle = loaded.Itm.Rules[2];
+            Assert.Equal(TargetKind.Cycle, cycle.Show.Kind);
+            Assert.Equal(new ItmPage?[] { ItmPage.FuelErsDrs, ItmPage.TyreTemps },
+                cycle.Show.CyclePages);
+            Assert.Equal(4000, cycle.Show.PeriodMs);
+            Assert.Equal(HoldKind.ForDuration, cycle.Hold.Kind);
+            Assert.Equal(8000, cycle.Hold.DurationMs);
         }
 
         [Fact]
@@ -149,7 +151,7 @@ namespace FanaBridge.Tests.Display
             config.Legacy.BaseScreenId = "pit";
             config.Legacy.Rules.Add(Rule("l1",
                 Level(ConditionKind.IsTrue, BuiltInProperties.DrsAvailable),
-                new RuleTarget { Kind = TargetKind.LegacyScreen, ScreenId = "pit" },
+                new RuleTarget { Kind = TargetKind.Screen, ScreenId = "pit" },
                 new HoldSpec { Kind = HoldKind.WhileActive }));
             config.FieldMappings[ItmParam.Fuel] = new FieldMapping
             {
@@ -196,7 +198,7 @@ namespace FanaBridge.Tests.Display
                 Level(ConditionKind.LessOrEqual, BuiltInProperties.GapAhead, 0.5),
                 Page(ItmPage.LapTimes),
                 new HoldSpec { Kind = HoldKind.ForDuration, DurationMs = 2000 },
-                RuleEligibility.Any));
+                RuleEligibility.Always));
 
             string json = DisplayConfigSerializer.Save(config);
 
@@ -206,7 +208,8 @@ namespace FanaBridge.Tests.Display
             Assert.Contains("\"page\"", json);
             Assert.Contains("\"lapTimes\"", json);
             Assert.Contains("\"forDuration\"", json);
-            Assert.Contains("\"any\"", json);
+            Assert.Contains("\"always\"", json);
+            Assert.Contains("\"runs\"", json);
             Assert.Contains("\"lapInfo\"", json);
         }
 
@@ -316,7 +319,7 @@ namespace FanaBridge.Tests.Display
                 + "\"itm\": { \"rules\": [ { \"id\": \"i1\", " + ValidWhen
                 + ", \"show\": { \"kind\": \"special\", \"command\": \"logo\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] }, "
-                + "\"legacy\": { \"rules\": [ { \"id\": \"l1\", "
+                + "\"segmentDisplay\": { \"rules\": [ { \"id\": \"l1\", "
                 + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
                 + "\"show\": { \"kind\": \"special\", \"command\": \"white\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] } }",
@@ -361,7 +364,7 @@ namespace FanaBridge.Tests.Display
         public void Load_UnknownEligibility_CoercesToInGameAndWarns()
         {
             var config = Load(DocWithItmRule(
-                "{ \"id\": \"r1\", " + ValidWhen + ", " + ValidShow + ", \"eligible\": \"weekends\" }"),
+                "{ \"id\": \"r1\", " + ValidWhen + ", " + ValidShow + ", \"runs\": \"weekends\" }"),
                 out var warnings);
 
             var rule = Assert.Single(config.Itm.Rules);
@@ -412,7 +415,7 @@ namespace FanaBridge.Tests.Display
                 "{ \"schemaVersion\": 2, \"itm\": { \"basePage\": \"pitDetail\", \"rules\": [ "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"sparkles\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 1 }, "
                 + "\"show\": { \"kind\": \"page\", \"page\": \"ersDetail\" }, "
-                + "\"hold\": { \"kind\": \"shimmer\" }, \"eligible\": \"weekends\" } "
+                + "\"hold\": { \"kind\": \"shimmer\" }, \"runs\": \"weekends\" } "
                 + "] } }";
 
             var config = Load(original, out _);
@@ -618,29 +621,37 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Alternate_PeriodBelowFloor_Clamped()
+        public void Alternate_PeriodBelowFloor_DegradesUnknown_NoClamp()
         {
+            // S4 (spec-v9-s4-rename-freeze): Alternate purged — old spelling degrades as
+            // Unknown (rule kept, disabled). Period is not clamped (not a Cycle branch).
             var config = Load(DocWithItmRule(
                 "{ \"id\": \"r1\", " + ValidWhen + ", "
                 + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\", \"periodMs\": 200 } }"),
                 out var warnings);
 
             var rule = Assert.Single(config.Itm.Rules);
-            Assert.True(rule.Enabled);
-            Assert.Equal(RuleTarget.MinCyclePeriodMs, rule.Show.PeriodMs);
-            Assert.Contains(warnings, w => w.Contains("clamped"));
+            Assert.True(rule.DegradedAtLoad);
+            Assert.Equal(TargetKind.Unknown, rule.Show.Kind);
+            Assert.Equal("alternate", rule.Show.KindRaw);
+            Assert.Equal(200, rule.Show.PeriodMs);
+            Assert.Contains(warnings, w => w.Contains("alternate"));
         }
 
         [Fact]
-        public void Alternate_OmittedPeriod_DefaultsTo3000()
+        public void Alternate_OmittedPeriod_DegradesUnknown_DefaultPeriodStillApplies()
         {
+            // S4: alternate is Unknown; PeriodMs still defaults on the property itself.
             var config = Load(DocWithItmRule(
                 "{ \"id\": \"r1\", " + ValidWhen + ", "
                 + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\" } }"),
                 out var warnings);
 
-            Assert.Empty(warnings);
-            Assert.Equal(RuleTarget.DefaultCyclePeriodMs, config.Itm.Rules[0].Show.PeriodMs);
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.True(rule.DegradedAtLoad);
+            Assert.Equal(TargetKind.Unknown, rule.Show.Kind);
+            Assert.Equal(RuleTarget.DefaultCyclePeriodMs, rule.Show.PeriodMs);
+            Assert.Contains(warnings, w => w.Contains("alternate"));
         }
 
         [Fact]
@@ -676,27 +687,29 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void RoundTrip_UntouchedAlternate_SurvivesVerbatim()
+        public void RoundTrip_UntouchedAlternate_DegradesPreserved()
         {
-            // An Alternate rule that this build never rewrites must ride through load/save
-            // with its pageA/pageB spelling intact (no pages array introduced).
+            // S4 (spec-v9-s4-rename-freeze): P4 Alternate-alias pin re-anchored — alternate
+            // is no longer a known kind. Rule degrades (kept, disabled); kind + pageA/pageB
+            // round-trip via KindRaw / ExtensionData. Never crash, never rewrite.
             string original = DocWithItmRule(
                 "{ \"id\": \"a1\", " + ValidWhen + ", "
                 + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\", "
                 + "\"periodMs\": 4000 }, \"hold\": { \"kind\": \"whileActive\" } }");
 
             var config = Load(original, out var warnings);
-            Assert.Empty(warnings);
-            Assert.Equal(TargetKind.Alternate, config.Itm.Rules[0].Show.Kind);
-            Assert.Null(config.Itm.Rules[0].Show.PagesRaw);
-            Assert.Equal(new ItmPage?[] { ItmPage.FuelErsDrs, ItmPage.TyreTemps },
-                config.Itm.Rules[0].Show.CyclePages);
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.True(rule.DegradedAtLoad);
+            Assert.Equal(TargetKind.Unknown, rule.Show.Kind);
+            Assert.Equal("alternate", rule.Show.KindRaw);
+            Assert.Null(rule.Show.PagesRaw);
+            Assert.Null(rule.Show.CyclePages);
+            Assert.Contains(warnings, w => w.Contains("alternate"));
 
             string saved = DisplayConfigSerializer.Save(config);
             Assert.Contains("\"alternate\"", saved);
             Assert.Contains("\"pageA\"", saved);
             Assert.Contains("\"pageB\"", saved);
-            Assert.DoesNotContain("\"pages\"", saved);
             Assert.Contains("\"periodMs\": 4000", saved);
 
             Assert.Equal(saved, DisplayConfigSerializer.Save(Load(saved, out _)));
@@ -743,7 +756,7 @@ namespace FanaBridge.Tests.Display
         public void Cycle_InLegacySet_Disables()
         {
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"rules\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"rules\": [ "
                 + "{ \"id\": \"l1\", " + ValidWhen + ", "
                 + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"tyreTemps\" ] } } "
                 + "] } }", out var warnings);
@@ -806,7 +819,7 @@ namespace FanaBridge.Tests.Display
         public void LegacyRule_TargetingItmPage_Disabled()
         {
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"rules\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"rules\": [ "
                 + "{ \"id\": \"l1\", " + ValidWhen + ", " + ValidShow + " } "
                 + "] } }", out var warnings);
 
@@ -818,7 +831,7 @@ namespace FanaBridge.Tests.Display
         public void ScreenTarget_UnknownScreenId_DisablesRule()
         {
             var config = Load(DocWithItmRule(
-                "{ \"id\": \"r1\", " + ValidWhen + ", \"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"ghost\" } }"),
+                "{ \"id\": \"r1\", " + ValidWhen + ", \"show\": { \"kind\": \"screen\", \"screenId\": \"ghost\" } }"),
                 out var warnings);
 
             Assert.True(config.Itm.Rules[0].DegradedAtLoad);
@@ -831,7 +844,7 @@ namespace FanaBridge.Tests.Display
         public void LegacyScreens_UnrenderableOrOversizedText_SkippedWithWarning()
         {
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"logo\", \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"baseScreenId\": \"logo\", \"screens\": [ "
                 + "{ \"id\": \"fn1\", \"text\": \"FN1\" }, "
                 + "{ \"id\": \"logo\", \"text\": \"\\u25c6F\\u25c6\" }, "
                 + "{ \"id\": \"long\", \"text\": \"WAIT\" }, "
@@ -852,7 +865,7 @@ namespace FanaBridge.Tests.Display
         public void LegacyScreens_DuplicateId_KeepsFirst()
         {
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"pit\", \"text\": \"PIT\" }, "
                 + "{ \"id\": \"pit\", \"text\": \"P2T\" } "
                 + "] } }", out var warnings);
@@ -891,7 +904,7 @@ namespace FanaBridge.Tests.Display
         {
             // Today's static screens omit contentKind — must stay Text with no warn.
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"pit\", \"text\": \"PIT\" } ] } }", out var warnings);
 
             var screen = Assert.Single(config.Legacy.Screens);
@@ -959,13 +972,13 @@ namespace FanaBridge.Tests.Display
             // A future version's contentKind/effect must pass through this build
             // byte-for-byte — the screen is kept (not dropped) but is not a survivor.
             string original =
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"x1\", \"text\": \"PIT\", \"contentKind\": \"hologram\", \"effect\": \"shimmer\" }, "
                 + "{ \"id\": \"ok\", \"text\": \"FN1\" } "
                 + "], \"rules\": [ "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
-                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"x1\" } } "
+                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"x1\" } } "
                 + "] } }";
 
             var config = Load(original, out var warnings);
@@ -997,13 +1010,13 @@ namespace FanaBridge.Tests.Display
         public void GearAndSpeed_Spelling_DegradesAsUnknown_ByteIdenticalRoundTrip()
         {
             string original =
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"gs\", \"name\": \"Gear + Speed\", \"contentKind\": \"gearAndSpeed\" }, "
                 + "{ \"id\": \"ok\", \"text\": \"FN1\" } "
                 + "], \"rules\": [ "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
-                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"gs\" } } "
+                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"gs\" } } "
                 + "] } }";
 
             var config = Load(original, out var warnings);
@@ -1027,12 +1040,12 @@ namespace FanaBridge.Tests.Display
         public void InRotation_RoundTrip_AbsentTrue_FalseSerializes_TrueSuppressed()
         {
             var absent = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"a\", \"text\": \"AAA\" } ] } }", out _);
             Assert.True(Assert.Single(absent.Legacy.Screens).InRotation);
 
             var explicitFalse = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"b\", \"text\": \"BBB\", \"inRotation\": false } ] } }", out _);
             Assert.False(Assert.Single(explicitFalse.Legacy.Screens).InRotation);
             string savedFalse = DisplayConfigSerializer.Save(explicitFalse);
@@ -1051,7 +1064,7 @@ namespace FanaBridge.Tests.Display
 
             // Unknown members on a screen with inRotation survive (S1 discipline).
             string withFuture =
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"d\", \"text\": \"DDD\", \"inRotation\": false, "
                 + "\"futureWidget\": 7 } ] } }";
             var withExt = Load(withFuture, out _);
@@ -1069,7 +1082,7 @@ namespace FanaBridge.Tests.Display
             // BaseScreenId (a persisted mutation) — only warn that this build blanks it.
             // Contrast: a base id with no kept screen at all still clears (existing behaviour).
             string original =
-                "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"x1\", \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"baseScreenId\": \"x1\", \"screens\": [ "
                 + "{ \"id\": \"x1\", \"text\": \"PIT\", \"contentKind\": \"hologram\" }, "
                 + "{ \"id\": \"ok\", \"text\": \"FN1\" } "
                 + "] } }";
@@ -1093,7 +1106,7 @@ namespace FanaBridge.Tests.Display
         public void LegacyScreen_MessageKind_AllowsLongRenderableText()
         {
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"msg\", \"contentKind\": \"message\", \"text\": \"HELLO\" } "
                 + "] } }", out var warnings);
 
@@ -1107,7 +1120,7 @@ namespace FanaBridge.Tests.Display
         public void LegacyScreen_MessageKind_Unrenderable_Skipped()
         {
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"msg\", \"contentKind\": \"message\", \"text\": \"\\u25c6F\\u25c6\" } "
                 + "] } }", out var warnings);
 
@@ -1120,7 +1133,7 @@ namespace FanaBridge.Tests.Display
         {
             // Dynamic kinds do not require Text — even oversized/empty is fine.
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"spd\", \"contentKind\": \"speed\", \"text\": \"TOOLONG\" }, "
                 + "{ \"id\": \"gr\", \"contentKind\": \"gear\" } "
                 + "] } }", out var warnings);
@@ -1135,7 +1148,7 @@ namespace FanaBridge.Tests.Display
         public void LegacyScreen_PropertyWithoutSource_Skipped()
         {
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"p1\", \"contentKind\": \"property\" }, "
                 + "{ \"id\": \"p2\", \"contentKind\": \"property\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"FluxCapacitor\" } }, "
@@ -1152,7 +1165,7 @@ namespace FanaBridge.Tests.Display
         public void LegacyScreen_FlashEffect_CoercesToBlink_RawSurvives()
         {
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"pit\", \"text\": \"PIT\", \"effect\": \"flash\" } "
                 + "] } }", out var warnings);
 
@@ -1170,7 +1183,7 @@ namespace FanaBridge.Tests.Display
         public void LegacyScreen_UnknownFormat_ClearedWithWarning()
         {
             var config = Load(
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"pit\", \"text\": \"PIT\", \"format\": \"fancy\" } "
                 + "] } }", out var warnings);
 
@@ -1286,5 +1299,145 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(warningsA, warningsB);
             Assert.Equal(DisplayConfigSerializer.Save(a), DisplayConfigSerializer.Save(b));
         }
+
+        // ── S4 old-spelling degrade pins (spec-v9-s4-rename-freeze §3) ───
+        // Old spellings must degrade safely: never crash, never rewrite.
+
+        [Fact]
+        public void OldSpelling_LegacySection_IsUnknownMember_SegmentWorldEmpty()
+        {
+            // A "legacy" section is now an unknown top-level member → ExtensionData;
+            // the segment world (Legacy property / segmentDisplay) reads empty.
+            var config = Load(
+                "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"s1\", "
+                + "\"screens\": [ { \"id\": \"s1\", \"text\": \"PIT\" } ], \"rules\": [] } }",
+                out var warnings);
+
+            Assert.Empty(config.Legacy.Screens);
+            Assert.Null(config.Legacy.BaseScreenId);
+            Assert.NotNull(config.ExtensionData);
+
+            // The COMPLETE raw section survives as the extension token, byte-faithful.
+            var expected = Newtonsoft.Json.Linq.JToken.Parse(
+                "{ \"baseScreenId\": \"s1\", "
+                + "\"screens\": [ { \"id\": \"s1\", \"text\": \"PIT\" } ], \"rules\": [] }");
+            Assert.True(config.ExtensionData.TryGetValue("legacy", out var legacyBag));
+            Assert.True(Newtonsoft.Json.Linq.JToken.DeepEquals(expected, legacyBag),
+                "raw legacy section mutated: " + legacyBag);
+
+            // Save → load → save is stable (same discipline as the other five pins).
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"legacy\"", saved);
+            Assert.Equal(saved, DisplayConfigSerializer.Save(Load(saved, out _)));
+            Assert.Empty(warnings);
+        }
+
+        [Fact]
+        public void OldSpelling_KindLegacyScreen_DegradesUnknown_RawPreserved()
+        {
+            var config = Load(DocWithItmRule(
+                "{ \"id\": \"r1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"fn1\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } }"), out var warnings);
+
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.True(rule.DegradedAtLoad);
+            Assert.Equal(TargetKind.Unknown, rule.Show.Kind);
+            Assert.Equal("legacyScreen", rule.Show.KindRaw);
+            Assert.Equal("fn1", rule.Show.ScreenId);
+            Assert.Contains(warnings, w => w.Contains("legacyScreen"));
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"legacyScreen\"", saved);
+            Assert.Contains("\"screenId\": \"fn1\"", saved);
+            Assert.Equal(saved, DisplayConfigSerializer.Save(Load(saved, out _)));
+        }
+
+        [Fact]
+        public void OldSpelling_KindAlternate_DegradesUnknown_RawPreserved()
+        {
+            // Also covered by RoundTrip_UntouchedAlternate_DegradesPreserved; one-case pin.
+            var config = Load(DocWithItmRule(
+                "{ \"id\": \"r1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } }"), out var warnings);
+
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.True(rule.DegradedAtLoad);
+            Assert.Equal(TargetKind.Unknown, rule.Show.Kind);
+            Assert.Equal("alternate", rule.Show.KindRaw);
+            Assert.Contains(warnings, w => w.Contains("alternate"));
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"alternate\"", saved);
+            Assert.Contains("\"pageA\"", saved);
+            Assert.Contains("\"pageB\"", saved);
+            Assert.Equal(saved, DisplayConfigSerializer.Save(Load(saved, out _)));
+        }
+
+        [Fact]
+        public void OldSpelling_EligibleMember_LandsInExtensionData_RawPreserved()
+        {
+            // "eligible" is no longer a known member → ExtensionData on the rule;
+            // Eligible defaults (InGame) when runs is absent.
+            var config = Load(DocWithItmRule(
+                "{ \"id\": \"r1\", " + ValidWhen + ", " + ValidShow + ", "
+                + "\"eligible\": \"idle\", \"hold\": { \"kind\": \"whileActive\" } }"),
+                out var warnings);
+
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.Equal(RuleEligibility.InGame, rule.Eligible);   // default — runs absent
+            Assert.Null(rule.EligibleRaw);
+            Assert.NotNull(rule.ExtensionData);
+            Assert.Equal("idle", (string)rule.ExtensionData["eligible"]);
+            Assert.Empty(warnings);
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"eligible\": \"idle\"", saved);
+            Assert.DoesNotContain("\"runs\"", saved);
+            Assert.Equal(saved, DisplayConfigSerializer.Save(Load(saved, out _)));
+        }
+
+        [Fact]
+        public void OldSpelling_HoldIndefinite_DegradesUnknown_RawPreserved()
+        {
+            var config = Load(DocWithItmRule(
+                "{ \"id\": \"r1\", " + ValidWhen + ", " + ValidShow + ", "
+                + "\"hold\": { \"kind\": \"indefinite\" } }"), out var warnings);
+
+            var rule = Assert.Single(config.Itm.Rules);
+            // Runtime coerce to level family default; KindRaw keeps indefinite.
+            Assert.Equal(HoldKind.WhileActive, rule.Hold.Kind);
+            Assert.Equal("indefinite", rule.Hold.KindRaw);
+            Assert.False(rule.DegradedAtLoad);   // hold-unknown coerces, does not disable
+            Assert.Contains(warnings, w => w.Contains("indefinite"));
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"indefinite\"", saved);
+            Assert.Equal(saved, DisplayConfigSerializer.Save(Load(saved, out _)));
+        }
+
+        [Fact]
+        public void PageLegacy_IsTheFrozenPage6Spelling_ParsesValid()
+        {
+            // Ship-v1 decision (kelchm 2026-07-23): the page-6 identity keeps the
+            // hardware-truthful spelling "legacy" — the wheel's own on-screen label —
+            // while the surface/world it hosts is named segmentDisplay. NOT a degrade
+            // case: this spelling is frozen-valid.
+            var config = Load(DocWithItmRule(
+                "{ \"id\": \"r1\", " + ValidWhen + ", "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"legacy\" }, "
+                + "\"hold\": { \"kind\": \"whileActive\" } }"), out var warnings);
+
+            var rule = Assert.Single(config.Itm.Rules);
+            Assert.False(rule.DegradedAtLoad);
+            Assert.Equal(ItmPage.Legacy, rule.Show.Page);
+            Assert.DoesNotContain(warnings, w => w.Contains("legacy"));
+
+            string saved = DisplayConfigSerializer.Save(config);
+            Assert.Contains("\"page\": \"legacy\"", saved);
+            Assert.Equal(saved, DisplayConfigSerializer.Save(Load(saved, out _)));
+        }
     }
 }
+

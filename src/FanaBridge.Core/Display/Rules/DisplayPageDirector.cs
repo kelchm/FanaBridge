@@ -207,7 +207,7 @@ namespace FanaBridge.Display.Rules
             {
                 desired = 0;
             }
-            else if (intent.Kind == TargetKind.LegacyScreen)
+            else if (intent.Kind == TargetKind.Screen)
             {
                 if (_pages.LegacyWire != 0)
                 {

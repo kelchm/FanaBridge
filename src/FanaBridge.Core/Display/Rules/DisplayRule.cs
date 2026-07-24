@@ -154,13 +154,10 @@ namespace FanaBridge.Display.Rules
         Unknown = 0,
         /// <summary>A single ITM page (<see cref="RuleTarget.Page"/>).</summary>
         Page,
-        /// <summary>A named legacy screen (<see cref="RuleTarget.ScreenId"/>). ITM rules may
-        /// target this too: it resolves to the device's legacy ITM page plus that screen
-        /// on the 7-segment surface.</summary>
-        LegacyScreen,
-        /// <summary>Parse alias — presents as a two-page cycle via
-        /// <see cref="RuleTarget.CyclePages"/>; kept forever so old documents load unchanged.</summary>
-        Alternate,
+        /// <summary>A named segment-display screen (<see cref="RuleTarget.ScreenId"/>).
+        /// ITM rules may target this too: it resolves to the device's segment ITM page
+        /// plus that screen on the 7-segment surface.</summary>
+        Screen,
         /// <summary>An ordered list of ITM pages shown in rotation every
         /// <see cref="RuleTarget.PeriodMs"/>.</summary>
         Cycle,
@@ -218,33 +215,9 @@ namespace FanaBridge.Display.Rules
             set => PageRaw = value == null ? null : EnumText.Write(value.Value);
         }
 
-        /// <summary><see cref="TargetKind.LegacyScreen"/>: the <see cref="LegacyScreen.Id"/> to show.</summary>
+        /// <summary><see cref="TargetKind.Screen"/>: the <see cref="LegacyScreen.Id"/> to show.</summary>
         [JsonProperty("screenId")]
         public string ScreenId { get; set; }
-
-        /// <summary>Serialized page name for <see cref="PageA"/>, preserved verbatim.</summary>
-        [JsonProperty("pageA")]
-        public string PageARaw { get; set; }
-
-        /// <summary><see cref="TargetKind.Alternate"/>: the first of the two pages.</summary>
-        [JsonIgnore]
-        public ItmPage? PageA
-        {
-            get => EnumText.ParseNullable<ItmPage>(PageARaw);
-            set => PageARaw = value == null ? null : EnumText.Write(value.Value);
-        }
-
-        /// <summary>Serialized page name for <see cref="PageB"/>, preserved verbatim.</summary>
-        [JsonProperty("pageB")]
-        public string PageBRaw { get; set; }
-
-        /// <summary><see cref="TargetKind.Alternate"/>: the second of the two pages.</summary>
-        [JsonIgnore]
-        public ItmPage? PageB
-        {
-            get => EnumText.ParseNullable<ItmPage>(PageBRaw);
-            set => PageBRaw = value == null ? null : EnumText.Write(value.Value);
-        }
 
         /// <summary>Serialized page names for <see cref="TargetKind.Cycle"/>, in rotation
         /// order, preserved verbatim (null when absent; never emitted for non-cycle targets).</summary>
@@ -252,11 +225,9 @@ namespace FanaBridge.Display.Rules
         public List<string> PagesRaw { get; set; }
 
         /// <summary>
-        /// Unified page list for the cycle family: for <see cref="TargetKind.Cycle"/> one
-        /// entry per <see cref="PagesRaw"/> element (empty when <see cref="PagesRaw"/> is
-        /// null); for <see cref="TargetKind.Alternate"/> the pair
-        /// [<see cref="PageA"/>, <see cref="PageB"/>]; null for every other kind. Null
-        /// entries mean a missing or unrecognized page name — the raw text is preserved
+        /// Page list for <see cref="TargetKind.Cycle"/>: one entry per <see cref="PagesRaw"/>
+        /// element (empty when <see cref="PagesRaw"/> is null); null for every other kind.
+        /// Null entries mean a missing or unrecognized page name — the raw text is preserved
         /// on the document for the round-trip.
         /// </summary>
         [JsonIgnore]
@@ -264,23 +235,19 @@ namespace FanaBridge.Display.Rules
         {
             get
             {
-                if (Kind == TargetKind.Cycle)
-                {
-                    if (PagesRaw == null)
-                        return Array.Empty<ItmPage?>();
-                    var pages = new ItmPage?[PagesRaw.Count];
-                    for (int i = 0; i < PagesRaw.Count; i++)
-                        pages[i] = EnumText.ParseNullable<ItmPage>(PagesRaw[i]);
-                    return pages;
-                }
-                if (Kind == TargetKind.Alternate)
-                    return new ItmPage?[] { PageA, PageB };
-                return null;
+                if (Kind != TargetKind.Cycle)
+                    return null;
+                if (PagesRaw == null)
+                    return Array.Empty<ItmPage?>();
+                var pages = new ItmPage?[PagesRaw.Count];
+                for (int i = 0; i < PagesRaw.Count; i++)
+                    pages[i] = EnumText.ParseNullable<ItmPage>(PagesRaw[i]);
+                return pages;
             }
         }
 
-        /// <summary><see cref="TargetKind.Alternate"/> and <see cref="TargetKind.Cycle"/>:
-        /// flip period in milliseconds (clamped to ≥ <see cref="MinCyclePeriodMs"/> at load).</summary>
+        /// <summary><see cref="TargetKind.Cycle"/>: flip period in milliseconds
+        /// (clamped to ≥ <see cref="MinCyclePeriodMs"/> at load).</summary>
         [JsonProperty("periodMs")]
         [DefaultValue(DefaultCyclePeriodMs)]
         public int PeriodMs { get; set; } = DefaultCyclePeriodMs;
@@ -327,7 +294,7 @@ namespace FanaBridge.Display.Rules
         ForDuration,
         /// <summary>Active until dismissed (manual navigation, a preempting rule finishing,
         /// eligibility loss, or — for level conditions — the condition going false).</summary>
-        Indefinite,
+        UntilDismissed,
     }
 
     /// <summary>A rule's hold: activation lifetime after the condition fires.</summary>
@@ -384,7 +351,7 @@ namespace FanaBridge.Display.Rules
         Unknown = 0,
         InGame,
         Idle,
-        Any,
+        Always,
     }
 
     /// <summary>
@@ -439,7 +406,7 @@ namespace FanaBridge.Display.Rules
 
         /// <summary>Serialized form of <see cref="Eligible"/>, preserved verbatim (see
         /// <see cref="RuleCondition.KindRaw"/>).</summary>
-        [JsonProperty("eligible")]
+        [JsonProperty("runs")]
         public string EligibleRaw
         {
             get => _eligibleRaw;

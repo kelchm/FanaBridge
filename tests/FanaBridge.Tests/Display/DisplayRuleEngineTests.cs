@@ -123,10 +123,7 @@ namespace FanaBridge.Tests.Display
             => new RuleTarget { Kind = TargetKind.Page, Page = page };
 
         private static RuleTarget Screen(string id)
-            => new RuleTarget { Kind = TargetKind.LegacyScreen, ScreenId = id };
-
-        private static RuleTarget Alt(ItmPage a, ItmPage b, int periodMs)
-            => new RuleTarget { Kind = TargetKind.Alternate, PageA = a, PageB = b, PeriodMs = periodMs };
+            => new RuleTarget { Kind = TargetKind.Screen, ScreenId = id };
 
         private static RuleTarget Cycle(int periodMs, params ItmPage[] pages)
         {
@@ -143,7 +140,7 @@ namespace FanaBridge.Tests.Display
 
         private static HoldSpec While() => new HoldSpec { Kind = HoldKind.WhileActive };
         private static HoldSpec For(int ms) => new HoldSpec { Kind = HoldKind.ForDuration, DurationMs = ms };
-        private static HoldSpec Indef() => new HoldSpec { Kind = HoldKind.Indefinite };
+        private static HoldSpec Indef() => new HoldSpec { Kind = HoldKind.UntilDismissed };
 
         // ── Assertion helpers ────────────────────────────────────────────
 
@@ -604,7 +601,7 @@ namespace FanaBridge.Tests.Display
                 Rule("idle", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
                     Page(ItmPage.TyreTemps), While(), RuleEligibility.Idle),
                 Rule("any", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
-                    Page(ItmPage.CarSettings), While(), RuleEligibility.Any));
+                    Page(ItmPage.CarSettings), While(), RuleEligibility.Always));
             h.Props.Set(BuiltInProperties.Fuel, 5);
 
             var r = h.Tick(inGame: true);
@@ -670,7 +667,7 @@ namespace FanaBridge.Tests.Display
                     Screen("pit"), While()));
 
             var r = h.Tick();
-            Assert.Equal(TargetKind.LegacyScreen, r.Intent.Kind);
+            Assert.Equal(TargetKind.Screen, r.Intent.Kind);
             Assert.Equal("spd", r.Intent.ScreenId);
             Assert.Null(r.Intent.SourceRuleId);
 
@@ -685,7 +682,7 @@ namespace FanaBridge.Tests.Display
         {
             var h = Legacy(null);
             var r = h.Tick();
-            Assert.Equal(TargetKind.LegacyScreen, r.Intent.Kind);
+            Assert.Equal(TargetKind.Screen, r.Intent.Kind);
             Assert.Null(r.Intent.ScreenId);
         }
 
@@ -768,25 +765,26 @@ namespace FanaBridge.Tests.Display
             AssertPage(r, ItmPage.FuelErsDrs, "lo");
         }
 
-        // ── Alternate / Cycle targets ────────────────────────────────────
+        // ── Cycle targets ────────────────────────────────────────────────
 
         [Fact]
-        public void Alternate_FlipsEachPeriod_UnimpededByDwell()
+        public void Cycle_TwoPages_FlipsEachPeriod_UnimpededByDwell()
         {
+            // S4: Alternate purged; two-page Cycle is the only flip target.
             var h = Itm(Rule("r", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
-                Alt(ItmPage.FuelErsDrs, ItmPage.TyreTemps, 1000), While()));
+                Cycle(1000, ItmPage.FuelErsDrs, ItmPage.TyreTemps), While()));
             h.Props.Set(BuiltInProperties.Fuel, 50);
             h.Tick();
 
             h.Props.Set(BuiltInProperties.Fuel, 5);
-            AssertPage(h.Tick(advance: 100), ItmPage.FuelErsDrs, "r");     // win: A first
+            AssertPage(h.Tick(advance: 100), ItmPage.FuelErsDrs, "r");     // win: [0] first
 
             Assert.Equal(ItmPage.FuelErsDrs, h.Tick(advance: 999).Intent.Page);   // t+999
             // The flip period (1000ms) is shorter than MinDwellMs — the internal
-            // alternation is exempt from the dwell floor.
-            Assert.Equal(ItmPage.TyreTemps, h.Tick(advance: 1).Intent.Page);      // t+1000 → B
-            Assert.Equal(ItmPage.FuelErsDrs, h.Tick(advance: 1000).Intent.Page);  // t+2000 → A
-            Assert.Equal(ItmPage.TyreTemps, h.Tick(advance: 1000).Intent.Page);   // t+3000 → B
+            // cycle is exempt from the dwell floor.
+            Assert.Equal(ItmPage.TyreTemps, h.Tick(advance: 1).Intent.Page);      // t+1000 → [1]
+            Assert.Equal(ItmPage.FuelErsDrs, h.Tick(advance: 1000).Intent.Page);  // t+2000 → [0]
+            Assert.Equal(ItmPage.TyreTemps, h.Tick(advance: 1000).Intent.Page);   // t+3000 → [1]
         }
 
         [Fact]
@@ -1066,7 +1064,7 @@ namespace FanaBridge.Tests.Display
                 Rule("gone", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
                     Page(ItmPage.CarSettings), While()),
                 Rule("alt", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
-                    Alt(ItmPage.FuelErsDrs, ItmPage.TyreTemps, 2000), While()),
+                    Cycle(2000, ItmPage.FuelErsDrs, ItmPage.TyreTemps), While()),
                 Rule("ok", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
                     Page(ItmPage.FuelErsDrs), While()));
             h.Props.Set(BuiltInProperties.Fuel, 5);
@@ -1109,7 +1107,7 @@ namespace FanaBridge.Tests.Display
                 Rule("edge", Edge(ConditionKind.Increases, BuiltInProperties.CurrentLap),
                     Page(ItmPage.LapTimes), Indef()),
                 Rule("alt", Level(ConditionKind.LessThan, BuiltInProperties.Fuel, 10),
-                    Alt(ItmPage.FuelErsDrs, ItmPage.CarSettings, 1000), While(), RuleEligibility.Any));
+                    Cycle(1000, ItmPage.FuelErsDrs, ItmPage.CarSettings), While(), RuleEligibility.Always));
 
             var outputs = new List<string>();
             void Record(RuleEngineResult r) => outputs.Add(
@@ -1157,7 +1155,7 @@ namespace FanaBridge.Tests.Display
                     Screen("fn1"), While())));
             Assert.Equal("'ShowTyres' triggered → Fuel / ERS / DRS ⇄ Tire Temps",
                 DisplayRuleFormatter.Describe(Rule("r", Action("ShowTyres"),
-                    Alt(ItmPage.FuelErsDrs, ItmPage.TyreTemps, 3000), For(2000))));
+                    Cycle(3000, ItmPage.FuelErsDrs, ItmPage.TyreTemps), For(2000))));
             Assert.Equal("Fuel / ERS / DRS ⇄ Tire Temps ⇄ Car Settings",
                 DisplayRuleFormatter.DescribeTarget(
                     Cycle(3000, ItmPage.FuelErsDrs, ItmPage.TyreTemps, ItmPage.CarSettings)));

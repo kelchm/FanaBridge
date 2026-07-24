@@ -56,7 +56,7 @@ namespace FanaBridge.Tests.Display
           ""durationMs"": 5000,
           ""v2Hold"": ""linger""
         },
-        ""eligible"": ""any""
+        ""runs"": ""always""
       },
       {
         ""id"": ""r-b"",
@@ -76,7 +76,7 @@ namespace FanaBridge.Tests.Display
           ""kind"": ""untilTomorrow"",
           ""durationMs"": 3000
         },
-        ""eligible"": ""whenever""
+        ""runs"": ""whenever""
       },
       {
         ""id"": ""r-c"",
@@ -103,11 +103,11 @@ namespace FanaBridge.Tests.Display
           ""durationMs"": 4000,
           ""v2CHold"": [1, 2]
         },
-        ""eligible"": ""inGame""
+        ""runs"": ""inGame""
       }
     ]
   },
-  ""legacy"": {
+  ""segmentDisplay"": {
     ""baseScreenId"": ""scr1"",
     ""v2Legacy"": { ""theme"": ""neon"" },
     ""screens"": [
@@ -163,10 +163,10 @@ namespace FanaBridge.Tests.Display
             ("itm.rules[2].when.source.v2CSource", @"""cs"""),
             ("itm.rules[2].show.v2CShow", @"7"),
             ("itm.rules[2].hold.v2CHold", @"[1,2]"),
-            ("legacy.v2Legacy", @"{""theme"":""neon""}"),
-            ("legacy.screens[0].v2Screen", @"{""cols"":3}"),
-            ("legacy.screens[0].source.v2ScreenSource", @"true"),
-            ("legacy.screens[1].v2Screen2", @"""wave"""),
+            ("segmentDisplay.v2Legacy", @"{""theme"":""neon""}"),
+            ("segmentDisplay.screens[0].v2Screen", @"{""cols"":3}"),
+            ("segmentDisplay.screens[0].source.v2ScreenSource", @"true"),
+            ("segmentDisplay.screens[1].v2Screen2", @"""wave"""),
             ("fieldMappings.5.v2Mapping", @"{""precision"":1}"),
             ("fieldMappings.5.source.v2MapSource", @"""keep"""),
         };
@@ -234,8 +234,8 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("sparkles", (string)Select(saved, "itm.rules[0].when.kind"));
             Assert.Equal("hologram", (string)Select(saved, "itm.rules[1].show.kind"));
             Assert.Equal("untilTomorrow", (string)Select(saved, "itm.rules[1].hold.kind"));
-            Assert.Equal("whenever", (string)Select(saved, "itm.rules[1].eligible"));
-            Assert.Equal("sparkle", (string)Select(saved, "legacy.screens[0].effect"));
+            Assert.Equal("whenever", (string)Select(saved, "itm.rules[1].runs"));
+            Assert.Equal("sparkle", (string)Select(saved, "segmentDisplay.screens[0].effect"));
         }
 
         [Fact]
@@ -273,8 +273,8 @@ namespace FanaBridge.Tests.Display
             // kept (excluded from survivors), the raw spelling and its unknown member
             // both round-trip.
             var saved = ParseSaved(DisplayConfigSerializer.Save(Load(V2Document)));
-            Assert.Equal("wavelength", (string)Select(saved, "legacy.screens[1].contentKind"));
-            Assert.Equal("wave", (string)Select(saved, "legacy.screens[1].v2Screen2"));
+            Assert.Equal("wavelength", (string)Select(saved, "segmentDisplay.screens[1].contentKind"));
+            Assert.Equal("wave", (string)Select(saved, "segmentDisplay.screens[1].v2Screen2"));
         }
 
         [Fact]

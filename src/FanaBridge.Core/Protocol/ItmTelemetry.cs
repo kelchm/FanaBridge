@@ -18,7 +18,10 @@ namespace FanaBridge.Protocol
         CarSettings,
         LapTimes,
         TyreTemps,
-        /// <summary>Legacy / default fallback — carries no telemetry parameters.</summary>
+        /// <summary>Page 6 — hosts the segment display; carries no telemetry parameters.
+        /// Named for the wheel's own on-screen label ("Legacy" on PBME): the page name
+        /// is Fanatec's, the segment-display world it delegates to is ours. Spelling
+        /// "legacy" is ship-v1 frozen.</summary>
         Legacy,
     }
 

@@ -46,7 +46,7 @@ namespace FanaBridge.Tests.Display
             draft.Operator = ConditionKind.LessThan;
             draft.Value = 10;
             draft.Page = ItmPage.FuelErsDrs;
-            draft.Hold = HoldKind.Indefinite;
+            draft.Hold = HoldKind.UntilDismissed;
 
             var cfg = model.AddRule(draft);
 
@@ -59,7 +59,7 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("Fuel", rule.When.Source.Name);
             Assert.Equal(10, rule.When.Value);
             Assert.Equal(ItmPage.FuelErsDrs, rule.Show.Page);
-            Assert.Equal(HoldKind.Indefinite, rule.Hold.Kind);
+            Assert.Equal(HoldKind.UntilDismissed, rule.Hold.Kind);
             Assert.Same(cfg, model.Config);
         }
 
@@ -89,7 +89,7 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(PropertyKind.SimHubProperty, rule.When.Source.Kind);
             Assert.Equal(ConditionKind.IsTrue, rule.When.Kind);
             Assert.Equal(HoldKind.WhileActive, rule.Hold.Kind);
-            Assert.Equal(RuleEligibility.Any, rule.Eligible);
+            Assert.Equal(RuleEligibility.Always, rule.Eligible);
             Assert.Null(rule.When.Value);                  // isTrue takes no comparison value
         }
 
@@ -210,7 +210,7 @@ namespace FanaBridge.Tests.Display
                 + "{ \"id\": \"future\", \"when\": { \"kind\": \"orbitsMars\", "
                 + "\"source\": { \"kind\": \"warpDrive\", \"name\": \"X\" } }, "
                 + "\"show\": { \"kind\": \"hologram\", \"page\": \"deckTen\" }, "
-                + "\"eligible\": \"whenTheStarsAlign\" }, "
+                + "\"runs\": \"whenTheStarsAlign\" }, "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
                 + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" } } ] } }");
@@ -251,9 +251,9 @@ namespace FanaBridge.Tests.Display
                 + "\"itm\": { \"rules\": [ "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"isTrue\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
-                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"fn1\" }, "
+                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"fn1\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] }, "
-                + "\"legacy\": { \"screens\": [ "
+                + "\"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"fn1\", \"name\": \"FN1\", \"text\": \"FN1\" } ] } }");
 
         [Fact]
@@ -265,7 +265,7 @@ namespace FanaBridge.Tests.Display
 
             var draft = DisplayTriggersEditModel.ToDraft(rule);
 
-            Assert.Equal(TargetKind.LegacyScreen, draft.TargetKind);
+            Assert.Equal(TargetKind.Screen, draft.TargetKind);
             Assert.Equal("fn1", draft.ScreenId);
         }
 
@@ -277,13 +277,13 @@ namespace FanaBridge.Tests.Display
 
             // Edit an unrelated field (eligibility) — the SHOW target must be untouched.
             var draft = DisplayTriggersEditModel.ToDraft(cfg0.Itm.Rules[0]);
-            draft.Eligibility = RuleEligibility.Any;
+            draft.Eligibility = RuleEligibility.Always;
             var cfg = model.UpdateRule(draft);
 
             var rule = Assert.Single(cfg.Itm.Rules);
-            Assert.Equal(TargetKind.LegacyScreen, rule.Show.Kind);
+            Assert.Equal(TargetKind.Screen, rule.Show.Kind);
             Assert.Equal("fn1", rule.Show.ScreenId);       // NOT dropped to null
-            Assert.Equal(RuleEligibility.Any, rule.Eligible);
+            Assert.Equal(RuleEligibility.Always, rule.Eligible);
         }
 
         // ── Commit gating (no edit degrades a user's own valid rule) ──────
@@ -359,17 +359,17 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void HoldAndEligibility_MapToSchemaEnums()
         {
-            Assert.Equal(new[] { HoldKind.WhileActive, HoldKind.ForDuration, HoldKind.Indefinite },
+            Assert.Equal(new[] { HoldKind.WhileActive, HoldKind.ForDuration, HoldKind.UntilDismissed },
                 DisplayTriggersEditModel.Holds.ToArray());
             Assert.Equal("While active", DisplayTriggersEditModel.HoldLabel(HoldKind.WhileActive));
             Assert.Equal("For duration", DisplayTriggersEditModel.HoldLabel(HoldKind.ForDuration));
-            Assert.Equal("Indefinite", DisplayTriggersEditModel.HoldLabel(HoldKind.Indefinite));
+            Assert.Equal("Until dismissed", DisplayTriggersEditModel.HoldLabel(HoldKind.UntilDismissed));
 
-            Assert.Equal(new[] { RuleEligibility.InGame, RuleEligibility.Idle, RuleEligibility.Any },
+            Assert.Equal(new[] { RuleEligibility.InGame, RuleEligibility.Idle, RuleEligibility.Always },
                 DisplayTriggersEditModel.Eligibilities.ToArray());
             Assert.Equal("In-game", DisplayTriggersEditModel.EligibilityLabel(RuleEligibility.InGame));
             Assert.Equal("Idle", DisplayTriggersEditModel.EligibilityLabel(RuleEligibility.Idle));
-            Assert.Equal("Any time", DisplayTriggersEditModel.EligibilityLabel(RuleEligibility.Any));
+            Assert.Equal("Any time", DisplayTriggersEditModel.EligibilityLabel(RuleEligibility.Always));
         }
 
         [Fact]
@@ -590,11 +590,11 @@ namespace FanaBridge.Tests.Display
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
                 + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" }, "
-                + "\"hold\": { \"kind\": \"forDuration\", \"durationMs\": 5000 }, \"eligible\": \"idle\" }, "
+                + "\"hold\": { \"kind\": \"forDuration\", \"durationMs\": 5000 }, \"runs\": \"idle\" }, "
                 + "{ \"id\": \"r2\", \"enabled\": false, \"when\": { \"kind\": \"isTrue\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
                 + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" }, "
-                + "\"hold\": { \"kind\": \"whileActive\" }, \"eligible\": \"any\" } ] } }");
+                + "\"hold\": { \"kind\": \"whileActive\" }, \"runs\": \"always\" } ] } }");
 
         [Fact]
         public void Rows_Workbench_DropsTheBaseRow_AndFillsTheDenseColumns()
@@ -654,12 +654,12 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Rows_Workbench_AlternateTarget_ShowsShortPair()
+        public void Rows_Workbench_CycleTarget_ShowsShortPair()
         {
             var cfg = Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
-                + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\", "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"tyreTemps\" ], "
                 + "\"periodMs\": 3000 }, \"hold\": { \"kind\": \"whileActive\" } } ] } }");
             var model = new DisplayTriggersEditModel(cfg, Device3);
 
@@ -668,31 +668,46 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("P2 ⇄ P5", row.ShowText);
         }
 
-        // ── Cycle target (Phase 4b: draft maps Alternate → Cycle, BuildRule writes
-        //    kind "cycle" + pages; untouched Alternate siblings stay byte-identical) ─
+        // ── Cycle target (S4: Alternate purged — degrades-preserved; Cycle is the write path)
 
-        private static DisplayCustomizationConfig TwoAlternateRules()
+        private static DisplayCustomizationConfig TwoCycleRules()
             => Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
                 + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
-                + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\", "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"tyreTemps\" ], "
                 + "\"periodMs\": 4000 }, \"hold\": { \"kind\": \"whileActive\" } }, "
                 + "{ \"id\": \"r2\", \"when\": { \"kind\": \"lessThan\", "
                 + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 5 }, "
-                + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"lapInfo\", \"pageB\": \"lapTimes\", "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"lapInfo\", \"lapTimes\" ], "
                 + "\"periodMs\": 2500 }, \"hold\": { \"kind\": \"whileActive\" } } ] } }");
 
         [Fact]
-        public void ToDraft_AlternateRule_MapsToTwoPageCycle_PeriodCarried()
+        public void ToDraft_CycleRule_CarriesPagesAndPeriod()
         {
-            var rule = TwoAlternateRules().Itm.Rules[0];
-            Assert.Equal(TargetKind.Alternate, rule.Show.Kind);
+            var rule = TwoCycleRules().Itm.Rules[0];
+            Assert.Equal(TargetKind.Cycle, rule.Show.Kind);
 
             var draft = DisplayTriggersEditModel.ToDraft(rule);
 
             Assert.Equal(TargetKind.Cycle, draft.TargetKind);
             Assert.Equal(new[] { ItmPage.FuelErsDrs, ItmPage.TyreTemps }, draft.CyclePages.ToArray());
             Assert.Equal(4000, draft.CyclePeriodMs);
+        }
+
+        [Fact]
+        public void ToDraft_AlternateRule_Degrades_DoesNotMapToCycle()
+        {
+            // S4 (spec-v9-s4-rename-freeze): Alternate→Cycle mapping deleted with the purge.
+            // Old alternate documents load as Unknown and stay degraded (not drafted as Cycle).
+            var cfg = Load("{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
+                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
+                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
+                + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\", "
+                + "\"periodMs\": 4000 }, \"hold\": { \"kind\": \"whileActive\" } } ] } }");
+            var rule = Assert.Single(cfg.Itm.Rules);
+            Assert.True(rule.DegradedAtLoad);
+            Assert.Equal(TargetKind.Unknown, rule.Show.Kind);
+            Assert.Equal("alternate", rule.Show.KindRaw);
         }
 
         [Fact]
@@ -718,15 +733,12 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("cycle", show.KindRaw);
             Assert.Equal(new[] { "fuelErsDrs", "tyreTemps", "carSettings" }, show.PagesRaw);
             Assert.Equal(2500, show.PeriodMs);
-            // No pageA/pageB spill from a cycle draft.
-            Assert.Null(show.PageARaw);
-            Assert.Null(show.PageBRaw);
         }
 
         [Fact]
-        public void UpdateRule_EditedAlternate_ResavesAsCycle_UntouchedAlternateSurvivesByReference()
+        public void UpdateRule_EditedCycle_ResavesAsCycle_UntouchedSiblingSurvivesByReference()
         {
-            var start = TwoAlternateRules();
+            var start = TwoCycleRules();
             string r2JsonBefore = DisplayConfigSerializer.Save(
                 new DisplayCustomizationConfig
                 {
@@ -748,10 +760,10 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(new[] { "fuelErsDrs", "tyreTemps", "carSettings" }, edited.Show.PagesRaw);
             Assert.Equal(5000, edited.Show.PeriodMs);
 
-            // Untouched sibling: same instance (edit-path guarantee) and still Alternate text.
+            // Untouched sibling: same instance (edit-path guarantee) and still Cycle text.
             Assert.Same(untouched, cfg.Itm.Rules[1]);
-            Assert.Equal(TargetKind.Alternate, cfg.Itm.Rules[1].Show.Kind);
-            Assert.Equal("alternate", cfg.Itm.Rules[1].Show.KindRaw);
+            Assert.Equal(TargetKind.Cycle, cfg.Itm.Rules[1].Show.Kind);
+            Assert.Equal("cycle", cfg.Itm.Rules[1].Show.KindRaw);
             string r2JsonAfter = DisplayConfigSerializer.Save(
                 new DisplayCustomizationConfig
                 {
@@ -892,7 +904,7 @@ namespace FanaBridge.Tests.Display
         public void RunsChoices_HasTheFourRuns_WithGlyphs_AndTheDraftsSelection()
         {
             var choices = DisplayTriggersEditModel.RunsChoices(
-                new RuleEdit { Enabled = true, Eligibility = RuleEligibility.Any });
+                new RuleEdit { Enabled = true, Eligibility = RuleEligibility.Always });
 
             Assert.Equal(new[] { "in", "idle", "any", "disabled" },
                 choices.Items.Select(i => i.Id).ToArray());
@@ -1053,7 +1065,7 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(reference.SourceName, draft.SourceName);
             Assert.Equal(ConditionKind.IsTrue, draft.Operator);
             Assert.Equal(HoldKind.WhileActive, draft.Hold);
-            Assert.Equal(RuleEligibility.Any, draft.Eligibility);
+            Assert.Equal(RuleEligibility.Always, draft.Eligibility);
             Assert.Null(draft.Value);
             Assert.True(DisplayTriggersEditModel.IsMappedControlProperty(draft.SourceName));
         }

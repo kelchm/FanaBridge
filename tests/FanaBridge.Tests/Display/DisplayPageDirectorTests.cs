@@ -90,7 +90,7 @@ namespace FanaBridge.Tests.Display
             => new RuleIntent(TargetKind.Page, page, null, ruleId);
 
         private static RuleIntent Screen(string id, string? ruleId = "r1")
-            => new RuleIntent(TargetKind.LegacyScreen, null, id, ruleId);
+            => new RuleIntent(TargetKind.Screen, null, id, ruleId);
 
         // ── Request issuance ─────────────────────────────────────────────
 

@@ -171,7 +171,7 @@ namespace FanaBridge.Display.Rules
             string baseScreenId = null, Func<long> nowMs = null, Action<string> log = null)
         {
             return new DisplayRuleEngine(rules, RuleSetKind.Legacy,
-                new RuleIntent(TargetKind.LegacyScreen, null, baseScreenId, null), null, nowMs, log);
+                new RuleIntent(TargetKind.Screen, null, baseScreenId, null), null, nowMs, log);
         }
 
         private static Func<long> DefaultClock()
@@ -249,7 +249,7 @@ namespace FanaBridge.Display.Rules
                 if (!rt.Usable || rt.Unavailable)
                     continue;
 
-                rt.EligibleNow = rt.Rule.Eligible == RuleEligibility.Any
+                rt.EligibleNow = rt.Rule.Eligible == RuleEligibility.Always
                     || (rt.Rule.Eligible == RuleEligibility.InGame ? inGame : !inGame);
                 if (!rt.EligibleNow)
                 {
@@ -297,7 +297,7 @@ namespace FanaBridge.Display.Rules
             {
                 var displaced = FindById(_prevWinnerId);
                 if (displaced != null && displaced.Active
-                    && displaced.Rule.Hold.Kind == HoldKind.Indefinite)
+                    && displaced.Rule.Hold.Kind == HoldKind.UntilDismissed)
                     displaced.Superseded = true;
             }
 
@@ -383,7 +383,7 @@ namespace FanaBridge.Display.Rules
                     if (rising)
                         Fire(rt, now);   // the window starts at the rising edge
                     break;
-                case HoldKind.Indefinite:
+                case HoldKind.UntilDismissed:
                     if (rising)
                         Fire(rt, now);
                     else if (!satisfied)
@@ -527,8 +527,7 @@ namespace FanaBridge.Display.Rules
             _selectionIndex = sel != null ? sel.Index : int.MaxValue;
             _selectionTarget = sel != null ? sel.Rule.Show : null;
             _selectionChangedAt = now;
-            bool cycleFamily = sel != null && (sel.Rule.Show.Kind == TargetKind.Alternate
-                || sel.Rule.Show.Kind == TargetKind.Cycle);
+            bool cycleFamily = sel != null && sel.Rule.Show.Kind == TargetKind.Cycle;
             _selectionCyclePages = cycleFamily ? sel.Rule.Show.CyclePages : null;
             if (cycleFamily)
                 _cycleAnchor = now;   // the flip period starts at win time
@@ -552,11 +551,10 @@ namespace FanaBridge.Display.Rules
             var t = _selectionTarget;
             switch (t.Kind)
             {
-                case TargetKind.LegacyScreen:
-                    return new RuleIntent(TargetKind.LegacyScreen, null, t.ScreenId, _selectionRuleId);
+                case TargetKind.Screen:
+                    return new RuleIntent(TargetKind.Screen, null, t.ScreenId, _selectionRuleId);
                 case TargetKind.Special:
                     return new RuleIntent(TargetKind.Special, null, null, _selectionRuleId, t.Command);
-                case TargetKind.Alternate:
                 case TargetKind.Cycle:
                     // The dwell floor does not apply to the internal flip — the flip is the
                     // rule's target, not an intent change.
@@ -619,7 +617,6 @@ namespace FanaBridge.Display.Rules
             {
                 case TargetKind.Page:
                     return show.Page == null || !availablePages.Contains(show.Page.Value);
-                case TargetKind.Alternate:
                 case TargetKind.Cycle:
                 {
                     var pages = show.CyclePages;

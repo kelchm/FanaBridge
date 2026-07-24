@@ -259,9 +259,9 @@ namespace FanaBridge.Tests.Display
                 "{ \"schemaVersion\": 1, "
                 + "\"itm\": { \"rules\": [ { \"id\": \"r1\", "
                 + "\"when\": { \"kind\": \"greaterThan\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Speed\" }, \"value\": 100 }, "
-                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"pit\" }, "
+                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] }, "
-                + "\"legacy\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ] } }";
+                + "\"segmentDisplay\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ] } }";
 
             var h = Harness.Create(config);
             h.Control.Land(1);
@@ -280,10 +280,10 @@ namespace FanaBridge.Tests.Display
             {
                 const string config =
                     "{ \"schemaVersion\": 1, "
-                    + "\"legacy\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
+                    + "\"segmentDisplay\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
                     + "\"rules\": [ { \"id\": \"l1\", "
                     + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                    + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"pit\" }, "
+                    + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
                     + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
 
                 var h = Harness.Create(config);
@@ -333,16 +333,16 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Snapshot_FollowsAlternateFlips()
+        public void Snapshot_FollowsCycleFlips()
         {
-            // An Alternate target flips the emitted intent every period with NO activity
+            // A Cycle target flips the emitted intent every period with NO activity
             // event and NO status change (the rule stays OnScreen) — the published
             // IntentDescription must still follow what the display actually shows.
             const string config =
                 "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
                 + "{ \"id\": \"r1\", "
                 + "\"when\": { \"kind\": \"greaterThan\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Speed\" }, \"value\": 100 }, "
-                + "\"show\": { \"kind\": \"alternate\", \"pageA\": \"fuelErsDrs\", \"pageB\": \"tyreTemps\", \"periodMs\": 2000 }, "
+                + "\"show\": { \"kind\": \"cycle\", \"pages\": [ \"fuelErsDrs\", \"tyreTemps\" ], \"periodMs\": 2000 }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
             var h = Harness.Create(config);
             h.Control.Land(1);
@@ -579,10 +579,10 @@ namespace FanaBridge.Tests.Display
         {
             const string config =
                 "{ \"schemaVersion\": 1, "
-                + "\"legacy\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
+                + "\"segmentDisplay\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
                 + "\"rules\": [ { \"id\": \"l1\", "
                 + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"pit\" }, "
+                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
             var h = Harness.Create(config);
             h.Control.Land(1);

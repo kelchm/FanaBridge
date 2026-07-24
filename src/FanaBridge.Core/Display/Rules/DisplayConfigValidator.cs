@@ -352,30 +352,12 @@ namespace FanaBridge.Display.Rules
                                 : "unrecognized page '" + t.PageRaw + "'");
                         break;
 
-                    case TargetKind.LegacyScreen:
+                    case TargetKind.Screen:
                         if (string.IsNullOrWhiteSpace(t.ScreenId))
                             Disable("no target screen id");
                         else if (!screenIds.Contains(t.ScreenId))
                             Disable("targets legacy screen '" + t.ScreenId
                                 + "' which does not exist");
-                        break;
-
-                    case TargetKind.Alternate:
-                        if (isLegacySet)
-                        {
-                            Disable("legacy rules can only target legacy screens");
-                        }
-                        else if (t.PageA == null || t.PageB == null)
-                        {
-                            Disable("missing or unrecognized alternate pages");
-                        }
-                        else if (t.PeriodMs < RuleTarget.MinCyclePeriodMs)
-                        {
-                            warn(setName + " rule '" + Label(rule) + "': alternate period "
-                                + t.PeriodMs + "ms clamped to "
-                                + RuleTarget.MinCyclePeriodMs + "ms");
-                            t.PeriodMs = RuleTarget.MinCyclePeriodMs;
-                        }
                         break;
 
                     case TargetKind.Cycle:

@@ -190,34 +190,34 @@ namespace FanaBridge.Tests.Display
 
         private const string StaticPitConfig =
             "{ \"schemaVersion\": 1, "
-            + "\"legacy\": { \"baseScreenId\": \"pit\", "
+            + "\"segmentDisplay\": { \"baseScreenId\": \"pit\", "
             + "\"screens\": [ { \"id\": \"pit\", \"name\": \"Pit\", \"text\": \"PIT\" } ] } }";
 
         private const string SpeedScreenConfig =
             "{ \"schemaVersion\": 1, "
-            + "\"legacy\": { \"baseScreenId\": \"spd\", "
+            + "\"segmentDisplay\": { \"baseScreenId\": \"spd\", "
             + "\"screens\": [ { \"id\": \"spd\", \"name\": \"Speed\", "
             + "\"contentKind\": \"speed\" } ] } }";
 
         private const string ScrollMsgConfig =
             "{ \"schemaVersion\": 1, "
-            + "\"legacy\": { \"baseScreenId\": \"msg\", "
+            + "\"segmentDisplay\": { \"baseScreenId\": \"msg\", "
             + "\"screens\": [ { \"id\": \"msg\", \"name\": \"Hello\", "
             + "\"contentKind\": \"message\", \"text\": \"HELLO\", "
             + "\"effect\": \"scroll\" } ] } }";
 
         private const string BlinkPitConfig =
             "{ \"schemaVersion\": 1, "
-            + "\"legacy\": { \"baseScreenId\": \"pit\", "
+            + "\"segmentDisplay\": { \"baseScreenId\": \"pit\", "
             + "\"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\", "
             + "\"effect\": \"blink\" } ] } }";
 
         private const string BlankBaseConfig =
             "{ \"schemaVersion\": 1, "
-            + "\"legacy\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
+            + "\"segmentDisplay\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
             + "\"rules\": [ { \"id\": \"l1\", "
             + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-            + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"pit\" }, "
+            + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
             + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
 
         // ── Byte goldens ─────────────────────────────────────────────────
@@ -370,7 +370,7 @@ namespace FanaBridge.Tests.Display
             // Spec P10a: Speed/Gear modes — untouched strict parity.
             string kind = mode == "Speed" ? "speed" : "gear";
             string configJson =
-                "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"m1\", "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"baseScreenId\": \"m1\", "
                 + "\"screens\": [ { \"id\": \"m1\", \"name\": \"M\", "
                 + "\"contentKind\": \"" + kind + "\" } ] } }";
 
@@ -600,17 +600,17 @@ namespace FanaBridge.Tests.Display
             // idle; the default (inGame) one is ineligible there — its screen never
             // shows without a game even though its condition holds.
             const string cfg =
-                "{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"prk\", \"text\": \"TIP\" }, "
                 + "{ \"id\": \"pit\", \"text\": \"PIT\" } ], "
                 + "\"rules\": [ "
-                + "{ \"id\": \"g1\", \"eligible\": \"inGame\", "
+                + "{ \"id\": \"g1\", \"runs\": \"inGame\", "
                 + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"pit\" }, "
+                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"pit\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } }, "
-                + "{ \"id\": \"a1\", \"eligible\": \"any\", "
+                + "{ \"id\": \"a1\", \"runs\": \"always\", "
                 + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"prk\" }, "
+                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"prk\" }, "
                 + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
 
             var h = Harness.Create(cfg);
@@ -833,7 +833,7 @@ namespace FanaBridge.Tests.Display
         // ── Special commands (firmware OLED screens) ─────────────────────
 
         private const string LogoSpecialConfig =
-            "{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"pit\", "
+            "{ \"schemaVersion\": 1, \"segmentDisplay\": { \"baseScreenId\": \"pit\", "
             + "\"screens\": [ { \"id\": \"pit\", \"name\": \"Pit\", \"text\": \"PIT\" } ], "
             + "\"rules\": [ { \"id\": \"s1\", "
             + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
@@ -841,8 +841,8 @@ namespace FanaBridge.Tests.Display
             + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
 
         private const string LogoSpecialIdleConfig =
-            "{ \"schemaVersion\": 1, \"legacy\": { "
-            + "\"rules\": [ { \"id\": \"s1\", \"eligible\": \"any\", "
+            "{ \"schemaVersion\": 1, \"segmentDisplay\": { "
+            + "\"rules\": [ { \"id\": \"s1\", \"runs\": \"always\", "
             + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
             + "\"show\": { \"kind\": \"special\", \"command\": \"logo\" }, "
             + "\"hold\": { \"kind\": \"whileActive\" } } ] } }";
@@ -891,7 +891,7 @@ namespace FanaBridge.Tests.Display
         public void Special_Release_EmptyResolution_WritesBlankOnce()
         {
             const string blankBase =
-                "{ \"schemaVersion\": 1, \"legacy\": { "
+                "{ \"schemaVersion\": 1, \"segmentDisplay\": { "
                 + "\"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ], "
                 + "\"rules\": [ { \"id\": \"s1\", "
                 + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
@@ -1012,7 +1012,7 @@ namespace FanaBridge.Tests.Display
         }
 
         private const string TwoSpecialConfig =
-            "{ \"schemaVersion\": 1, \"legacy\": { "
+            "{ \"schemaVersion\": 1, \"segmentDisplay\": { "
             + "\"rules\": [ { \"id\": \"w1\", "
             + "\"when\": { \"kind\": \"lessThan\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
             + "\"show\": { \"kind\": \"special\", \"command\": \"white\" }, "
@@ -1115,7 +1115,7 @@ namespace FanaBridge.Tests.Display
         public void HasLegacyWorld_ScreensOrRules_NotBaseAlone()
         {
             var screensOnly = DisplayConfigSerializer.Load(
-                "{ \"legacy\": { \"screens\": [ { \"id\": \"p\", \"text\": \"PIT\" } ] } }",
+                "{ \"segmentDisplay\": { \"screens\": [ { \"id\": \"p\", \"text\": \"PIT\" } ] } }",
                 _ => { });
             Assert.True(DisplayRuleStack.HasLegacyWorld(screensOnly));
 
@@ -1137,7 +1137,7 @@ namespace FanaBridge.Tests.Display
             // never painted) and must not mutate the doc.
             const string json =
                 "{ \"schemaVersion\": 1, "
-                + "\"legacy\": { \"baseScreenId\": \"x1\", "
+                + "\"segmentDisplay\": { \"baseScreenId\": \"x1\", "
                 + "\"screens\": [ { \"id\": \"x1\", \"name\": \"Future\", \"text\": \"PIT\", "
                 + "\"contentKind\": \"hologram\" } ] } }";
 

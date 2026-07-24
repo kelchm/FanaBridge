@@ -199,7 +199,7 @@ namespace FanaBridge.Tests.UI
                 + "{ \"id\": \"r2\", \"enabled\": false, \"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"DrsEnabled\" } }, "
                 + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" } }, "
                 + "{ \"id\": \"r3\", \"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"PitLimiterOn\" } }, "
-                + "\"show\": { \"kind\": \"page\", \"page\": \"carSettings\" }, \"eligible\": \"idle\" }, "
+                + "\"show\": { \"kind\": \"page\", \"page\": \"carSettings\" }, \"runs\": \"idle\" }, "
                 + "{ \"id\": \"r4\", \"when\": { \"kind\": \"greaterThan\", \"source\": { \"kind\": \"builtIn\", \"name\": \"Speed\" }, \"value\": 100 }, "
                 + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" } } ] } }", _ => { });
 

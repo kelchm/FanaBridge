@@ -34,8 +34,7 @@ namespace FanaBridge.UI.Display
         public double? Value;
         public double? Hysteresis;
 
-        // SHOW — draft TargetKind is Page, Cycle, Special, or (carried) LegacyScreen;
-        // Alternate loads as a 2-page Cycle and re-saves as Cycle if the user edits it.
+        // SHOW — draft TargetKind is Page, Cycle, Special, or (carried) Screen.
         public TargetKind TargetKind = TargetKind.Page;
         public ItmPage? Page;
         /// <summary>Resolved pages for a <see cref="TargetKind.Cycle"/> draft (order is
@@ -138,7 +137,7 @@ namespace FanaBridge.UI.Display
             {
                 SourceKind = PropertyKind.SimHubProperty,
                 Operator = ConditionKind.GreaterThan,
-                TargetKind = IsLegacyMode ? TargetKind.LegacyScreen : TargetKind.Page,
+                TargetKind = IsLegacyMode ? TargetKind.Screen : TargetKind.Page,
                 Page = IsLegacyMode ? (ItmPage?)null : DefaultTargetPage(),
                 ScreenId = IsLegacyMode ? DefaultScreenId() : null,
                 Eligibility = RuleEligibility.InGame,
@@ -155,10 +154,10 @@ namespace FanaBridge.UI.Display
                 SourceName = MappedControlPropertyName(role),
                 Operator = ConditionKind.IsTrue,
                 Hold = HoldKind.WhileActive,
-                TargetKind = IsLegacyMode ? TargetKind.LegacyScreen : TargetKind.Page,
+                TargetKind = IsLegacyMode ? TargetKind.Screen : TargetKind.Page,
                 Page = IsLegacyMode ? (ItmPage?)null : DefaultTargetPage(),
                 ScreenId = IsLegacyMode ? DefaultScreenId() : null,
-                Eligibility = RuleEligibility.Any,
+                Eligibility = RuleEligibility.Always,
             };
 
         /// <summary>Loads an existing (non-degraded) rule into an editable draft.</summary>
@@ -184,11 +183,7 @@ namespace FanaBridge.UI.Display
             }
             if (rule.Show != null)
             {
-                // Alternate is a parse alias of Cycle: the draft always holds Cycle so an
-                // edit re-saves as kind "cycle" + pages (design decision 2). Untouched
-                // Alternate rules never pass through ToDraft/BuildRule, so they keep their
-                // original kind byte-for-byte.
-                if (rule.Show.Kind == TargetKind.Alternate || rule.Show.Kind == TargetKind.Cycle)
+                if (rule.Show.Kind == TargetKind.Cycle)
                 {
                     e.TargetKind = TargetKind.Cycle;
                     e.CyclePages = new List<ItmPage>();
@@ -308,7 +303,7 @@ namespace FanaBridge.UI.Display
             {
                 RuleEligibility scope =
                     string.Equals(runId, RunIdle, StringComparison.Ordinal) ? RuleEligibility.Idle :
-                    string.Equals(runId, RunAny, StringComparison.Ordinal) ? RuleEligibility.Any :
+                    string.Equals(runId, RunAny, StringComparison.Ordinal) ? RuleEligibility.Always :
                     RuleEligibility.InGame;
                 rules[i] = CloneRuleWithRun(rules[i], enabled: true, eligibility: scope);
             }
@@ -424,7 +419,7 @@ namespace FanaBridge.UI.Display
                 draft.Operator = ConditionKind.IsTrue;
                 draft.Value = null;
                 draft.Hold = HoldKind.WhileActive;
-                draft.Eligibility = RuleEligibility.Any;
+                draft.Eligibility = RuleEligibility.Always;
             }
         }
 
@@ -580,7 +575,6 @@ namespace FanaBridge.UI.Display
             {
                 case TargetKind.Page:
                     return show.Page == null ? "" : PageLabel(show.Page.Value);
-                case TargetKind.Alternate:
                 case TargetKind.Cycle:
                 {
                     var pages = show.CyclePages;
@@ -591,7 +585,7 @@ namespace FanaBridge.UI.Display
                         parts[i] = PageShort(pages[i]);
                     return string.Join(" ⇄ ", parts);
                 }
-                case TargetKind.LegacyScreen:
+                case TargetKind.Screen:
                     return LegacyShowGlyph + " " + ScreenDisplayName(show.ScreenId);
                 case TargetKind.Special:
                     return show.Command == SpecialCommand.Unknown
@@ -765,7 +759,7 @@ namespace FanaBridge.UI.Display
         /// for edge/event conditions, matching the validator's coercion).</summary>
         public static readonly IReadOnlyList<HoldKind> Holds = Array.AsReadOnly(new[]
         {
-            HoldKind.WhileActive, HoldKind.ForDuration, HoldKind.Indefinite,
+            HoldKind.WhileActive, HoldKind.ForDuration, HoldKind.UntilDismissed,
         });
 
         public static string HoldLabel(HoldKind kind)
@@ -774,7 +768,7 @@ namespace FanaBridge.UI.Display
             {
                 case HoldKind.WhileActive: return "While active";
                 case HoldKind.ForDuration: return "For duration";
-                case HoldKind.Indefinite: return "Indefinite";
+                case HoldKind.UntilDismissed: return "Until dismissed";
                 default: return kind.ToString();
             }
         }
@@ -782,7 +776,7 @@ namespace FanaBridge.UI.Display
         /// <summary>The eligibility segmented control, in the mock's order.</summary>
         public static readonly IReadOnlyList<RuleEligibility> Eligibilities = Array.AsReadOnly(new[]
         {
-            RuleEligibility.InGame, RuleEligibility.Idle, RuleEligibility.Any,
+            RuleEligibility.InGame, RuleEligibility.Idle, RuleEligibility.Always,
         });
 
         public static string EligibilityLabel(RuleEligibility eligibility)
@@ -791,7 +785,7 @@ namespace FanaBridge.UI.Display
             {
                 case RuleEligibility.InGame: return "In-game";
                 case RuleEligibility.Idle: return "Idle";
-                case RuleEligibility.Any: return "Any time";
+                case RuleEligibility.Always: return "Any time";
                 default: return eligibility.ToString();
             }
         }
@@ -812,7 +806,7 @@ namespace FanaBridge.UI.Display
             switch (eligibility)
             {
                 case RuleEligibility.Idle: return RunIdle;
-                case RuleEligibility.Any: return RunAny;
+                case RuleEligibility.Always: return RunAny;
                 default: return RunInGame;
             }
         }
@@ -1036,8 +1030,6 @@ namespace FanaBridge.UI.Display
                     show.Page = e.Page;
                     break;
                 case TargetKind.Cycle:
-                    // Draft never holds Alternate — ToDraft maps it to Cycle, so BuildRule
-                    // always writes kind "cycle" + camelCase pages (ItmPage? setter spelling).
                     show.PagesRaw = new List<string>();
                     if (e.CyclePages != null)
                     {
@@ -1046,7 +1038,7 @@ namespace FanaBridge.UI.Display
                     }
                     show.PeriodMs = e.CyclePeriodMs;
                     break;
-                case TargetKind.LegacyScreen:
+                case TargetKind.Screen:
                     // Legacy mode authors virtual-page targets; ITM mode still carries a
                     // loaded legacy-screen id through an unrelated field edit.
                     show.ScreenId = e.ScreenId;
@@ -1127,8 +1119,6 @@ namespace FanaBridge.UI.Display
                     KindRaw = rule.Show.KindRaw,
                     PageRaw = rule.Show.PageRaw,
                     ScreenId = rule.Show.ScreenId,
-                    PageARaw = rule.Show.PageARaw,
-                    PageBRaw = rule.Show.PageBRaw,
                     // Fresh list so a later mutation of the clone cannot reach the source
                     // rule's PagesRaw (byte-faithful clone for cycle rules).
                     PagesRaw = rule.Show.PagesRaw == null

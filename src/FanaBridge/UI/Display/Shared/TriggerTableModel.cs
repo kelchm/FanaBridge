@@ -125,14 +125,14 @@ namespace FanaBridge.UI.Display.Shared
     internal static class TriggerTableModel
     {
         /// <summary>The Timeout column text for a hold: <see cref="HoldKind.WhileActive"/> →
-        /// "While active", <see cref="HoldKind.Indefinite"/> → "Until replaced" (serialization
+        /// "While active", <see cref="HoldKind.UntilDismissed"/> → "Until replaced" (serialization
         /// untouched — the display word only), <see cref="HoldKind.ForDuration"/> →
         /// "&lt;seconds&gt; s". An unset/unknown hold reads as "While active" (the level default).</summary>
         public static string TimeoutText(HoldKind kind, int durationMs)
         {
             switch (kind)
             {
-                case HoldKind.Indefinite:
+                case HoldKind.UntilDismissed:
                     return "Until replaced";
                 case HoldKind.ForDuration:
                     return SecondsText(durationMs) + " s";

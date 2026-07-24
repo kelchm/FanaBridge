@@ -40,7 +40,7 @@ namespace FanaBridge.Display.Rules
         public ItmRuleSet Itm { get; set; } = new ItmRuleSet();
 
         /// <summary>Rules, screens, and base screen for the legacy 7-segment surface.</summary>
-        [JsonProperty("legacy")]
+        [JsonProperty("segmentDisplay")]
         public LegacyRuleSet Legacy { get; set; } = new LegacyRuleSet();
 
         /// <summary>Per-parameter source/format overrides, keyed by ITM param id

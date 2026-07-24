@@ -370,10 +370,9 @@ namespace FanaBridge.Display.Runtime
             bool versionChanged = version != _lastActivityVersion;
             bool itmChanged = StatusesChanged(itm.RuleStates, ref _lastItmStatuses);
             bool legacyChanged = StatusesChanged(legacy.RuleStates, ref _lastLegacyStatuses);
-            // The described intent is a gate of its own: a cycle-family target (Alternate
-            // or Cycle) flips the emitted intent every period with no activity event and
-            // no status change, and the published snapshot must follow what the display
-            // actually shows.
+            // The described intent is a gate of its own: a Cycle target flips the emitted
+            // intent every period with no activity event and no status change, and the
+            // published snapshot must follow what the display actually shows.
             string intent = DescribeIntent(itm.Intent);
             bool intentChanged = !string.Equals(intent, _lastIntentDescription, StringComparison.Ordinal);
             // Last-resolved legacy segments / screen name — effect frames recompose when
@@ -522,7 +521,7 @@ namespace FanaBridge.Display.Runtime
         {
             if (intent.Kind == TargetKind.Special)
                 return SpecialCommands.Label(intent.Command);
-            if (intent.Kind == TargetKind.LegacyScreen)
+            if (intent.Kind == TargetKind.Screen)
                 return "screen '" + (intent.ScreenId ?? "(blank)") + "'";
             return intent.Page == null
                 // Resting without a page intent: the wheel navigated to a page
@@ -653,7 +652,7 @@ namespace FanaBridge.Display.Runtime
         /// </summary>
         private void DriveLegacyCol01(RuleIntent intent, bool inGame, GameData data)
         {
-            string screenId = intent.Kind == TargetKind.LegacyScreen ? intent.ScreenId : null;
+            string screenId = intent.Kind == TargetKind.Screen ? intent.ScreenId : null;
             LegacyScreen screen = null;
             if (!string.IsNullOrEmpty(screenId))
                 _screensById.TryGetValue(screenId, out screen);
@@ -749,7 +748,7 @@ namespace FanaBridge.Display.Runtime
         // Flag-off: exact pre-7b log-only message (byte-identical text).
         private void LogLegacyIntentChange(RuleIntent intent)
         {
-            string screenId = intent.Kind == TargetKind.LegacyScreen ? intent.ScreenId : null;
+            string screenId = intent.Kind == TargetKind.Screen ? intent.ScreenId : null;
             if (string.Equals(screenId, _lastLegacyLogged, StringComparison.Ordinal))
                 return;
             _lastLegacyLogged = screenId;

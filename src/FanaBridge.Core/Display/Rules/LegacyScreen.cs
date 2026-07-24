@@ -62,7 +62,7 @@ namespace FanaBridge.Display.Rules
 
     /// <summary>
     /// A named screen for the legacy 7-segment surface. Screens form the library that
-    /// legacy rules (and ITM rules targeting <see cref="TargetKind.LegacyScreen"/>) pick
+    /// legacy rules (and ITM rules targeting <see cref="TargetKind.Screen"/>) pick
     /// from. Content is either static text (the original 1–3 char form) or a dynamic kind
     /// resolved at frame time by the legacy formatter — nothing consumes those kinds until
     /// the wire path is wired (Phase 7b).

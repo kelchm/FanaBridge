@@ -119,7 +119,7 @@ namespace FanaBridge.Display.Host
                 },
                 Show = new RuleTarget
                 {
-                    Kind = TargetKind.LegacyScreen,
+                    Kind = TargetKind.Screen,
                     ScreenId = gear.Id,
                 },
                 Hold = new HoldSpec
@@ -153,7 +153,7 @@ namespace FanaBridge.Display.Host
                 },
                 Show = new RuleTarget
                 {
-                    Kind = TargetKind.LegacyScreen,
+                    Kind = TargetKind.Screen,
                     ScreenId = brackets.Id,
                 },
                 Hold = new HoldSpec

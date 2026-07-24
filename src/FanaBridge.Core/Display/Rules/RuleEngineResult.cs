@@ -8,8 +8,8 @@ namespace FanaBridge.Display.Rules
     /// What the display should be showing. An intent carries content identities only
     /// (<see cref="ItmPage"/> / screen id / special command) — wire page numbers are per
     /// display device and are resolved by the page director at the edge. An
-    /// <see cref="TargetKind.Alternate"/> rule never appears here as such: the engine
-    /// resolves the alternation and emits the current flip page, so the consumer only
+    /// <see cref="TargetKind.Cycle"/> rule never appears here as such: the engine
+    /// resolves the cycle and emits the current flip page, so the consumer only
     /// ever sees a concrete page, screen, or special command.
     /// </summary>
     public struct RuleIntent : IEquatable<RuleIntent>
@@ -24,14 +24,14 @@ namespace FanaBridge.Display.Rules
             Command = command;
         }
 
-        /// <summary><see cref="TargetKind.Page"/>, <see cref="TargetKind.LegacyScreen"/>,
+        /// <summary><see cref="TargetKind.Page"/>, <see cref="TargetKind.Screen"/>,
         /// or <see cref="TargetKind.Special"/>.</summary>
         public TargetKind Kind { get; }
 
         /// <summary>The page to show, for <see cref="TargetKind.Page"/>.</summary>
         public ItmPage? Page { get; }
 
-        /// <summary>The screen to show, for <see cref="TargetKind.LegacyScreen"/>. Null means
+        /// <summary>The screen to show, for <see cref="TargetKind.Screen"/>. Null means
         /// a blank display (a legacy set with no base screen).</summary>
         public string ScreenId { get; }
 

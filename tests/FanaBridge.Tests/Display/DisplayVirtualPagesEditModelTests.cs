@@ -17,7 +17,7 @@ namespace FanaBridge.Tests.Display
             => DisplayConfigSerializer.Load(json, _ => { });
 
         private static DisplayCustomizationConfig WithTwoScreens()
-            => Load("{ \"schemaVersion\": 1, \"legacy\": { \"baseScreenId\": \"pit\", "
+            => Load("{ \"schemaVersion\": 1, \"segmentDisplay\": { \"baseScreenId\": \"pit\", "
                 + "\"screens\": [ "
                 + "{ \"id\": \"spd\", \"name\": \"Speed\", \"contentKind\": \"speed\" }, "
                 + "{ \"id\": \"pit\", \"name\": \"Pit\", \"text\": \"PIT\" } "
@@ -158,7 +158,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void PreviewSegments_ScrollMessage_AdvancesOnClock()
         {
-            var cfg = Load("{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+            var cfg = Load("{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"m\", \"contentKind\": \"message\", \"text\": \"HELLO\", "
                 + "\"effect\": \"scroll\" } ] } }");
             var model = new DisplayVirtualPagesEditModel(cfg);
@@ -173,7 +173,7 @@ namespace FanaBridge.Tests.Display
         public void SurvivorScreens_ExcludesUnknownContentKind()
         {
             // Unknown kind is kept for EnumText survival but is not a SHOW target.
-            var raw = Load("{ \"schemaVersion\": 1, \"legacy\": { \"screens\": [ "
+            var raw = Load("{ \"schemaVersion\": 1, \"segmentDisplay\": { \"screens\": [ "
                 + "{ \"id\": \"ok\", \"text\": \"PIT\" }, "
                 + "{ \"id\": \"x\", \"text\": \"PIT\", \"contentKind\": \"hologram\" } "
                 + "] } }");

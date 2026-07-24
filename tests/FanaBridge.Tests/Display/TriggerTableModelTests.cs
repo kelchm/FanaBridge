@@ -13,7 +13,7 @@ namespace FanaBridge.Tests.Display
     {
         [Theory]
         [InlineData(HoldKind.WhileActive, 5000, "While active")]
-        [InlineData(HoldKind.Indefinite, 5000, "Until replaced")]
+        [InlineData(HoldKind.UntilDismissed, 5000, "Until replaced")]
         [InlineData(HoldKind.ForDuration, 5000, "5 s")]
         [InlineData(HoldKind.ForDuration, 2500, "2.5 s")]
         [InlineData(HoldKind.Unknown, 5000, "While active")]   // unset → the level default look

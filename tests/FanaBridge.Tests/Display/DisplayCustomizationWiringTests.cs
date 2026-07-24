@@ -257,16 +257,16 @@ namespace FanaBridge.Tests.Display
             Assert.False(DisplayConfigSerializer.Load(
                 "{ \"itm\": { \"basePage\": \"tyreTemps\" } }", _ => { }).IsEmpty);
             Assert.False(DisplayConfigSerializer.Load(
-                "{ \"legacy\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ] } }",
+                "{ \"segmentDisplay\": { \"screens\": [ { \"id\": \"pit\", \"text\": \"PIT\" } ] } }",
                 _ => { }).IsEmpty);
             Assert.False(DisplayConfigSerializer.Load(
                 "{ \"fieldMappings\": { \"5\": { \"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" } } } }",
                 _ => { }).IsEmpty);
             // A legacy rule set with rules only.
             Assert.False(DisplayConfigSerializer.Load(
-                "{ \"legacy\": { \"screens\": [ { \"id\": \"s\", \"text\": \"P1\" } ], \"rules\": [ "
+                "{ \"segmentDisplay\": { \"screens\": [ { \"id\": \"s\", \"text\": \"P1\" } ], \"rules\": [ "
                 + "{ \"id\": \"l1\", \"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                + "\"show\": { \"kind\": \"legacyScreen\", \"screenId\": \"s\" } } ] } }",
+                + "\"show\": { \"kind\": \"screen\", \"screenId\": \"s\" } } ] } }",
                 _ => { }).IsEmpty);
         }
 
