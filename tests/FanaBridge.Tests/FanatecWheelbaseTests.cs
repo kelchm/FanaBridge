@@ -650,14 +650,22 @@ namespace FanaBridge.Tests
             wb.UpdateIdentity();
             Assert.True(wb.IsSrmConverter);
 
-            t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, 0x11 });
+            // A realistic push rather than a marker byte: FF 05 01 then one 5-byte entry
+            // [deviceId][fwHandle][paramId-LE][dataType] for display device 4 (the Bentley).
+            // The sibling tests above only need a distinguishable frame, but this one is the
+            // converter path's only coverage — so it drains AND parses, which would also catch
+            // a future regression that hands the driver a frame it silently discards.
+            t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, 0x04, 0x00, (byte)ItmParam.Speed, 0x00, 0x34 });
             clock.T += 10;
             Assert.False(wb.UpdateIdentity());   // no identity change — but the ITM drain still runs
 
             var drained = new List<byte[]>();
             wb.DrainItmReports(drained.Add);
             Assert.Single(drained);
-            Assert.Equal(0x11, drained[0][3]);
+
+            var subs = ItmTelemetry.ParseSubscriptionReport(drained[0], drained[0].Length, deviceId: 4);
+            var sub = Assert.Single(subs);
+            Assert.Equal(ItmParam.Speed, sub.ParamId);
         }
 
         [Fact]

@@ -463,13 +463,18 @@ namespace FanaBridge.Transport
             if (!IsConnected)
                 return false;
 
-            // ITM subscription pushes are a display concern, not an identity one: they keep
-            // arriving on col03 for the life of the connection no matter how the connection was
-            // identified. Drain them BEFORE the converter short-circuit below — an SRM kit's
-            // identity is a one-shot, but its ITM channel is not, and skipping this drain leaves
-            // the ITM lifecycle waiting on a confirming push that is sitting unread in the
-            // transport queue, so bring-up runs the whole recovery ladder and settles into
-            // Unavailable forever.
+            // ITM subscription pushes are a display concern, not an identity one, so they are
+            // drained for the life of the connection regardless of how identity was established.
+            // This MUST stay above the converter short-circuit below: an SRM kit's identity is a
+            // one-shot, but its ITM channel is not, and skipping the drain leaves the lifecycle
+            // waiting on a confirming push that is sitting unread in the transport queue — so
+            // bring-up runs the whole recovery ladder and settles into Unavailable forever.
+            // (Whether a given kit relays those pushes at all is a separate, open question; this
+            // only guarantees we read whatever does arrive.) Draining here rather than alongside
+            // the identity streams below widens, by a few microseconds of same-thread work, the
+            // pre-existing window in which a late push from a previous attachment can outlive the
+            // wheel-change clear in the transport queue — one drain site is worth that over two
+            // that can drift apart.
             DrainFamily(Transport.ItmReports, _bufferItm);
 
             // An SRM converter's identity is a fixed one-shot — nothing to drain or re-settle once
