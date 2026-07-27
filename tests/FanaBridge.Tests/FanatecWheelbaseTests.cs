@@ -633,6 +633,34 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void ItmReports_StillDrained_OnAnSrmConverter()
+        {
+            // Regression (v0.6.0 field report, SRM kit + Podium Bentley GT3): once a
+            // converter identity committed, UpdateIdentity short-circuited BEFORE the ITM
+            // drain. The kit's FF 05 subscription pushes then sat unread in the transport
+            // queue forever, so the ITM lifecycle never got its confirming push — bring-up
+            // ran the whole recovery ladder and parked in Unavailable. Identity is a
+            // one-shot on a converter; the ITM channel is not.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0005, 64, 64, "CSL Elite"));
+            Assert.True(wb.AutoConnect());
+
+            t.Srm.Enqueue(SrmReply());
+            clock.T += 10;
+            wb.UpdateIdentity();
+            Assert.True(wb.IsSrmConverter);
+
+            t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, 0x11 });
+            clock.T += 10;
+            Assert.False(wb.UpdateIdentity());   // no identity change — but the ITM drain still runs
+
+            var drained = new List<byte[]>();
+            wb.DrainItmReports(drained.Add);
+            Assert.Single(drained);
+            Assert.Equal(0x11, drained[0][3]);
+        }
+
+        [Fact]
         public void ItmReports_BufferBounded_DropsOldestWhenFull()
         {
             // Cap is 32; a stalled consumer (e.g. during the wizard) must cost the
