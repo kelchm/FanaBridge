@@ -2,7 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge;
+using FanaBridge.Display.Catalog;
+using FanaBridge.Display.Composition;
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Schema2;
 using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
@@ -138,6 +141,9 @@ namespace FanaBridge.Adapters
 
         /// <summary>Test hook (parity gate): the rule stack, null when nothing is built.</summary>
         internal DisplayRuleStack DisplayStackForTest => _displayRuntime.Stack;
+
+        /// <summary>Test hook: the v2 composition, null when a v1 doc (or none) is live.</summary>
+        internal DisplayCompositionV2 CompositionForTest => _displayRuntime.Composition;
 
         /// <summary>Test hook: the ITM driver, null until an ITM display is driven.</summary>
         internal ItmDisplayDriver ItmDisplayForTest => _displayRuntime.ItmDriver;
@@ -321,6 +327,7 @@ namespace FanaBridge.Adapters
             var defaultsConfig = LegacyModeMigration.Apply(_displaySettings, null);
             _customSettings["legacyModeMigrated"] = _displaySettings.LegacyModeMigrated;
             _displayRuntime.SetConfig(defaultsConfig);
+            _displayRuntime.ClearConfigV2();
 
             if (_ledModule != null)
             {
@@ -402,11 +409,21 @@ namespace FanaBridge.Adapters
 
             // Display customization: serialize the CURRENT snapshot (not the raw
             // payload) — the EnumText model keeps values a future version wrote
-            // intact through the load/save round-trip.
-            var displayConfig = _displayRuntime.CurrentConfig;
-            if (displayConfig != null)
-                result["displayCustomization"] =
-                    JObject.Parse(DisplayConfigSerializer.Save(displayConfig));
+            // intact through the load/save round-trip. v2 key "display" wins; v1
+            // "displayCustomization" is only written when no v2 document is live.
+            var displayConfigV2 = _displayRuntime.CurrentConfigV2;
+            if (displayConfigV2 != null)
+            {
+                result["display"] =
+                    JObject.Parse(DisplayConfigV2Serializer.Save(displayConfigV2));
+            }
+            else
+            {
+                var displayConfig = _displayRuntime.CurrentConfig;
+                if (displayConfig != null)
+                    result["displayCustomization"] =
+                        JObject.Parse(DisplayConfigSerializer.Save(displayConfig));
+            }
 
             return result;
         }
@@ -457,26 +474,38 @@ namespace FanaBridge.Adapters
             // Track open migration so DataUpdate can re-Read when live caps flip.
             _migratedItmCapable = _customSettings["displayControl"] == null ? itmCapable : (bool?)null;
 
-            // Display customization document (whitelisted nested key; absent = none).
-            // Parsed leniently on this thread — Load never throws — then the Phase 9a
-            // mode→legacy-world migration runs on the parsed graph (never the raw
-            // JObject). Handed to the runtime as an immutable snapshot (its volatile
-            // release); the frame path notices the reference change and rebuilds the
-            // rule stack. Released AFTER the plain _displaySettings write above, and
-            // paired with the runtime's acquire-before-settings read order, so a frame
-            // that sees the new config also sees the settings that arrived with it
-            // (the runtime's volatile is the fence). Settings can arrive before plugin
-            // Init: the snapshot just waits until the frame path is alive to consume it.
-            var displayCustomization = obj["displayCustomization"];
-            var parsedConfig = displayCustomization == null
-                ? null
-                : DisplayConfigSerializer.Load(displayCustomization.ToString(),
-                    msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg));
-            parsedConfig = LegacyModeMigration.Apply(_displaySettings, parsedConfig);
+            // Display customization document (whitelisted nested keys; absent = none).
+            // OQ-3: the v2 key "display" wins unconditionally; the v1 key is read only
+            // when no v2 key exists. Released AFTER the plain _displaySettings write
+            // above, paired with the runtime's acquire-before-settings read order.
+            Action<string> warn = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
+            var displayV2 = obj["display"];
+            if (displayV2 != null)
+            {
+                // Resolve catalog for Normalize capability rules (OQ-2: WheelCode).
+                WheelCatalog catalog;
+                CatalogLoader.TryResolve(_config.WheelCode, out catalog, warn,
+                    itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
+                var parsedV2 = DisplayConfigV2Serializer.Load(displayV2.ToString(), warn);
+                parsedV2 = DisplayConfigV2Validator.Normalize(parsedV2, warn, catalog);
+                _displayRuntime.SetConfigV2(parsedV2);
+                _displayRuntime.ClearConfig(); // v2 owns this device; drop any v1 snapshot
+            }
+            else
+            {
+                // E8b deletion item: v1 fallback when no v2 key exists (dev configs only
+                // during the E8→E8b window). Scaffolding — remove with the v1 path.
+                var displayCustomization = obj["displayCustomization"];
+                var parsedConfig = displayCustomization == null
+                    ? null
+                    : DisplayConfigSerializer.Load(displayCustomization.ToString(), warn);
+                parsedConfig = LegacyModeMigration.Apply(_displaySettings, parsedConfig);
+                _displayRuntime.SetConfig(parsedConfig);
+                _displayRuntime.ClearConfigV2();
+            }
             // Bake the marker into the settings bag so GetSettings persists it (without
             // this, a save would re-run synthesis after the user emptied the world).
             _customSettings["legacyModeMigrated"] = _displaySettings.LegacyModeMigrated;
-            _displayRuntime.SetConfig(parsedConfig);
 
             _legacyDriver?.UpdateSettings(_displaySettings);
         }
@@ -706,17 +735,19 @@ namespace FanaBridge.Adapters
         // ── Legacy col01 arbitration (single writer: LegacyDisplayDriver) ─
 
         /// <summary>
-        /// True when the rule path owns col01: flag on and the frame-latched config has a
-        /// non-empty legacy world. Uses <see cref="DeviceDisplayRuntime.FrameConfig"/> (the
-        /// acquire Tick / TickLegacyRules already made) — never re-reads the volatile
-        /// <see cref="DeviceDisplayRuntime.CurrentConfig"/>, so a concurrent UI Apply between
-        /// the tick and this drive cannot split ownership (rule sink + mode Update both
-        /// writing col01 in one frame). Flag-off keeps the mode-based
+        /// True when the rule/composition path owns col01: flag on and the frame-latched
+        /// config has a non-empty legacy world (v1) OR a live v2 composition document
+        /// (RISK-4). Uses <see cref="DeviceDisplayRuntime.FrameConfig"/> /
+        /// <see cref="DeviceDisplayRuntime.FrameConfigV2"/> (the acquire Tick /
+        /// TickLegacyRules already made) — never re-reads the volatiles, so a concurrent
+        /// UI Apply between the tick and this drive cannot split ownership (rule sink +
+        /// mode Update both writing col01 in one frame). Flag-off keeps the mode-based
         /// <see cref="LegacyDisplayDriver.Update"/> fallback; flag-on empty world is silence.
         /// </summary>
         private bool UseLegacyRulePath
             => DisplayRuleStack.LegacyRuleWrites
-                && DisplayRuleStack.HasLegacyWorld(_displayRuntime.FrameConfig);
+                && (DisplayRuleStack.HasLegacyWorld(_displayRuntime.FrameConfig)
+                    || DeviceDisplayRuntime.IsLiveCompositionV2(_displayRuntime.FrameConfigV2));
 
         private void EnsureLegacyDriver(FanatecPlugin plugin, bool logCreate = false)
         {

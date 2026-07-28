@@ -46,11 +46,5 @@ namespace FanaBridge.Display.Composition
         /// Null = all params encodable.
         /// </summary>
         public Func<ushort, bool> HasEncoder { get; set; }
-
-        /// <summary>
-        /// Default wire page used when resolving <see cref="DisplayCompositionV2.BaseWirePage"/>
-        /// (device settings default). 0 = table fallback only.
-        /// </summary>
-        public byte DefaultWirePage { get; set; }
     }
 }

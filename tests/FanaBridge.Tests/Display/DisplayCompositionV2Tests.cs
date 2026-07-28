@@ -253,7 +253,6 @@ namespace FanaBridge.Tests.Display
                     new DisplayCompositionV2Options
                     {
                         DeviceKey = "test",
-                        DefaultWirePage = 1,
                     });
                 h.Composition.TryWriteLegacySegments = (a, b, c) =>
                 {
@@ -692,6 +691,26 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(DirectorIntentKind.Page, intent.Kind);
             Assert.Equal(ItmPage.TyreTemps, intent.Page);
             Assert.Equal("r-tyre", intent.SourceRuleId);
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // Base wire page — single producer (document rest floor)
+        // ════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Owner ruling (e8-seam-adjudication): base page has one producer — document rest
+        /// via catalog. Unresolvable rest (hosted / absent) is Blank (wire 0), never a
+        /// nonzero legacy settings default. DisplayCompositionV2Options has no
+        /// DefaultWirePage member (compile-time proof).
+        /// </summary>
+        [Fact]
+        public void BaseWirePage_UnresolvableRest_IsBlank_NeverLegacySettingsDefault()
+        {
+            // MinimalDoc defaults rest to hosted:p-a → ConfiguredBase null → unresolvable.
+            var doc = MinimalDoc();
+            var h = Harness.Create(doc, itmDeviceId: 3);
+            Assert.Null(h.Composition.ConfiguredBase);
+            Assert.Equal(0, h.Composition.BaseWirePage);
         }
 
         // ════════════════════════════════════════════════════════════════

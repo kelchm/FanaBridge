@@ -119,7 +119,8 @@ namespace FanaBridge.Display.Composition
             _landingHostedPageId = ResolveHostedId(DestinationIds.FromPageRef(rest?.LandingPage))
                 ?? ResolveHostedId(_inSessionDestinationId);
 
-            BaseWirePage = ResolveBaseWirePage(options.DefaultWirePage);
+            ConfiguredBase = ResolveConfiguredBaseItm();
+            BaseWirePage = ResolveBaseWirePage();
             Config = _config;
             ConditionPlan = _conditionPlan;
         }
@@ -128,10 +129,18 @@ namespace FanaBridge.Display.Composition
         public DisplayConfigV2 Config { get; }
 
         /// <summary>
-        /// Effective base wire page (rest in-session when cataloged, else device default).
-        /// Feeds SetPagePolicy when runtime-wired.
+        /// Effective base wire page from the document rest floor via the device catalog;
+        /// 0 (Blank / unresolvable) when rest is hosted or not offered on this device.
+        /// Feeds SetPagePolicy when runtime-wired. Single producer — no settings fallback.
         /// </summary>
         public byte BaseWirePage { get; }
+
+        /// <summary>
+        /// Configured rest in-session as an ITM page identity when the document pins one;
+        /// null when rest is hosted/unresolved. Used to re-resolve BaseWirePage across a
+        /// display-id hot-swap (never carry a raw wire across a device-id boundary).
+        /// </summary>
+        public ItmPage? ConfiguredBase { get; }
 
         /// <summary>Host-local condition-param plan (once per rebuild).</summary>
         public ConditionParamPlan ConditionPlan { get; }
@@ -430,13 +439,19 @@ namespace FanaBridge.Display.Composition
             return _landingHostedPageId;
         }
 
-        private byte ResolveBaseWirePage(byte defaultWirePage)
+        private ItmPage? ResolveConfiguredBaseItm()
         {
-            ItmPage? configured = null;
             if (TryItmPage(_inSessionDestinationId, out ItmPage page))
-                configured = page;
-            var resolution = _pageTable.ResolveBase(configured, defaultWirePage);
-            return resolution.Wire;
+                return page;
+            return null;
+        }
+
+        // Single producer: document rest floor via catalog. No settings fallback (owner ruling).
+        private byte ResolveBaseWirePage()
+        {
+            if (ConfiguredBase is ItmPage page && _pageTable.TryGetWire(page, out byte wire))
+                return wire;
+            return 0; // absent/degraded rest = Blank (model-ruled)
         }
 
         private static string ResolveHostedId(string destinationId)
