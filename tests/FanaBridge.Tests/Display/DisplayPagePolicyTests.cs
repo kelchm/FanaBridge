@@ -237,7 +237,12 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void NoConfig_TheSettingOwnsTheLifecyclePagePolicy()
         {
-            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            // v1 empty document (no ITM destinations): built-in page policy + game-start revert.
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            });
             var running = Data(NewStatus());
             s.Frame(running);
             s.Frame(running);
@@ -245,6 +250,22 @@ namespace FanaBridge.Tests.Display
             var lifecycle = s.Instance.ItmDisplayForTest!.Lifecycle;
             Assert.Equal(DisplaySettings.DefaultItmDefaultPage, lifecycle.DefaultPage);
             Assert.True(lifecycle.GameStartPageRevert);    // built-in revert stays on
+        }
+
+        [Fact]
+        public void PreEpicBake_RestFloorOwnsLifecyclePagePolicy()
+        {
+            // §9b: no document keys → bake v2 with rest = default itm page; composition
+            // takes external page policy (game-start revert off).
+            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            var running = Data(NewStatus());
+            s.Frame(running);
+            s.Frame(running);
+
+            var lifecycle = s.Instance.ItmDisplayForTest!.Lifecycle;
+            Assert.Equal(DisplaySettings.DefaultItmDefaultPage, lifecycle.DefaultPage);
+            Assert.False(lifecycle.GameStartPageRevert);
+            Assert.True(s.Instance.ItmDisplayForTest.HasExternalPagePolicy);
         }
 
         // ── Handoff edges ─────────────────────────────────────────────────
@@ -325,18 +346,24 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void DefaultPageSettingChange_NoStack_SwitchesLive()
         {
+            // v1 empty document keeps built-in policy so a live itmDefaultPage change
+            // still drives the lifecycle (no §9b rest-floor takeover).
             var running = Data(NewStatus());
-            var s = SyncedSession(new JObject { ["wheelType"] = "CSSWFORMV3" },
-                LapInfoPush, running);
+            var s = SyncedSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            }, LapInfoPush, running);
             Assert.Equal(ItmLifecycleState.Synced, s.Instance.ItmDisplayForTest!.Lifecycle.State);
             int before = PageSets(s.Transport.Sent).Count;
 
-            // The user picks a new default page in settings: with no stack the driver
-            // edge-detects the change and requests the page live (no reconnect needed).
+            // The user picks a new default page in settings: with no ITM stack content
+            // the driver edge-detects the change and requests the page live.
             s.Instance.SetSettings(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
                 ["itmDefaultPage"] = 5,
+                ["displayCustomization"] = new JObject(),
             }, isDefault: false);
             s.Frame(running);
             RunSwitchWindow(s, running);

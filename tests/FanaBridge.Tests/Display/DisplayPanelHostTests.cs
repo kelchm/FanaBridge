@@ -207,8 +207,8 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Envelope_PublishesStatusAndValues_WithoutAnyRuleConfig()
         {
-            // Phase 9a: no authored ITM rules, but migration seeds a Gear legacy world
-            // so the Rules part is present (legacy stack). Status + values still publish.
+            // §9b: no document keys bake a v2 document (rest floor); composition owns
+            // the engine (Rules null, ComposedResolution set). Status + values publish.
             var running = Data(NewStatus());
             var s = SyncedSession(new JObject { ["wheelType"] = "CSSWFORMV3" }, running);
 
@@ -216,8 +216,9 @@ namespace FanaBridge.Tests.Display
             Assert.NotNull(envelope);
             Assert.NotNull(envelope!.ItmStatus);
             Assert.NotNull(envelope.Values);
-            Assert.NotNull(envelope.Rules);          // migrated Gear world
-            Assert.False(s.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
+            Assert.Null(envelope.Rules);             // v2 composition, not v1 rules
+            Assert.NotNull(envelope.ComposedResolution);
+            Assert.True(s.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
 
             // The parts ARE the producers' snapshots — composed, never copied.
             Assert.Same(s.Instance.DisplayValuesSnapshot, envelope.Values);
@@ -242,8 +243,15 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Envelope_IsNotRecomposed_WhileNoPartChanges()
         {
+            // v1 empty document: rule/values/status parts stabilize so the envelope
+            // identity can be reused on idle frames (v2 composition rebuilds its
+            // resolution record each tick — identity reuse is a v1-path pin).
             var running = Data(NewStatus());
-            var s = SyncedSession(new JObject { ["wheelType"] = "CSSWFORMV3" }, running);
+            var s = SyncedSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            }, running);
 
             var first = s.Host.Snapshot;
             Assert.NotNull(first);
@@ -509,12 +517,15 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void BasicPath_LegacyControl_PaintsGearOnCol01()
         {
+            // v1 empty document keeps LegacyModeMigration Gear synthesis on the basic path.
+            // §9b does not bake displayMode into segment content (deliberate; v1-only).
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "PSWBMW",
                 ["displayControl"] = DisplaySettings.ControlLegacy,
                 ["displayMode"] = "Gear",
                 ["itmEnabled"] = false,
+                ["displayCustomization"] = new JObject(),
             }, WheelWire("PSWBMW"), "PSWBMW");
 
             s.Frame(GearRunning("4"));
@@ -557,7 +568,12 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Host_TypedMembers_RoundTrip()
         {
-            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            // v1 empty document: GetDisplayConfig returns the migrated Gear world.
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            });
             var host = s.Host;
 
             Assert.Equal(DisplayType.Itm, host.DisplayType);

@@ -8,6 +8,7 @@ using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Schema2;
 using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
@@ -191,46 +192,102 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void LoadDefaultSettings_SynthesizesMigratedGearWorld()
+        public void LoadDefaultSettings_BakesV2FromPreEpicDefaults()
         {
-            // Phase 9a: fresh defaults migrate the default Gear mode into a virtual page
-            // (replaces the empty-config ClearConfig path for col01).
-            var inst = InstanceFor("PSWBMW");
+            // §9b: fresh defaults bake a v2 document (marker + default rest lapInfo).
+            // CSSWFORMV3 is ITM-capable → displayControl defaults to Itm → settings.mode on.
+            var inst = InstanceFor("CSSWFORMV3");
             inst.PluginResolver = () => null;
 
             inst.SetSettings(new JObject { ["displayCustomization"] = RuleDocument() }, false);
             inst.LoadDefaultSettings();
 
             var saved = (JObject)inst.GetSettings(false, false);
-            var doc = saved["displayCustomization"] as JObject;
+            Assert.Null(saved["displayCustomization"]);
+            var doc = saved["display"] as JObject;
             Assert.NotNull(doc);
-            var reloaded = DisplayConfigSerializer.Load(doc!.ToString(), _ => { });
-            Assert.True(DisplayRuleStack.HasLegacyWorld(reloaded));
-            Assert.Single(reloaded.Legacy.Screens);
-            Assert.Equal(LegacyContentKind.Gear, reloaded.Legacy.Screens[0].ContentKind);
-            Assert.Equal("Gear", reloaded.Legacy.Screens[0].Name);
-            Assert.Empty(reloaded.Itm.Rules);
-            Assert.True((bool)saved["legacyModeMigrated"]!);
+            var reloaded = DisplayConfigV2Serializer.Load(doc!.ToString(), _ => { });
+            Assert.True(PreEpicSettingsMigrator.HasMarker(reloaded));
+            Assert.Equal(SettingsMode.On, reloaded.Settings.Mode);
+            Assert.Equal(PageRefKind.ItmPage, reloaded.Priority.Rest.InSessionPage.Kind);
+            Assert.Equal("lapInfo", reloaded.Priority.Rest.InSessionPage.CatalogPageId);
         }
 
         [Fact]
-        public void SetSettings_WithoutTheKey_MigratesDefaultGearWorld()
+        public void SetSettings_WithoutDocumentKeys_BakesV2FromPreEpic()
         {
-            // A settings payload is authoritative: no key = empty document input, then
-            // Phase 9a migration synthesizes the frozen mode (default Gear) into a page.
+            // A settings payload with no display / displayCustomization keys triggers
+            // the §9b bake (pre-epic settings → v2), not the v1 LegacyModeMigration path.
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;
 
             inst.SetSettings(new JObject { ["displayCustomization"] = RuleDocument() }, false);
-            inst.SetSettings(new JObject { ["wheelType"] = "PSWBMW" }, false);
+            inst.SetSettings(new JObject
+            {
+                ["wheelType"] = "PSWBMW",
+                ["displayControl"] = DisplaySettings.ControlLegacy,
+                ["itmDefaultPage"] = 2,
+            }, false);
 
             var saved = (JObject)inst.GetSettings(false, false);
-            var doc = saved["displayCustomization"] as JObject;
+            Assert.Null(saved["displayCustomization"]);
+            var doc = saved["display"] as JObject;
             Assert.NotNull(doc);
-            var reloaded = DisplayConfigSerializer.Load(doc!.ToString(), _ => { });
-            Assert.Single(reloaded.Legacy.Screens);
-            Assert.Equal(LegacyContentKind.Gear, reloaded.Legacy.Screens[0].ContentKind);
-            Assert.True((bool)saved["legacyModeMigrated"]!);
+            var reloaded = DisplayConfigV2Serializer.Load(doc!.ToString(), _ => { });
+            Assert.True(PreEpicSettingsMigrator.HasMarker(reloaded));
+            Assert.Equal(SettingsMode.LegacyOnly, reloaded.Settings.Mode);
+            Assert.Equal("fuelErsDrs", reloaded.Priority.Rest.InSessionPage.CatalogPageId);
+        }
+
+        [Fact]
+        public void SetSettings_ExistingV2_NeverOverwrittenByPreEpicBake()
+        {
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            var authored = new JObject
+            {
+                ["schemaVersion"] = 2,
+                ["settings"] = new JObject { ["mode"] = "off" },
+                ["profileId"] = "authored-keep",
+            };
+            inst.SetSettings(new JObject
+            {
+                ["wheelType"] = "PSWBMW",
+                ["displayControl"] = DisplaySettings.ControlItm,
+                ["itmDefaultPage"] = 5,
+                ["display"] = authored,
+            }, false);
+
+            var saved = (JObject)inst.GetSettings(false, false);
+            var doc = saved["display"] as JObject;
+            Assert.NotNull(doc);
+            Assert.Equal("authored-keep", (string)doc!["profileId"]);
+            Assert.Equal("off", (string)doc["settings"]!["mode"]);
+            // Authored docs are not re-stamped with the bake marker.
+            Assert.Null(doc[PreEpicSettingsMigrator.MarkerKey]);
+        }
+
+        [Fact]
+        public void SetSettings_V1Document_DoesNotTriggerPreEpicBake()
+        {
+            // v1-only bag leaves the LegacyModeMigration path unchanged this round.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            inst.SetSettings(new JObject
+            {
+                ["wheelType"] = "PSWBMW",
+                ["displayControl"] = DisplaySettings.ControlItm,
+                ["itmDefaultPage"] = 5,
+                ["displayCustomization"] = RuleDocument(),
+            }, false);
+
+            var saved = (JObject)inst.GetSettings(false, false);
+            Assert.Null(saved["display"]);
+            Assert.NotNull(saved["displayCustomization"]);
+            Assert.Null(inst.DisplayRuntimeForTest.CurrentConfigV2);
+            Assert.NotNull(inst.DisplayRuntimeForTest.CurrentConfig);
         }
 
         // ── IsEmpty (the parity gate's switch) ───────────────────────────
@@ -425,14 +482,18 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void MigratedDefault_Col03FramePathIsByteIdentical_ToPreFeature()
         {
-            // Phase 9a: a migrated-default user (Gear world, no ITM rules/fieldMappings)
-            // must produce col03 sequences byte-identical to the pre-feature build.
-            // The legacy stack now exists; ITM page policy stays built-in.
-            // (a) no displayCustomization key → migration synthesizes Gear.
-            var baseline = RunScriptedSession(
-                new JObject { ["wheelType"] = "CSSWFORMV3" }, out var instA);
+            // Phase 9a v1 path: a migrated-default user (Gear world, no ITM
+            // rules/fieldMappings) must produce col03 sequences byte-identical to the
+            // pre-feature build. §9b owns the no-document-key path now, so these arms
+            // pin the v1 key (empty displayCustomization) to keep LegacyModeMigration.
+            // (a) empty displayCustomization → migration synthesizes Gear.
+            var baseline = RunScriptedSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            }, out var instA);
 
-            // (b) an explicitly empty document → same synthesis.
+            // (b) another empty document → same synthesis.
             var withEmptyDoc = RunScriptedSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
@@ -473,9 +534,13 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void MigratedLegacyOnly_ItmActive_HasExternalPagePolicyFalse()
         {
-            // Page-policy pin: migrated Gear-world-only + ItmActive must leave built-in
-            // page policy (live default-page semantics) untouched.
-            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            // Page-policy pin (v1 path): migrated Gear-world-only + ItmActive must leave
+            // built-in page policy (live default-page semantics) untouched.
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            });
             var running = Data(NewStatus());
             s.Frame(running);
             s.Frame(running);
@@ -498,8 +563,13 @@ namespace FanaBridge.Tests.Display
             // Baseline (no mappings) vs Lap remapped to a constant SimHub property.
             // Pins the overridden ValueUpdate payload so a regression in the scalar
             // encode path is visible even when empty-config parity still holds.
-            var baseline = RunScriptedSession(
-                new JObject { ["wheelType"] = "CSSWFORMV3" }, out _);
+            // Baseline uses the v1 empty-document path (Gear synthesis, no mappings)
+            // so it stays on the same engine as the fieldMappings arm.
+            var baseline = RunScriptedSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            }, out _);
 
             var withMapping = RunScriptedSession(new JObject
             {
@@ -661,9 +731,13 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void EmptyConfig_DriverPagePolicyKeepsTheSettings()
         {
-            // Migrated Gear world (no ITM rules): stock ITM page policy — the setting is
-            // the default page and the lifecycle's game-start revert stays on.
-            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            // v1 empty document → Gear world only (no ITM destinations): stock ITM page
+            // policy — the setting is the default page and game-start revert stays on.
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            });
             var running = Data(NewStatus());
             s.Frame(running);
             s.Frame(running);
@@ -673,6 +747,28 @@ namespace FanaBridge.Tests.Display
             Assert.False(driver!.HasExternalPagePolicy);
             Assert.Equal(DisplaySettings.DefaultItmDefaultPage, driver.Lifecycle.DefaultPage);
             Assert.True(driver.Lifecycle.GameStartPageRevert);
+        }
+
+        [Fact]
+        public void PreEpicBake_NoDocumentKeys_TakesItmPagePolicyFromRest()
+        {
+            // §9b: no display / displayCustomization keys → bake v2 with rest = lapInfo;
+            // composition takes external page policy at the rest floor wire page.
+            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            var running = Data(NewStatus());
+            s.Frame(running);
+            s.Frame(running);
+
+            Assert.NotNull(s.Instance.DisplayRuntimeForTest.CurrentConfigV2);
+            Assert.True(PreEpicSettingsMigrator.HasMarker(
+                s.Instance.DisplayRuntimeForTest.CurrentConfigV2));
+            Assert.Null(s.Instance.DisplayStackForTest);
+
+            var driver = s.Instance.ItmDisplayForTest;
+            Assert.NotNull(driver);
+            Assert.True(driver!.HasExternalPagePolicy);
+            Assert.Equal(DisplaySettings.DefaultItmDefaultPage, driver.Lifecycle.DefaultPage);
+            Assert.False(driver.Lifecycle.GameStartPageRevert);
         }
 
         // ── ApplyDisplayConfig (the UI write path) ───────────────────────
@@ -733,9 +829,13 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void ApplyDisplayConfig_ReachesTheFramePath()
         {
-            // Migrated default already has a Gear-world stack; apply a richer ITM config
-            // and confirm the frame path rebuilds, then empty tears it down.
-            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            // v1 path: Gear-world stack present; apply a richer ITM config and confirm
+            // the frame path rebuilds, then empty tears it down.
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            });
             var running = Data(NewStatus());
             s.Frame(running);
             Assert.NotNull(s.Instance.DisplayStackForTest);
@@ -763,7 +863,11 @@ namespace FanaBridge.Tests.Display
             // Flag-on + empty world is silence — but a page the rule path painted this
             // session must be blanked once when the world empties live (last virtual page
             // deleted), not left frozen on its final frame.
-            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            });
             var status = NewStatus();
             Set(status, "Gear", "3");
             var running = Data(status);
@@ -787,7 +891,11 @@ namespace FanaBridge.Tests.Display
             // when the world empties at idle — idle col01 silence (the firmware may be
             // using the display, e.g. its tuning menu). The driver's exit-blank latch is
             // the single source of truth for "page holds our content".
-            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayCustomization"] = new JObject(),
+            });
             var status = NewStatus();
             Set(status, "Gear", "3");
 
@@ -916,9 +1024,9 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void ValuesSnapshot_PublishedWithoutAnyRuleConfig_AndClearedWithTheDriver()
         {
-            // The values snapshot exists for every ITM user. Phase 9a also migrates a
-            // Gear legacy world, so the rule snapshot is present (legacy-only stack);
-            // ITM page policy stays built-in.
+            // The values snapshot exists for every ITM user. §9b bakes a v2 document
+            // (rest = lapInfo) when no document keys are present; composition owns the
+            // engine (no v1 rule snapshot) and takes external page policy.
             var session = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
 
             var s = NewStatus();
@@ -942,8 +1050,9 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(ItmPage.LapInfo, snap!.Page);
             Assert.Equal("15 /73", Assert.Single(snap.LeftTop!.Fields).Value);
             Assert.Equal("268", snap.SpeedText);
-            Assert.NotNull(session.Instance.DisplayRuleSnapshot); // migrated Gear world
-            Assert.False(session.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
+            Assert.Null(session.Instance.DisplayRuleSnapshot); // v2 composition, not v1 rules
+            Assert.NotNull(session.Instance.DisplayRuntimeForTest.CurrentConfigV2);
+            Assert.True(session.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
 
             // Switching the display type away from ITM tears the driver down — the
             // values snapshot must go with it (same edge as the ITM status snapshot).

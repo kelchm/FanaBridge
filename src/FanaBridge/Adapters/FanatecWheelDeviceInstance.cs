@@ -321,13 +321,20 @@ namespace FanaBridge.Adapters
             DisplaySettingsCodec.WriteDefaults(_customSettings, itmCapable);
             _displaySettings = DisplaySettingsCodec.Read(_customSettings, itmCapable);
             _migratedItmCapable = _customSettings["displayControl"] == null ? itmCapable : (bool?)null;
-            // Fresh device: marker absent (false) + default Gear → synthesize the Gear
-            // page so every wheel has its legacy page from first light (same step as
-            // SetSettings). Replaces the empty-config ClearConfig fast path for col01.
-            var defaultsConfig = LegacyModeMigration.Apply(_displaySettings, null);
-            _customSettings["legacyModeMigrated"] = _displaySettings.LegacyModeMigrated;
-            _displayRuntime.SetConfig(defaultsConfig);
-            _displayRuntime.ClearConfigV2();
+            // §9b: fresh device has pre-epic defaults and no v2 document → bake once.
+            Action<string> warnDefaults = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
+            WheelCatalog defaultsCatalog;
+            CatalogLoader.TryResolve(_config.WheelCode, out defaultsCatalog, warnDefaults,
+                itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
+            var bakedDefaults = PreEpicSettingsMigrator.Bake(
+                _displaySettings.DisplayControl,
+                _displaySettings.ItmDefaultPage,
+                ResolvedDisplayCaps.ItmDeviceId,
+                warnDefaults);
+            bakedDefaults = DisplayConfigV2Validator.Normalize(
+                bakedDefaults, warnDefaults, defaultsCatalog);
+            _displayRuntime.SetConfigV2(bakedDefaults);
+            _displayRuntime.ClearConfig();
 
             if (_ledModule != null)
             {
@@ -476,10 +483,14 @@ namespace FanaBridge.Adapters
 
             // Display customization document (whitelisted nested keys; absent = none).
             // OQ-3: the v2 key "display" wins unconditionally; the v1 key is read only
-            // when no v2 key exists. Released AFTER the plain _displaySettings write
-            // above, paired with the runtime's acquire-before-settings read order.
+            // when no v2 key exists. §9b: when NEITHER key exists, bake a v2 document
+            // from pre-epic settings once (never overwrites an existing v2 document;
+            // a v1-only bag leaves the v1 fallback path unchanged this round).
+            // Released AFTER the plain _displaySettings write above, paired with the
+            // runtime's acquire-before-settings read order.
             Action<string> warn = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
             var displayV2 = obj["display"];
+            var displayCustomization = obj["displayCustomization"];
             if (displayV2 != null)
             {
                 // Resolve catalog for Normalize capability rules (OQ-2: WheelCode).
@@ -491,14 +502,27 @@ namespace FanaBridge.Adapters
                 _displayRuntime.SetConfigV2(parsedV2);
                 _displayRuntime.ClearConfig(); // v2 owns this device; drop any v1 snapshot
             }
+            else if (displayCustomization == null)
+            {
+                // §9b bake-on-sight: pre-epic settings → v2, no v1 document present.
+                WheelCatalog catalog;
+                CatalogLoader.TryResolve(_config.WheelCode, out catalog, warn,
+                    itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
+                var baked = PreEpicSettingsMigrator.Bake(
+                    _displaySettings.DisplayControl,
+                    _displaySettings.ItmDefaultPage,
+                    ResolvedDisplayCaps.ItmDeviceId,
+                    warn);
+                baked = DisplayConfigV2Validator.Normalize(baked, warn, catalog);
+                _displayRuntime.SetConfigV2(baked);
+                _displayRuntime.ClearConfig();
+            }
             else
             {
-                // E8b deletion item: v1 fallback when no v2 key exists (dev configs only
-                // during the E8→E8b window). Scaffolding — remove with the v1 path.
-                var displayCustomization = obj["displayCustomization"];
-                var parsedConfig = displayCustomization == null
-                    ? null
-                    : DisplayConfigSerializer.Load(displayCustomization.ToString(), warn);
+                // E8b deletion item: v1 fallback when a v1 key exists and no v2 key.
+                // Scaffolding — remove with the v1 path. Unchanged this round.
+                var parsedConfig = DisplayConfigSerializer.Load(
+                    displayCustomization.ToString(), warn);
                 parsedConfig = LegacyModeMigration.Apply(_displaySettings, parsedConfig);
                 _displayRuntime.SetConfig(parsedConfig);
                 _displayRuntime.ClearConfigV2();
