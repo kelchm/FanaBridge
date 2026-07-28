@@ -1193,8 +1193,17 @@ namespace FanaBridge.Display.Schema2
                 degrade?.Invoke();
             }
 
-            // whileTrue + operator-less (except action sources, exempt) → degrade.
-            if (lifeKind == LifetimeKind.WhileTrue && !hasOperator && !isActionSource)
+            // whileTrue is level-only (v1 law restored): action/edge sources with
+            // whileTrue coerce to forDuration, degrade-visible. Action sources are no
+            // longer exempt — Event+whileTrue would otherwise latch forever.
+            if (lifeKind == LifetimeKind.WhileTrue && isActionSource && lifetime != null)
+            {
+                lifetime.CoerceKind(LifetimeKind.ForDuration);
+                lifeKind = LifetimeKind.ForDuration;
+                warn(label + ": whileTrue is level-only — action source coerced to forDuration");
+                degrade?.Invoke();
+            }
+            else if (lifeKind == LifetimeKind.WhileTrue && !hasOperator && !isActionSource)
             {
                 warn(label + ": whileTrue requires a level operator — degraded");
                 degrade?.Invoke();

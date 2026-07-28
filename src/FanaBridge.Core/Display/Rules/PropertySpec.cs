@@ -21,6 +21,16 @@ namespace FanaBridge.Display.Rules
         SimHubProperty,
         /// <summary>A FanaBridge action name — the mapped-control trigger path.</summary>
         FanaBridgeAction,
+        /// <summary>
+        /// An ITM field param id (v2 field-linked conditions). Name is the param id, or
+        /// the owning field's param id after FromV2 bakes the <c>self</c> sentinel.
+        /// </summary>
+        ItmField,
+        /// <summary>
+        /// Script source — parse-inert sentinel until the script DSL lands. Readers treat
+        /// this as unreadable (condition never fires) rather than Unknown/missing-property.
+        /// </summary>
+        Script,
     }
 
     /// <summary>

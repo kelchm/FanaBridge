@@ -56,6 +56,7 @@
     <EmbeddedResource Include="Display\Fixtures\pbme-catalog-draft.json" />
     <EmbeddedResource Include="Display\Fixtures\bentley-catalog-draft.json" />
     <EmbeddedResource Include="Display\Fixtures\alias-table-draft.json" />
+    <EmbeddedResource Include="Display\Fixtures\evaluator-differential-traces.golden.txt" />
   </ItemGroup>
 
 </Project>

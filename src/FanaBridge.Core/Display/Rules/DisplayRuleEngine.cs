@@ -60,31 +60,22 @@ namespace FanaBridge.Display.Rules
         /// <summary>Activity ring capacity — oldest entries drop beyond this.</summary>
         internal const int ActivityCapacity = 50;
 
-        /// <summary>Comparison tolerance for Equals/NotEquals and edge change detection.</summary>
-        internal const double Epsilon = 1e-9;
+        // Comparison tolerance lives on CarrierEvaluator.Epsilon (single source).
 
         // Per-rule runtime state. Everything the engine remembers between ticks lives here
         // (plus the selection/resting fields below) — nothing else is stateful.
+        // Condition/hold/eligibility state lives on CarrierRuntime (E3 extraction); Spec is
+        // a live adapter refreshed from DisplayRule before each evaluate.
         private sealed class RuleRuntime
         {
             public DisplayRule Rule;
             public int Index;
             public bool Usable;          // enabled with a complete shape (validator-guaranteed)
             public bool Unavailable;     // targets a page this display doesn't have — permanent
-            public bool WarnedMissing;   // one missing-property warning per rule per lifetime
-
-            // Condition state.
-            public bool Satisfied;       // level kinds, with hysteresis applied
-            public bool HasPrev;         // edge kinds: first sample never fires
-            public double Prev;
-
-            // Activation.
-            public bool Active;
-            public long ExpiresAt;       // ForDuration window end
-            public bool Superseded;      // Indefinite only: displaced from the screen by a
-                                         // different winner — excluded from winning; dismissed
-                                         // when the preemptor ends
-            public bool EligibleNow;
+            public CarrierSpec Spec;     // v1 DisplayRule adapted onto the carrier machine
+            public CarrierRuntime State; // condition + hold clocks + eligibility + latch
+            /// <summary>Cached warn callback — allocated once at build, not per tick.</summary>
+            public Action WarnMissing;
         }
 
         private readonly List<RuleRuntime> _rules = new List<RuleRuntime>();
@@ -136,7 +127,16 @@ namespace FanaBridge.Display.Rules
                 {
                     if (rule == null)
                         continue;
-                    var rt = new RuleRuntime { Rule = rule, Index = _rules.Count };
+                    var rt = new RuleRuntime
+                    {
+                        Rule = rule,
+                        Index = _rules.Count,
+                        Spec = CarrierSpec.FromDisplayRule(rule),
+                        State = new CarrierRuntime(),
+                    };
+                    // Closure cached at build — the hot path must not allocate per tick.
+                    var captured = rt;
+                    rt.WarnMissing = () => WarnMissingOnce(captured);
                     // The validated snapshot guarantees effectively-enabled rules have
                     // complete shapes; the shape check is a cheap guard against an
                     // unvalidated hand-built list.
@@ -231,10 +231,7 @@ namespace FanaBridge.Display.Rules
                 ItmPage? page = input.Manual.Value.Page;
                 _restingIntent = new RuleIntent(TargetKind.Page, page, null, null);
                 foreach (var rt in _rules)
-                {
-                    rt.Active = false;
-                    rt.Superseded = false;
-                }
+                    rt.State.ClearActivation();
                 _prevWinnerId = null;   // dismissed by the driver's own choice, not an expiry
                 AddEvent(now, ActivityKind.ManualNavigation,
                     "Manual page change — " + (page == null
@@ -243,44 +240,33 @@ namespace FanaBridge.Display.Rules
                 SetSelection(null, now, logReturn: false);
             }
 
-            // Evaluate every rule's condition and update its activation.
+            // Evaluate every rule's condition and update its activation (carrier evaluator).
+            // Refresh Spec from the live DisplayRule so post-construction mutations of
+            // When/Hold/Eligible are observed (pre-extraction public API semantics).
+            var tickIn = new CarrierTickInput
+            {
+                NowMs = now,
+                InGame = inGame,
+                Properties = input.Properties,
+                TriggeredActions = input.TriggeredActions,
+            };
             foreach (var rt in _rules)
             {
                 if (!rt.Usable || rt.Unavailable)
                     continue;
 
-                rt.EligibleNow = rt.Rule.Eligible == RuleEligibility.Always
-                    || (rt.Rule.Eligible == RuleEligibility.InGame ? inGame : !inGame);
-                if (!rt.EligibleNow)
-                {
-                    // Ineligible clears everything: the activation, the level latch, and the
-                    // edge prev-value — re-entering eligibility starts from a clean slate
-                    // (an "edge" spanning a game restart is not a real change).
-                    rt.Active = false;
-                    rt.Superseded = false;
-                    rt.Satisfied = false;
-                    rt.HasPrev = false;
-                    continue;
-                }
-
-                var kind = rt.Rule.When.Kind;
-                if (kind.IsLevel())
-                    EvaluateLevel(rt, input, now);
-                else if (kind.IsEdge())
-                    EvaluateEdge(rt, input, now);
-                else if (kind.IsEvent())
-                    EvaluateEvent(rt, input, now);
-
-                // ForDuration expiry (the window runs from the last fire, condition-independent).
-                if (rt.Active && rt.Rule.Hold.Kind == HoldKind.ForDuration && now >= rt.ExpiresAt)
-                    rt.Active = false;
+                rt.Spec.RefreshFromDisplayRule(rt.Rule);
+                bool fresh = CarrierEvaluator.Evaluate(rt.Spec, rt.State, tickIn, rt.WarnMissing);
+                if (fresh)
+                    AddEvent(now, ActivityKind.RuleFired,
+                        DisplayRuleFormatter.Label(rt.Rule), rt.Rule.Id);
             }
 
             // Winner: lowest index with a live, non-superseded activation.
             RuleRuntime winner = null;
             foreach (var rt in _rules)
             {
-                if (rt.Active && !rt.Superseded)
+                if (rt.State.Active && !rt.State.Superseded)
                 {
                     winner = rt;
                     break;
@@ -296,24 +282,25 @@ namespace FanaBridge.Display.Rules
             if (winner != null && _prevWinnerId != null && winner.Rule.Id != _prevWinnerId)
             {
                 var displaced = FindById(_prevWinnerId);
-                if (displaced != null && displaced.Active
+                if (displaced != null && displaced.State.Active
                     && displaced.Rule.Hold.Kind == HoldKind.UntilDismissed)
-                    displaced.Superseded = true;
+                    displaced.State.MarkSuperseded();
             }
 
             // A superseded Indefinite whose preemptors are all gone is dismissed now, not
             // resumed — it would otherwise be the winner again, and it was superseded.
+            // Active cleared only; Superseded bit retained (HEAD parity / diagnostics).
             int winnerIdx = winner != null ? winner.Index : int.MaxValue;
             foreach (var rt in _rules)
-                if (rt.Active && rt.Superseded && rt.Index < winnerIdx)
-                    rt.Active = false;
+                if (rt.State.Active && rt.State.Superseded && rt.Index < winnerIdx)
+                    rt.State.Active = false;
 
             // The previous winner's activation ended (hold expiry or dismissal) — log it.
             // A mere preemption (previous winner still active, just outranked) is not an expiry.
             if (_prevWinnerId != null && (winner == null || winner.Rule.Id != _prevWinnerId))
             {
                 var prev = FindById(_prevWinnerId);
-                if (prev != null && !prev.Active)
+                if (prev != null && !prev.State.Active)
                     AddEvent(now, ActivityKind.RuleExpired,
                         DisplayRuleFormatter.Label(prev.Rule) + " — expired", prev.Rule.Id);
             }
@@ -343,171 +330,11 @@ namespace FanaBridge.Display.Rules
             return new RuleEngineResult(CurrentIntent(now), BuildStates(winner, now), _activityVersion);
         }
 
-        // ── Condition evaluation ─────────────────────────────────────────
-
-        private void EvaluateLevel(RuleRuntime rt, RuleEngineInput input, long now)
-        {
-            var c = rt.Rule.When;
-            bool wasSatisfied = rt.Satisfied;
-            bool satisfied = false;
-
-            if (c.Kind == ConditionKind.IsTrue || c.Kind == ConditionKind.IsFalse)
-            {
-                if (TryReadBool(rt, input, out bool b))
-                    satisfied = c.Kind == ConditionKind.IsTrue ? b : !b;
-                // Missing property → not satisfied (rule stays armed / releases).
-            }
-            else if (TryReadNumber(rt, input, out double x))
-            {
-                double v = c.Value ?? 0;
-                double h = c.Hysteresis ?? 0;
-                // Hysteresis acts on release only: once satisfied, the condition lets go
-                // only past the threshold by the margin, in the releasing direction.
-                satisfied = wasSatisfied ? StillHolds(c.Kind, x, v, h) : SatisfiedNow(c.Kind, x, v);
-            }
-
-            rt.Satisfied = satisfied;
-            bool rising = satisfied && !wasSatisfied;
-
-            switch (rt.Rule.Hold.Kind)
-            {
-                case HoldKind.WhileActive:
-                    // Active exactly while satisfied — except a dismissed activation stays
-                    // down until a fresh rising edge (satisfied never re-fires by itself).
-                    if (rising)
-                        Fire(rt, now);
-                    else if (!satisfied)
-                        rt.Active = false;
-                    break;
-                case HoldKind.ForDuration:
-                    if (rising)
-                        Fire(rt, now);   // the window starts at the rising edge
-                    break;
-                case HoldKind.UntilDismissed:
-                    if (rising)
-                        Fire(rt, now);
-                    else if (!satisfied)
-                        rt.Active = false;   // level Indefinite: condition going false dismisses
-                    break;
-            }
-        }
-
-        private void EvaluateEdge(RuleRuntime rt, RuleEngineInput input, long now)
-        {
-            // Missing sample: keep the previous value — a brief gap must neither fire nor
-            // reset the edge baseline (eligibility loss is what resets it).
-            if (!TryReadNumber(rt, input, out double x))
-                return;
-            // A non-finite sample is a gap, not a value (gap/delta properties emit NaN
-            // when there is no reference car): same rule — no fire, baseline kept.
-            if (double.IsNaN(x) || double.IsInfinity(x))
-                return;
-            if (!rt.HasPrev)
-            {
-                // First sample never fires — there is nothing to have changed FROM.
-                rt.HasPrev = true;
-                rt.Prev = x;
-                return;
-            }
-
-            bool fired;
-            switch (rt.Rule.When.Kind)
-            {
-                case ConditionKind.Increases: fired = x > rt.Prev + Epsilon; break;
-                case ConditionKind.Decreases: fired = x < rt.Prev - Epsilon; break;
-                default: fired = Math.Abs(x - rt.Prev) > Epsilon; break;   // Changes
-            }
-            rt.Prev = x;
-            if (fired)
-                Fire(rt, now);
-        }
-
-        private void EvaluateEvent(RuleRuntime rt, RuleEngineInput input, long now)
-        {
-            var actions = input.TriggeredActions;
-            if (actions == null)
-                return;
-            string name = rt.Rule.When.Source.Name;
-            for (int i = 0; i < actions.Count; i++)
-            {
-                if (string.Equals(actions[i], name, StringComparison.Ordinal))
-                {
-                    Fire(rt, now);
-                    return;
-                }
-            }
-        }
-
-        // A fire creates an activation, or restarts a ForDuration window / re-enters a
-        // superseded activation. Only a genuinely new claim logs — window restarts while
-        // already on screen would drown the activity feed.
-        private void Fire(RuleRuntime rt, long now)
-        {
-            bool fresh = !rt.Active || rt.Superseded;
-            rt.Active = true;
-            rt.Superseded = false;
-            if (rt.Rule.Hold.Kind == HoldKind.ForDuration)
-                rt.ExpiresAt = now + rt.Rule.Hold.DurationMs;
-            if (fresh)
-                AddEvent(now, ActivityKind.RuleFired, DisplayRuleFormatter.Label(rt.Rule), rt.Rule.Id);
-        }
-
-        private static bool SatisfiedNow(ConditionKind kind, double x, double v)
-        {
-            switch (kind)
-            {
-                case ConditionKind.LessThan: return x < v;
-                case ConditionKind.LessOrEqual: return x <= v;
-                case ConditionKind.GreaterThan: return x > v;
-                case ConditionKind.GreaterOrEqual: return x >= v;
-                case ConditionKind.Equals: return Math.Abs(x - v) <= Epsilon;
-                case ConditionKind.NotEquals: return Math.Abs(x - v) > Epsilon;
-                default: return false;
-            }
-        }
-
-        private static bool StillHolds(ConditionKind kind, double x, double v, double h)
-        {
-            switch (kind)
-            {
-                case ConditionKind.LessThan: return x < v + h;
-                case ConditionKind.LessOrEqual: return x <= v + h;
-                case ConditionKind.GreaterThan: return x > v - h;
-                case ConditionKind.GreaterOrEqual: return x >= v - h;
-                case ConditionKind.Equals: return Math.Abs(x - v) <= Epsilon + h;
-                // NotEquals has no releasing direction past "equal" — hysteresis is inert.
-                case ConditionKind.NotEquals: return Math.Abs(x - v) > Epsilon;
-                default: return false;
-            }
-        }
-
-        // ── Property reads (missing = not satisfied; one warning per rule, ever) ──
-
-        private bool TryReadNumber(RuleRuntime rt, RuleEngineInput input, out double value)
-        {
-            value = 0;
-            if (input.Properties != null
-                && input.Properties.TryGetNumber(rt.Rule.When.Source, out value))
-                return true;
-            WarnMissingOnce(rt);
-            return false;
-        }
-
-        private bool TryReadBool(RuleRuntime rt, RuleEngineInput input, out bool value)
-        {
-            value = false;
-            if (input.Properties != null
-                && input.Properties.TryGetBool(rt.Rule.When.Source, out value))
-                return true;
-            WarnMissingOnce(rt);
-            return false;
-        }
+        // ── Property-missing warning (one per rule, ever) ────────────────
 
         private void WarnMissingOnce(RuleRuntime rt)
         {
-            if (rt.WarnedMissing)
-                return;
-            rt.WarnedMissing = true;
+            // WarnedMissing lives on CarrierRuntime; CarrierEvaluator gates the call.
             _log("DisplayRules: rule '" + DisplayRuleFormatter.Label(rt.Rule) + "' — property '"
                 + rt.Rule.When.Source.Name + "' unavailable; condition idle until it appears");
         }
@@ -582,15 +409,15 @@ namespace FanaBridge.Display.Rules
                     status = RuleStatus.Disabled;
                 else if (rt.Unavailable)
                     status = RuleStatus.Unavailable;
-                else if (!rt.EligibleNow)
+                else if (!rt.State.EligibleNow)
                     status = RuleStatus.Ineligible;
                 else if (rt == winner)
                 {
                     status = RuleStatus.OnScreen;
                     if (rt.Rule.Hold.Kind == HoldKind.ForDuration)
-                        remaining = (int)Math.Max(0, rt.ExpiresAt - now);
+                        remaining = (int)Math.Max(0, rt.State.ExpiresAt - now);
                 }
-                else if (rt.Active)
+                else if (rt.State.Active)
                     status = RuleStatus.Waiting;
                 else
                     status = RuleStatus.Armed;
