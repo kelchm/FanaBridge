@@ -1469,11 +1469,12 @@ namespace FanaBridge.Display.Arbitration
                 }
                 else if (latched)
                 {
-                    // E4-08: Outranked when latched AND Active+Eligible; Waiting only
-                    // when the condition is genuinely false. DISMISSED on both.
+                    // REALIGNMENT #1: latched + Active+Eligible → Dismissed (first-class
+                    // presence; not Outranked — nothing above the row won). Waiting only
+                    // when the condition is genuinely false. RowLabels.Dismissed on both.
                     labels |= CarrierRowLabels.Dismissed;
                     presence = activeEligible
-                        ? CarrierPresence.Outranked
+                        ? CarrierPresence.Dismissed
                         : CarrierPresence.Waiting;
                 }
                 else if (hasSnap && !eligible)

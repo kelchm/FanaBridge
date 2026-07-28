@@ -104,6 +104,13 @@ namespace FanaBridge.Display.Rules
         OffScreen,
         /// <summary>Winning and painting.</summary>
         OnScreen,
+        /// <summary>
+        /// Latched out by a dismiss on this surface while still Active+Eligible.
+        /// Display/wheelScreen planes only — not a D10 check word (joins OnScreen
+        /// as a non-check state). Content planes stamp <see cref="CarrierRowLabels.Dismissed"/>
+        /// instead and keep painting presence.
+        /// </summary>
+        Dismissed,
     }
 
     /// <summary>

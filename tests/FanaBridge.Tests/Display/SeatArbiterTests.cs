@@ -417,8 +417,8 @@ namespace FanaBridge.Tests.Display
 
             var pit = r.Resolution.CarrierStatuses.First(s => s.CarrierId == "e-pit");
             Assert.Equal(CarrierRowLabels.Dismissed, pit.RowLabels & CarrierRowLabels.Dismissed);
-            // E4-08: latched + Active+Eligible → Outranked (not Waiting).
-            Assert.Equal(CarrierPresence.Outranked, pit.Presence);
+            // REALIGNMENT #1: latched + Active+Eligible → Dismissed (first-class; not Waiting).
+            Assert.Equal(CarrierPresence.Dismissed, pit.Presence);
 
             r = arb.Tick(In(SeatArbiter.MinDwellMs + 200, Snap("e-pit", true)));
             Assert.Equal(SeatArbiter.ManualCarrierId, r.Intent.WinnerCarrierId);
@@ -443,6 +443,27 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void Dismissed_IsFirstClassPresence_DisplayPlane()
+        {
+            // REALIGNMENT #1: display-plane latched Active+Eligible is Presence=Dismissed
+            // (+ RowLabels.Dismissed), not Outranked. Nothing above the row won.
+            var arb = new SeatArbiter(MinimalLadder(
+                (PriorityRowKind.Seat, "s-pit", "hosted", "p-b", new[] { "e-pit" }, null)));
+
+            arb.Tick(In(0, Snap("e-pit", true)));
+            var dismiss = In(100, Snap("e-pit", true));
+            dismiss.Manual = SeatManualInput.Navigate(DestinationIds.Hosted("p-a"));
+            var r = arb.Tick(dismiss);
+
+            var pit = r.Resolution.CarrierStatuses.First(s => s.CarrierId == "e-pit");
+            Assert.Equal(SeatArbiter.DisplaySurfaceId, pit.SurfaceId);
+            Assert.Equal(CarrierPresence.Dismissed, pit.Presence);
+            Assert.Equal(CarrierRowLabels.Dismissed, pit.RowLabels & CarrierRowLabels.Dismissed);
+            Assert.NotEqual("e-pit", r.Intent.WinnerCarrierId);
+            Assert.Equal(1, CountDisplayOnScreen(r));
+        }
+
+        [Fact]
         public void MidWindowRefire_DoesNotRearm_D8Letter()
         {
             // RULED (owner, 2026-07-28): D8's letter. A re-fire INSIDE an unexpired
@@ -462,9 +483,9 @@ namespace FanaBridge.Tests.Display
             var mid = arb.Tick(In(100 + SeatArbiter.PreemptFloorMs,
                 Snap("e-pit", active: true, fired: true, fresh: false)));
             Assert.NotEqual("e-pit", mid.Intent.WinnerCarrierId);
-            Assert.Contains(mid.Resolution.CarrierStatuses, s =>
-                s.CarrierId == "e-pit" &&
-                (s.RowLabels & CarrierRowLabels.Dismissed) != 0);
+            var midPit = mid.Resolution.CarrierStatuses.First(s => s.CarrierId == "e-pit");
+            Assert.Equal(CarrierPresence.Dismissed, midPit.Presence);
+            Assert.Equal(CarrierRowLabels.Dismissed, midPit.RowLabels & CarrierRowLabels.Dismissed);
 
             // The law's other half: a genuine inactive→active edge re-summons.
             arb.Tick(In(400)); // pit inactive — activation truly ends
@@ -1248,8 +1269,8 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("page:p-t", ca.SurfaceId);
             var bring = r.Resolution.CarrierStatuses.First(s => s.CarrierId == "bringUp:s-t");
             Assert.Equal(CarrierRowLabels.Dismissed, bring.RowLabels & CarrierRowLabels.Dismissed);
-            // Display contender latched while still Active → Outranked (E4-08).
-            Assert.Equal(CarrierPresence.Outranked, bring.Presence);
+            // Display contender latched while still Active → Dismissed (REALIGNMENT #1).
+            Assert.Equal(CarrierPresence.Dismissed, bring.Presence);
 
             // Still held mid-window.
             r = arb.Tick(In(1100, Snap("c-a", true)));

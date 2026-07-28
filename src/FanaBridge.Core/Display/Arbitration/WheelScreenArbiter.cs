@@ -369,9 +369,11 @@ namespace FanaBridge.Display.Arbitration
                 }
                 else if (latchedDismissed)
                 {
+                    // REALIGNMENT #1: latched + Active+Eligible → Dismissed (first-class
+                    // presence; not Outranked). Label stamped alongside for consistency.
                     labels |= CarrierRowLabels.Dismissed;
                     presence = active && eligible
-                        ? CarrierPresence.Outranked
+                        ? CarrierPresence.Dismissed
                         : CarrierPresence.Waiting;
                 }
                 else if (hasSnap && !eligible)

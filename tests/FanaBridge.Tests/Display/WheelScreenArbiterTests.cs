@@ -1053,8 +1053,36 @@ namespace FanaBridge.Tests.Display
                 snaps: Snap("s1", active: true)));
             Assert.True(dismissed.ReleaseEdge);
             Assert.False(dismissed.SurfaceHeld);
+            var st = StatusOf(dismissed, "s1");
+            Assert.Equal(CarrierPresence.Dismissed, st.Presence);
             Assert.Equal(CarrierRowLabels.Dismissed,
-                StatusOf(dismissed, "s1").RowLabels & CarrierRowLabels.Dismissed);
+                st.RowLabels & CarrierRowLabels.Dismissed);
+        }
+
+        [Fact]
+        public void Dismissed_IsFirstClassPresence_WheelScreenPlane()
+        {
+            // REALIGNMENT #1: wheel-screen latched Active+Eligible is Presence=Dismissed
+            // (+ RowLabels.Dismissed), not Outranked.
+            var doc = Doc(new[]
+            {
+                Rule("s1", WheelScreenCommand.Logo, life: LifetimeKind.UntilDismissed),
+            });
+            var a = Arb(doc);
+            long t = 0;
+            WinAndAccept(a, ref t, snaps: Snap("s1", active: true));
+
+            t += 16;
+            var r = a.Tick(In(t,
+                dismissed: new[] { "s1" },
+                snaps: Snap("s1", active: true)));
+            var st = StatusOf(r, "s1");
+            Assert.Equal(WheelScreenArbiter.SurfaceId, st.SurfaceId);
+            Assert.Equal(CarrierPresence.Dismissed, st.Presence);
+            Assert.Equal(CarrierRowLabels.Dismissed, st.RowLabels & CarrierRowLabels.Dismissed);
+            Assert.False(r.SurfaceHeld);
+            Assert.Equal(0, r.Resolution.CarrierStatuses
+                .Count(s => s.Presence == CarrierPresence.OnScreen));
         }
 
         [Fact]
