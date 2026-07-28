@@ -52,6 +52,10 @@
       <_Parameter2>$(SimHubDir)</_Parameter2>
     </AssemblyAttribute>
     <None Include="Snapshots\SimHub.FanatecManaged.enums.txt" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Schema-v2 catalog drafts (copied from scratch; tests must not read scratch\). -->
+    <EmbeddedResource Include="Display\Fixtures\pbme-catalog-draft.json" />
+    <EmbeddedResource Include="Display\Fixtures\bentley-catalog-draft.json" />
+    <EmbeddedResource Include="Display\Fixtures\alias-table-draft.json" />
   </ItemGroup>
 
 </Project>

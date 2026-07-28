@@ -1,0 +1,633 @@
+{
+  "catalogVersion": 1,
+  "wheelId": "pswbent",
+  "displayName": "Podium Steering Wheel Bentley GT3",
+  "provisional": true,
+  "provisionalNote": "Entire file is unverified. The page set below is the one the code ships (Lap Info, Fuel / ERS / DRS, Lap Times, Tire Temps, Legacy at 5); the product manual shows a different page 2 roster (Fuel, Brake Bias, ERS, Delta -- no DRS) and shows ABS, Engine Map and TC as permanent corner badges present on every page including Legacy. Those persistent fields are deliberately NOT listed on any page here, because doing so would put the catalog out of step with the parameter sets the code actually subscribes. One page-cycle capture resolves both questions.",
+  "itm": {
+    "deviceId": 4,
+    "legacyPageIndex": 5,
+    "pages": [
+      {
+        "id": "lapInfo",
+        "index": 1,
+        "name": "Lap Info",
+        "provisional": true,
+        "fields": [
+          {
+            "fieldId": "speed",
+            "paramId": 1,
+            "shortCode": "SPD",
+            "displayLabel": "Speed",
+            "firmwareLabel": null,
+            "header": true,
+            "region": {
+              "row": "bottom",
+              "column": "center"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "gear",
+            "paramId": 4,
+            "shortCode": "GEAR",
+            "displayLabel": "Gear",
+            "firmwareLabel": null,
+            "header": true,
+            "overridable": false,
+            "region": {
+              "row": "top",
+              "column": "center"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": null,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "lap",
+            "paramId": 505,
+            "shortCode": "LAP",
+            "displayLabel": "Laps",
+            "firmwareLabel": "LAPS",
+            "region": {
+              "row": "top",
+              "column": "left"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "position",
+            "paramId": 501,
+            "shortCode": "POS",
+            "displayLabel": "Position",
+            "firmwareLabel": "POSITION",
+            "region": {
+              "row": "bottom",
+              "column": "left"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "currentLapTime",
+            "paramId": 509,
+            "shortCode": "CUR",
+            "displayLabel": "Current Lap Time",
+            "firmwareLabel": "CURRENT LAP",
+            "region": {
+              "row": "top",
+              "column": "right"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "lastLapTime",
+            "paramId": 510,
+            "shortCode": "LAST",
+            "displayLabel": "Last Lap Time",
+            "firmwareLabel": "LAST LAP",
+            "region": {
+              "row": "bottom",
+              "column": "right"
+            },
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          }
+        ]
+      },
+      {
+        "id": "fuelErsDrs",
+        "index": 2,
+        "name": "Fuel / ERS / DRS",
+        "provisional": true,
+        "provisionalNote": "Highest-doubt page on this wheel. The code subscribes Fuel, ERS, DRS Zone, DRS Active and Delta here; the manual renders Fuel, Brake Bias, ERS and Delta with no DRS at all. Regions below mirror the standard panel and are a placeholder until capture.",
+        "fields": [
+          {
+            "fieldId": "speed",
+            "paramId": 1,
+            "shortCode": "SPD",
+            "displayLabel": "Speed",
+            "firmwareLabel": null,
+            "header": true,
+            "region": {
+              "row": "bottom",
+              "column": "center"
+            },
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "gear",
+            "paramId": 4,
+            "shortCode": "GEAR",
+            "displayLabel": "Gear",
+            "firmwareLabel": null,
+            "header": true,
+            "overridable": false,
+            "region": {
+              "row": "top",
+              "column": "center"
+            },
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": null,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "fuel",
+            "paramId": 5,
+            "shortCode": "FUEL",
+            "displayLabel": "Fuel",
+            "firmwareLabel": "FUEL",
+            "region": {
+              "row": "top",
+              "column": "left"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "ersLevel",
+            "paramId": 9,
+            "shortCode": "ERS",
+            "displayLabel": "ERS Level",
+            "firmwareLabel": "ERS",
+            "region": {
+              "row": "bottom",
+              "column": "left"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "drsZone",
+            "paramId": 14,
+            "shortCode": "DRSZ",
+            "displayLabel": "DRS Zone",
+            "firmwareLabel": null,
+            "region": {
+              "row": "top",
+              "column": "right",
+              "shared": true
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "drsActive",
+            "paramId": 15,
+            "shortCode": "DRSA",
+            "displayLabel": "DRS Active",
+            "firmwareLabel": null,
+            "region": {
+              "row": "top",
+              "column": "right",
+              "shared": true
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "deltaOwnBest",
+            "paramId": 516,
+            "shortCode": "DLT",
+            "displayLabel": "Delta to Own Best",
+            "firmwareLabel": "DELTA",
+            "region": {
+              "row": "bottom",
+              "column": "right"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          }
+        ]
+      },
+      {
+        "id": "lapTimes",
+        "index": 3,
+        "name": "Lap Times",
+        "provisional": true,
+        "fields": [
+          {
+            "fieldId": "speed",
+            "paramId": 1,
+            "shortCode": "SPD",
+            "displayLabel": "Speed",
+            "firmwareLabel": null,
+            "header": true,
+            "region": {
+              "row": "bottom",
+              "column": "center"
+            },
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "gear",
+            "paramId": 4,
+            "shortCode": "GEAR",
+            "displayLabel": "Gear",
+            "firmwareLabel": null,
+            "header": true,
+            "overridable": false,
+            "region": {
+              "row": "top",
+              "column": "center"
+            },
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": null,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "lastLapTime",
+            "paramId": 510,
+            "shortCode": "LAST",
+            "displayLabel": "Last Lap Time",
+            "firmwareLabel": "LAST LAP",
+            "region": {
+              "row": "top",
+              "column": "left"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "bestLapTime",
+            "paramId": 511,
+            "shortCode": "BEST",
+            "displayLabel": "Best Lap Time",
+            "firmwareLabel": "BEST LAP",
+            "region": {
+              "row": "bottom",
+              "column": "left"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "carAhead",
+            "paramId": 519,
+            "shortCode": "AHD",
+            "displayLabel": "Car Ahead",
+            "firmwareLabel": "CAR AHEAD",
+            "region": {
+              "row": "top",
+              "column": "right"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "carBehind",
+            "paramId": 520,
+            "shortCode": "BHD",
+            "displayLabel": "Car Behind",
+            "firmwareLabel": "CAR BEHIND",
+            "region": {
+              "row": "bottom",
+              "column": "right"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          }
+        ]
+      },
+      {
+        "id": "tyreTemps",
+        "index": 4,
+        "name": "Tire Temps",
+        "provisional": true,
+        "fields": [
+          {
+            "fieldId": "speed",
+            "paramId": 1,
+            "shortCode": "SPD",
+            "displayLabel": "Speed",
+            "firmwareLabel": null,
+            "header": true,
+            "region": {
+              "row": "bottom",
+              "column": "center"
+            },
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "gear",
+            "paramId": 4,
+            "shortCode": "GEAR",
+            "displayLabel": "Gear",
+            "firmwareLabel": null,
+            "header": true,
+            "overridable": false,
+            "region": {
+              "row": "top",
+              "column": "center"
+            },
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": null,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "tyreFL",
+            "paramId": 42,
+            "shortCode": "FL",
+            "displayLabel": "Front Left Tire Temp",
+            "firmwareLabel": "FL TYRE TEMP",
+            "region": {
+              "row": "top",
+              "column": "left"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "tyreRL",
+            "paramId": 48,
+            "shortCode": "RL",
+            "displayLabel": "Rear Left Tire Temp",
+            "firmwareLabel": "RL TYRE TEMP",
+            "region": {
+              "row": "bottom",
+              "column": "left"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "tyreFR",
+            "paramId": 45,
+            "shortCode": "FR",
+            "displayLabel": "Front Right Tire Temp",
+            "firmwareLabel": "FR TYRE TEMP",
+            "region": {
+              "row": "top",
+              "column": "right"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          },
+          {
+            "fieldId": "tyreRR",
+            "paramId": 51,
+            "shortCode": "RR",
+            "displayLabel": "Rear Right Tire Temp",
+            "firmwareLabel": "RR TYRE TEMP",
+            "region": {
+              "row": "bottom",
+              "column": "right"
+            },
+            "primaryHost": true,
+            "suffix": {
+              "supported": null,
+              "provisional": true
+            },
+            "value": {
+              "numeric": true,
+              "ascii": null
+            },
+            "provisional": true
+          }
+        ]
+      }
+    ],
+    "transitions": {
+      "legacyEntryMs": null,
+      "legacyExitMs": null,
+      "virtualRepaintMs": null,
+      "provisional": true
+    }
+  },
+  "segment": {
+    "present": true,
+    "hostedOnLegacyPage": true,
+    "digits": 3,
+    "charTable": {},
+    "decimalPerDigit": null,
+    "blink": null,
+    "provisional": true
+  },
+  "screenCommands": {
+    "logo": null,
+    "blank": null,
+    "white": null,
+    "logoInverted": null,
+    "provisional": true
+  },
+  "announcedFormats": {
+    "byParam": {
+      "5": [
+        "withTotal",
+        "bare"
+      ],
+      "42": [
+        "unit",
+        "bare"
+      ],
+      "45": [
+        "unit",
+        "bare"
+      ],
+      "48": [
+        "unit",
+        "bare"
+      ],
+      "51": [
+        "unit",
+        "bare"
+      ],
+      "501": [
+        "withTotal",
+        "bare"
+      ],
+      "505": [
+        "withTotal",
+        "bare"
+      ]
+    },
+    "provisional": true
+  }
+}
