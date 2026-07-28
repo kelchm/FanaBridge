@@ -399,6 +399,37 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("e-pit", r.Intent.WinnerCarrierId);
         }
 
+        [Fact]
+        public void MidWindowRefire_DoesNotRearm_D8Letter()
+        {
+            // RULED (owner, 2026-07-28): D8's letter. A re-fire INSIDE an unexpired
+            // window (FiredThisTick && !FreshFire — a window restart) does NOT re-arm
+            // a dismissal latch; only a genuine inactive→active edge does. The policy
+            // lives in SeatArbiter.ShouldRearmDismissalLatch — if the ruling is ever
+            // reversed (re-arm on any fire), THIS fixture changes with it.
+            var arb = new SeatArbiter(MinimalLadder(
+                (PriorityRowKind.Seat, "s-pit", "hosted", "p-b", new[] { "e-pit" }, null)));
+
+            arb.Tick(In(0, Snap("e-pit", active: true, fired: true, fresh: true)));
+            var dismiss = In(100, Snap("e-pit", true));
+            dismiss.Manual = SeatManualInput.Navigate(DestinationIds.Hosted("p-a"));
+            arb.Tick(dismiss);
+
+            // Mid-window re-fire: still active, fired again, NOT a fresh edge.
+            var mid = arb.Tick(In(100 + SeatArbiter.PreemptFloorMs,
+                Snap("e-pit", active: true, fired: true, fresh: false)));
+            Assert.NotEqual("e-pit", mid.Intent.WinnerCarrierId);
+            Assert.Contains(mid.Resolution.CarrierStatuses, s =>
+                s.CarrierId == "e-pit" &&
+                (s.RowLabels & CarrierRowLabels.Dismissed) != 0);
+
+            // The law's other half: a genuine inactive→active edge re-summons.
+            arb.Tick(In(400)); // pit inactive — activation truly ends
+            var fresh = arb.Tick(In(400 + SeatArbiter.PreemptFloorMs,
+                Snap("e-pit", active: true, fired: true, fresh: true)));
+            Assert.Equal("e-pit", fresh.Intent.WinnerCarrierId);
+        }
+
         // ── D9 same-destination handoff ──────────────────────────────────
 
         [Fact]

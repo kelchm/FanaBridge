@@ -883,23 +883,27 @@ namespace FanaBridge.Display.Arbitration
         }
 
         /// <summary>
-        /// OPEN RULING (evaluated-carrier-contract.md §3.1 "mid-window re-arm"):
-        /// whether a re-fire INSIDE an unexpired forDuration window while latched should
-        /// re-arm. Default = D8's letter: re-arm only on a genuine inactive→active edge
-        /// (<see cref="CarrierTickSnapshot.FreshFire"/>), not on a window restart
-        /// (FiredThisTick &amp;&amp; !FreshFire). Change this one predicate when the ruling
-        /// closes; do not scatter the policy.
+        /// RULED (owner, 2026-07-28 — "accept as solution for now"): D8's LETTER.
+        /// A dismissal latch re-arms ONLY on a genuine inactive→active edge
+        /// (<see cref="CarrierTickSnapshot.FreshFire"/>). A re-fire INSIDE an unexpired
+        /// window (FiredThisTick &amp;&amp; !FreshFire — a window restart) does NOT re-arm:
+        /// the dismissal sticks until the activation truly ends and fires fresh.
         ///
-        /// With the Derived aggregate itself latched (E4-01), a mid-window member re-fire
-        /// under the AGGREGATE path stays down because the derived carrier does not see
-        /// FreshFire on a window restart — that outcome is now testable. The raw
-        /// per-carrier mid-window predicate remains un-asserted per the open owner ruling.
+        /// "For now": the accepted trade-off is that a rapidly re-firing condition stays
+        /// dismissed for its whole window even when the user might want it back — if
+        /// field reports read this as "my dismissal was ignored"/"it never came back",
+        /// the alternative (re-arm on any FiredThisTick) is a one-line change HERE and
+        /// an update to the two pinning fixtures. The policy lives in this one predicate;
+        /// do not scatter it. Pinned by MidWindowRefire_DoesNotRearm_D8Letter.
+        ///
+        /// The Derived aggregate path follows mechanically (the aggregate is itself
+        /// latched, E4-01, and never sees FreshFire on a window restart).
         /// </summary>
         private static bool ShouldRearmDismissalLatch(CarrierTickSnapshot snap)
         {
             if (!snap.FiredThisTick)
                 return false;
-            // D8 letter default: no mid-window re-arm.
+            // D8 letter (ruled): no mid-window re-arm.
             return snap.FreshFire;
         }
 
