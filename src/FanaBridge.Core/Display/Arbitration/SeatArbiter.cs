@@ -1049,26 +1049,20 @@ namespace FanaBridge.Display.Arbitration
             return false;
         }
 
+        /// <summary>
+        /// E7a: one authoritative step — delegates to <see cref="WalkCompiler.Step"/>.
+        /// WalkCompiler law wins where historical semantics differed (empty walk returns
+        /// null / steps nowhere; off-walk is direction-aware landing, not
+        /// anchor-walk[0]+direction). Catalog-index re-entry is available when the
+        /// compiler is called with a catalog; the arbiter seam passes null catalog
+        /// (hosted/unknown path: walk[0] NEXT / walk[last] PREV).
+        /// </summary>
         private static string StepWalk(
             string current,
             int direction,
             IReadOnlyList<string> walk)
         {
-            if (walk == null || walk.Count == 0)
-                return current;
-            int idx = -1;
-            for (int i = 0; i < walk.Count; i++)
-            {
-                if (string.Equals(walk[i], current, StringComparison.Ordinal))
-                {
-                    idx = i;
-                    break;
-                }
-            }
-            if (idx < 0)
-                idx = 0;
-            int next = ((idx + direction) % walk.Count + walk.Count) % walk.Count;
-            return walk[next];
+            return WalkCompiler.Step(walk, current, direction, catalog: null).DestinationId;
         }
 
         /// <summary>
