@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using GameReaderCommon;
+using FanaBridge.Display.Composition;
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Schema2;
 using FanaBridge.Protocol;
 
 namespace FanaBridge.Display.Drivers
@@ -57,9 +59,15 @@ namespace FanaBridge.Display.Drivers
         private readonly Dictionary<ushort, Func<double, byte, ItmValue>> _scalarEncoders;
 
         // Per-device field overrides (validated snapshot). Empty when none; never null after
-        // Configure. Read on the DataUpdate thread only.
+        // Configure / ConfigureFromPlans. Read on the DataUpdate thread only.
         private IReadOnlyDictionary<ushort, FieldMapping> _fieldMappings =
             EmptyMappings;
+
+        // v2 plan layer (pre-E8 seam). Empty when the v1 Configure path is active.
+        // SuffixOwner / AlignedSuffixText / EffectVisible live here; value source+format
+        // are also projected into _fieldMappings so the encode path stays single.
+        private IReadOnlyDictionary<ushort, FieldRegionPlan> _fieldPlans =
+            EmptyPlans;
 
         // Shared property reader (the runtime's SimHubPropertySource). Null when no
         // customization is active — overrides then never fire. BeginFrame is the runtime's
@@ -68,6 +76,13 @@ namespace FanaBridge.Display.Drivers
 
         private static readonly IReadOnlyDictionary<ushort, FieldMapping> EmptyMappings =
             new Dictionary<ushort, FieldMapping>();
+
+        private static readonly IReadOnlyDictionary<ushort, FieldRegionPlan> EmptyPlans =
+            new Dictionary<ushort, FieldRegionPlan>();
+
+        /// <summary>Provisional field-value format: round resolved scalars to 1 decimal
+        /// before the typed encoder (mirrors segment-plane <c>oneDecimal</c>).</summary>
+        public const string FormatOneDecimal = "oneDecimal";
 
         /// <summary>
         /// Optional sink for the latest computed scalar per param (E7 itmField read path).
@@ -89,14 +104,90 @@ namespace FanaBridge.Display.Drivers
         /// Installs the device's validated field mappings and the shared property reader.
         /// Call from the runtime on every frame that may encode (or on config swap); a null
         /// mappings dict or null reader clears the override layer. Gear/EngineMapping are
-        /// already stripped by the validator.
+        /// already stripped by the validator. Clears any v2 plan layer.
         /// </summary>
         public void Configure(
             IReadOnlyDictionary<ushort, FieldMapping> fieldMappings,
             IPropertyReader properties)
         {
             _fieldMappings = fieldMappings ?? EmptyMappings;
+            _fieldPlans = EmptyPlans;
             _properties = properties;
+        }
+
+        /// <summary>
+        /// v2 plan → mapper application seam (pre-E8). Installs per-field value source +
+        /// format, <see cref="SuffixOwner"/> tri-state (with bare-format coercion when the
+        /// plan paints the suffix), <see cref="FieldRegionPlan.AlignedSuffixText"/>, and
+        /// effect visibility already resolved into that text by the composer. Does not
+        /// touch double-tap cadences — those stay on the driver. Null/empty plans clear
+        /// the plan layer (same as empty mappings).
+        /// </summary>
+        public void ConfigureFromPlans(
+            IReadOnlyList<FieldRegionPlan> plans,
+            IPropertyReader properties)
+        {
+            _properties = properties;
+            if (plans == null || plans.Count == 0)
+            {
+                _fieldMappings = EmptyMappings;
+                _fieldPlans = EmptyPlans;
+                return;
+            }
+
+            var planMap = new Dictionary<ushort, FieldRegionPlan>();
+            var mappings = new Dictionary<ushort, FieldMapping>();
+            for (int i = 0; i < plans.Count; i++)
+            {
+                var plan = plans[i];
+                if (plan == null)
+                    continue;
+                planMap[plan.ParamId] = plan;
+
+                var mapping = MappingFromPlan(plan);
+                if (mapping != null)
+                    mappings[plan.ParamId] = mapping;
+            }
+            _fieldPlans = planMap;
+            _fieldMappings = mappings.Count > 0 ? mappings : EmptyMappings;
+        }
+
+        /// <summary>
+        /// Projects a field plan into a v1-shaped <see cref="FieldMapping"/> for the shared
+        /// encode + format path. Suffix-owner Override/Blank coerces format to bare so the
+        /// single mapper suffix path cannot re-fill the region (FrameComposerTypes rule).
+        /// </summary>
+        private static FieldMapping MappingFromPlan(FieldRegionPlan plan)
+        {
+            string format = plan.ValueFormat;
+            // Bare-format coercion: plan paints the suffix → mapper must not emit
+            // withTotal/unit into the same region.
+            if (plan.SuffixOwner == SuffixOwner.Override
+                || plan.SuffixOwner == SuffixOwner.Blank)
+                format = FieldFormats.Bare;
+
+            PropertySpec source = null;
+            if (plan.ValueFromOverride || plan.ValueSource != null)
+                source = ToPropertySpec(plan.ValueSource);
+
+            // Text/message value content has no property source — encode path stays built-in
+            // unless a source is present. Format alone still installs (suffix layer).
+            if (source == null && string.IsNullOrEmpty(format))
+                return null;
+
+            return new FieldMapping { Source = source, Format = format };
+        }
+
+        private static PropertySpec ToPropertySpec(ValueSource source)
+        {
+            if (source == null)
+                return null;
+            var spec = new PropertySpec { Name = source.Name };
+            if (!string.IsNullOrWhiteSpace(source.KindRaw))
+                spec.KindRaw = source.KindRaw;
+            else if (source.Kind != ValueSourceKind.Unknown)
+                spec.KindRaw = EnumText.Write(source.Kind);
+            return spec;
         }
 
         /// <summary>
@@ -243,9 +334,15 @@ namespace FanaBridge.Display.Drivers
         /// or false if the parameter isn't a temperature. Read from the frame's
         /// <c>TemperatureUnit</c> so it stays consistent with the already-converted value.
         /// Honours the format layer: <see cref="FieldFormats.Bare"/> clears the unit.
+        /// When a v2 plan owns the suffix (<see cref="SuffixOwner.Override"/> /
+        /// <see cref="SuffixOwner.Blank"/>), returns the plan's
+        /// <see cref="FieldRegionPlan.AlignedSuffixText"/> instead.
         /// </summary>
         public bool TryGetUnitSuffix(ushort paramId, GameData data, out string suffix)
         {
+            if (TryGetPlanOwnedSuffix(paramId, out suffix))
+                return true;
+
             if (!TempParams.Contains(paramId))
             {
                 suffix = null;
@@ -259,6 +356,48 @@ namespace FanaBridge.Display.Drivers
                 return true;
             }
             suffix = UnitLabel(data?.NewData?.TemperatureUnit, "C");
+            return true;
+        }
+
+        /// <summary>
+        /// Unified ParamDefs suffix resolve for the v2 plan layer (and a drop-in for E8):
+        /// plan-owned Override/Blank → <see cref="FieldRegionPlan.AlignedSuffixText"/>;
+        /// otherwise the existing unit / total owners. Returns false when no suffix applies.
+        /// </summary>
+        public bool TryResolveSuffix(ushort paramId, GameData data, out string suffix)
+        {
+            if (TryGetPlanOwnedSuffix(paramId, out suffix))
+                return true;
+            if (TryGetUnitSuffix(paramId, data, out suffix))
+                return true;
+            if (TryResolveTotalSuffix(paramId, data, out suffix))
+                return true;
+            return false;
+        }
+
+        /// <summary>
+        /// When a plan paints the suffix region, return its resolved text (already
+        /// alignment-clamped / blink-blanked by the composer). BaseComputed is not plan-
+        /// owned — the mapper's unit/total path remains the single dynamic owner.
+        /// </summary>
+        private bool TryGetPlanOwnedSuffix(ushort paramId, out string suffix)
+        {
+            if (!_fieldPlans.TryGetValue(paramId, out var plan) || plan == null)
+            {
+                suffix = null;
+                return false;
+            }
+            if (plan.SuffixOwner != SuffixOwner.Override
+                && plan.SuffixOwner != SuffixOwner.Blank)
+            {
+                suffix = null;
+                return false;
+            }
+            // EffectVisible false already folded into AlignedSuffixText as width-blank.
+            suffix = plan.AlignedSuffixText
+                ?? (plan.SuffixOwner == SuffixOwner.Blank ? " " : plan.SuffixText);
+            if (suffix == null)
+                suffix = " ";
             return true;
         }
 
@@ -327,9 +466,14 @@ namespace FanaBridge.Display.Drivers
         /// (or the migrated Show*Total=false / overridden-source default) clears with " ";
         /// <see cref="FieldFormats.WithTotal"/> emits the total when available, else the fuel
         /// unit-label fallback or a blank for lap/position. Single owner of suffix decisions.
+        /// When a v2 plan owns the suffix, returns the plan text (same as
+        /// <see cref="TryGetUnitSuffix"/>).
         /// </summary>
         public bool TryResolveTotalSuffix(ushort paramId, GameData data, out string suffix)
         {
+            if (TryGetPlanOwnedSuffix(paramId, out suffix))
+                return true;
+
             if (!IsTotalParam(paramId))
             {
                 suffix = null;
@@ -439,10 +583,22 @@ namespace FanaBridge.Display.Drivers
                 return false;   // miss → caller falls back to built-in for this frame
             if (!_scalarEncoders.TryGetValue(paramId, out var encodeScalar))
                 return false;
+            n = ApplyValueFormat(n, mapping.Format);
             value = encodeScalar(n, handle);
             // ONE publish site: natural pre-wire scalar (property-picker unit), same as built-in.
             PublishNaturalScalar(paramId, n);
             return true;
+        }
+
+        /// <summary>
+        /// Host-side value-format transforms applied before the typed encoder. Today only
+        /// <see cref="FormatOneDecimal"/>; withTotal/bare/unit are suffix-only keys.
+        /// </summary>
+        private static double ApplyValueFormat(double n, string format)
+        {
+            if (string.Equals(format, FormatOneDecimal, StringComparison.Ordinal))
+                return Math.Round(n, 1);
+            return n;
         }
 
         /// <summary>
