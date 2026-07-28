@@ -57,6 +57,8 @@
     <EmbeddedResource Include="Display\Fixtures\bentley-catalog-draft.json" />
     <EmbeddedResource Include="Display\Fixtures\alias-table-draft.json" />
     <EmbeddedResource Include="Display\Fixtures\evaluator-differential-traces.golden.txt" />
+    <!-- FA2: frozen v2 counterparts for the FrameComposer parity battery (v1 stays inline). -->
+    <EmbeddedResource Include="Display\Fixtures\parity-pairs\*.v2.json" />
   </ItemGroup>
 
 </Project>

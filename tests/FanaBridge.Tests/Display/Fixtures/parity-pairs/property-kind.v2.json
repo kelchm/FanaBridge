@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 2,
+  "pages": [
+    {
+      "kind": "hostedPage",
+      "id": "s-prop",
+      "name": "PROP",
+      "base": {
+        "content": {
+          "kind": "property",
+          "source": {
+            "kind": "builtIn",
+            "name": "Fuel"
+          }
+        }
+      }
+    }
+  ],
+  "cycles": [],
+  "priority": {
+    "rows": [],
+    "rest": {
+      "inSessionPage": {
+        "kind": "hostedPage",
+        "id": "s-prop"
+      },
+      "idle": {
+        "kind": "blank"
+      }
+    }
+  },
+  "pageOrder": [
+    {
+      "kind": "hostedPage",
+      "id": "s-prop"
+    }
+  ],
+  "fields": {},
+  "wheelScreen": {
+    "rules": []
+  },
+  "settings": {}
+}

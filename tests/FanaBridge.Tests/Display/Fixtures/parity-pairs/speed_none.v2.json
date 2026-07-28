@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 2,
+  "pages": [
+    {
+      "kind": "hostedPage",
+      "id": "s1",
+      "name": "S1",
+      "base": {
+        "content": {
+          "kind": "speed"
+        }
+      }
+    }
+  ],
+  "cycles": [],
+  "priority": {
+    "rows": [],
+    "rest": {
+      "inSessionPage": {
+        "kind": "hostedPage",
+        "id": "s1"
+      },
+      "idle": {
+        "kind": "blank"
+      }
+    }
+  },
+  "pageOrder": [
+    {
+      "kind": "hostedPage",
+      "id": "s1"
+    }
+  ],
+  "fields": {},
+  "wheelScreen": {
+    "rules": []
+  },
+  "settings": {}
+}

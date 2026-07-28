@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.Serialization;
 using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Catalog;
@@ -1712,18 +1713,37 @@ namespace FanaBridge.Tests.Display
 
         // ═════════════════════════════════════════════════════════════════
         // Parity battery — real v9 DisplayRuleStack harness
+        // FA2: v2 side is a FROZEN fixture pair (parity-pairs/*.v2.json), not a
+        // test-time migration. v1 JSON stays inline and drives the v9 reference.
         // ═════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// E5-001: isolated v9 DisplayRuleStack harness vs migrated FrameComposer.
-        /// Fixed expected byte records at fixed ticks; genuine v1 docs with rules;
-        /// winner handoffs, gear-overlay window, blink/scroll boundaries.
+        /// Loads a frozen v2 parity-pair fixture (embedded under
+        /// Display/Fixtures/parity-pairs/). FA2: counterparts were produced once
+        /// offline; the harness never migrates at test time.
+        /// </summary>
+        private static DisplayConfigV2 LoadParityV2(string fileName)
+        {
+            var asm = typeof(FrameComposerTests).Assembly;
+            // Embedded-resource names fold path separators and '-' in folders to '_'.
+            string suffix = ".Display.Fixtures.parity_pairs." + fileName;
+            string resource = asm.GetManifestResourceNames()
+                .Single(n => n.EndsWith(suffix, StringComparison.Ordinal));
+            using (var stream = asm.GetManifestResourceStream(resource))
+            using (var reader = new StreamReader(stream!))
+                return DisplayConfigV2Serializer.Load(reader.ReadToEnd(), _ => { });
+        }
+
+        /// <summary>
+        /// E5-001: isolated v9 DisplayRuleStack harness vs frozen-fixture FrameComposer.
+        /// Fixed expected byte records at fixed ticks; genuine v1 docs with rules
+        /// (v9 reference); winner handoffs, gear-overlay window, blink/scroll boundaries.
         /// </summary>
         [Fact]
         public void Parity_V9StackHarness_WinnerHandoff_GearOverlay_BlinkScroll()
         {
             // v1 document with base speed, gear-change overlay (2s), blink pit rule,
-            // and a scroll message screen for boundary coverage.
+            // and a scroll message screen for boundary coverage. Drives v9 only.
             const string v1Json = @"{
   ""schemaVersion"": 1,
   ""segmentDisplay"": {
@@ -1752,9 +1772,7 @@ namespace FanaBridge.Tests.Display
     ]
   }
 }";
-            var v1 = DisplayConfigSerializer.Load(v1Json, _ => { });
-            var v2 = DisplayConfigV2Validator.Normalize(
-                DisplayConfigV2Migration.Convert(v1), _ => { });
+            var v2 = LoadParityV2("winner-handoff-gear-overlay-blink-scroll.v2.json");
             var composer = new FrameComposer(v2, new FrameComposerOptions { DeviceKey = "parity" });
 
             var harness = V9Harness.Create(v1Json);
@@ -1872,10 +1890,9 @@ namespace FanaBridge.Tests.Display
         {
             Assert.False(string.IsNullOrEmpty(fixtureName));
 
+            // v1 drives the v9 stack reference; v2 is the frozen FA2 fixture pair.
             string v1Json = BuildV1SingleScreen(text, contentKind, effect);
-            var v1 = DisplayConfigSerializer.Load(v1Json, _ => { });
-            var v2 = DisplayConfigV2Validator.Normalize(
-                DisplayConfigV2Migration.Convert(v1), _ => { });
+            var v2 = LoadParityV2(fixtureName + ".v2.json");
             string hostedId = v2.Pages.First(p => p.Kind == PageEntryKind.HostedPage).Id;
 
             var content = Ctx(
@@ -1918,6 +1935,7 @@ namespace FanaBridge.Tests.Display
         public void Parity_PropertyKind_ByteIdentical()
         {
             var reader = new DictReader(42);
+            // v1 drives the formatter reference; v2 is the frozen FA2 fixture pair.
             string v1Json = @"{
   ""schemaVersion"": 1,
   ""segmentDisplay"": {
@@ -1936,8 +1954,7 @@ namespace FanaBridge.Tests.Display
   }
 }";
             var v1 = DisplayConfigSerializer.Load(v1Json, _ => { });
-            var v2 = DisplayConfigV2Validator.Normalize(
-                DisplayConfigV2Migration.Convert(v1), _ => { });
+            var v2 = LoadParityV2("property-kind.v2.json");
             var screen = v1.Legacy.Screens[0];
             string hostedId = v2.Pages.First(p => p.Kind == PageEntryKind.HostedPage).Id;
 

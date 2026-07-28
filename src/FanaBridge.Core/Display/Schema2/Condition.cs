@@ -69,8 +69,9 @@ namespace FanaBridge.Display.Schema2
 
     /// <summary>
     /// A (kind, name) value source for conditions, field bases, and property content.
-    /// Kind spellings include v1's <c>simHubProperty</c> / <c>builtIn</c> plus v2's
-    /// <c>itmField</c> / <c>action</c> / <c>script</c> (provisional final list — 🔶 §12.7).
+    /// Kind spellings: <c>simHubProperty</c> / <c>builtIn</c> / <c>itmField</c> /
+    /// <c>script</c> (parsed-but-inert). FA2: <c>action</c> is no longer a recognized
+    /// kind (unknown → degraded).
     /// </summary>
     public class ValueSource
     {
@@ -95,7 +96,7 @@ namespace FanaBridge.Display.Schema2
         }
 
         /// <summary>Name within the kind's namespace (property path, built-in name,
-        /// param id, action name, or <c>self</c> for itmField on a field override).</summary>
+        /// param id, or <c>self</c> for itmField on a field override).</summary>
         [JsonProperty("name")]
         public string Name { get; set; }
 
@@ -118,8 +119,6 @@ namespace FanaBridge.Display.Schema2
         SimHubProperty,
         BuiltIn,
         ItmField,
-        /// <summary>Migration-only carry — parse-and-preserve, never authored in v2 pickers.</summary>
-        Action,
         /// <summary>Reserved until the script DSL is sequenced — parse-and-preserve.</summary>
         Script,
     }

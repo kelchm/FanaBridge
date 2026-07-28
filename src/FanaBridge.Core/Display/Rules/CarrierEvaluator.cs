@@ -197,9 +197,11 @@ namespace FanaBridge.Display.Rules
         /// Adapt a v2 <see cref="Condition"/> + <see cref="Lifetime"/> onto the same
         /// evaluator machine. <b>Precondition:</b> the document has been through
         /// <c>DisplayConfigV2Validator.Normalize</c> (see contract §1). Dispatch is on
-        /// <b>source kind before lifetime kind</b>: action → Event family; onChange → Edge;
-        /// otherwise Level. <paramref name="owningFieldParamId"/> bakes itmField <c>self</c>
-        /// to the owning field's param id at spec-build time.
+        /// lifetime kind: onChange → Edge; otherwise Level. (FA2: v2 Condition vocabulary
+        /// no longer has an <c>action</c> source; Event family remains via
+        /// <see cref="FromDisplayRule"/> for the v9 actionTriggered path until E8b.)
+        /// <paramref name="owningFieldParamId"/> bakes itmField <c>self</c> to the owning
+        /// field's param id at spec-build time.
         /// </summary>
         public static CarrierSpec FromV2(string id, Condition condition, Lifetime lifetime,
             RunsWhen runs, string owningFieldParamId = null)
@@ -228,16 +230,7 @@ namespace FanaBridge.Display.Rules
             if (lifetime == null)
                 lifeKind = LifetimeKind.WhileTrue;
 
-            bool isAction = condition?.Source != null
-                && condition.Source.Kind == ValueSourceKind.Action;
-
-            // SOURCE KIND before lifetime kind (E3-05 / E3-001).
-            if (isAction)
-            {
-                trigger.Family = CarrierTriggerFamily.Event;
-                MapPostFireLifetime(life, lifeKind, lifetime);
-            }
-            else if (lifeKind == LifetimeKind.OnChange)
+            if (lifeKind == LifetimeKind.OnChange)
             {
                 trigger.Family = CarrierTriggerFamily.Edge;
                 // Direction: coerced-to-any uses Any; Unknown → Any (engine view).
@@ -316,7 +309,7 @@ namespace FanaBridge.Display.Rules
             {
                 case LifetimeKind.OnChange:
                 {
-                    // Action + onChange: durationMs → ForDuration; then → UntilDismissed.
+                    // onChange post-fire (used when not already dispatched as Edge above).
                     bool thenUntil = lifetime != null
                         && !lifetime.ThenIgnored
                         && lifetime.Then == LifetimeThen.UntilDismissed;
@@ -369,7 +362,6 @@ namespace FanaBridge.Display.Rules
             {
                 case ValueSourceKind.BuiltIn: return PropertyKind.BuiltIn;
                 case ValueSourceKind.SimHubProperty: return PropertyKind.SimHubProperty;
-                case ValueSourceKind.Action: return PropertyKind.FanaBridgeAction;
                 case ValueSourceKind.ItmField: return PropertyKind.ItmField;
                 case ValueSourceKind.Script: return PropertyKind.Script;
                 default: return PropertyKind.Unknown;

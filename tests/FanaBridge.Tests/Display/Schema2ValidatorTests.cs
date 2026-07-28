@@ -845,7 +845,7 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Shape_WhileTrue_OperatorLess_Degraded_ExceptAction()
+        public void Shape_WhileTrue_OperatorLess_Degraded()
         {
             var cfg = DocWithHosted();
             cfg.Priority.Rows.Add(new PriorityRow
@@ -869,27 +869,45 @@ namespace FanaBridge.Tests.Display
                         },
                         Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
                     },
-                    new Summon
-                    {
-                        Id = "e-action",
-                        Condition = new Condition
-                        {
-                            Source = new ValueSource
-                            {
-                                Kind = ValueSourceKind.Action,
-                                Name = "PitLimiter",
-                            },
-                        },
-                        Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
-                    },
                 },
             });
             cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
             Norm(cfg);
             Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
-            // E3-06: action + whileTrue is no longer exempt — coerced to forDuration, degrade-visible.
-            Assert.True(cfg.Priority.Rows[0].Summons[1].DegradedAtLoad);
-            Assert.Equal(LifetimeKind.ForDuration, cfg.Priority.Rows[0].Summons[1].Lifetime.Kind);
+        }
+
+        /// <summary>
+        /// FA2: authored "action" source kind is unknown and degrades (raw preserved).
+        /// </summary>
+        [Fact]
+        public void Shape_ActionSourceKind_DegradesAsUnknown()
+        {
+            var cfg = DocWithHosted();
+            var source = new ValueSource { KindRaw = "action", Name = "showPit" };
+            cfg.Priority.Rows.Add(new PriorityRow
+            {
+                Kind = PriorityRowKind.Seat,
+                Id = "s1",
+                Target = Hosted("p-a"),
+                Summons = new List<Summon>
+                {
+                    new Summon
+                    {
+                        Id = "e-action",
+                        Condition = new Condition
+                        {
+                            Source = source,
+                        },
+                        Lifetime = new Lifetime { Kind = LifetimeKind.OnChange, DurationMs = 2000 },
+                    },
+                },
+            });
+            cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+            Norm(cfg);
+            Assert.Equal(ValueSourceKind.Unknown, source.Kind);
+            Assert.Equal("action", source.KindRaw);
+            Assert.True(source.DegradedAtLoad);
+            Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
         }
 
         [Fact]
@@ -1121,46 +1139,6 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("onChange", life.KindRaw);
             // FZ-011: bring-up lifetime coercion is degrade-visible on the owning row.
             Assert.True(cfg.Priority.Rows[0].DegradedAtLoad);
-        }
-
-        /// <summary>
-        /// E3-06: whileTrue is level-only — action source + whileTrue coerces to forDuration
-        /// degrade-visibly (restores v1 non-level/WhileActive law; closes permanent-latch hole).
-        /// </summary>
-        [Fact]
-        public void Shape_ActionWhileTrue_CoercesToForDuration_DegradeVisible()
-        {
-            var life = new Lifetime { Kind = LifetimeKind.WhileTrue };
-            var cfg = DocWithHosted();
-            cfg.Priority.Rows.Add(new PriorityRow
-            {
-                Kind = PriorityRowKind.Seat,
-                Id = "s1",
-                Target = Hosted("p-a"),
-                Summons = new List<Summon>
-                {
-                    new Summon
-                    {
-                        Id = "act-wt",
-                        Condition = new Condition
-                        {
-                            Source = new ValueSource
-                            {
-                                Kind = ValueSourceKind.Action,
-                                Name = "showPit",
-                            },
-                        },
-                        Lifetime = life,
-                    },
-                },
-            });
-            cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
-            var log = new List<string>();
-            Norm(cfg, log);
-            Assert.Equal(LifetimeKind.ForDuration, life.Kind);
-            Assert.Equal("whileTrue", life.KindRaw); // raw preserved
-            Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
-            Assert.Contains(log, m => m.IndexOf("whileTrue is level-only", StringComparison.Ordinal) >= 0);
         }
 
         [Fact]
@@ -2370,23 +2348,7 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(PageRefKind.ItmPage, cfg.Priority.Rest.LandingPage.Kind);
         }
 
-        [Fact]
-        public void FZ007_ReservedHostedPageId_DegradedAndUnresolved()
-        {
-            var cfg = new DisplayConfigV2();
-            cfg.Pages.Add(new PageEntry
-            {
-                Kind = PageEntryKind.HostedPage,
-                Id = "p-v1-legacy",
-                Name = "User claimed reserved",
-            });
-            cfg.Priority.Rest.LandingPage = Hosted("p-v1-legacy");
-            Norm(cfg);
-            Assert.True(cfg.Pages[0].DegradedAtLoad);
-            // Not indexed → landing remains unresolved (placeholder semantics).
-            Assert.True(cfg.Priority.Rest.LandingPage.DegradedAtLoad);
-            Assert.True(cfg.Priority.Rest.LandingPageUseFallback);
-        }
+        // FA2: FZ007 reserved hosted-page-prefix rule DELETED with the v1→v2 converter.
 
         public static IEnumerable<object[]> UnknownEnumCarrierCases()
         {

@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 2,
+  "pages": [
+    {
+      "kind": "hostedPage",
+      "id": "spd",
+      "name": "Speed",
+      "base": {
+        "content": {
+          "kind": "speed"
+        }
+      }
+    },
+    {
+      "kind": "hostedPage",
+      "id": "gear",
+      "name": "Gear",
+      "base": {
+        "content": {
+          "kind": "gear"
+        }
+      }
+    },
+    {
+      "kind": "hostedPage",
+      "id": "pit",
+      "name": "Pit",
+      "base": {
+        "content": {
+          "kind": "text",
+          "text": "PIT"
+        },
+        "effect": "blink"
+      }
+    },
+    {
+      "kind": "hostedPage",
+      "id": "msg",
+      "name": "Msg",
+      "base": {
+        "content": {
+          "kind": "message",
+          "text": "HELLO"
+        },
+        "effect": "scroll"
+      }
+    }
+  ],
+  "cycles": [],
+  "priority": {
+    "rows": [
+      {
+        "kind": "seat",
+        "id": "s-r-gear",
+        "target": {
+          "kind": "hostedPage",
+          "id": "gear"
+        },
+        "summons": [
+          {
+            "id": "r-gear",
+            "name": "Gear change",
+            "condition": {
+              "source": {
+                "kind": "builtIn",
+                "name": "Gear"
+              }
+            },
+            "lifetime": {
+              "kind": "onChange",
+              "durationMs": 2000
+            }
+          }
+        ]
+      },
+      {
+        "kind": "seat",
+        "id": "s-r-pit",
+        "target": {
+          "kind": "hostedPage",
+          "id": "pit"
+        },
+        "summons": [
+          {
+            "id": "r-pit",
+            "name": "Pit",
+            "condition": {
+              "source": {
+                "kind": "builtIn",
+                "name": "PitLimiterOn"
+              },
+              "operator": "isTrue"
+            },
+            "lifetime": {
+              "kind": "whileTrue"
+            }
+          }
+        ]
+      }
+    ],
+    "rest": {
+      "inSessionPage": {
+        "kind": "hostedPage",
+        "id": "spd"
+      },
+      "idle": {
+        "kind": "blank"
+      }
+    }
+  },
+  "pageOrder": [
+    {
+      "kind": "hostedPage",
+      "id": "spd"
+    }
+  ],
+  "fields": {},
+  "wheelScreen": {
+    "rules": []
+  },
+  "settings": {}
+}

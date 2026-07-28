@@ -123,15 +123,6 @@ namespace FanaBridge.Display.Schema2
                             page.DegradedAtLoad = true;
                             warn("hosted page '" + (page.Name ?? "?") + "' degraded — no id");
                         }
-                        else if (IsReservedHostedPageId(page.Id))
-                        {
-                            // Reserved p-v1-* namespace — user ids must not claim it, and
-                            // must not enter the identity index (bare-Legacy placeholder
-                            // stays intentionally unresolved).
-                            page.DegradedAtLoad = true;
-                            warn("hosted page id '" + page.Id
-                                + "' uses reserved p-v1- prefix — degraded");
-                        }
                         else if (IsReservedRuntimeCarrierId(page.Id))
                         {
                             page.DegradedAtLoad = true;
@@ -1209,8 +1200,6 @@ namespace FanaBridge.Display.Schema2
                 degrade?.Invoke();
             }
 
-            bool isActionSource = condition?.Source != null
-                && condition.Source.Kind == ValueSourceKind.Action;
             bool hasOperator = condition != null && condition.Operator != null
                 && condition.Operator != ConditionOperator.Unknown;
             bool operatorUnknown = condition != null
@@ -1224,17 +1213,9 @@ namespace FanaBridge.Display.Schema2
                 degrade?.Invoke();
             }
 
-            // whileTrue is level-only (v1 law restored): action/edge sources with
-            // whileTrue coerce to forDuration, degrade-visible. Action sources are no
-            // longer exempt — Event+whileTrue would otherwise latch forever.
-            if (lifeKind == LifetimeKind.WhileTrue && isActionSource && lifetime != null)
-            {
-                lifetime.CoerceKind(LifetimeKind.ForDuration);
-                lifeKind = LifetimeKind.ForDuration;
-                warn(label + ": whileTrue is level-only — action source coerced to forDuration");
-                degrade?.Invoke();
-            }
-            else if (lifeKind == LifetimeKind.WhileTrue && !hasOperator && !isActionSource)
+            // whileTrue is level-only: operator-less whileTrue degrades (FA2: action
+            // source kind removed — no operator-exemption path remains).
+            if (lifeKind == LifetimeKind.WhileTrue && !hasOperator)
             {
                 warn(label + ": whileTrue requires a level operator — degraded");
                 degrade?.Invoke();
@@ -1403,8 +1384,7 @@ namespace FanaBridge.Display.Schema2
                     break;
 
                 case ValueSourceKind.SimHubProperty:
-                case ValueSourceKind.Action:
-                    // Legal carries; action is migration-only.
+                    // Legal carry.
                     break;
 
                 case ValueSourceKind.Script:
@@ -1520,19 +1500,14 @@ namespace FanaBridge.Display.Schema2
             // ContentObject has no effect — effects live on carriers. No-op retained for symmetry.
         }
 
-        /// <summary>Reserved hosted-page id prefix (bare-Legacy placeholder namespace).</summary>
-        internal static bool IsReservedHostedPageId(string id)
-            => id != null
-                && id.StartsWith(DisplayConfigV2Migration.ReservedHostedPageIdPrefix,
-                    StringComparison.Ordinal);
-
         /// <summary>
         /// Runtime carrier-id families reserved for plane floors and synthetic rows:
         /// bare <c>rest</c> / <c>manual</c> / <c>idle</c>, and the <c>rest:</c> prefix
         /// family (covers E6 floor id <c>rest:idle</c> and E4 rest destination spellings).
         /// Authored wheel rules, pages, summons, seats, layers, and overrides that claim
         /// these ids degrade at load so the §6.1 one-row-per-(CarrierId,SurfaceId) law
-        /// cannot collide with a floor row.
+        /// cannot collide with a floor row. (FA2: former v1-migration reserved
+        /// hosted-page prefix is gone — only these E6-round runtime families remain.)
         /// </summary>
         internal static bool IsReservedRuntimeCarrierId(string id)
         {

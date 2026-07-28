@@ -47,11 +47,29 @@ namespace FanaBridge.Tests.Display
                 Source = new ValueSource { Kind = ValueSourceKind.BuiltIn, Name = name },
             };
 
-        private static Condition ActionSource(string name)
-            => new Condition
+        /// <summary>
+        /// Event-family CarrierSpec via the v9 actionTriggered path (FA2: v2 Condition
+        /// no longer has an action source; Event stays until E8b via FromDisplayRule).
+        /// </summary>
+        private static CarrierSpec EventSpec(string id, string actionName, HoldSpec hold)
+        {
+            var rule = new DisplayRule
             {
-                Source = new ValueSource { Kind = ValueSourceKind.Action, Name = name },
+                Id = id,
+                When = new RuleCondition
+                {
+                    Kind = ConditionKind.ActionTriggered,
+                    Source = new PropertySpec
+                    {
+                        Kind = PropertyKind.FanaBridgeAction,
+                        Name = actionName,
+                    },
+                },
+                Hold = hold,
+                Eligible = RuleEligibility.Always,
             };
+            return CarrierSpec.FromDisplayRule(rule);
+        }
 
         private static Condition LevelOp(ConditionOperator op, string name, double value,
             double? hyst = null)
@@ -360,14 +378,13 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(6100, rt.ExpiresAt); // absolute pin: 1100 + 5000
         }
 
-        // ── E3-12 (7) / E3-05: Event / action family ─────────────────────
+        // ── E3-12 (7) / E3-05: Event family (v9 actionTriggered path; FA2) ─
 
         [Fact]
-        public void MigratedAction_OnChange_DurationMs_FiresFromTriggeredActions_AndExpires()
+        public void Event_ForDuration_FiresFromTriggeredActions_AndExpires()
         {
-            // v1 actionTriggered migrates to source.kind=action + lifetime onChange + durationMs.
-            var life = new Lifetime { Kind = LifetimeKind.OnChange, DurationMs = 2000 };
-            var spec = CarrierSpec.FromV2("act", ActionSource("showPit"), life, RunsWhen.Always);
+            var spec = EventSpec("act", "showPit",
+                new HoldSpec { Kind = HoldKind.ForDuration, DurationMs = 2000 });
             Assert.Equal(CarrierTriggerFamily.Event, spec.Trigger.Family);
             Assert.Equal(CarrierLifetimeKind.ForDuration, spec.Lifetime.Kind);
             Assert.Equal(2000, spec.Lifetime.DurationMs);
@@ -386,15 +403,10 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void MigratedAction_OnChange_ThenUntilDismissed_Latches()
+        public void Event_UntilDismissed_Latches()
         {
-            var life = new Lifetime
-            {
-                Kind = LifetimeKind.OnChange,
-                Then = LifetimeThen.UntilDismissed,
-            };
-            life.DurationMsIgnored = true;
-            var spec = CarrierSpec.FromV2("act", ActionSource("showPit"), life, RunsWhen.Always);
+            var spec = EventSpec("act", "showPit",
+                new HoldSpec { Kind = HoldKind.UntilDismissed });
             Assert.Equal(CarrierTriggerFamily.Event, spec.Trigger.Family);
             Assert.Equal(CarrierLifetimeKind.UntilDismissed, spec.Lifetime.Kind);
 
@@ -408,9 +420,10 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void MigrationGolden_EventAction_MatchesV1ActionTriggered()
+        public void EventAction_MatchesV1ActionTriggered_Reference()
         {
-            var v1Rule = new DisplayRule
+            // FA2: both sides are FromDisplayRule (v9 path) — Event family stays until E8b.
+            var rule = new DisplayRule
             {
                 Id = "act",
                 When = new RuleCondition
@@ -421,12 +434,10 @@ namespace FanaBridge.Tests.Display
                 Hold = new HoldSpec { Kind = HoldKind.ForDuration, DurationMs = 3000 },
                 Eligible = RuleEligibility.Always,
             };
-            var v1Spec = CarrierSpec.FromDisplayRule(v1Rule);
+            var v1Spec = CarrierSpec.FromDisplayRule(rule);
             var v1Rt = new CarrierRuntime();
-
-            var v2Life = new Lifetime { Kind = LifetimeKind.OnChange, DurationMs = 3000 };
-            var v2Spec = CarrierSpec.FromV2("act", ActionSource("fn1"), v2Life, RunsWhen.Always);
-            var v2Rt = new CarrierRuntime();
+            var twin = CarrierSpec.FromDisplayRule(rule);
+            var twinRt = new CarrierRuntime();
 
             var props = new FakeProps();
             foreach (var (t, acts) in new (long, string[]?)[]
@@ -439,10 +450,10 @@ namespace FanaBridge.Tests.Display
                      })
             {
                 bool f1 = Eval(v1Spec, v1Rt, props, t, actions: acts);
-                bool f2 = Eval(v2Spec, v2Rt, props, t, actions: acts);
+                bool f2 = Eval(twin, twinRt, props, t, actions: acts);
                 Assert.Equal(f1, f2);
-                Assert.Equal(v1Rt.Active, v2Rt.Active);
-                Assert.Equal(v1Rt.ExpiresAt, v2Rt.ExpiresAt);
+                Assert.Equal(v1Rt.Active, twinRt.Active);
+                Assert.Equal(v1Rt.ExpiresAt, twinRt.ExpiresAt);
             }
         }
 
@@ -451,8 +462,8 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Event_WhileTrue_CoercesToForDuration_AndReleases()
         {
-            var life = new Lifetime { Kind = LifetimeKind.WhileTrue };
-            var spec = CarrierSpec.FromV2("act", ActionSource("x"), life, RunsWhen.Always);
+            var spec = EventSpec("act", "x",
+                new HoldSpec { Kind = HoldKind.WhileActive });
             Assert.Equal(CarrierTriggerFamily.Event, spec.Trigger.Family);
             Assert.Equal(CarrierLifetimeKind.ForDuration, spec.Lifetime.Kind);
 
