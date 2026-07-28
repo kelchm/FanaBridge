@@ -117,9 +117,9 @@ namespace FanaBridge.Display.Runtime
         /// created (legacy / test convenience).</summary>
         public DisplayRuleStack(DisplayCustomizationConfig config, ItmDisplayDriver driver,
             byte itmDeviceId, byte defaultWirePage, Action<string> log = null,
-            SimHubPropertySource properties = null)
+            SimHubPropertySource properties = null, Func<long> nowMs = null)
             : this(config, new ItmLifecyclePageControl(driver.Lifecycle), itmDeviceId,
-                defaultWirePage, log, nowMs: null, rawLookup: null, properties: properties)
+                defaultWirePage, log, nowMs: nowMs, rawLookup: null, properties: properties)
         {
             Driver = driver;
         }

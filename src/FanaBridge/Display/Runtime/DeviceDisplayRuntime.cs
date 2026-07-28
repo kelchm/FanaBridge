@@ -621,7 +621,8 @@ namespace FanaBridge.Display.Runtime
                 _displayStack = new DisplayRuleStack(config, _itmDisplay, _itmDeviceId,
                     settings.ItmDefaultPage,
                     msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
-                    properties: _propertySource);
+                    properties: _propertySource,
+                    nowMs: _itmClock());
                 _log("FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                     "]: Display rules active (" + (config.Itm?.Rules?.Count ?? 0) + " ITM, " +
                     (config.Legacy?.Rules?.Count ?? 0) + " legacy)");
@@ -683,7 +684,7 @@ namespace FanaBridge.Display.Runtime
                     itmDeviceId: 0, defaultWirePage: settings?.ItmDefaultPage
                         ?? DisplaySettings.DefaultItmDefaultPage,
                     msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
-                    nowMs: null, rawLookup: null, properties: _propertySource);
+                    nowMs: _itmClock(), rawLookup: null, properties: _propertySource);
                 _log("FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                     "]: Display rules active (legacy-only, " +
                     (config.Legacy?.Rules?.Count ?? 0) + " rules)");
