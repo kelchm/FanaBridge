@@ -152,6 +152,14 @@ namespace FanaBridge.Display.Arbitration
 
         /// <summary>Idle page destination when <see cref="IdleKind"/> is Page.</summary>
         public string IdlePageDestinationId { get; set; }
+
+        /// <summary>
+        /// Idle blank compile: park on Legacy while painting (ITM without blank command).
+        /// Mirrors <see cref="Schema2.IdleSpec.ParkOnLegacyForBlank"/> (validator-set).
+        /// Additive for E7 — E6 also emits
+        /// <c>WheelScreenDeferReason.ParkOnLegacyForBlank</c> on the wheel-screen plane.
+        /// </summary>
+        public bool ParkOnLegacyForBlank { get; set; }
     }
 
     /// <summary>Manual-row bookkeeping exposed for diagnostics and E7.</summary>

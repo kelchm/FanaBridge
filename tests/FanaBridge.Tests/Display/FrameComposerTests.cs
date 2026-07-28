@@ -36,9 +36,9 @@ namespace FanaBridge.Tests.Display
                 legacySupersededV9: false, eligible, expiresAtMs: 0, remaining);
 
         private static SegmentContentContext Ctx(
-            double? speed = null, string gear = null, double? rpm = null,
+            double? speed = null, string? gear = null, double? rpm = null,
             double? pos = null, double? fuel = null, bool inGame = true,
-            IPropertyReader props = null)
+            IPropertyReader? props = null)
             => new SegmentContentContext
             {
                 InGame = inGame,
@@ -55,9 +55,9 @@ namespace FanaBridge.Tests.Display
 
         private static FrameComposer Composer(
             DisplayConfigV2 doc,
-            IReadOnlyDictionary<ushort, FieldCapability> caps = null,
-            Action<string> warn = null,
-            IReadOnlyDictionary<ushort, string> primaryHost = null)
+            IReadOnlyDictionary<ushort, FieldCapability>? caps = null,
+            Action<string>? warn = null,
+            IReadOnlyDictionary<ushort, string>? primaryHost = null)
         {
             var options = new FrameComposerOptions
             {
@@ -75,10 +75,10 @@ namespace FanaBridge.Tests.Display
 
         private static FrameComposerTickInput In(
             long now,
-            string segmentPage,
-            string displayed,
-            SegmentContentContext content = null,
-            IReadOnlyCollection<string> dismissed = null,
+            string? segmentPage,
+            string? displayed,
+            SegmentContentContext? content = null,
+            IReadOnlyCollection<string>? dismissed = null,
             bool wheelScreenHolds = false,
             params CarrierTickSnapshot[] snaps)
             => new FrameComposerTickInput
@@ -119,15 +119,15 @@ namespace FanaBridge.Tests.Display
             };
 
         private static FieldOverride Ov(
-            string id, FieldWrites writes, string text,
+            string id, FieldWrites writes, string? text,
             ContentEffect effect = ContentEffect.None,
             FieldAlignment align = FieldAlignment.Left,
-            ContentObject content = null)
+            ContentObject? content = null)
             => new FieldOverride
             {
                 Id = id,
                 Writes = writes,
-                Content = content ?? Text(text),
+                Content = content ?? Text(text ?? ""),
                 Effect = effect,
                 Alignment = align,
                 Condition = new Condition
@@ -143,7 +143,7 @@ namespace FanaBridge.Tests.Display
             };
 
         private static DisplayConfigV2 HostedDoc(
-            string pageId, ContentWithEffect bas, params LayerEntry[] layers)
+            string pageId, ContentWithEffect? bas, params LayerEntry[] layers)
             => new DisplayConfigV2
             {
                 Pages = new List<PageEntry>
@@ -180,7 +180,7 @@ namespace FanaBridge.Tests.Display
             int? suffixWidth = 5,
             bool? numeric = true,
             bool? ascii = false,
-            string primaryHost = "tyreTemps",
+            string? primaryHost = "tyreTemps",
             bool? overridable = true,
             params string[] hosts)
             => new FieldCapability
@@ -958,6 +958,33 @@ namespace FanaBridge.Tests.Display
             Assert.False(r.SegmentFrameWritable);
         }
 
+        [Fact]
+        public void WheelScreenHolds_DemotesPageOnScreen_ToOffScreen()
+        {
+            // E6-OP-05: while held, page:{id} OnScreen → OffScreen (record honesty).
+            var doc = HostedDoc("p-a",
+                new ContentWithEffect { Content = Text("BAS") },
+                Layer("l-top", "TOP"));
+            var c = Composer(doc);
+
+            var free = c.Tick(In(0, "p-a", DestinationIds.Hosted("p-a"),
+                Ctx(), null, false, Snap("l-top", true)));
+            Assert.Equal(CarrierPresence.OnScreen,
+                free.Resolution.CarrierStatuses.Single(s => s.CarrierId == "l-top").Presence);
+
+            var held = c.Tick(In(0, "p-a", DestinationIds.Hosted("p-a"),
+                Ctx(), null, true, Snap("l-top", true)));
+            Assert.Equal(CarrierPresence.OffScreen,
+                held.Resolution.CarrierStatuses.Single(s => s.CarrierId == "l-top").Presence);
+            Assert.False(held.SegmentFrameWritable);
+            // Winner id still carried; presence surrendered.
+            Assert.Equal("l-top", held.SegmentWinnerCarrierId);
+            Assert.Equal(0, held.Resolution.CarrierStatuses
+                .Count(s => s.Presence == CarrierPresence.OnScreen
+                    && s.SurfaceId != null
+                    && s.SurfaceId.StartsWith("page:", StringComparison.Ordinal)));
+        }
+
         // ═════════════════════════════════════════════════════════════════
         // Effect clocks (v9 law) + field blink resolution
         // ═════════════════════════════════════════════════════════════════
@@ -1537,17 +1564,17 @@ namespace FanaBridge.Tests.Display
                 Assert.Equal(DestinationIds.Itm("tyreTemps"), row.DestinationId));
 
             // Page surface rows exist once.
-            Assert.Single(merged.CarrierStatuses.Where(s =>
+            Assert.Single(merged.CarrierStatuses, s =>
                 s.CarrierId == "l-pit"
-                && s.SurfaceId == DestinationIds.PageSurface("p-alerts")));
+                && s.SurfaceId == DestinationIds.PageSurface("p-alerts"));
         }
 
         private static ComposedResolutionRecord MergeRecords(
-            ComposedResolutionRecord e4, ComposedResolutionRecord e5)
+            ComposedResolutionRecord? e4, ComposedResolutionRecord? e5)
         {
             // Minimal pure merge matching contract §6.1 for the unit test.
             var rows = new Dictionary<(string, string), CarrierResolutionStatus>();
-            void ingest(IReadOnlyList<CarrierResolutionStatus> list)
+            void ingest(IReadOnlyList<CarrierResolutionStatus>? list)
             {
                 if (list == null) return;
                 foreach (var s in list)
@@ -1576,7 +1603,7 @@ namespace FanaBridge.Tests.Display
             ingest(e5?.CarrierStatuses);
 
             var winners = new Dictionary<string, SurfaceWinner>(StringComparer.Ordinal);
-            void ingestW(IReadOnlyList<SurfaceWinner> list)
+            void ingestW(IReadOnlyList<SurfaceWinner>? list)
             {
                 if (list == null) return;
                 foreach (var w in list)
@@ -1586,7 +1613,7 @@ namespace FanaBridge.Tests.Display
             ingestW(e5?.SurfaceWinners);
 
             var snaps = new Dictionary<string, CarrierTickSnapshot>(StringComparer.Ordinal);
-            void ingestS(IReadOnlyList<CarrierTickSnapshot> list)
+            void ingestS(IReadOnlyList<CarrierTickSnapshot>? list)
             {
                 if (list == null) return;
                 foreach (var s in list)
@@ -1792,7 +1819,7 @@ namespace FanaBridge.Tests.Display
             var composer = new FrameComposer(v2, new FrameComposerOptions { DeviceKey = "parity" });
 
             var harness = V9Harness.Create(v1Json);
-            byte[] last = null;
+            byte[]? last = null;
             harness.Stack.TryWriteLegacySegments = (a, b, c) =>
             {
                 last = new[] { a, b, c };
@@ -1897,7 +1924,7 @@ namespace FanaBridge.Tests.Display
         private sealed class V9Harness
         {
             public long T;
-            public DisplayRuleStack Stack;
+            public DisplayRuleStack Stack = null!;
             public readonly FakePageControl Control = new FakePageControl();
 
             public static V9Harness Create(string configJson)

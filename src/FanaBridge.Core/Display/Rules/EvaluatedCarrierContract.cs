@@ -124,6 +124,12 @@ namespace FanaBridge.Display.Rules
         /// (e.g. runs:idle while in-game). Presence stays Waiting; UI copy maps later.
         /// </summary>
         OutOfSessionScope = 1 << 6,
+        /// <summary>
+        /// Diagnostics: catalog capability for this command/region is untested (null).
+        /// Warn-and-allow (§14) — the carrier still competes; UI may show a provisional badge.
+        /// Additive (E6): stamped on wheel-screen winners/floor rows when ScreenCommands is null.
+        /// </summary>
+        Untested = 1 << 7,
     }
 
     /// <summary>

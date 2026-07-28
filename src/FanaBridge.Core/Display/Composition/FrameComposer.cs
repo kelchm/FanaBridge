@@ -177,6 +177,13 @@ namespace FanaBridge.Display.Composition
                     displayed, dest, dismissed));
             }
 
+            // Contract §6.2 / E6-OP-05: while the wheel-screen plane holds the glass,
+            // page:{id} rows demote OnScreen → OffScreen (record honesty — at most one
+            // OnScreen per physical surface across E5+E6). Field/ITM surfaces unchanged.
+            // SurfaceWinner still carries the ladder winner id; presence is surrendered.
+            if (input.SegmentSurfaceHeldByWheelScreen)
+                DemotePageOnScreenWhileWheelScreenHolds(statuses);
+
             var resolution = new ComposedResolutionRecord(
                 input.NowMs,
                 _deviceKey,
@@ -201,6 +208,29 @@ namespace FanaBridge.Display.Composition
         // ═════════════════════════════════════════════════════════════════
         // Segment / layer ladder
         // ═════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// While wheel-screen holds col01, demote page-surface OnScreen → OffScreen so the
+        /// merged composed-resolution record never claims two things on the glass at once.
+        /// </summary>
+        private static void DemotePageOnScreenWhileWheelScreenHolds(
+            List<CarrierResolutionStatus> statuses)
+        {
+            if (statuses == null)
+                return;
+            for (int i = 0; i < statuses.Count; i++)
+            {
+                var s = statuses[i];
+                if (s.Presence != CarrierPresence.OnScreen)
+                    continue;
+                if (s.SurfaceId == null
+                    || !s.SurfaceId.StartsWith("page:", StringComparison.Ordinal))
+                    continue;
+                statuses[i] = new CarrierResolutionStatus(
+                    s.CarrierId, s.SurfaceId, s.DestinationId,
+                    CarrierPresence.OffScreen, s.RemainingMs, s.RowLabels);
+            }
+        }
 
         private sealed class LayerResolveResult
         {

@@ -72,5 +72,21 @@ namespace FanaBridge.Display.Arbitration
                 return FieldSurface(paramId);
             return "field:" + (fieldKey ?? "");
         }
+
+        // ── Wheel-screen surface (E6) ────────────────────────────────────
+
+        /// <summary>
+        /// Surface key for the concurrent firmware-screen plane. One spelling for
+        /// merge with E4/E5 (contract §6.1) — E6 is the sole presence owner.
+        /// </summary>
+        public const string WheelScreenSurfaceId = "wheelScreen";
+
+        /// <summary>Surface key for the wheel-screen plane: <c>wheelScreen</c>.</summary>
+        public static string WheelScreenSurface()
+            => WheelScreenSurfaceId;
+
+        /// <summary>Destination identity for a firmware screen command: <c>screen:{spelling}</c>.</summary>
+        public static string Screen(string commandSpelling)
+            => "screen:" + (commandSpelling ?? "");
     }
 }

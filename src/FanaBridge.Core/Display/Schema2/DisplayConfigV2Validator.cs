@@ -132,6 +132,12 @@ namespace FanaBridge.Display.Schema2
                             warn("hosted page id '" + page.Id
                                 + "' uses reserved p-v1- prefix — degraded");
                         }
+                        else if (IsReservedRuntimeCarrierId(page.Id))
+                        {
+                            page.DegradedAtLoad = true;
+                            warn("hosted page id '" + page.Id
+                                + "' is a reserved runtime id — degraded");
+                        }
                         else if (!hostedPageIds.Add(page.Id))
                         {
                             page.DegradedAtLoad = true;
@@ -208,6 +214,11 @@ namespace FanaBridge.Display.Schema2
             {
                 layer.DegradedAtLoad = true;
                 warn(label + " degraded — no id");
+            }
+            else if (IsReservedRuntimeCarrierId(layer.Id))
+            {
+                layer.DegradedAtLoad = true;
+                warn(label + " degraded — id is a reserved runtime id");
             }
             else if (!layerIds.Add(layer.Id))
             {
@@ -367,6 +378,11 @@ namespace FanaBridge.Display.Schema2
             {
                 ov.DegradedAtLoad = true;
                 warn(label + " degraded — no id");
+            }
+            else if (IsReservedRuntimeCarrierId(ov.Id))
+            {
+                ov.DegradedAtLoad = true;
+                warn(label + " degraded — id is a reserved runtime id");
             }
             else if (!overrideIds.Add(ov.Id))
             {
@@ -591,6 +607,11 @@ namespace FanaBridge.Display.Schema2
                     {
                         row.DegradedAtLoad = true;
                         warn(label + " degraded — no id");
+                    }
+                    else if (IsReservedRuntimeCarrierId(row.Id))
+                    {
+                        row.DegradedAtLoad = true;
+                        warn(label + " degraded — id is a reserved runtime id");
                     }
                     else if (!rowIds.Add(row.Id))
                     {
@@ -849,6 +870,11 @@ namespace FanaBridge.Display.Schema2
                 summon.DegradedAtLoad = true;
                 warn(label + " degraded — no id");
             }
+            else if (IsReservedRuntimeCarrierId(summon.Id))
+            {
+                summon.DegradedAtLoad = true;
+                warn(label + " degraded — id is a reserved runtime id");
+            }
             else if (!summonIds.Add(summon.Id))
             {
                 summon.DegradedAtLoad = true;
@@ -1075,6 +1101,11 @@ namespace FanaBridge.Display.Schema2
                 {
                     rule.DegradedAtLoad = true;
                     warn(label + " degraded — no id");
+                }
+                else if (IsReservedRuntimeCarrierId(rule.Id))
+                {
+                    rule.DegradedAtLoad = true;
+                    warn(label + " degraded — id is a reserved runtime id");
                 }
                 else if (!wheelRuleIds.Add(rule.Id))
                 {
@@ -1494,6 +1525,25 @@ namespace FanaBridge.Display.Schema2
             => id != null
                 && id.StartsWith(DisplayConfigV2Migration.ReservedHostedPageIdPrefix,
                     StringComparison.Ordinal);
+
+        /// <summary>
+        /// Runtime carrier-id families reserved for plane floors and synthetic rows:
+        /// bare <c>rest</c> / <c>manual</c> / <c>idle</c>, and the <c>rest:</c> prefix
+        /// family (covers E6 floor id <c>rest:idle</c> and E4 rest destination spellings).
+        /// Authored wheel rules, pages, summons, seats, layers, and overrides that claim
+        /// these ids degrade at load so the §6.1 one-row-per-(CarrierId,SurfaceId) law
+        /// cannot collide with a floor row.
+        /// </summary>
+        internal static bool IsReservedRuntimeCarrierId(string id)
+        {
+            if (string.IsNullOrEmpty(id))
+                return false;
+            if (string.Equals(id, "rest", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(id, "manual", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(id, "idle", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return id.StartsWith("rest:", StringComparison.OrdinalIgnoreCase);
+        }
 
         // ── PageRef helpers ───────────────────────────────────────────────
 
