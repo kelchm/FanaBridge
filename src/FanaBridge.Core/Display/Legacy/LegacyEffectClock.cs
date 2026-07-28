@@ -21,6 +21,14 @@ namespace FanaBridge.Display.Legacy
         public const int BlinkHalfPeriodMs = 500;
 
         /// <summary>
+        /// Shared blink on/off law: phase 0 = on, phase 1 = off. Keys only on
+        /// <paramref name="nowMs"/> (global clock — no per-landing re-anchor).
+        /// Field-plane and segment-plane both call this; do not re-implement.
+        /// </summary>
+        public static bool IsOnPhase(long nowMs)
+            => (nowMs / BlinkHalfPeriodMs) % 2 == 0;
+
+        /// <summary>
         /// Applies <paramref name="effect"/> to <paramref name="renderedText"/> at
         /// <paramref name="nowMs"/> and returns a 3-byte segment frame.
         /// </summary>
@@ -72,9 +80,7 @@ namespace FanaBridge.Display.Legacy
         /// <summary>500 ms on / 500 ms off. Off phase is a blank frame.</summary>
         private static byte[] BlinkFrame(string text, long nowMs)
         {
-            // Phase 0 = on, phase 1 = off.
-            long phase = (nowMs / BlinkHalfPeriodMs) % 2;
-            if (phase != 0)
+            if (!IsOnPhase(nowMs))
             {
                 return new byte[]
                 {

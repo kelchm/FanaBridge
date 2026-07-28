@@ -49,5 +49,28 @@ namespace FanaBridge.Display.Arbitration
 
         public static bool IsRest(string destinationId)
             => destinationId == RestInSession || destinationId == RestIdle;
+
+        // ── Surface keys (shared by E4/E5 merge — one spelling, one normalize) ─
+
+        /// <summary>Surface key for a hosted page's layer ladder: <c>page:{id}</c>.</summary>
+        public static string PageSurface(string hostedPageId)
+            => "page:" + (hostedPageId ?? "");
+
+        /// <summary>Surface key for a field override ladder: <c>field:{paramId}</c>.</summary>
+        public static string FieldSurface(ushort paramId)
+            => "field:" + paramId;
+
+        /// <summary>
+        /// Surface key from a raw field key / childRef.Field string. Normalizes via
+        /// <see cref="ushort.TryParse"/> so <c>"05"</c> / <c>" 5"</c> collapse to
+        /// <c>field:5</c> (same as the ushort overload) — merge-safe with E5.
+        /// </summary>
+        public static string FieldSurface(string fieldKey)
+        {
+            if (fieldKey != null
+                && ushort.TryParse(fieldKey.Trim(), out var paramId))
+                return FieldSurface(paramId);
+            return "field:" + (fieldKey ?? "");
+        }
     }
 }
