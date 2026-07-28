@@ -4,6 +4,7 @@ using System.Runtime.Serialization;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
+using FanaBridge.Tests.Display.TestSupport;
 using GameReaderCommon;
 using Xunit;
 
@@ -12,29 +13,6 @@ namespace FanaBridge.Tests.Display
     /// <summary>Phase E7 B: itmField read-path seam — pure plumbing; nothing live consumes it.</summary>
     public class ItmFieldValueReaderTests
     {
-        private sealed class DictReader : IPropertyReader
-        {
-            public readonly Dictionary<string, double> Numbers =
-                new Dictionary<string, double>(System.StringComparer.OrdinalIgnoreCase);
-
-            public bool TryGetNumber(PropertySpec spec, out double value)
-            {
-                value = 0;
-                if (spec?.Kind == PropertyKind.BuiltIn && Numbers.TryGetValue(spec.Name ?? "", out value))
-                    return true;
-                return false;
-            }
-
-            public bool TryGetBool(PropertySpec spec, out bool value)
-            {
-                value = false;
-                if (!TryGetNumber(spec, out double n))
-                    return false;
-                value = n != 0;
-                return true;
-            }
-        }
-
         // GameData construction (see ItmTelemetryTests).
         private static readonly Type StatusDataType =
             typeof(GameData).Assembly
@@ -75,7 +53,7 @@ namespace FanaBridge.Tests.Display
         {
             var buf = new ItmFieldValueBuffer();
             buf.Publish(66, 9);
-            var reader = new PropertyReaderWithItmFields(new DictReader(), buf);
+            var reader = new PropertyReaderWithItmFields(new DictReader { RequireKind = PropertyKind.BuiltIn }, buf);
             var spec = new PropertySpec { Kind = PropertyKind.ItmField, Name = "66" };
             Assert.True(reader.TryGetNumber(spec, out double v));
             Assert.Equal(9, v);
@@ -86,7 +64,7 @@ namespace FanaBridge.Tests.Display
         {
             var buf = new ItmFieldValueBuffer();
             buf.Publish(0x42, 3);
-            var reader = new PropertyReaderWithItmFields(new DictReader(), buf);
+            var reader = new PropertyReaderWithItmFields(new DictReader { RequireKind = PropertyKind.BuiltIn }, buf);
             var spec = new PropertySpec { Kind = PropertyKind.ItmField, Name = "0x42" };
             Assert.True(reader.TryGetNumber(spec, out double v));
             Assert.Equal(3, v);
@@ -95,7 +73,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Composite_ItmField_Missing_ReturnsFalse()
         {
-            var reader = new PropertyReaderWithItmFields(new DictReader(), new ItmFieldValueBuffer());
+            var reader = new PropertyReaderWithItmFields(new DictReader { RequireKind = PropertyKind.BuiltIn }, new ItmFieldValueBuffer());
             var spec = new PropertySpec { Kind = PropertyKind.ItmField, Name = "1" };
             Assert.False(reader.TryGetNumber(spec, out _));
         }
@@ -103,7 +81,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Composite_ItmField_NullSink_ReturnsFalse()
         {
-            var reader = new PropertyReaderWithItmFields(new DictReader(), itmFields: null);
+            var reader = new PropertyReaderWithItmFields(new DictReader { RequireKind = PropertyKind.BuiltIn }, itmFields: null);
             var spec = new PropertySpec { Kind = PropertyKind.ItmField, Name = "1" };
             Assert.False(reader.TryGetNumber(spec, out _));
         }
@@ -111,7 +89,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Composite_BuiltIn_DelegatesToInner()
         {
-            var inner = new DictReader();
+            var inner = new DictReader { RequireKind = PropertyKind.BuiltIn };
             inner.Numbers[BuiltInProperties.Fuel] = 12;
             var reader = new PropertyReaderWithItmFields(inner, new ItmFieldValueBuffer());
             var spec = new PropertySpec { Kind = PropertyKind.BuiltIn, Name = BuiltInProperties.Fuel };
@@ -198,7 +176,7 @@ namespace FanaBridge.Tests.Display
 
             var withOverride = new ItmFieldValueBuffer();
             var m2 = new ItmTelemetryMapper { ParamValueSink = withOverride };
-            var props = new DictReader();
+            var props = new DictReader { RequireKind = PropertyKind.BuiltIn };
             props.Numbers["Fuel"] = 51.2; // any numeric source
             m2.Configure(
                 new Dictionary<ushort, FieldMapping>

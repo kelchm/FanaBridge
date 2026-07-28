@@ -131,7 +131,7 @@ namespace FanaBridge.Display.Rules
                     {
                         Rule = rule,
                         Index = _rules.Count,
-                        Spec = CarrierSpec.FromDisplayRule(rule),
+                        Spec = DisplayRuleCarrierAdapter.ToCarrierSpec(rule),
                         State = new CarrierRuntime(),
                     };
                     // Closure cached at build — the hot path must not allocate per tick.
@@ -255,7 +255,7 @@ namespace FanaBridge.Display.Rules
                 if (!rt.Usable || rt.Unavailable)
                     continue;
 
-                rt.Spec.RefreshFromDisplayRule(rt.Rule);
+                DisplayRuleCarrierAdapter.Refresh(rt.Spec, rt.Rule);
                 bool fresh = CarrierEvaluator.Evaluate(rt.Spec, rt.State, tickIn, rt.WarnMissing);
                 if (fresh)
                     AddEvent(now, ActivityKind.RuleFired,

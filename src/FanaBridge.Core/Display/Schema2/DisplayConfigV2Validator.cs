@@ -1439,7 +1439,7 @@ namespace FanaBridge.Display.Schema2
             // raw char length — "A.b.c.d" is 4 folded positions, not 7 raw chars.
             if (content.Kind == ContentKind.Text && !string.IsNullOrEmpty(content.Text))
             {
-                if (!LegacyScreen.IsRenderableText(content.Text))
+                if (!FanaBridge.Display.SegmentText.IsRenderableText(content.Text))
                 {
                     if (SevenSegment.EncodeWithDots(content.Text).Count > 3)
                     {

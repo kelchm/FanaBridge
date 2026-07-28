@@ -7,6 +7,7 @@ using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Composition;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Schema2;
+using FanaBridge.Tests.Display.TestSupport;
 using Newtonsoft.Json.Linq;
 using Xunit;
 
@@ -176,20 +177,6 @@ namespace FanaBridge.Tests.Display
         private static CarrierResolutionStatus StatusOf(
             WheelScreenArbiterTickResult r, string carrierId)
             => r.Resolution.CarrierStatuses.First(s => s.CarrierId == carrierId);
-
-        private static string RepoRoot()
-        {
-            var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-            while (dir != null)
-            {
-                if (File.Exists(Path.Combine(dir.FullName, "FanaBridge.sln"))
-                    || Directory.Exists(Path.Combine(dir.FullName, "src")))
-                    return dir.FullName;
-                dir = dir.Parent;
-            }
-            return Path.GetFullPath(Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", ".."));
-        }
 
         private sealed class FakeProps : IPropertyReader
         {
@@ -1396,7 +1383,7 @@ namespace FanaBridge.Tests.Display
         public void Examples_EveryBuiltInName_ResolvesAgainstPropertySpec()
         {
             var examplesDir = Path.Combine(
-                RepoRoot(), "scratch", "plans", "display-customization", "examples");
+                TestPaths.RepoRoot(), "scratch", "plans", "display-customization", "examples");
             Assert.True(Directory.Exists(examplesDir), "examples dir missing: " + examplesDir);
 
             var known = new HashSet<string>(

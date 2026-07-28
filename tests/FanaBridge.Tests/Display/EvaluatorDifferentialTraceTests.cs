@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 using Xunit;

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
 
@@ -197,7 +198,7 @@ namespace FanaBridge.Display.Rules
         /// after the lifecycle's own Tick (so landings are observed the frame they happen)
         /// and after the engine's Tick (so the intent is this frame's).
         /// </summary>
-        public DirectorTickResult Tick(RuleIntent intent)
+        public DirectorTickResult Tick(DirectorIntent intent)
         {
             var state = _control.State;
             byte? current = _control.CurrentWirePage;
@@ -338,11 +339,11 @@ namespace FanaBridge.Display.Rules
             // Special commands write col01 directly — the director does not page-navigate.
             string legacyScreenId = null;
             byte desired = 0;
-            if (intent.Kind == TargetKind.Special)
+            if (intent.Kind == DirectorIntentKind.Special)
             {
                 desired = 0;
             }
-            else if (intent.Kind == TargetKind.SegmentScreen)
+            else if (intent.Kind == DirectorIntentKind.SegmentScreen)
             {
                 if (_pages.LegacyWire != 0)
                 {

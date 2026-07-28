@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
@@ -54,7 +55,7 @@ namespace FanaBridge.Tests.Display
                 return h;
             }
 
-            public DirectorTickResult Tick(RuleIntent intent) => Director.Tick(intent);
+            public DirectorTickResult Tick(DirectorIntent intent) => Director.Tick(intent);
 
             public void SyncBaseline(byte wirePage = 1, ItmPage intentPage = ItmPage.LapInfo)
             {
@@ -66,8 +67,8 @@ namespace FanaBridge.Tests.Display
             }
         }
 
-        private static RuleIntent Page(ItmPage page, string ruleId = null)
-            => new RuleIntent(TargetKind.Page, page, null, ruleId);
+        private static DirectorIntent Page(ItmPage page, string ruleId = null)
+            => new DirectorIntent(DirectorIntentKind.Page, page, null, ruleId);
 
         // ── A. Reject-uncommanded ────────────────────────────────────────
 
@@ -424,7 +425,7 @@ namespace FanaBridge.Tests.Display
             var h3 = Harness.Create(reject: true);
             h3.Control.SyncGeneration = 1;
             h3.Control.Land(4);
-            var rest = new RuleIntent(TargetKind.Page, null, null, null);
+            var rest = new DirectorIntent(DirectorIntentKind.Page, null, null, null);
             r = h3.Tick(rest);
             Assert.Null(r.RequestedWirePage);
             Assert.False(r.RevertedThisTick);

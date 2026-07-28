@@ -6,6 +6,7 @@ using System.Reflection;
 using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Schema2;
+using FanaBridge.Tests.Display.TestSupport;
 using Xunit;
 
 namespace FanaBridge.Tests.Display
@@ -36,27 +37,13 @@ namespace FanaBridge.Tests.Display
         private static DisplayConfigV2 LoadExample(string fileName, WheelCatalog catalog = null)
         {
             var path = Path.Combine(
-                RepoRoot(), "scratch", "plans", "display-customization",
+                TestPaths.RepoRoot(), "scratch", "plans", "display-customization",
                 "examples", fileName);
             var json = File.ReadAllText(path);
             var doc = DisplayConfigV2Serializer.Load(json, _ => { });
             if (catalog != null)
                 return Normalize(doc, catalog);
             return doc;
-        }
-
-        private static string RepoRoot()
-        {
-            var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-            while (dir != null)
-            {
-                if (File.Exists(Path.Combine(dir.FullName, "FanaBridge.sln"))
-                    || Directory.Exists(Path.Combine(dir.FullName, "src")))
-                    return dir.FullName;
-                dir = dir.Parent;
-            }
-            return Path.GetFullPath(Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", ".."));
         }
 
         private static PageRef HostedRef(string id)

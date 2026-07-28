@@ -4,6 +4,18 @@ using System.Collections.Generic;
 namespace FanaBridge.Display.Rules
 {
     /// <summary>
+    /// v2-owned default duration constants for carrier evaluation.
+    /// </summary>
+    public static class CarrierDefaults
+    {
+        /// <summary>
+        /// Default ForDuration window (5000 ms). This is the v2 home for the constant;
+        /// the scaffolding HoldSpec copy is deleted at E8b.
+        /// </summary>
+        public const int DefaultDurationMs = 5000;
+    }
+
+    /// <summary>
     /// Frozen per-carrier snapshot after one evaluator tick. E4/E5/E6 consume this shape;
     /// the v9 engine does not yet emit it (selection still builds <see cref="RuleLiveState"/>).
     /// See scratch/plans/display-customization/evaluated-carrier-contract.md.

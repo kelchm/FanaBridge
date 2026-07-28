@@ -43,8 +43,8 @@ namespace FanaBridge.Display.Rules
     }
 
     /// <summary>
-    /// Abstract condition vocabulary — what a carrier tests each tick. Carrier-shaped, not
-    /// DisplayRule-shaped: both v1 <see cref="RuleCondition"/> and v2 <see cref="Condition"/>
+    /// Abstract condition vocabulary — what a carrier tests each tick. Carrier-shaped:
+    /// both v1 <see cref="RuleCondition"/> and v2 <see cref="Condition"/>
     /// + <see cref="Lifetime"/> adapt onto this.
     /// </summary>
     public sealed class CarrierTrigger
@@ -70,9 +70,9 @@ namespace FanaBridge.Display.Rules
         public CarrierLifetimeKind Kind { get; set; }
 
         /// <summary><see cref="CarrierLifetimeKind.ForDuration"/> window length.
-        /// Default matches both <see cref="HoldSpec.DefaultDurationMs"/> and
+        /// Default matches both <see cref="CarrierDefaults.DefaultDurationMs"/> and
         /// <see cref="Lifetime.DefaultDurationMs"/> (pinned equal by tests).</summary>
-        public int DurationMs { get; set; } = HoldSpec.DefaultDurationMs;
+        public int DurationMs { get; set; } = CarrierDefaults.DefaultDurationMs;
     }
 
     /// <summary>
@@ -93,113 +93,15 @@ namespace FanaBridge.Display.Rules
         public string Id { get; }
         public CarrierTrigger Trigger { get; }
         public CarrierLifetime Lifetime { get; }
-        public RuleEligibility Eligibility { get; private set; }
-
-        /// <summary>
-        /// Re-read mutable <see cref="DisplayRule"/> condition/hold/eligibility into this
-        /// spec. Preserves live-rule semantics: the engine adapts before each evaluate so
-        /// post-construction mutations of <c>When</c>/<c>Hold</c>/<c>Eligible</c> are observed.
-        /// </summary>
-        public void RefreshFromDisplayRule(DisplayRule rule)
-        {
-            if (rule == null)
-                throw new ArgumentNullException(nameof(rule));
-            ApplyDisplayRule(rule, Trigger, Lifetime, out var elig);
-            Eligibility = elig;
-        }
-
-        /// <summary>Adapt a v1 <see cref="DisplayRule"/> (condition + hold subset) onto the
-        /// carrier machine. Edge whileActive is expected already coerced to ForDuration by
-        /// the validator; this maps Kind as the engine sees it and coerces non-level
-        /// WhileTrue → ForDuration (v1 law restored).</summary>
-        public static CarrierSpec FromDisplayRule(DisplayRule rule)
-        {
-            if (rule == null)
-                throw new ArgumentNullException(nameof(rule));
-
-            var trigger = new CarrierTrigger();
-            var life = new CarrierLifetime();
-            ApplyDisplayRule(rule, trigger, life, out var elig);
-            return new CarrierSpec(rule.Id, trigger, life, elig);
-        }
-
-        private static void ApplyDisplayRule(DisplayRule rule, CarrierTrigger trigger,
-            CarrierLifetime life, out RuleEligibility eligibility)
-        {
-            var when = rule.When;
-            var hold = rule.Hold;
-            trigger.Source = when?.Source;
-            trigger.Value = when?.Value;
-            trigger.Hysteresis = when?.Hysteresis;
-            trigger.LevelKind = ConditionKind.Unknown;
-            trigger.Direction = CarrierEdgeDirection.Any;
-
-            if (when != null && when.Kind.IsLevel())
-            {
-                trigger.Family = CarrierTriggerFamily.Level;
-                trigger.LevelKind = when.Kind;
-            }
-            else if (when != null && when.Kind.IsEdge())
-            {
-                trigger.Family = CarrierTriggerFamily.Edge;
-                if (when.Kind == ConditionKind.Increases)
-                    trigger.Direction = CarrierEdgeDirection.Up;
-                else if (when.Kind == ConditionKind.Decreases)
-                    trigger.Direction = CarrierEdgeDirection.Down;
-                else
-                    trigger.Direction = CarrierEdgeDirection.Any;
-            }
-            else if (when != null && when.Kind.IsEvent())
-            {
-                trigger.Family = CarrierTriggerFamily.Event;
-            }
-            else
-            {
-                // Unknown condition kind: never fires (level SatisfiedNow default false).
-                trigger.Family = CarrierTriggerFamily.Level;
-                trigger.LevelKind = ConditionKind.Unknown;
-            }
-
-            if (hold != null)
-            {
-                switch (hold.Kind)
-                {
-                    case HoldKind.WhileActive:
-                        life.Kind = CarrierLifetimeKind.WhileTrue;
-                        break;
-                    case HoldKind.ForDuration:
-                        life.Kind = CarrierLifetimeKind.ForDuration;
-                        life.DurationMs = hold.DurationMs;
-                        break;
-                    case HoldKind.UntilDismissed:
-                        life.Kind = CarrierLifetimeKind.UntilDismissed;
-                        break;
-                    default:
-                        life.Kind = CarrierLifetimeKind.ForDuration;
-                        life.DurationMs = hold.DurationMs > 0
-                            ? hold.DurationMs
-                            : HoldSpec.DefaultDurationMs;
-                        break;
-                }
-            }
-            else
-            {
-                life.Kind = CarrierLifetimeKind.WhileTrue;
-            }
-
-            // v1 law: non-level + WhileActive → ForDuration (edge and event).
-            CoerceNonLevelWhileTrue(trigger, life);
-
-            eligibility = rule.Eligible;
-        }
+        public RuleEligibility Eligibility { get; internal set; }
 
         /// <summary>
         /// Adapt a v2 <see cref="Condition"/> + <see cref="Lifetime"/> onto the same
         /// evaluator machine. <b>Precondition:</b> the document has been through
         /// <c>DisplayConfigV2Validator.Normalize</c> (see contract §1). Dispatch is on
         /// lifetime kind: onChange → Edge; otherwise Level. (FA2: v2 Condition vocabulary
-        /// no longer has an <c>action</c> source; Event family remains via
-        /// <see cref="FromDisplayRule"/> for the v9 actionTriggered path until E8b.)
+        /// no longer has an <c>action</c> source; Event family remains via the scaffolding
+        /// rule adapter for the v9 actionTriggered path until E8b.)
         /// <paramref name="owningFieldParamId"/> bakes itmField <c>self</c> to the owning
         /// field's param id at spec-build time.
         /// </summary>
@@ -268,7 +170,7 @@ namespace FanaBridge.Display.Rules
                     life.Kind = CarrierLifetimeKind.ForDuration;
                     life.DurationMs = lifetime != null && !lifetime.DurationMsIgnored
                         ? lifetime.DurationMs
-                        : HoldSpec.DefaultDurationMs;
+                        : CarrierDefaults.DefaultDurationMs;
                 }
             }
             else
@@ -292,7 +194,7 @@ namespace FanaBridge.Display.Rules
         /// satellite). Caller supplies satisfied/fired each tick via
         /// <see cref="CarrierTickInput"/>.</summary>
         public static CarrierSpec Derived(string id, CarrierLifetimeKind lifetimeKind,
-            int durationMs = HoldSpec.DefaultDurationMs,
+            int durationMs = CarrierDefaults.DefaultDurationMs,
             RuleEligibility eligibility = RuleEligibility.Always)
         {
             var trigger = new CarrierTrigger { Family = CarrierTriggerFamily.Derived };
@@ -322,7 +224,7 @@ namespace FanaBridge.Display.Rules
                         life.Kind = CarrierLifetimeKind.ForDuration;
                         life.DurationMs = lifetime != null && !lifetime.DurationMsIgnored
                             ? lifetime.DurationMs
-                            : HoldSpec.DefaultDurationMs;
+                            : CarrierDefaults.DefaultDurationMs;
                     }
                     break;
                 }
@@ -330,7 +232,7 @@ namespace FanaBridge.Display.Rules
                     life.Kind = CarrierLifetimeKind.ForDuration;
                     life.DurationMs = lifetime != null && !lifetime.DurationMsIgnored
                         ? lifetime.DurationMs
-                        : HoldSpec.DefaultDurationMs;
+                        : CarrierDefaults.DefaultDurationMs;
                     break;
                 case LifetimeKind.UntilDismissed:
                     life.Kind = CarrierLifetimeKind.UntilDismissed;
@@ -344,7 +246,7 @@ namespace FanaBridge.Display.Rules
 
         /// <summary>whileTrue is a level-only lifetime; edge/event carriers coerce to
         /// forDuration (mirrors v1 DisplayConfigValidator non-level/WhileActive law).</summary>
-        private static void CoerceNonLevelWhileTrue(CarrierTrigger trigger, CarrierLifetime life)
+        internal static void CoerceNonLevelWhileTrue(CarrierTrigger trigger, CarrierLifetime life)
         {
             if (life.Kind != CarrierLifetimeKind.WhileTrue)
                 return;
@@ -353,7 +255,7 @@ namespace FanaBridge.Display.Rules
                 return;
             life.Kind = CarrierLifetimeKind.ForDuration;
             if (life.DurationMs <= 0)
-                life.DurationMs = HoldSpec.DefaultDurationMs;
+                life.DurationMs = CarrierDefaults.DefaultDurationMs;
         }
 
         private static PropertyKind MapSourceKind(ValueSourceKind kind)

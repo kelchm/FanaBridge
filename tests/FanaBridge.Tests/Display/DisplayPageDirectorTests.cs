@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Session;
 using FanaBridge.Protocol;
@@ -63,7 +64,7 @@ namespace FanaBridge.Tests.Display
                 return h;
             }
 
-            public DirectorTickResult Tick(RuleIntent intent) => Director.Tick(intent);
+            public DirectorTickResult Tick(DirectorIntent intent) => Director.Tick(intent);
 
             /// <summary>Lands the fake and runs a baseline tick so later landings are
             /// post-baseline. Standard table: wire 1 = LapInfo, so the base intent's page
@@ -86,11 +87,11 @@ namespace FanaBridge.Tests.Display
             }
         }
 
-        private static RuleIntent Page(ItmPage page, string? ruleId = null)
-            => new RuleIntent(TargetKind.Page, page, null, ruleId);
+        private static DirectorIntent Page(ItmPage page, string? ruleId = null)
+            => new DirectorIntent(DirectorIntentKind.Page, page, null, ruleId);
 
-        private static RuleIntent Screen(string id, string? ruleId = "r1")
-            => new RuleIntent(TargetKind.SegmentScreen, null, id, ruleId);
+        private static DirectorIntent Screen(string id, string? ruleId = "r1")
+            => new DirectorIntent(DirectorIntentKind.SegmentScreen, null, id, ruleId);
 
         // ── Request issuance ─────────────────────────────────────────────
 
@@ -300,7 +301,7 @@ namespace FanaBridge.Tests.Display
             // The engine adopted "wherever the wheel is": its resting intent carries no
             // page, and the director stays quiet however long the display sits there —
             // including across further adoptions of the same unnamed page.
-            var resting = new RuleIntent(TargetKind.Page, null, null, null);
+            var resting = new DirectorIntent(DirectorIntentKind.Page, null, null, null);
             for (int i = 0; i < 10; i++)
             {
                 if (i == 5)
@@ -327,7 +328,7 @@ namespace FanaBridge.Tests.Display
             h.Tick(Page(ItmPage.LapInfo));             // manual (no identity) reported
 
             h.Control.Land(1);                         // wheel button back to Lap Info
-            var r = h.Tick(new RuleIntent(TargetKind.Page, null, null, null));
+            var r = h.Tick(new DirectorIntent(DirectorIntentKind.Page, null, null, null));
             Assert.Null(r.Manual);                     // re-confirmation of the page last seen
             Assert.Empty(h.Control.Requests);
         }

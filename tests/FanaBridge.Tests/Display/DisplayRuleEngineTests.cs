@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 using Xunit;

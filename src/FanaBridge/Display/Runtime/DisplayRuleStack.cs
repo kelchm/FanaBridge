@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Legacy;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Session;
@@ -352,7 +353,7 @@ namespace FanaBridge.Display.Runtime
                 LogLegacyIntentChange(legacy.Intent);
             }
 
-            var directed = _director.Tick(itm.Intent);
+            var directed = _director.Tick(ToDirectorIntent(itm.Intent));
             _pendingManual = directed.Manual;
             LogLegacyScreenChange(directed.LegacyScreenId);
 
@@ -515,6 +516,19 @@ namespace FanaBridge.Display.Runtime
                     merged.Add(b[j++]);
             }
             return merged;
+        }
+
+        /// <summary>Scaffolding: map v9 RuleIntent onto the director's v2 input shape.</summary>
+        private static DirectorIntent ToDirectorIntent(RuleIntent intent)
+        {
+            DirectorIntentKind kind;
+            if (intent.Kind == TargetKind.Special)
+                kind = DirectorIntentKind.Special;
+            else if (intent.Kind == TargetKind.SegmentScreen)
+                kind = DirectorIntentKind.SegmentScreen;
+            else
+                kind = DirectorIntentKind.Page;
+            return new DirectorIntent(kind, intent.Page, intent.ScreenId, intent.SourceRuleId);
         }
 
         private static string DescribeIntent(RuleIntent intent)
