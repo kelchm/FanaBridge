@@ -38,7 +38,8 @@ namespace FanaBridge.Display.Arbitration
     {
         /// <summary>
         /// Destination the press adopts as the remembered manual target.
-        /// Null when the press is a pure walk step (uses current target + walk).
+        /// Null when the press is a pure walk step (uses current target + walk), or when
+        /// <see cref="AdoptedUnknownPage"/> is true (uncataloged adopt — rest-with-no-intent).
         /// Cycle destinations are rejected (ignored + warn-once); remembered target
         /// must be a page ref.
         /// </summary>
@@ -50,15 +51,32 @@ namespace FanaBridge.Display.Arbitration
         /// </summary>
         public int? WalkStep { get; }
 
-        public SeatManualInput(string adoptedDestinationId, int? walkStep = null)
+        /// <summary>
+        /// True when the director adopted a page outside this device's catalog
+        /// (<c>ManualNavigation(null)</c>). E4 treats as rest-with-no-intent: no remembered
+        /// page destination, no request while the wheel sits there (v9 semantic).
+        /// </summary>
+        public bool AdoptedUnknownPage { get; }
+
+        public SeatManualInput(
+            string adoptedDestinationId,
+            int? walkStep = null,
+            bool adoptedUnknownPage = false)
         {
             AdoptedDestinationId = adoptedDestinationId;
             WalkStep = walkStep;
+            AdoptedUnknownPage = adoptedUnknownPage;
         }
 
         /// <summary>Adopt a page (and dismiss any live entrypoint).</summary>
         public static SeatManualInput Navigate(string destinationId)
             => new SeatManualInput(destinationId, walkStep: null);
+
+        /// <summary>
+        /// Adopt an uncataloged page (director identity null) — rest-with-no-intent.
+        /// </summary>
+        public static SeatManualInput NavigateUnknownPage()
+            => new SeatManualInput(null, walkStep: null, adoptedUnknownPage: true);
 
         /// <summary>Step the walk from the current manual target (no adopt).</summary>
         public static SeatManualInput StepWalk(int direction = 1)
@@ -191,6 +209,12 @@ namespace FanaBridge.Display.Arbitration
 
         /// <summary>True when returnToRestAfterMs has cleared the park this tick.</summary>
         public bool ReturnedToRest { get; set; }
+
+        /// <summary>
+        /// True when the last manual adopt was an uncataloged page (director identity null).
+        /// E4 rests with no page intent — remembered destination stays cleared.
+        /// </summary>
+        public bool AdoptedUnknownPage { get; set; }
     }
 
     /// <summary>n-of-m diagnostics for one home-seat derived aggregate.</summary>

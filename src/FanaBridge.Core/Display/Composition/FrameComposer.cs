@@ -191,10 +191,16 @@ namespace FanaBridge.Display.Composition
                 statuses,
                 input.CarrierSnapshots ?? Array.Empty<CarrierTickSnapshot>());
 
+            // Contract §6.2 law 3: ReclaimEdge forces a write on wheel-screen release even
+            // when content is unchanged. E5 produces frame + marker; E7/E8 writes.
+            bool reclaim = input.ReclaimEdge;
+            bool writable = reclaim || !input.SegmentSurfaceHeldByWheelScreen;
+
             return new FrameComposerTickResult
             {
                 SegmentFrame = segmentFrame,
-                SegmentFrameWritable = !input.SegmentSurfaceHeldByWheelScreen,
+                SegmentFrameWritable = writable,
+                ReclaimFrame = reclaim,
                 SegmentHostedPageId = segmentPageId,
                 SegmentWinnerCarrierId = segmentWinner,
                 SegmentRenderedText = segmentText,

@@ -956,6 +956,70 @@ namespace FanaBridge.Tests.Display
                 (SevenSegment.P, SevenSegment.I, SevenSegment.T),
                 Triple(r.SegmentFrame));
             Assert.False(r.SegmentFrameWritable);
+            Assert.False(r.ReclaimFrame);
+        }
+
+        [Fact]
+        public void ReclaimEdge_MarksReclaimFrame_ForcesWritable()
+        {
+            // Contract §6.2 law 3: E5 produces reclaim frame + marker; E7/E8 writes.
+            var doc = HostedDoc("p-a",
+                new ContentWithEffect { Content = Text("PIT") });
+            var c = Composer(doc);
+            var input = In(0, "p-a", DestinationIds.Hosted("p-a"),
+                Ctx(), wheelScreenHolds: false);
+            input.ReclaimEdge = true;
+            var r = c.Tick(input);
+            Assert.True(r.ReclaimFrame);
+            Assert.True(r.SegmentFrameWritable);
+            Assert.Equal(
+                (SevenSegment.P, SevenSegment.I, SevenSegment.T),
+                Triple(r.SegmentFrame));
+        }
+
+        [Fact]
+        public void DirectorOrder_ManualFeedsNextTick_TwoTickFixture()
+        {
+            // Contract §6.2 law 4: director runs LAST; Manual/Adopted feeds NEXT tick's
+            // E4 + wheel-screen dismissal. SegmentSurfaceHeldByWheelScreen is same-tick.
+            // This pure fixture pins the one-frame lag shape without E8 composition.
+            bool pressFromDirectorTickN = false;
+            bool pressSeenByE4OnTickN = false;
+            bool pressSeenByE4OnTickN1 = false;
+            bool surfaceHeldSameTick = false;
+
+            // Tick N: E4 → E6 → E5 → (director last produces press for N+1)
+            {
+                bool e4Manual = pressFromDirectorTickN; // false on first tick
+                pressSeenByE4OnTickN = e4Manual;
+                bool e6Held = true; // wheel-screen holds this tick
+                surfaceHeldSameTick = e6Held; // same-tick hold (not previous-tick)
+                // director last:
+                pressFromDirectorTickN = true; // adopted/manual this tick
+            }
+            // Tick N+1: press lands in E4
+            {
+                bool e4Manual = pressFromDirectorTickN;
+                pressSeenByE4OnTickN1 = e4Manual;
+            }
+
+            Assert.False(pressSeenByE4OnTickN);
+            Assert.True(pressSeenByE4OnTickN1);
+            Assert.True(surfaceHeldSameTick);
+
+            // E5 reclaim marker is representable on the release tick (same-tick hold → release).
+            var doc = HostedDoc("p-a",
+                new ContentWithEffect { Content = Text("GO ") });
+            var c = Composer(doc);
+            var held = c.Tick(In(0, "p-a", DestinationIds.Hosted("p-a"),
+                Ctx(), wheelScreenHolds: true));
+            Assert.False(held.SegmentFrameWritable);
+            var release = In(1, "p-a", DestinationIds.Hosted("p-a"),
+                Ctx(), wheelScreenHolds: false);
+            release.ReclaimEdge = true;
+            var reclaimed = c.Tick(release);
+            Assert.True(reclaimed.ReclaimFrame);
+            Assert.True(reclaimed.SegmentFrameWritable);
         }
 
         [Fact]

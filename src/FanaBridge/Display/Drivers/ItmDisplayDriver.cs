@@ -172,6 +172,8 @@ namespace FanaBridge.Display.Drivers
         private readonly List<ItmValue> _valueBuf = new List<ItmValue>();
         // Subscribed paramIds we've already warned have no encoder — log each once.
         private readonly HashSet<ushort> _unencodableWarned = new HashSet<ushort>();
+        // Defensive MaxParams warn-once (firmware should never announce >16).
+        private bool _warnedOverMaxParams;
         // Per-device mapper (built-in default encoder registry). Shared helpers that do not
         // need instance state (e.g. NearestGap) stay static on the mapper type.
         private readonly ItmTelemetryMapper _mapper;
@@ -377,6 +379,10 @@ namespace FanaBridge.Display.Drivers
             var sig = new System.Text.StringBuilder();
 
             var subs = _lifecycle.Subscriptions;
+            // Defensive assert at the defs/values seam: firmware hard cap is
+            // ItmEncoder.MaxParams (16). Real pages are always ≤16 by firmware
+            // construction — this branch is dormant-safe (unreachable on today's paths).
+            AssertSubscriptionBudget(subs.Count);
             for (int i = 0; i < subs.Count; i++)
             {
                 var kv = subs[i];
@@ -433,6 +439,8 @@ namespace FanaBridge.Display.Drivers
         {
             _valueBuf.Clear();
             var subs = _lifecycle.Subscriptions;
+            // Same defensive MaxParams seam as UpdateSlotDefs (dormant on today's paths).
+            AssertSubscriptionBudget(subs.Count);
             for (int i = 0; i < subs.Count; i++)
             {
                 var kv = subs[i];
@@ -494,6 +502,21 @@ namespace FanaBridge.Display.Drivers
                 _lastValues = new ItmValue[values.Count];
             for (int i = 0; i < values.Count; i++)
                 _lastValues[i] = values[i];
+        }
+
+        /// <summary>
+        /// Defensive degrade-visible assert at the ParamDefs/SendValues seam when the
+        /// firmware announces more than <see cref="ItmEncoder.MaxParams"/> subscriptions.
+        /// Dormant on today's paths: real pages are ≤16 by firmware construction and
+        /// <see cref="ItmLifecycleController"/> only adopts the announced set.
+        /// </summary>
+        private void AssertSubscriptionBudget(int count)
+        {
+            if (count <= ItmEncoder.MaxParams || _warnedOverMaxParams)
+                return;
+            _warnedOverMaxParams = true;
+            _log("ITM: firmware announced " + count + " subscriptions (cap "
+                + ItmEncoder.MaxParams + ") — over-budget set is degrade-visible");
         }
     }
 }

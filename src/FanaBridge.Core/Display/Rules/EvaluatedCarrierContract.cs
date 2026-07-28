@@ -196,6 +196,7 @@ namespace FanaBridge.Display.Rules
     /// One-tick composed-resolution record: per-surface winners + per-carrier statuses.
     /// Shape pinned by E3; emitted by E7; one-tick golden lands with the emitter.
     /// The evaluator does NOT produce this — arbiters compose it from snapshots.
+    /// Additive device-level block (E7): page knowledge + reject edge flags for E8.
     /// </summary>
     public sealed class ComposedResolutionRecord
     {
@@ -205,12 +206,46 @@ namespace FanaBridge.Display.Rules
             IReadOnlyList<SurfaceWinner> surfaceWinners,
             IReadOnlyList<CarrierResolutionStatus> carrierStatuses,
             IReadOnlyList<CarrierTickSnapshot> carrierSnapshots)
+            : this(tickMs, deviceKey, surfaceWinners, carrierStatuses, carrierSnapshots,
+                CurrentPageKnowledge.Unknown, revertedThisTick: false, adoptWarnedThisTick: false,
+                hasDeviceBlock: false)
+        {
+        }
+
+        public ComposedResolutionRecord(
+            long tickMs,
+            string deviceKey,
+            IReadOnlyList<SurfaceWinner> surfaceWinners,
+            IReadOnlyList<CarrierResolutionStatus> carrierStatuses,
+            IReadOnlyList<CarrierTickSnapshot> carrierSnapshots,
+            CurrentPageKnowledge pageKnowledge,
+            bool revertedThisTick,
+            bool adoptWarnedThisTick)
+            : this(tickMs, deviceKey, surfaceWinners, carrierStatuses, carrierSnapshots,
+                pageKnowledge, revertedThisTick, adoptWarnedThisTick, hasDeviceBlock: true)
+        {
+        }
+
+        private ComposedResolutionRecord(
+            long tickMs,
+            string deviceKey,
+            IReadOnlyList<SurfaceWinner> surfaceWinners,
+            IReadOnlyList<CarrierResolutionStatus> carrierStatuses,
+            IReadOnlyList<CarrierTickSnapshot> carrierSnapshots,
+            CurrentPageKnowledge pageKnowledge,
+            bool revertedThisTick,
+            bool adoptWarnedThisTick,
+            bool hasDeviceBlock)
         {
             TickMs = tickMs;
             DeviceKey = deviceKey;
             SurfaceWinners = surfaceWinners;
             CarrierStatuses = carrierStatuses;
             CarrierSnapshots = carrierSnapshots;
+            PageKnowledge = pageKnowledge;
+            RevertedThisTick = revertedThisTick;
+            AdoptWarnedThisTick = adoptWarnedThisTick;
+            HasDeviceBlock = hasDeviceBlock;
         }
 
         /// <summary>Engine clock at tick evaluation.</summary>
@@ -227,5 +262,25 @@ namespace FanaBridge.Display.Rules
 
         /// <summary>Raw evaluator snapshots (activation, fresh-fire, FiredThisTick, clocks).</summary>
         public IReadOnlyList<CarrierTickSnapshot> CarrierSnapshots { get; }
+
+        // ── Additive device-level block (contract §6.1 / E7) ──────────────
+
+        /// <summary>
+        /// True when this record carries the device-level block (page knowledge + edge flags).
+        /// Partial emitter slices from E4/E5/E6 alone leave this false until merge/E8 stamps it.
+        /// </summary>
+        public bool HasDeviceBlock { get; }
+
+        /// <summary>
+        /// Honest current-page knowledge. Connect-before-first-announcement is
+        /// <see cref="CurrentPageKnowledge.Unknown"/>.
+        /// </summary>
+        public CurrentPageKnowledge PageKnowledge { get; }
+
+        /// <summary>Director reject push-back issued this tick (edge flag).</summary>
+        public bool RevertedThisTick { get; }
+
+        /// <summary>Director adopt-with-warning this tick (edge flag).</summary>
+        public bool AdoptWarnedThisTick { get; }
     }
 }

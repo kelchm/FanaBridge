@@ -73,6 +73,7 @@ namespace FanaBridge.Display.Arbitration
 
         /// <summary>Null until first press / adopt; cleared on GameChanged.</summary>
         private string _manualTarget;
+        private bool _adoptedUnknownPage;
         private long? _lastManualPressAt;
         private bool _manualParked;
 
@@ -124,6 +125,7 @@ namespace FanaBridge.Display.Arbitration
             _idle = rest?.Idle;
             // Never-navigated: no remembered target (landing is a separate fallback).
             _manualTarget = null;
+            _adoptedUnknownPage = false;
 
             BuildPlans();
             _manualRank = FindManualRank();
@@ -259,6 +261,7 @@ namespace FanaBridge.Display.Arbitration
                         ? now - _lastManualPressAt.Value
                         : (long?)null,
                     ReturnedToRest = returnedToRest,
+                    AdoptedUnknownPage = _adoptedUnknownPage,
                 },
                 Aggregates = aggregateMembership,
                 WalkStepResolvedDestinationId = walkResolved,
@@ -846,6 +849,7 @@ namespace FanaBridge.Display.Arbitration
         private void ApplyGameChanged(long now, bool inGame)
         {
             _manualTarget = null;
+            _adoptedUnknownPage = false;
             _manualParked = false;
             _lastManualPressAt = null;
 
@@ -945,8 +949,16 @@ namespace FanaBridge.Display.Arbitration
             }
 
             // Adopt / walk only when no dismissal consumed the press.
-            if (manual.WalkStep.HasValue)
+            if (manual.AdoptedUnknownPage)
             {
+                // Uncataloged adopt (director ManualNavigation(null)): rest-with-no-intent.
+                // Clear remembered page; no destination request while the wheel sits there.
+                _manualTarget = null;
+                _adoptedUnknownPage = true;
+            }
+            else if (manual.WalkStep.HasValue)
+            {
+                _adoptedUnknownPage = false;
                 string from = ResolvePageAdopt(manual.AdoptedDestinationId)
                     ?? EffectiveManualDestination();
                 result.WalkResolved = StepWalk(from, manual.WalkStep.Value, compiledWalk);
@@ -958,7 +970,10 @@ namespace FanaBridge.Display.Arbitration
             {
                 string adopt = ResolvePageAdopt(manual.AdoptedDestinationId);
                 if (adopt != null)
+                {
                     _manualTarget = adopt;
+                    _adoptedUnknownPage = false;
+                }
             }
 
             _manualParked = true;
@@ -1369,8 +1384,13 @@ namespace FanaBridge.Display.Arbitration
             };
 
             // Idle semantic published on every out-of-session tick (E4-15).
+            // Shared IdleCompile helper (E7) — same reader as WheelScreenArbiter floor.
+            // Seat publishes document-level IdleKind (page / blank / screen); park flag
+            // comes from the helper so it cannot diverge from E6's blank compile.
             if (!inGame)
             {
+                var compiled = IdleCompile.Resolve(_idle);
+                intent.ParkOnLegacyForBlank = compiled.ParkOnLegacyForBlank;
                 if (_idle == null || _idle.DegradedAtLoad)
                 {
                     intent.IdleKind = Schema2.IdleKind.Blank;

@@ -10,10 +10,28 @@ namespace FanaBridge.Display.Rules
     {
         public DirectorTickResult(ManualNavigation? manual, string legacyScreenId,
             byte? requestedWirePage)
+            : this(manual, legacyScreenId, requestedWirePage,
+                CurrentPageKnowledge.Unknown,
+                adopted: false, reverted: false, adoptWarned: false)
+        {
+        }
+
+        public DirectorTickResult(
+            ManualNavigation? manual,
+            string legacyScreenId,
+            byte? requestedWirePage,
+            CurrentPageKnowledge pageKnowledge,
+            bool adopted,
+            bool reverted,
+            bool adoptWarned)
         {
             Manual = manual;
             LegacyScreenId = legacyScreenId;
             RequestedWirePage = requestedWirePage;
+            PageKnowledge = pageKnowledge;
+            AdoptedThisTick = adopted;
+            RevertedThisTick = reverted;
+            AdoptWarnedThisTick = adoptWarned;
         }
 
         /// <summary>A wheel-button page change detected this tick — feed it into the ITM
@@ -31,6 +49,35 @@ namespace FanaBridge.Display.Rules
         /// <summary>The wire page passed to <see cref="IItmPageControl.RequestPage"/> this
         /// tick, or null when nothing was requested (diagnostics and tests).</summary>
         public byte? RequestedWirePage { get; }
+
+        /// <summary>
+        /// Honest current-page knowledge from sync bookkeeping (E7). Unknown until the
+        /// first Synced observation; mid-switch reports the commanded page (optimistic
+        /// twin, DECISIONS 7c).
+        /// </summary>
+        public CurrentPageKnowledge PageKnowledge { get; }
+
+        /// <summary>
+        /// True when this tick adopted an uncommanded page change (flag-off parity path,
+        /// or reject-path adopt-with-warning after re-assert / exhausted retries). Surfaces
+        /// so the v2 composition can update the manual row — the director does not know
+        /// the row.
+        /// </summary>
+        public bool AdoptedThisTick { get; }
+
+        /// <summary>
+        /// True when this tick issued a reject-uncommanded push-back request (one issue
+        /// per attempt while the fight is outstanding). Only meaningful when
+        /// <see cref="DisplayPageDirector.RejectUncommandedChanges"/> is on.
+        /// </summary>
+        public bool RevertedThisTick { get; }
+
+        /// <summary>
+        /// True when this tick adopted after a wheel re-assert within the reject debounce
+        /// window, or after the bounded re-issue cap was exhausted (warn-once companion
+        /// of <see cref="AdoptedThisTick"/>).
+        /// </summary>
+        public bool AdoptWarnedThisTick { get; }
     }
 
     /// <summary>
@@ -62,13 +109,41 @@ namespace FanaBridge.Display.Rules
     ///   the intent — once per landing (each landing is a new sync generation), so a
     ///   persistent disagreement can never turn into a request storm.
     /// - <b>Never bypasses the lifecycle</b>: no frames, no timing — the injected clock is
-    ///   accepted for construction parity with the engine but currently unused (the
-    ///   controller owns all pacing).
+    ///   used only by the optional reject-uncommanded debounce (E7); the controller owns
+    ///   all page-switch pacing.
+    /// - <b>Reject-uncommanded (E7, dormant):</b> when
+    ///   <see cref="RejectUncommandedChanges"/> is on (nothing live sets it yet), an
+    ///   uncommanded generation-edge landing is push-backed to the last commanded page.
+    ///   "Recurrence" means an UNRESOLVED fight only: confirmed revert landing clears
+    ///   state so a later press is a fresh fight. While outstanding, re-assert of the
+    ///   same wire page inside the inclusive <see cref="RejectDebounceMs"/> window
+    ///   adopts with warn; ignored push-backs re-issue up to
+    ///   <see cref="MaxRevertAttempts"/> then adopt-with-warn ("the wheel is not accepting
+    ///   page changes"). Out-of-table wire pages use that same machine (identity null)
+    ///   only under reject. Flag off (today's world) keeps adopt byte-identical to pre-E7:
+    ///   cataloged uncommanded landings adopt; out-of-catalog wire landings stay
+    ///   Manual=null with one immediate intent re-assert and warn-once (v9 pinned).
+    ///   The v2 <c>AdoptedUnknownPage</c> shape is composition-side only (E8); the director
+    ///   flag-off path deliberately keeps Manual=null for unknown wire pages until E8b
+    ///   re-signs that semantic — do not emit ManualNavigation(null) on this path.
     /// </summary>
     public class DisplayPageDirector
     {
+        /// <summary>
+        /// Reject-uncommanded debounce window (E7 implementation constant, test-pinned).
+        /// Inclusive: a re-assert at exactly this many ms after issue is still in-window.
+        /// </summary>
+        public const int RejectDebounceMs = 2000;
+
+        /// <summary>
+        /// Max push-back issues while a single fight is outstanding (first issue + retries).
+        /// Exhaustion → adopt-with-warn "the wheel is not accepting page changes".
+        /// </summary>
+        public const int MaxRevertAttempts = 3;
+
         private readonly IItmPageControl _control;
         private readonly Action<string> _log;
+        private readonly Func<long> _now;
 
         // The device's page table: identity ↔ wire both directions plus the legacy page's
         // wire number (0 = this display has none) — the one page-mapping source of truth.
@@ -82,6 +157,19 @@ namespace FanaBridge.Display.Rules
         private bool _wasCold;              // edge-detects the lifecycle forgetting its page
         private bool _wasUncataloged;       // previous tick was Synced on an unnamed page
 
+        // ── Reject-uncommanded (E7; dormant while RejectUncommandedChanges is false) ─
+        // Last page FanaBridge commanded OR catalog-adopted (future revert target).
+        // 0 = nothing commanded yet — reject must NOT revert while Unknown / never-commanded.
+        private byte _lastCommandedWire;
+        // Outstanding fight: true only while a push-back has not yet landed (or been
+        // surrendered). Cleared on confirmed revert landing — "recurrence" = unresolved only.
+        private bool _revertOutstanding;
+        private byte _revertFromWire;       // the uncommanded page we pushed back from (0 = uncataloged)
+        private long _revertIssuedAtMs;     // clock of the latest push-back issue
+        private int _revertAttemptCount;    // issues in this fight (1..MaxRevertAttempts)
+        private bool _warnedAdoptAfterRevert;
+        private bool _warnedWheelNotAccepting;
+
         // ── Warn-once latches (per director lifetime, like the engine's) ─
         private bool _warnedNoLegacyPage;
         private bool _warnedUncatalogedCurrent;
@@ -93,8 +181,16 @@ namespace FanaBridge.Display.Rules
         {
             _control = control ?? throw new ArgumentNullException(nameof(control));
             _log = log ?? (_ => { });
+            _now = nowMs ?? (() => 0);
             _pages = ItmPageTable.ForDevice(itmDeviceId);
         }
+
+        /// <summary>
+        /// When true, uncommanded page changes on a sync-generation edge are push-backed
+        /// to the last commanded page. Default false = adopt (today's world, byte-identical).
+        /// Nothing live sets this yet (E8 wires <c>settings.rejectUncommandedChanges</c>).
+        /// </summary>
+        public bool RejectUncommandedChanges { get; set; }
 
         /// <summary>
         /// Runs one director tick against the engine's current intent. Call once per frame,
@@ -121,15 +217,32 @@ namespace FanaBridge.Display.Rules
                 _baselineSeen = false;
                 _lastSyncedWire = 0;
                 _lastRequestedWire = 0;
+                // Commanded page is intentionally retained across cold: a connect that
+                // never announced still has nothing commanded (_lastCommandedWire == 0).
+                ClearRevertState();
             }
             _wasCold = cold;
 
             ManualNavigation? manual = null;
             bool holdRequests = false;
+            bool adopted = false;
+            bool reverted = false;
+            bool adoptWarned = false;
+            byte? forcedRequest = null; // reject push-back (issued below, outside intent path)
 
             if (state == ItmLifecycleState.Synced && current.HasValue)
             {
                 byte landed = current.Value;
+
+                // Confirmed revert landing: fight resolved — clear so a later press is fresh.
+                if (_revertOutstanding
+                    && landed == _lastRequestedWire
+                    && landed == _lastCommandedWire
+                    && _lastCommandedWire != 0)
+                {
+                    ClearRevertState();
+                }
+
                 if (!_baselineSeen)
                 {
                     // First Synced observation since construction / cold start: baseline,
@@ -140,44 +253,63 @@ namespace FanaBridge.Display.Rules
                     if (_lastRequestedWire != 0 && landed != _lastRequestedWire)
                         _lastRequestedWire = 0;
                 }
-                else if (generationAdvanced && landed != _lastRequestedWire
-                    && landed != _lastSyncedWire)
+                else if (generationAdvanced)
                 {
-                    // The display moved somewhere the director did not send it.
-                    if (_pages.TryGetPage(landed, out var identity))
+                    // Unresolved fight still on the uncommanded page (even when
+                    // landed == _lastSyncedWire — that used to silently drop retries).
+                    bool unresolvedOnFrom =
+                        _revertOutstanding && landed == _revertFromWire;
+
+                    bool freshUncommanded =
+                        landed != _lastRequestedWire && landed != _lastSyncedWire;
+
+                    if (unresolvedOnFrom || freshUncommanded)
                     {
-                        // Wheel-button navigation (a landed legacy page reports as the
-                        // legacy page identity). The engine adopts it on its next tick;
-                        // requesting anything now would fight the driver's choice for the
-                        // one frame before it does.
-                        manual = new ManualNavigation(identity);
-                        holdRequests = true;
-                        _lastRequestedWire = 0;
-                    }
-                    else
-                    {
-                        // A wire page outside this device's catalog: never manual (there is
-                        // no identity to report). No manual explanation means the request
-                        // phase may re-assert the intent, once for this landing.
-                        WarnUnknownWireOnce(landed);
-                        _lastRequestedWire = 0;
+                        if (_pages.TryGetPage(landed, out var pageId))
+                        {
+                            // Cataloged uncommanded landing: adopt (flag-off) or reject machine.
+                            ApplyUncommandedLanding(
+                                landed, pageId,
+                                ref manual, ref holdRequests,
+                                ref adopted, ref reverted, ref adoptWarned,
+                                ref forcedRequest);
+                        }
+                        else
+                        {
+                            // Wire page outside this device's catalog.
+                            // Flag-off (v9 pinned): never Manual — no identity to report, so
+                            // the request phase re-asserts the intent once for this landing.
+                            // Reject mode only: identity-null state machine (E7-001).
+                            // AdoptedUnknownPage is V2/E8 composition, not this path.
+                            WarnUnknownWireOnce(landed);
+                            if (RejectUncommandedChanges)
+                            {
+                                ApplyUncommandedLanding(
+                                    landed, identity: null,
+                                    ref manual, ref holdRequests,
+                                    ref adopted, ref reverted, ref adoptWarned,
+                                    ref forcedRequest);
+                            }
+                            else
+                            {
+                                _lastRequestedWire = 0;
+                            }
+                        }
                     }
                 }
                 // landed == _lastRequestedWire: our request confirmed (possibly via
                 // recovery re-establishing it) — not manual, latch stays.
-                // landed == _lastSyncedWire: a repaint or recovery of the page already
-                // showing — not manual.
+                // landed == _lastSyncedWire (and not unresolved fight): a repaint or
+                // recovery of the page already showing — not manual.
                 _lastSyncedWire = landed;
             }
             else if (state == ItmLifecycleState.Synced)   // && page unknown
             {
                 // Synced with the page unknown: the controller adopted a parameter set
                 // matching no catalog page — the wheel button reached a page the firmware
-                // knows and we don't. Adopt, never fight. Reported as manual navigation
-                // WITHOUT a page identity: the engine parks its resting target on
-                // "wherever the wheel is" (no page intent), so nothing is requested while
-                // the display sits there, and rules re-enter via a fresh fire exactly as
-                // after manual navigation to a cataloged page.
+                // knows and we don't. Adopt, never fight (flag-off). Under reject: still
+                // no identity and no commanded page at connect-before-announce → do not
+                // invent a revert target.
                 if (!_baselineSeen)
                 {
                     // Director joined (config swap) while the display sits on an unnamed
@@ -189,10 +321,13 @@ namespace FanaBridge.Display.Rules
                 }
                 else if (generationAdvanced && !_wasUncataloged)
                 {
-                    manual = new ManualNavigation(null);
-                    holdRequests = true;
-                    _lastRequestedWire = 0;   // any outstanding request evidently lost
-                    WarnUncatalogedCurrentOnce();
+                    ApplyUncommandedLanding(
+                        wirePage: null, identity: null,
+                        ref manual, ref holdRequests,
+                        ref adopted, ref reverted, ref adoptWarned,
+                        ref forcedRequest);
+                    if (manual.HasValue || adopted)
+                        WarnUncatalogedCurrentOnce();
                 }
                 // _lastSyncedWire keeps the last NAMED page: the wheel button returning
                 // to it lands as a re-confirmation, not as manual navigation.
@@ -233,7 +368,20 @@ namespace FanaBridge.Display.Rules
             }
 
             byte? requested = null;
-            if (desired != 0 && !holdRequests
+
+            // Reject push-back takes priority over the intent request this tick (we already
+            // decided not to fight via holdRequests, but the push-back IS the fight).
+            if (forcedRequest.HasValue
+                && state != ItmLifecycleState.Idle && state != ItmLifecycleState.Disabled)
+            {
+                _control.RequestPage(forcedRequest.Value);
+                _lastRequestedWire = forcedRequest.Value;
+                _lastCommandedWire = forcedRequest.Value;
+                requested = forcedRequest.Value;
+                _log("Display director: rejecting uncommanded page change — requesting "
+                    + forcedRequest.Value);
+            }
+            else if (desired != 0 && !holdRequests
                 && state != ItmLifecycleState.Idle && state != ItmLifecycleState.Disabled
                 && desired != _lastRequestedWire
                 && (!current.HasValue || desired != current.Value))
@@ -243,12 +391,159 @@ namespace FanaBridge.Display.Rules
                 // acts (Synced) or queues (in-flight states) — its queueing is honored.
                 _control.RequestPage(desired);
                 _lastRequestedWire = desired;
+                _lastCommandedWire = desired;
                 requested = desired;
                 _log("Display director: requesting page " + desired
                     + (intent.SourceRuleId != null ? " (rule " + intent.SourceRuleId + ")" : " (base)"));
             }
 
-            return new DirectorTickResult(manual, legacyScreenId, requested);
+            var knowledge = BuildPageKnowledge(state, current);
+            return new DirectorTickResult(
+                manual, legacyScreenId, requested, knowledge,
+                adopted, reverted, adoptWarned);
+        }
+
+        /// <summary>
+        /// Handle an uncommanded generation-edge landing (or an unresolved fight reconfirm).
+        /// Flag-off: adopt (byte-identical). Flag-on: push-back with clear-on-land, inclusive
+        /// debounce reassert-adopt, and bounded re-issue then surrender.
+        /// </summary>
+        private void ApplyUncommandedLanding(
+            byte? wirePage,
+            ItmPage? identity,
+            ref ManualNavigation? manual,
+            ref bool holdRequests,
+            ref bool adopted,
+            ref bool reverted,
+            ref bool adoptWarned,
+            ref byte? forcedRequest)
+        {
+            if (!RejectUncommandedChanges)
+            {
+                // Today's world: adopt, never fight.
+                Adopt(identity, wirePage, warned: false,
+                    ref manual, ref holdRequests, ref adopted, ref adoptWarned);
+                return;
+            }
+
+            // Reject path. Nothing commanded yet → cannot invent a push-back target.
+            // Adopt so the runtime stays honest (same as flag-off for this edge case).
+            if (_lastCommandedWire == 0)
+            {
+                Adopt(identity, wirePage, warned: false,
+                    ref manual, ref holdRequests, ref adopted, ref adoptWarned);
+                return;
+            }
+
+            long now = _now();
+            byte fromWire = wirePage ?? (byte)0;
+
+            // Unresolved fight still on the uncommanded page.
+            if (_revertOutstanding && fromWire == _revertFromWire)
+            {
+                // Inclusive debounce: re-assert at exactly RejectDebounceMs still adopts.
+                if (now - _revertIssuedAtMs <= RejectDebounceMs)
+                {
+                    Adopt(identity, wirePage, warned: true,
+                        ref manual, ref holdRequests, ref adopted, ref adoptWarned);
+                    if (!_warnedAdoptAfterRevert)
+                    {
+                        _warnedAdoptAfterRevert = true;
+                        _log("Display director: wheel re-asserted uncommanded page within "
+                            + RejectDebounceMs + " ms — adopting with warning");
+                    }
+                    return;
+                }
+
+                // Past the window, still outstanding (firmware ignored the push-back):
+                // re-issue up to MaxRevertAttempts, then surrender loudly.
+                if (_revertAttemptCount >= MaxRevertAttempts)
+                {
+                    Adopt(identity, wirePage, warned: true,
+                        ref manual, ref holdRequests, ref adopted, ref adoptWarned);
+                    if (!_warnedWheelNotAccepting)
+                    {
+                        _warnedWheelNotAccepting = true;
+                        _log("Display director: the wheel is not accepting page changes");
+                    }
+                    return;
+                }
+
+                _revertAttemptCount++;
+                IssueRevert(fromWire, now, ref holdRequests, ref reverted, ref forcedRequest);
+                return;
+            }
+
+            // Fresh observed change (fight was cleared, or different page): one new fight.
+            _revertAttemptCount = 1;
+            IssueRevert(fromWire, now, ref holdRequests, ref reverted, ref forcedRequest);
+        }
+
+        private void IssueRevert(
+            byte fromWire,
+            long now,
+            ref bool holdRequests,
+            ref bool reverted,
+            ref byte? forcedRequest)
+        {
+            forcedRequest = _lastCommandedWire;
+            holdRequests = true;
+            reverted = true;
+            _revertOutstanding = true;
+            _revertFromWire = fromWire;
+            _revertIssuedAtMs = now;
+            _lastRequestedWire = _lastCommandedWire;
+            // Do not set Manual — the page is being rejected, not adopted.
+        }
+
+        private void Adopt(
+            ItmPage? identity,
+            byte? wirePage,
+            bool warned,
+            ref ManualNavigation? manual,
+            ref bool holdRequests,
+            ref bool adopted,
+            ref bool adoptWarned)
+        {
+            manual = new ManualNavigation(identity);
+            holdRequests = true;
+            adopted = true;
+            if (warned)
+                adoptWarned = true;
+            _lastRequestedWire = 0;
+            // Cataloged adopt updates the future revert target (E7-002 / OPUS-12 target).
+            if (identity.HasValue && wirePage.HasValue && wirePage.Value != 0)
+                _lastCommandedWire = wirePage.Value;
+            ClearRevertState();
+        }
+
+        private CurrentPageKnowledge BuildPageKnowledge(ItmLifecycleState state, byte? current)
+        {
+            if (!_baselineSeen)
+                return CurrentPageKnowledge.Unknown;
+            if (state != ItmLifecycleState.Synced)
+            {
+                // Optimistic twin (DECISIONS 7c): mid-switch reports the COMMANDED page
+                // immediately — the twin shows commanded state, not a stale last-synced.
+                if (_lastCommandedWire != 0)
+                {
+                    _pages.TryGetPage(_lastCommandedWire, out var commandedId);
+                    return CurrentPageKnowledge.Known(_lastCommandedWire, commandedId);
+                }
+                return CurrentPageKnowledge.Unknown;
+            }
+            if (!current.HasValue)
+                return CurrentPageKnowledge.KnownUncataloged;
+            _pages.TryGetPage(current.Value, out var identity);
+            return CurrentPageKnowledge.Known(current.Value, identity);
+        }
+
+        private void ClearRevertState()
+        {
+            _revertOutstanding = false;
+            _revertFromWire = 0;
+            _revertIssuedAtMs = 0;
+            _revertAttemptCount = 0;
         }
 
         private void WarnUncatalogedCurrentOnce()

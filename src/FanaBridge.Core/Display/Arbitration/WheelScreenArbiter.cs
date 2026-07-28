@@ -281,47 +281,34 @@ namespace FanaBridge.Display.Arbitration
 
         private Winner SelectIdleFloor()
         {
-            // §10 / §14: absent or degraded rest.idle = blank floor (through FloorScreen
-            // so capability gating + park-on-Legacy still apply). Silence is not the default.
-            if (_idle == null || _idle.DegradedAtLoad)
-                return FloorScreen(WheelScreenCommand.Blank);
-
-            switch (_idle.Kind)
+            // Shared IdleCompile helper (E7 / contract §6.2) — same reader as SeatArbiter.
+            // Absent or degraded rest.idle = blank floor; Silence is not the default.
+            var compiled = IdleCompile.Resolve(_idle, _screenCommands);
+            switch (compiled.Kind)
             {
-                case IdleKind.Page:
-                    // Display plane owns the wheel — explicit deferred outcome (not Silence).
+                case IdleCompileKind.Page:
                     return Winner.Deferred(WheelScreenDeferReason.PageIdle);
 
-                case IdleKind.Blank:
-                    if (_idle.ParkOnLegacyForBlank)
-                        return Winner.Deferred(WheelScreenDeferReason.ParkOnLegacyForBlank);
-                    return FloorScreen(WheelScreenCommand.Blank);
+                case IdleCompileKind.ParkOnLegacyForBlank:
+                    return Winner.Deferred(WheelScreenDeferReason.ParkOnLegacyForBlank);
 
-                case IdleKind.Screen:
-                    if (_idle.ScreenIgnored || _idle.Screen == WheelScreenCommand.Unknown)
-                        return FloorScreen(WheelScreenCommand.Blank);
-                    return FloorScreen(_idle.Screen);
+                case IdleCompileKind.PaintBlankFrame:
+                    return Winner.Deferred(WheelScreenDeferReason.PaintBlankFrame);
+
+                case IdleCompileKind.Silence:
+                    return Winner.Silence();
+
+                case IdleCompileKind.FirmwareBlank:
+                case IdleCompileKind.FirmwareScreen:
+                    return Winner.ForScreen(
+                        IdleFloorCarrierId,
+                        compiled.ScreenCommand ?? WheelScreenCommand.Blank,
+                        compiled.CapabilityUntested);
 
                 default:
-                    // Unknown kind: treat as degraded → blank floor.
-                    return FloorScreen(WheelScreenCommand.Blank);
+                    return Winner.ForScreen(
+                        IdleFloorCarrierId, WheelScreenCommand.Blank, capabilityUntested: true);
             }
-        }
-
-        private Winner FloorScreen(WheelScreenCommand cmd)
-        {
-            bool? supported = ScreenSupported(cmd);
-            if (supported == false)
-            {
-                // Blank with no firmware command → painted-frame (or park already handled).
-                // Non-blank unsupported → inert (no residue).
-                if (cmd == WheelScreenCommand.Blank)
-                    return Winner.Deferred(WheelScreenDeferReason.PaintBlankFrame);
-                return Winner.Silence();
-            }
-
-            bool untested = supported == null;
-            return Winner.ForScreen(IdleFloorCarrierId, cmd, untested);
         }
 
         // ── Send feedback / latch ────────────────────────────────────────

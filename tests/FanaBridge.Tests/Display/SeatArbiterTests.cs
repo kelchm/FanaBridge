@@ -300,6 +300,49 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void Idle_ParkOnLegacyForBlank_PublishedFromHelper()
+        {
+            // E7-007: SeatArbiter asserts ParkOnLegacyForBlank from IdleCompile.
+            var doc = MinimalLadder(
+                (PriorityRowKind.Seat, "s-hi", "hosted", "p-b", new[] { "e-hi" }, null));
+            doc.Priority.Rest.Idle = new IdleSpec { Kind = IdleKind.Blank };
+            doc.Priority.Rest.Idle.ParkOnLegacyForBlank = true;
+            var arb = new SeatArbiter(Normalize(doc));
+            var input = In(0);
+            input.InGame = false;
+            var r = arb.Tick(input);
+            Assert.Equal(IdleKind.Blank, r.Intent.IdleKind);
+            Assert.True(r.Intent.ParkOnLegacyForBlank);
+        }
+
+        [Fact]
+        public void AdoptedUnknownPage_RestWithNoIntent()
+        {
+            // E7-OPUS-06: uncataloged adopt → ManualRowState.AdoptedUnknownPage, no remembered dest.
+            var arb = new SeatArbiter(MinimalLadder(
+                (PriorityRowKind.Seat, "s-hi", "hosted", "p-b", new[] { "e-hi" }, null)));
+            // First establish a remembered target.
+            var r = arb.Tick(new SeatArbiterTickInput
+            {
+                NowMs = 0,
+                InGame = true,
+                Manual = SeatManualInput.Navigate(DestinationIds.Hosted("p-b")),
+            });
+            Assert.True(r.Manual.HasRememberedTarget);
+
+            // Uncataloged adopt clears remembered page (rest-with-no-intent).
+            r = arb.Tick(new SeatArbiterTickInput
+            {
+                NowMs = 1,
+                InGame = true,
+                Manual = SeatManualInput.NavigateUnknownPage(),
+            });
+            Assert.True(r.Manual.AdoptedUnknownPage);
+            Assert.False(r.Manual.HasRememberedTarget);
+            Assert.Null(r.Manual.RememberedDestinationId);
+        }
+
+        [Fact]
         public void OneWinner_TopRankBeatsLower()
         {
             var arb = new SeatArbiter(MinimalLadder(

@@ -45,6 +45,12 @@ namespace FanaBridge.Display.Drivers
         // param has an entry here (see HasEncoder).
         private readonly Dictionary<ushort, Func<StatusDataBase, byte, ItmValue>> _registry;
 
+        // Natural pre-wire scalars (property-picker units) for itmField condition reads.
+        // Parallel to the registry: same SimHub read + host-side rounding, WITHOUT wire
+        // transforms (no brake-bias tenths, no CarAhead sign flip). ASCII params are absent
+        // (skipped by param identity — no single numeric meaning).
+        private readonly Dictionary<ushort, Func<StatusDataBase, double>> _naturalScalars;
+
         // Scalar encoder path: same clamps/rounding/wire type as the built-in registry,
         // fed a double from a FieldMapping override (or from a resolved built-in). Gear and
         // EngineMapping have no entry — they are override-excluded and keep special forms.
@@ -63,10 +69,19 @@ namespace FanaBridge.Display.Drivers
         private static readonly IReadOnlyDictionary<ushort, FieldMapping> EmptyMappings =
             new Dictionary<ushort, FieldMapping>();
 
+        /// <summary>
+        /// Optional sink for the latest computed scalar per param (E7 itmField read path).
+        /// Null by default — nothing live sets this yet; encode path is unchanged when
+        /// null (one null-check). E8 wires an <see cref="ItmFieldValueBuffer"/> /
+        /// <see cref="IItmFieldValueSink"/> so condition evaluation can read the stream.
+        /// </summary>
+        public IItmFieldValueSink ParamValueSink { get; set; }
+
         /// <summary>Builds a mapper with the built-in default encoder registry.</summary>
         public ItmTelemetryMapper()
         {
             _registry = BuildRegistry();
+            _naturalScalars = BuildNaturalScalars();
             _scalarEncoders = BuildScalarEncoders();
         }
 
@@ -142,6 +157,34 @@ namespace FanaBridge.Display.Drivers
                 [ItmParam.TyreRlTemp] = U8(ItmParam.TyreRlTemp, d => ClampByte(d.TyreTemperatureRearLeft)),
                 [ItmParam.TyreFrTemp] = U8(ItmParam.TyreFrTemp, d => ClampByte(d.TyreTemperatureFrontRight)),
                 [ItmParam.TyreRrTemp] = U8(ItmParam.TyreRrTemp, d => ClampByte(d.TyreTemperatureRearRight)),
+            };
+
+        // Natural pre-wire scalars — property-picker / itmField units. No Gear / EngineMapping
+        // (ASCII params skipped by identity). BrakeBias stays percent; CarAhead is +gap.
+        private static Dictionary<ushort, Func<StatusDataBase, double>> BuildNaturalScalars()
+            => new Dictionary<ushort, Func<StatusDataBase, double>>
+            {
+                [ItmParam.Speed] = d => ClampSpeed(d.SpeedLocal),
+                [ItmParam.Lap] = d => ClampByte(d.CurrentLap),
+                [ItmParam.Position] = d => ClampByte(d.Position),
+                [ItmParam.LapTime] = d => Seconds(d.CurrentLapTime),
+                [ItmParam.LastLapTime] = d => Seconds(d.LastLapTime),
+                [ItmParam.Fuel] = d => Math.Round(d.Fuel, 1),
+                [ItmParam.ErsLevel] = d => SafeRound(d.ERSPercent),
+                [ItmParam.DrsZone] = d => d.DRSAvailable != 0 ? 1 : 0,
+                [ItmParam.DrsActive] = d => d.DRSEnabled != 0 ? 1 : 0,
+                [ItmParam.DeltaOwnBest] = d => Math.Round(d.DeltaToSessionBest ?? 0.0, 2),
+                [ItmParam.TcSetting] = d => ClampByte(d.TCLevel),
+                [ItmParam.AbsSetting] = d => ClampByte(d.ABSLevel),
+                [ItmParam.OilTemp] = d => ClampByte(d.OilTemperature),
+                [ItmParam.BrakeBias] = d => d.BrakeBias,
+                [ItmParam.BestLapTime] = d => Seconds(d.BestLapTime),
+                [ItmParam.CarAhead] = d => Math.Round(NearestGap(d.OpponentsAheadOnTrack), 2),
+                [ItmParam.CarBehind] = d => Math.Round(NearestGap(d.OpponentsBehindOnTrack), 2),
+                [ItmParam.TyreFlTemp] = d => ClampByte(d.TyreTemperatureFrontLeft),
+                [ItmParam.TyreRlTemp] = d => ClampByte(d.TyreTemperatureRearLeft),
+                [ItmParam.TyreFrTemp] = d => ClampByte(d.TyreTemperatureFrontRight),
+                [ItmParam.TyreRrTemp] = d => ClampByte(d.TyreTemperatureRearRight),
             };
 
         // Scalar path: same wire transforms as the registry selectors above, without the
@@ -362,7 +405,8 @@ namespace FanaBridge.Display.Drivers
             if (status == null)
                 return false;
 
-            // Gear text form is firmware-slot-driven and never remapped.
+            // Gear text form is firmware-slot-driven and never remapped. ASCII by identity
+            // — no itmField publish (no single numeric meaning).
             if (paramId == ItmParam.Gear && ItmTelemetry.IsTextType(dataType))
             {
                 value = ItmValue.Ascii(handle, ItmParam.Gear, GearText(status.Gear));
@@ -376,6 +420,7 @@ namespace FanaBridge.Display.Drivers
             if (!_registry.TryGetValue(paramId, out var encode))
                 return false;
             value = encode(status, handle);
+            PublishNatural(paramId, status);
             return true;
         }
 
@@ -395,7 +440,39 @@ namespace FanaBridge.Display.Drivers
             if (!_scalarEncoders.TryGetValue(paramId, out var encodeScalar))
                 return false;
             value = encodeScalar(n, handle);
+            // ONE publish site: natural pre-wire scalar (property-picker unit), same as built-in.
+            PublishNaturalScalar(paramId, n);
             return true;
+        }
+
+        /// <summary>
+        /// True for ASCII-on-wire params skipped by itmField publish (param identity, not Size).
+        /// </summary>
+        public static bool IsAsciiParam(ushort paramId)
+            => paramId == ItmParam.Gear || paramId == ItmParam.EngineMapping;
+
+        /// <summary>
+        /// Publish the natural pre-wire scalar for a built-in encode (status already validated).
+        /// No-op for ASCII params and when the sink is null.
+        /// </summary>
+        private void PublishNatural(ushort paramId, StatusDataBase status)
+        {
+            if (IsAsciiParam(paramId))
+                return;
+            if (!_naturalScalars.TryGetValue(paramId, out var select))
+                return;
+            PublishNaturalScalar(paramId, select(status));
+        }
+
+        /// <summary>
+        /// Single publish site for itmField condition reads. Emits the natural pre-wire
+        /// scalar (property-picker unit) — never the wire encoding. ASCII skipped by identity.
+        /// </summary>
+        private void PublishNaturalScalar(ushort paramId, double natural)
+        {
+            if (IsAsciiParam(paramId))
+                return;
+            ParamValueSink?.Publish(paramId, natural);
         }
 
         /// <summary>
@@ -403,6 +480,7 @@ namespace FanaBridge.Display.Drivers
         /// Handles are assigned <paramref name="handleBase"/>..+N-1 in the page's catalog order
         /// (<see cref="ItmTelemetry.ParamsFor"/>). Returns an empty list when there is no
         /// telemetry frame or the page carries no parameters.
+        /// Routes through the same publish site as <see cref="TryEncodeParam"/>.
         /// </summary>
         public IReadOnlyList<ItmValue> BuildValues(ItmPage page, GameData data, byte handleBase = 0)
         {
@@ -418,10 +496,14 @@ namespace FanaBridge.Display.Drivers
                 byte handle = (byte)(handleBase + i);
                 // BuildValues is the offline/catalog path — still honour overrides when
                 // configured so tests and any future consumer see the same layering.
+                // Same single publish site as the live TryEncodeParam path.
                 if (TryEncodeOverride(paramId, handle, out var overridden))
                     values[i] = overridden;
                 else
+                {
                     values[i] = _registry[paramId](status, handle);
+                    PublishNatural(paramId, status);
+                }
             }
             return values;
         }

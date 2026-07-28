@@ -87,6 +87,14 @@ namespace FanaBridge.Display.Composition
         public bool SegmentSurfaceHeldByWheelScreen { get; set; }
 
         /// <summary>
+        /// Forced reclaim write on wheel-screen release (contract §6.2 law 3). When true,
+        /// E5 marks <see cref="FrameComposerTickResult.ReclaimFrame"/> so E7/E8 writes the
+        /// frame even when content is unchanged (v9 special-channel reclaim parity).
+        /// Owner: E5 produces the frame + marker; E7/E8 performs the write.
+        /// </summary>
+        public bool ReclaimEdge { get; set; }
+
+        /// <summary>
         /// Pre-evaluated snapshots for layers and field overrides. Composer NEVER writes
         /// evaluator state — activation is read-only input.
         /// </summary>
@@ -248,9 +256,17 @@ namespace FanaBridge.Display.Composition
         /// <summary>
         /// False when the wheel-screen plane holds col01 this tick
         /// (<see cref="FrameComposerTickInput.SegmentSurfaceHeldByWheelScreen"/>).
-        /// E7 must not write <see cref="SegmentFrame"/> and must reclaim on release.
+        /// True when <see cref="ReclaimFrame"/> is set (forced reclaim write).
+        /// E7 must not write <see cref="SegmentFrame"/> while held (except reclaim).
         /// </summary>
         public bool SegmentFrameWritable { get; set; } = true;
+
+        /// <summary>
+        /// True when this frame is a wheel-screen release reclaim (contract §6.2 law 3).
+        /// E5 produces the frame + this marker from <see cref="FrameComposerTickInput.ReclaimEdge"/>;
+        /// E7/E8 writes it even when content is unchanged. Port of v9 special-channel reclaim.
+        /// </summary>
+        public bool ReclaimFrame { get; set; }
 
         /// <summary>Hosted page id that produced <see cref="SegmentFrame"/> (echo).</summary>
         public string SegmentHostedPageId { get; set; }
