@@ -433,9 +433,12 @@ namespace FanaBridge.UI.Display
 
         private static string TruncateText(string text, int maxPositions)
         {
-            if (string.IsNullOrEmpty(text) || text.Length <= maxPositions)
+            // Positions are FOLDED segment positions (dots ride their preceding
+            // character), not raw characters — "A.b.c." is three positions.
+            if (string.IsNullOrEmpty(text))
                 return text;
-            return text.Substring(0, maxPositions);
+            return FanaBridge.Protocol.SevenSegment.TruncateToFoldedPositions(
+                text, maxPositions);
         }
     }
 }

@@ -95,6 +95,33 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void SetContentKind_ToText_DottedName_TruncatesByFoldedPositions()
+        {
+            // Dot-fix follow-up (dotfix-codex F1): seeding Text from a dotted
+            // name must count FOLDED segment positions (dots ride their
+            // preceding character), not raw characters — "A.b.c." is three
+            // positions and survives whole.
+            // Seeding-from-name applies only when Text is blank (a dynamic
+            // screen switched to Text/Message).
+            var start = WithTwoScreens();
+            var model = new DisplayVirtualPagesEditModel(start);
+            model.SelectScreen("pit");
+            model.SetText("pit", "");
+            model.SetName("pit", "A.b.c.");
+
+            var after = model.SetContentKind("pit", LegacyContentKind.Text);
+            Assert.Equal("A.b.c.",
+                after.Legacy.Screens.Single(s => s.Id == "pit").Text);
+
+            // Four folded positions clamp to the first three (dot kept folded).
+            model.SetText("pit", "");
+            model.SetName("pit", "A.b.c.d");
+            var clamped = model.SetContentKind("pit", LegacyContentKind.Text);
+            Assert.Equal("A.b.c.",
+                clamped.Legacy.Screens.Single(s => s.Id == "pit").Text);
+        }
+
+        [Fact]
         public void RemoveScreen_Immediate_ClearsBaseIfMatched_SelectsNeighbour()
         {
             var model = new DisplayVirtualPagesEditModel(WithTwoScreens());

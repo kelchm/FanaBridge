@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Rules;
+using FanaBridge.Protocol;
 
 namespace FanaBridge.Display.Schema2
 {
@@ -1434,15 +1435,16 @@ namespace FanaBridge.Display.Schema2
                 }
             }
 
-            // Over-length text: clamp at runtime (segment text ≤ 3 positions).
+            // Over-length text: clamp at runtime on FOLDED position count (≤ 3), never
+            // raw char length — "A.b.c.d" is 4 folded positions, not 7 raw chars.
             if (content.Kind == ContentKind.Text && !string.IsNullOrEmpty(content.Text))
             {
                 if (!LegacyScreen.IsRenderableText(content.Text))
                 {
-                    // Still try a simple char clamp for over-length pure text.
-                    if (content.Text.Length > 3)
+                    if (SevenSegment.EncodeWithDots(content.Text).Count > 3)
                     {
-                        content.EffectiveText = content.Text.Substring(0, 3);
+                        content.EffectiveText =
+                            SevenSegment.TruncateToFoldedPositions(content.Text, 3);
                         content.DegradedAtLoad = true;
                         warn(label + ": over-length text clamped at runtime (document preserved)");
                     }

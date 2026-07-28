@@ -143,9 +143,15 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Encodes a string to 7-segment bytes, folding '.'/',' onto the previous
-        /// character's dot segment. Unbounded length — callers decide fit-vs-scroll
-        /// (the settings page's display test scrolls anything longer than 3).
+        /// Encodes a string to 7-segment bytes with the fold law:
+        /// <list type="number">
+        /// <item>'.' / ',' folds onto the preceding position when that position has no
+        /// dot yet (the preceding renderable character).</item>
+        /// <item>A leading dot, or a dot after a position that already carries a dot
+        /// (dot-after-dot), occupies a blank position with the dot lit.</item>
+        /// </list>
+        /// Unbounded length — callers decide fit-vs-scroll on the returned position
+        /// count (≤3 fits; longer messages scroll by folded-position windows).
         /// <see cref="DisplayEncoder.DisplayText"/> applies the same fold capped at
         /// 3 positions for the physical display.
         /// </summary>
@@ -157,12 +163,65 @@ namespace FanaBridge.Protocol
 
             foreach (char ch in text)
             {
-                if ((ch == '.' || ch == ',') && encoded.Count > 0)
-                    encoded[encoded.Count - 1] |= Dot;
+                if (ch == '.' || ch == ',')
+                {
+                    // Fold onto the preceding position only when it has no dot yet.
+                    // Leading / consecutive dots become their own blank|dot slots.
+                    if (encoded.Count > 0 && (encoded[encoded.Count - 1] & Dot) == 0)
+                        encoded[encoded.Count - 1] |= Dot;
+                    else
+                        encoded.Add(Dot);
+                }
                 else
+                {
                     encoded.Add(CharToSegment(ch));
+                }
             }
             return encoded;
+        }
+
+        /// <summary>
+        /// Shortest source prefix whose <see cref="EncodeWithDots"/> form uses at most
+        /// <paramref name="maxPositions"/> folded positions. Used when clamping over-width
+        /// static text — raw <c>Substring(0, 3)</c> would sever dots from their characters.
+        /// </summary>
+        public static string TruncateToFoldedPositions(string text, int maxPositions)
+        {
+            if (string.IsNullOrEmpty(text) || maxPositions <= 0)
+                return text ?? "";
+
+            int positions = 0;
+            bool lastDotted = false;
+            int end = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char ch = text[i];
+                if (ch == '.' || ch == ',')
+                {
+                    if (positions > 0 && !lastDotted)
+                    {
+                        lastDotted = true;
+                        end = i + 1;
+                    }
+                    else
+                    {
+                        if (positions >= maxPositions)
+                            break;
+                        positions++;
+                        lastDotted = true;
+                        end = i + 1;
+                    }
+                }
+                else
+                {
+                    if (positions >= maxPositions)
+                        break;
+                    positions++;
+                    lastDotted = false;
+                    end = i + 1;
+                }
+            }
+            return text.Substring(0, end);
         }
     }
 }

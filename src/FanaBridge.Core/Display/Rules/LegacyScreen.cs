@@ -209,25 +209,25 @@ namespace FanaBridge.Display.Rules
         }
 
         /// <summary>Counts display positions the way <see cref="SevenSegment.EncodeWithDots"/>
-        /// folds dots, returning false when any non-space character has no segment coverage.</summary>
+        /// folds dots (including blank|dot slots for leading / consecutive dots), returning
+        /// false when any non-space character has no segment coverage.</summary>
         private static bool TryCountRenderablePositions(string text, out int positions)
         {
             positions = 0;
             if (string.IsNullOrEmpty(text))
                 return false;
 
+            // Glyph coverage first — EncodeWithDots would blank unmappable chars silently.
             foreach (char ch in text)
             {
                 if (ch == '.' || ch == ',')
-                {
-                    if (positions == 0)
-                        positions++;   // nothing to fold onto — a leading dot takes a slot
                     continue;
-                }
                 if (ch != ' ' && SevenSegment.CharToSegment(ch) == SevenSegment.Blank)
                     return false;
-                positions++;
             }
+
+            // Single source of truth for folded width (fit vs scroll, IsRenderableText ≤ 3).
+            positions = SevenSegment.EncodeWithDots(text).Count;
             return true;
         }
     }

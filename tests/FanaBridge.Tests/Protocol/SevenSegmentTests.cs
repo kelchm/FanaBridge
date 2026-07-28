@@ -38,8 +38,8 @@ namespace FanaBridge.Tests.Protocol
         [Fact]
         public void EncodeWithDots_CommaFoldsLikeDot_AndTrailingDotIsKept()
         {
-            // Unbounded encoding keeps a trailing dot (unlike the 3-capped
-            // DisplayEncoder.DisplayText path).
+            // Unbounded encoding keeps a trailing dot; DisplayText uses the same fold
+            // capped at 3 positions (including a trailing fold onto position 3).
             var encoded = SevenSegment.EncodeWithDots("1,23.");
 
             Assert.Equal(3, encoded.Count);
@@ -50,12 +50,20 @@ namespace FanaBridge.Tests.Protocol
         [Fact]
         public void EncodeWithDots_LeadingDot_BecomesItsOwnSegment()
         {
-            // Nothing to fold onto — the dot char passes through CharToSegment.
+            // Nothing to fold onto — blank position with the dot lit.
             var encoded = SevenSegment.EncodeWithDots(".5");
 
             Assert.Equal(2, encoded.Count);
-            Assert.Equal(SevenSegment.CharToSegment('.'), encoded[0]);
+            Assert.Equal(SevenSegment.Dot, encoded[0]);
             Assert.Equal(SevenSegment.Digit5, encoded[1]);
+        }
+
+        [Fact]
+        public void EncodeWithDots_ConsecutiveDots_EachIsBlankDotPosition()
+        {
+            var encoded = SevenSegment.EncodeWithDots("...");
+            Assert.Equal(3, encoded.Count);
+            Assert.All(encoded, b => Assert.Equal(SevenSegment.Dot, b));
         }
 
         [Fact]

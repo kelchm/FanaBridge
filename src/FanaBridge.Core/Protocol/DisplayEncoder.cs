@@ -122,8 +122,9 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Display up to 3 characters of text. Dots/commas are folded onto predecessor.
-        /// Uses a pooled buffer to avoid per-call allocations.
+        /// Display up to 3 folded positions of text via <see cref="SevenSegment.EncodeWithDots"/>.
+        /// Trailing dots on the third character are kept (the early-break that dropped them
+        /// was a bug). Longer folded sequences take the first three positions.
         /// </summary>
         public bool DisplayText(string text)
         {
@@ -132,25 +133,16 @@ namespace FanaBridge.Protocol
 
             lock (_sync)
             {
-                int segCount = 0;
                 _textSegs[0] = SevenSegment.Blank;
                 _textSegs[1] = SevenSegment.Blank;
                 _textSegs[2] = SevenSegment.Blank;
 
-                foreach (char ch in text)
-                {
-                    if ((ch == '.' || ch == ',') && segCount > 0)
-                    {
-                        _textSegs[segCount - 1] |= SevenSegment.Dot;
-                    }
-                    else
-                    {
-                        _textSegs[segCount] = SevenSegment.CharToSegment(ch);
-                        segCount++;
-                    }
-
-                    if (segCount >= 3) break;
-                }
+                // Same fold law as the scroll path — never break mid-fold after filling
+                // position 3 (that dropped the trailing dot on "A.b.c.").
+                var encoded = SevenSegment.EncodeWithDots(text);
+                int n = encoded.Count < 3 ? encoded.Count : 3;
+                for (int i = 0; i < n; i++)
+                    _textSegs[i] = encoded[i];
 
                 return SetDisplay(_textSegs[0], _textSegs[1], _textSegs[2]);
             }
