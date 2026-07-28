@@ -11,10 +11,12 @@ namespace FanaBridge.Tests.Architecture
     /// <summary>
     /// Architecture guard for the v2 Display copy layer (<c>DisplayCopy.cs</c>).
     /// (a) banned-vocabulary scan — "global", "rest", "waved off" must not appear as
-    ///     user copy; FailMode=true from day one (surface is new).
+    ///     user copy in any v2-view file under <c>src/FanaBridge/UI/Display</c>;
+    ///     FailMode=true from day one (surface is new). v1 views are excluded via an
+    ///     explicit list that E9-exit deletes.
     /// (b) ruled-term presence — every NAMING PASS / shared-field ruled term appears
-    ///     in the table. NamespaceGuard folder conventions apply (this file lives under
-    ///     Architecture/).
+    ///     in DisplayCopy. NamespaceGuard folder conventions apply (this file lives
+    ///     under Architecture/).
     /// </summary>
     public class CopyLayerGuardTests
     {
@@ -23,6 +25,26 @@ namespace FanaBridge.Tests.Architecture
 
         private static readonly string DisplayCopyRelative =
             "src/FanaBridge/UI/Display/DisplayCopy.cs";
+
+        private static readonly string DisplayUiRootRelative =
+            "src/FanaBridge/UI/Display";
+
+        // v1 view / edit-model files still in tree this round — E9-exit deletes them.
+        // Banned-vocabulary scan skips these so the guard can enforce v2 views only.
+        // v1 XAML counterparts are on the exclude list too (Text/Content/ToolTip scan).
+        private static readonly string[] V1ViewExcludeFileNames =
+        {
+            "DisplayPagesView.xaml",
+            "DisplayPagesView.xaml.cs",
+            "DisplayPagesEditModel.cs",
+            "DisplayTriggersView.xaml",
+            "DisplayTriggersView.xaml.cs",
+            "DisplayTriggersEditModel.cs",
+            "DisplayVirtualPagesView.xaml",
+            "DisplayVirtualPagesView.xaml.cs",
+            "DisplayVirtualPagesEditModel.cs",
+            "TriggerRuleSet.cs",
+        };
 
         // Banned as user copy (DECISIONS §7e + field-filter ruling).
         private static readonly string[] BannedVocabulary =
@@ -71,26 +93,42 @@ namespace FanaBridge.Tests.Architecture
         public CopyLayerGuardTests(ITestOutputHelper output) => _output = output;
 
         [Fact]
-        public void DisplayCopy_BannedVocabulary_AbsentFromStringLiterals()
+        public void V2DisplayViews_BannedVocabulary_AbsentFromStringLiterals()
         {
-            var path = Absolute(DisplayCopyRelative);
-            Assert.True(File.Exists(path), "DisplayCopy.cs missing at " + DisplayCopyRelative);
+            var root = Absolute(DisplayUiRootRelative);
+            Assert.True(Directory.Exists(root), "Display UI root missing at " + DisplayUiRootRelative);
 
-            var text = File.ReadAllText(path);
-            var literals = ExtractStringLiterals(text);
+            var csFiles = Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories)
+                .Where(f => !IsExcludedV1View(f));
+            var xamlFiles = Directory.GetFiles(root, "*.xaml", SearchOption.AllDirectories)
+                .Where(f => !IsExcludedV1View(f));
+            var files = csFiles.Concat(xamlFiles)
+                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            Assert.NotEmpty(files);
+
             var hits = new List<string>();
-
-            foreach (var banned in BannedVocabulary)
+            foreach (var path in files)
             {
-                foreach (var lit in literals)
+                var text = File.ReadAllText(path);
+                bool isXaml = path.EndsWith(".xaml", StringComparison.OrdinalIgnoreCase);
+                var literals = isXaml
+                    ? ExtractXamlUserCopyLiterals(text)
+                    : ExtractStringLiterals(text);
+                string rel = RelFromRepo(path);
+
+                foreach (var banned in BannedVocabulary)
                 {
-                    if (ContainsBannedAsCopy(lit, banned))
-                        hits.Add($"\"{banned}\" in string literal: \"{Truncate(lit, 80)}\"");
+                    foreach (var lit in literals)
+                    {
+                        if (ContainsBannedAsCopy(lit, banned))
+                            hits.Add($"{rel}: \"{banned}\" in {(isXaml ? "XAML attr" : "string literal")}: \"{Truncate(lit, 80)}\"");
+                    }
                 }
             }
 
             _output.WriteLine(
-                $"Copy-layer banned scan: {hits.Count} hit(s) (FailMode={FailMode})");
+                $"Copy-layer banned scan: {files.Count} file(s), {hits.Count} hit(s) (FailMode={FailMode})");
             foreach (var h in hits)
                 _output.WriteLine("  " + h);
 
@@ -98,7 +136,7 @@ namespace FanaBridge.Tests.Architecture
             {
                 Assert.True(
                     hits.Count == 0,
-                    "Banned vocabulary in DisplayCopy.cs user copy:\n"
+                    "Banned vocabulary in v2 Display view string literals / XAML copy:\n"
                         + string.Join("\n", hits));
             }
         }
@@ -120,6 +158,17 @@ namespace FanaBridge.Tests.Architecture
             Assert.True(
                 missing.Count == 0,
                 "Ruled terms missing from DisplayCopy.cs:\n" + string.Join("\n", missing));
+        }
+
+        private static bool IsExcludedV1View(string absolutePath)
+        {
+            string name = Path.GetFileName(absolutePath);
+            for (int i = 0; i < V1ViewExcludeFileNames.Length; i++)
+            {
+                if (string.Equals(name, V1ViewExcludeFileNames[i], StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -220,6 +269,26 @@ namespace FanaBridge.Tests.Architecture
             return list;
         }
 
+        /// <summary>
+        /// User-facing XAML copy: Text, Content, and ToolTip attribute string values
+        /// (quoted). Bindings and empty values are included as-is; the banned check
+        /// only flags real vocabulary hits.
+        /// </summary>
+        private static IEnumerable<string> ExtractXamlUserCopyLiterals(string xaml)
+        {
+            var matches = Regex.Matches(
+                xaml,
+                @"(?:Text|Content|ToolTip)\s*=\s*""([^""]*)""",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            var list = new List<string>(matches.Count);
+            foreach (Match m in matches)
+            {
+                if (m.Success && m.Groups.Count > 1)
+                    list.Add(m.Groups[1].Value);
+            }
+            return list;
+        }
+
         private static string UnescapeOrdinary(string s)
             => s.Replace("\\n", "\n")
                 .Replace("\\r", "\r")
@@ -232,6 +301,18 @@ namespace FanaBridge.Tests.Architecture
 
         private static string Absolute(string repoRelative)
             => Path.Combine(RepoRoot(), repoRelative.Replace('/', Path.DirectorySeparatorChar));
+
+        private static string RelFromRepo(string absolutePath)
+        {
+            string root = RepoRoot();
+            if (absolutePath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            {
+                string rel = absolutePath.Substring(root.Length)
+                    .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return rel.Replace(Path.DirectorySeparatorChar, '/');
+            }
+            return absolutePath;
+        }
 
         private static string RepoRoot()
         {

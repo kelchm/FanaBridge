@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using FanaBridge.Display.Rules;
 using FanaBridge.UI.Display;
 using Xunit;
@@ -9,42 +11,105 @@ namespace FanaBridge.Tests.UI.Display
     /// Mapping pins for <see cref="DisplayResolutionSnapshotModel"/>: every
     /// <see cref="CarrierPresence"/> and single-bit <see cref="CarrierRowLabels"/>
     /// value maps to its ruled <see cref="DisplayCopy"/> string; device block
-    /// passthrough; null record → empty model.
+    /// passthrough; null record → empty model. Completeness is
+    /// <see cref="Enum.GetValues"/>-driven so a new enum member fails until mapped.
     /// </summary>
     public class DisplayResolutionSnapshotModelTests
     {
-        // ── Presence → ruled status ──────────────────────────────────────
+        // ── Presence → ruled status (completeness) ───────────────────────
+
+        public static IEnumerable<object[]> AllCarrierPresenceValues()
+            => Enum.GetValues(typeof(CarrierPresence))
+                .Cast<CarrierPresence>()
+                .Select(p => new object[] { p });
 
         [Theory]
-        [InlineData(CarrierPresence.Waiting, DisplayCopy.Waiting)]
-        [InlineData(CarrierPresence.Outranked, DisplayCopy.Outranked)]
-        [InlineData(CarrierPresence.OffScreen, DisplayCopy.OffScreen)]
-        [InlineData(CarrierPresence.OnScreen, DisplayCopy.OnScreen)]
-        [InlineData(CarrierPresence.Dismissed, "")]
-        public void PresenceCopy_MapsEachCarrierPresence(CarrierPresence presence, string expected)
-            => Assert.Equal(expected, DisplayResolutionSnapshotModel.PresenceCopy(presence));
+        [MemberData(nameof(AllCarrierPresenceValues))]
+        public void PresenceCopy_MapsEveryCarrierPresence(CarrierPresence presence)
+        {
+            string copy = DisplayResolutionSnapshotModel.PresenceCopy(presence);
+            Assert.NotNull(copy);
+
+            switch (presence)
+            {
+                case CarrierPresence.Waiting:
+                    Assert.Equal(DisplayCopy.Waiting, copy);
+                    break;
+                case CarrierPresence.Outranked:
+                    Assert.Equal(DisplayCopy.Outranked, copy);
+                    break;
+                case CarrierPresence.OffScreen:
+                    Assert.Equal(DisplayCopy.OffScreen, copy);
+                    break;
+                case CarrierPresence.OnScreen:
+                    Assert.Equal(DisplayCopy.OnScreen, copy);
+                    break;
+                case CarrierPresence.Dismissed:
+                    // Presence-Dismissed is a non-check state; DISMISSED is the row label.
+                    Assert.Equal(string.Empty, copy);
+                    break;
+                default:
+                    Assert.Fail(
+                        "Unmapped CarrierPresence." + presence
+                        + " — add a case in PresenceCopy and this test.");
+                    break;
+            }
+        }
 
         [Fact]
         public void PresenceCopy_Null_IsEmpty()
             => Assert.Equal(string.Empty, DisplayResolutionSnapshotModel.PresenceCopy(null));
 
-        // ── Row labels → ruled / diagnostics strings ─────────────────────
+        // ── Row labels → ruled / diagnostics (completeness) ──────────────
+
+        public static IEnumerable<object[]> AllSingleBitCarrierRowLabels()
+            => Enum.GetValues(typeof(CarrierRowLabels))
+                .Cast<CarrierRowLabels>()
+                .Where(IsSingleBitOrNone)
+                .Select(l => new object[] { l });
 
         [Theory]
-        [InlineData(CarrierRowLabels.Off, DisplayCopy.Off)]
-        [InlineData(CarrierRowLabels.Dismissed, DisplayCopy.Dismissed)]
-        [InlineData(CarrierRowLabels.CantRunHere, DisplayCopy.CantRunHere)]
-        [InlineData(CarrierRowLabels.NoWheel, DisplayCopy.NoWheel)]
-        [InlineData(CarrierRowLabels.Paused, DisplayCopy.Paused)]
-        [InlineData(CarrierRowLabels.KeptAsIs, DisplayCopy.KeptAsIs)]
-        [InlineData(CarrierRowLabels.OutOfSessionScope, DisplayCopy.OutOfSessionScope)]
-        [InlineData(CarrierRowLabels.Untested, DisplayCopy.Untested)]
-        public void RowLabelCopy_MapsEachFlag(CarrierRowLabels label, string expected)
-            => Assert.Equal(expected, DisplayResolutionSnapshotModel.RowLabelCopy(label));
+        [MemberData(nameof(AllSingleBitCarrierRowLabels))]
+        public void RowLabelCopy_MapsEveryDefinedFlag(CarrierRowLabels label)
+        {
+            string copy = DisplayResolutionSnapshotModel.RowLabelCopy(label);
 
-        [Fact]
-        public void RowLabelCopy_None_IsNull()
-            => Assert.Null(DisplayResolutionSnapshotModel.RowLabelCopy(CarrierRowLabels.None));
+            switch (label)
+            {
+                case CarrierRowLabels.None:
+                    Assert.Null(copy);
+                    break;
+                case CarrierRowLabels.Off:
+                    Assert.Equal(DisplayCopy.Off, copy);
+                    break;
+                case CarrierRowLabels.Dismissed:
+                    Assert.Equal(DisplayCopy.Dismissed, copy);
+                    break;
+                case CarrierRowLabels.CantRunHere:
+                    Assert.Equal(DisplayCopy.CantRunHere, copy);
+                    break;
+                case CarrierRowLabels.NoWheel:
+                    Assert.Equal(DisplayCopy.NoWheel, copy);
+                    break;
+                case CarrierRowLabels.Paused:
+                    Assert.Equal(DisplayCopy.Paused, copy);
+                    break;
+                case CarrierRowLabels.KeptAsIs:
+                    Assert.Equal(DisplayCopy.KeptAsIs, copy);
+                    break;
+                case CarrierRowLabels.OutOfSessionScope:
+                    Assert.Equal(DisplayCopy.OutOfSessionScope, copy);
+                    break;
+                case CarrierRowLabels.Untested:
+                    Assert.Equal(DisplayCopy.Untested, copy);
+                    break;
+                default:
+                    Assert.Fail(
+                        "Unmapped CarrierRowLabels." + label
+                        + " — add a case in RowLabelCopy and this test.");
+                    break;
+            }
+        }
 
         [Fact]
         public void RowLabelCopies_CombinesFlags_InStableOrder()
@@ -178,6 +243,18 @@ namespace FanaBridge.Tests.UI.Display
             Assert.Equal(
                 new[] { DisplayCopy.CantRunHere, DisplayCopy.Dismissed },
                 model.Carriers[2].RowLabelCopies);
+        }
+
+        /// <summary>
+        /// Flags enums include composite values when members are combined in the
+        /// definition; we only require each defined single-bit (or None) name.
+        /// </summary>
+        private static bool IsSingleBitOrNone(CarrierRowLabels label)
+        {
+            if (label == CarrierRowLabels.None)
+                return true;
+            int v = (int)label;
+            return v != 0 && (v & (v - 1)) == 0;
         }
     }
 }

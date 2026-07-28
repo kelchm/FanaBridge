@@ -192,10 +192,10 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void LoadDefaultSettings_BakesV2FromPreEpicDefaults()
+        public void LoadDefaultSettings_LeavesNoKeyStateUnbaked()
         {
-            // §9b: fresh defaults bake a v2 document (marker + default rest lapInfo).
-            // CSSWFORMV3 is ITM-capable → displayControl defaults to Itm → settings.mode on.
+            // §9b: LoadDefaultSettings never bakes — no-key state waits for first live
+            // DataUpdate. Pre-connection nothing drives the display, so deferral is free.
             var inst = InstanceFor("CSSWFORMV3");
             inst.PluginResolver = () => null;
 
@@ -204,20 +204,17 @@ namespace FanaBridge.Tests.Display
 
             var saved = (JObject)inst.GetSettings(false, false);
             Assert.Null(saved["displayCustomization"]);
-            var doc = saved["display"] as JObject;
-            Assert.NotNull(doc);
-            var reloaded = DisplayConfigV2Serializer.Load(doc!.ToString(), _ => { });
-            Assert.True(PreEpicSettingsMigrator.HasMarker(reloaded));
-            Assert.Equal(SettingsMode.On, reloaded.Settings.Mode);
-            Assert.Equal(PageRefKind.ItmPage, reloaded.Priority.Rest.InSessionPage.Kind);
-            Assert.Equal("lapInfo", reloaded.Priority.Rest.InSessionPage.CatalogPageId);
+            Assert.Null(saved["display"]);
+            Assert.Null(inst.DisplayRuntimeForTest.CurrentConfigV2);
+            Assert.Null(inst.DisplayRuntimeForTest.CurrentConfig);
+            Assert.False(inst.HasLiveResolvedDisplayCaps);
         }
 
         [Fact]
-        public void SetSettings_WithoutDocumentKeys_BakesV2FromPreEpic()
+        public void SetSettings_WithoutDocumentKeys_LeavesUnbaked()
         {
-            // A settings payload with no display / displayCustomization keys triggers
-            // the §9b bake (pre-epic settings → v2), not the v1 LegacyModeMigration path.
+            // A settings payload with no display / displayCustomization keys leaves the
+            // bake pending — SetSettings must never bake from registration fallback.
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;
 
@@ -226,17 +223,141 @@ namespace FanaBridge.Tests.Display
             {
                 ["wheelType"] = "PSWBMW",
                 ["displayControl"] = DisplaySettings.ControlLegacy,
+                ["displayMode"] = "Speed",
                 ["itmDefaultPage"] = 2,
             }, false);
 
             var saved = (JObject)inst.GetSettings(false, false);
             Assert.Null(saved["displayCustomization"]);
+            Assert.Null(saved["display"]);
+            Assert.Null(inst.DisplayRuntimeForTest.CurrentConfigV2);
+            Assert.False(inst.HasLiveResolvedDisplayCaps);
+        }
+
+        [Fact]
+        public void PreEpicBake_FirstLiveDataUpdate_BakesFromPreEpicSettings()
+        {
+            // §9b: bake fires on first live-resolved DataUpdate (connected wheel match).
+            // CSSWFORMV3 live + defaults → marker, mode on, rest lapInfo, Gear hosted.
+            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            Assert.Null(s.Instance.DisplayRuntimeForTest.CurrentConfigV2);
+            Assert.True(s.Instance.HasLiveResolvedDisplayCaps);
+
+            s.Frame(Data(NewStatus()));
+
+            var saved = (JObject)s.Instance.GetSettings(false, false);
+            Assert.Null(saved["displayCustomization"]);
             var doc = saved["display"] as JObject;
             Assert.NotNull(doc);
             var reloaded = DisplayConfigV2Serializer.Load(doc!.ToString(), _ => { });
             Assert.True(PreEpicSettingsMigrator.HasMarker(reloaded));
-            Assert.Equal(SettingsMode.LegacyOnly, reloaded.Settings.Mode);
-            Assert.Equal("fuelErsDrs", reloaded.Priority.Rest.InSessionPage.CatalogPageId);
+            Assert.Equal(SettingsMode.On, reloaded.Settings.Mode);
+            Assert.Equal(PageRefKind.ItmPage, reloaded.Priority.Rest.InSessionPage.Kind);
+            Assert.Equal("lapInfo", reloaded.Priority.Rest.InSessionPage.CatalogPageId);
+            var hosted = Assert.Single(reloaded.Pages);
+            Assert.Equal(PageEntryKind.HostedPage, hosted.Kind);
+            Assert.Equal(ContentKind.Gear, hosted.Base.Content.Kind);
+            Assert.Equal("Gear", hosted.Name);
+        }
+
+        [Fact]
+        public void PreEpicBake_RegistrationItm_LiveBasic_BakesBasicContent()
+        {
+            // Registration profile is ITM (CSSWFORMV3) but live resolve is Basic via
+            // override — bake must wait for live resolve and stamp segment-only content
+            // (hosted rest, no ITM catalog ref). Registration-fallback bake would lock
+            // wrong ITM rest then never refresh.
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayMode"] = "Speed",
+                ["displayControl"] = DisplaySettings.ControlLegacy,
+            });
+            Assert.Null(s.Instance.DisplayRuntimeForTest.CurrentConfigV2);
+            // Registration profile is ITM; without the live override ResolveCapsFor
+            // would still report Itm for this descriptor.
+            var reg = WheelProfileStore.FindByWheelType("CSSWFORMV3");
+            Assert.NotNull(reg);
+            Assert.Equal(DisplayType.Itm, new WheelCapabilities(reg!).Display);
+
+            var basic = WheelProfileStore.FindByWheelType("PSWBMW");
+            Assert.NotNull(basic);
+            Assert.Equal(DisplayType.Basic, new WheelCapabilities(basic!).Display);
+            s.Wheelbase.ProfileOverrideResolver = _ => basic!.Id;
+            s.Wheelbase.RefreshCapabilities();
+
+            Assert.Equal(DisplayType.Basic, ((IDisplayPanelHost)s.Instance).DisplayType);
+            Assert.True(s.Instance.HasLiveResolvedDisplayCaps);
+
+            s.Frame(Data(NewStatus()));
+
+            var v2 = s.Instance.DisplayRuntimeForTest.CurrentConfigV2;
+            Assert.NotNull(v2);
+            Assert.True(PreEpicSettingsMigrator.HasMarker(v2));
+            Assert.Equal(SettingsMode.LegacyOnly, v2!.Settings.Mode);
+            Assert.Equal(PageRefKind.HostedPage, v2.Priority.Rest.InSessionPage.Kind);
+            var hosted = Assert.Single(v2.Pages);
+            Assert.Equal(ContentKind.Speed, hosted.Base.Content.Kind);
+            Assert.Equal(hosted.Id, v2.Priority.Rest.InSessionPage.Id);
+            Assert.DoesNotContain(v2.Pages, p => p.Kind == PageEntryKind.ItmPage);
+        }
+
+        [Fact]
+        public void PreEpicBake_MarkedDocument_NotRebakedOnReconnectOrCapsFlip()
+        {
+            // A marked document is USER-OWNED from the moment it is written — user edits
+            // survive reconnection and caps flips. No marker refresh / open-migration window.
+            var editedMarked = new JObject
+            {
+                ["schemaVersion"] = 2,
+                ["settings"] = new JObject { ["mode"] = "on" },
+                ["profileId"] = "user-edited-keep",
+                [PreEpicSettingsMigrator.MarkerKey] = PreEpicSettingsMigrator.MarkerValue,
+                ["priority"] = new JObject
+                {
+                    ["rest"] = new JObject
+                    {
+                        ["inSessionPage"] = new JObject
+                        {
+                            ["kind"] = "itmPage",
+                            ["catalogPageId"] = "tyreTemps",
+                        },
+                    },
+                },
+            };
+            var s = StartSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["display"] = editedMarked,
+            });
+
+            Assert.Equal("user-edited-keep",
+                s.Instance.DisplayRuntimeForTest.CurrentConfigV2!.ProfileId);
+            Assert.Equal("tyreTemps",
+                s.Instance.DisplayRuntimeForTest.CurrentConfigV2.Priority.Rest.InSessionPage
+                    .CatalogPageId);
+
+            s.Frame(Data(NewStatus()));
+
+            // Caps flip Basic → ITM must not rebake over the marked document.
+            var basic = WheelProfileStore.FindByWheelType("PSWBMW");
+            s.Wheelbase.ProfileOverrideResolver = _ => basic!.Id;
+            s.Wheelbase.RefreshCapabilities();
+            s.Frame(Data(NewStatus()));
+            s.Wheelbase.ProfileOverrideResolver = _ => null;
+            s.Wheelbase.RefreshCapabilities();
+            s.Frame(Data(NewStatus()));
+
+            var saved = (JObject)s.Instance.GetSettings(false, false);
+            var doc = saved["display"] as JObject;
+            Assert.NotNull(doc);
+            Assert.Equal("user-edited-keep", (string)doc!["profileId"]);
+            Assert.Equal("tyreTemps",
+                (string)doc["priority"]!["rest"]!["inSessionPage"]!["catalogPageId"]);
+            Assert.Equal(PreEpicSettingsMigrator.MarkerValue,
+                (string)doc[PreEpicSettingsMigrator.MarkerKey]);
+            Assert.Equal("user-edited-keep",
+                s.Instance.DisplayRuntimeForTest.CurrentConfigV2!.ProfileId);
         }
 
         [Fact]

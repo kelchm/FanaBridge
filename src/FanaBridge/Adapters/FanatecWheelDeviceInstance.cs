@@ -85,8 +85,13 @@ namespace FanaBridge.Adapters
         private bool _legacyReclaimPending;
         // Last itmCapable snapshot used for resolve-on-read when displayControl is absent
         // from the blob. Avoids allocating a DisplaySettings every frame; only re-Reads
-        // when live caps flip while migration is still open.
+        // when live caps flip while DisplayControl migration is still open.
         private bool? _migratedItmCapable;
+        // §9b: no-document-key settings load is pending a first live-resolved bake.
+        // Completes only on the connected DataUpdate path after live capability resolution
+        // (real wheel match / live override — never registration-fallback caps).
+        // A written v2 document (marked or not) is user-owned; the migrator never touches it.
+        private bool _pendingPreEpicBake;
         // One-shot guard for the legacy col01 drive: this instance-side drive used to sit
         // inside the runtime's ITM try/catch (sharing its _itmErrorLogged latch) and must
         // keep the same contract now that it runs on the instance — a firmware/transport
@@ -321,20 +326,11 @@ namespace FanaBridge.Adapters
             DisplaySettingsCodec.WriteDefaults(_customSettings, itmCapable);
             _displaySettings = DisplaySettingsCodec.Read(_customSettings, itmCapable);
             _migratedItmCapable = _customSettings["displayControl"] == null ? itmCapable : (bool?)null;
-            // §9b: fresh device has pre-epic defaults and no v2 document → bake once.
-            Action<string> warnDefaults = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
-            WheelCatalog defaultsCatalog;
-            CatalogLoader.TryResolve(_config.WheelCode, out defaultsCatalog, warnDefaults,
-                itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
-            var bakedDefaults = PreEpicSettingsMigrator.Bake(
-                _displaySettings.DisplayControl,
-                _displaySettings.ItmDefaultPage,
-                ResolvedDisplayCaps.ItmDeviceId,
-                warnDefaults);
-            bakedDefaults = DisplayConfigV2Validator.Normalize(
-                bakedDefaults, warnDefaults, defaultsCatalog);
-            _displayRuntime.SetConfigV2(bakedDefaults);
+            // §9b: no document keys — leave pending until first live-resolved DataUpdate.
+            // Never bake from registration / pre-connection caps.
+            _pendingPreEpicBake = true;
             _displayRuntime.ClearConfig();
+            _displayRuntime.ClearConfigV2();
 
             if (_ledModule != null)
             {
@@ -483,9 +479,10 @@ namespace FanaBridge.Adapters
 
             // Display customization document (whitelisted nested keys; absent = none).
             // OQ-3: the v2 key "display" wins unconditionally; the v1 key is read only
-            // when no v2 key exists. §9b: when NEITHER key exists, bake a v2 document
-            // from pre-epic settings once (never overwrites an existing v2 document;
-            // a v1-only bag leaves the v1 fallback path unchanged this round).
+            // when no v2 key exists. §9b: when NEITHER key exists, leave pending for the
+            // first live-resolved DataUpdate bake (never bake here from registration
+            // fallback or pre-connection caps). A written v2 document is user-owned;
+            // a v1-only bag leaves the v1 fallback path unchanged this round.
             // Released AFTER the plain _displaySettings write above, paired with the
             // runtime's acquire-before-settings read order.
             Action<string> warn = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
@@ -493,6 +490,7 @@ namespace FanaBridge.Adapters
             var displayCustomization = obj["displayCustomization"];
             if (displayV2 != null)
             {
+                _pendingPreEpicBake = false;
                 // Resolve catalog for Normalize capability rules (OQ-2: WheelCode).
                 WheelCatalog catalog;
                 CatalogLoader.TryResolve(_config.WheelCode, out catalog, warn,
@@ -504,23 +502,16 @@ namespace FanaBridge.Adapters
             }
             else if (displayCustomization == null)
             {
-                // §9b bake-on-sight: pre-epic settings → v2, no v1 document present.
-                WheelCatalog catalog;
-                CatalogLoader.TryResolve(_config.WheelCode, out catalog, warn,
-                    itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
-                var baked = PreEpicSettingsMigrator.Bake(
-                    _displaySettings.DisplayControl,
-                    _displaySettings.ItmDefaultPage,
-                    ResolvedDisplayCaps.ItmDeviceId,
-                    warn);
-                baked = DisplayConfigV2Validator.Normalize(baked, warn, catalog);
-                _displayRuntime.SetConfigV2(baked);
+                // §9b: no document keys → pending until first live-resolved DataUpdate.
+                _pendingPreEpicBake = true;
                 _displayRuntime.ClearConfig();
+                _displayRuntime.ClearConfigV2();
             }
             else
             {
                 // E8b deletion item: v1 fallback when a v1 key exists and no v2 key.
                 // Scaffolding — remove with the v1 path. Unchanged this round.
+                _pendingPreEpicBake = false;
                 var parsedConfig = DisplayConfigSerializer.Load(
                     displayCustomization.ToString(), warn);
                 parsedConfig = LegacyModeMigration.Apply(_displaySettings, parsedConfig);
@@ -634,6 +625,11 @@ namespace FanaBridge.Adapters
                     _migratedItmCapable = itmCapableNow;
                 }
             }
+
+            // §9b: first LIVE-resolved sight only (wheel match / live override — never
+            // registration fallback). Runs AFTER DisplayControl self-heal so the bake
+            // sees the live control/mode/device id. Marked or authored v2 is user-owned.
+            TryCompletePreEpicBake(displayCaps);
 
             // Switched away from ITM (e.g. override to a basic-display profile): the
             // runtime stops the session (a no-op when it holds no driver) so the next Itm
@@ -923,6 +919,73 @@ namespace FanaBridge.Adapters
         // plugin is live yet, matching ResolveCapsFor's own fallback.
         private WheelCapabilities ResolvedDisplayCaps =>
             PluginResolver()?.ResolveCapsFor(_config) ?? _config.Capabilities ?? WheelCapabilities.None;
+
+        /// <summary>
+        /// True when display caps come from a real wheel match / live profile override —
+        /// not from the device's registration profile. The §9b pre-epic bake fires only
+        /// when this is true (connected DataUpdate path). Testable seam for the live gate.
+        /// </summary>
+        internal bool HasLiveResolvedDisplayCaps
+        {
+            get
+            {
+                var plugin = PluginResolver();
+                return plugin != null && plugin.HasLiveResolvedCapsFor(_config);
+            }
+        }
+
+        /// <summary>
+        /// §9b first-bake completion: only on live-resolved caps (Basic or Itm).
+        /// <see cref="DisplayType.None"/> is unresolvable — leave pending, do not guess.
+        /// Any existing v2 document (marked or authored) is user-owned and never overwritten.
+        /// SetSettings / LoadDefaultSettings never call this — no-key state waits for
+        /// the first connected live DataUpdate.
+        /// </summary>
+        private void TryCompletePreEpicBake(WheelCapabilities caps)
+        {
+            if (!_pendingPreEpicBake)
+                return;
+
+            // Registration-fallback caps must never drive a bake.
+            if (!HasLiveResolvedDisplayCaps)
+                return;
+
+            if (caps == null || caps.Display == DisplayType.None)
+                return; // genuinely unresolvable — defer
+
+            // v1 document owns this device this round — never bake over it.
+            if (_displayRuntime.CurrentConfig != null)
+            {
+                _pendingPreEpicBake = false;
+                return;
+            }
+
+            // Any existing v2 (marked bake or authored) is USER-OWNED — never touch it.
+            // Deleting the whole v2 section re-establishes the bake trigger via SetSettings.
+            if (_displayRuntime.CurrentConfigV2 != null)
+            {
+                _pendingPreEpicBake = false;
+                return;
+            }
+
+            bool itmCapable = caps.Display == DisplayType.Itm;
+            byte itmDeviceId = caps.ItmDeviceId;
+
+            Action<string> warn = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
+            WheelCatalog catalog;
+            CatalogLoader.TryResolve(_config.WheelCode, out catalog, warn, itmDeviceId: itmDeviceId);
+            var baked = PreEpicSettingsMigrator.Bake(
+                _displaySettings.DisplayControl,
+                _displaySettings.ItmDefaultPage,
+                itmDeviceId,
+                _displaySettings.DisplayMode,
+                itmCapable,
+                warn);
+            baked = DisplayConfigV2Validator.Normalize(baked, warn, catalog);
+            _displayRuntime.SetConfigV2(baked);
+            _displayRuntime.ClearConfig();
+            _pendingPreEpicBake = false;
+        }
 
         // Whether this device should surface a Display tab. Reads the RESOLVED caps
         // (not the frozen registration caps) so a profile override that retargets the

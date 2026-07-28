@@ -133,6 +133,25 @@ namespace FanaBridge
         public WheelCapabilities CurrentCapabilities => _wheelbase?.CurrentCapabilities ?? WheelCapabilities.None;
 
         /// <summary>
+        /// True when the connected wheel matches <paramref name="config"/> and live
+        /// capabilities (including a live profile override) are available. False for
+        /// registration-fallback — no wheel match, no wheelbase, or no live profile.
+        /// Shared by <see cref="ResolveCapsFor"/> and the §9b bake gate so no path can
+        /// treat registration caps as a live resolve.
+        /// </summary>
+        public bool HasLiveResolvedCapsFor(DeviceConfig config)
+        {
+            if (config == null)
+                return false;
+
+            var wheelbase = _wheelbase;
+            var current = CurrentCapabilities;
+            return current?.Profile != null && wheelbase != null
+                && config.MatchesAttachment(
+                    wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
+        }
+
+        /// <summary>
         /// Resolves the capabilities a specific device descriptor should use.
         /// Returns the live, currently-active capabilities (which respect any
         /// user override) only when the connected wheel actually matches this
@@ -147,14 +166,8 @@ namespace FanaBridge
             if (config == null)
                 return WheelCapabilities.None;
 
-            var wheelbase = _wheelbase;
-            var current = CurrentCapabilities;
-            if (current?.Profile != null && wheelbase != null
-                && config.MatchesAttachment(
-                    wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode))
-            {
-                return current;
-            }
+            if (HasLiveResolvedCapsFor(config))
+                return CurrentCapabilities;
 
             return config.Capabilities ?? WheelCapabilities.None;
         }

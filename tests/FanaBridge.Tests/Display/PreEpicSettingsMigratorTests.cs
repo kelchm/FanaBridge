@@ -1,4 +1,7 @@
 using System.Collections.Generic;
+using System.Linq;
+using FanaBridge.Display.Legacy;
+using FanaBridge.Display.Rules;
 using FanaBridge.Display.Schema2;
 using FanaBridge.Display.Host;
 using Newtonsoft.Json.Linq;
@@ -8,6 +11,7 @@ namespace FanaBridge.Tests.Display
 {
     /// <summary>
     /// Spec §9b — pre-epic settings → v2 direct migrator (bake-on-sight, marker, idempotent).
+    /// Mode-content oracle = <see cref="Host.LegacyModeMigrationTests"/> (kinds, names, layers).
     /// </summary>
     public class PreEpicSettingsMigratorTests
     {
@@ -93,7 +97,128 @@ namespace FanaBridge.Tests.Display
             Assert.True(PreEpicSettingsMigrator.HasMarker(doc));
         }
 
-        // ── itmDefaultPage → rest.inSessionPage ───────────────────────────
+        // ── displayMode → hosted content (oracle: LegacyModeMigrationTests) ─
+
+        [Theory]
+        [InlineData("Gear", ContentKind.Gear, "Gear")]
+        [InlineData("Speed", ContentKind.Speed, "Speed")]
+        [InlineData("TotallyBogus", ContentKind.Gear, "Gear")]
+        [InlineData("", ContentKind.Gear, "Gear")]
+        public void Bake_Mode_SynthesizesHostedBase_ShapeIdNameKind(
+            string mode, ContentKind kind, string label)
+        {
+            var doc = PreEpicSettingsMigrator.Bake(
+                DisplaySettings.ControlLegacy,
+                DisplaySettings.DefaultItmDefaultPage,
+                displayMode: mode,
+                itmCapable: false);
+
+            Assert.True(PreEpicSettingsMigrator.HasMarker(doc));
+            var page = Assert.Single(doc.Pages);
+            Assert.Equal(PageEntryKind.HostedPage, page.Kind);
+            Assert.False(string.IsNullOrEmpty(page.Id));
+            Assert.Equal(32, page.Id.Length); // Guid "N"
+            Assert.Equal(label, page.Name);
+            Assert.Equal(kind, page.Base.Content.Kind);
+            Assert.Null(page.Layers);
+            Assert.Equal(PageRefKind.HostedPage, doc.Priority.Rest.InSessionPage.Kind);
+            Assert.Equal(page.Id, doc.Priority.Rest.InSessionPage.Id);
+        }
+
+        [Fact]
+        public void Bake_NullMode_SynthesizesGear()
+        {
+            var doc = PreEpicSettingsMigrator.Bake(
+                DisplaySettings.ControlLegacy,
+                DisplaySettings.DefaultItmDefaultPage,
+                displayMode: null,
+                itmCapable: false);
+
+            var page = Assert.Single(doc.Pages);
+            Assert.Equal(ContentKind.Gear, page.Base.Content.Kind);
+            Assert.Equal("Gear", page.Name);
+        }
+
+        [Fact]
+        public void Bake_GearAndSpeed_BaseSpeed_OverlayGear_OnChangeHold()
+        {
+            var doc = PreEpicSettingsMigrator.Bake(
+                DisplaySettings.ControlLegacy,
+                DisplaySettings.DefaultItmDefaultPage,
+                displayMode: "GearAndSpeed",
+                itmCapable: false);
+
+            var page = Assert.Single(doc.Pages);
+            Assert.Equal("Speed", page.Name);
+            Assert.Equal(ContentKind.Speed, page.Base.Content.Kind);
+
+            var layer = Assert.Single(page.Layers);
+            Assert.Equal(32, layer.Id.Length);
+            Assert.Equal("Gear", layer.Name);
+            Assert.Equal(ContentKind.Gear, layer.Content.Kind);
+            Assert.Equal(ValueSourceKind.BuiltIn, layer.Condition.Source.Kind);
+            Assert.Equal(BuiltInProperties.Gear, layer.Condition.Source.Name);
+            Assert.Null(layer.Condition.Operator); // edge lives on lifetime
+            Assert.Equal(LifetimeKind.OnChange, layer.Lifetime.Kind);
+            Assert.Equal(LegacyValueFormatter.GearOverlayMs, layer.Lifetime.DurationMs);
+            Assert.Equal(RunsWhen.InGame, layer.Runs); // default eligibility
+        }
+
+        [Fact]
+        public void Bake_GearUpshiftBrackets_BaseGear_OverlayBrackets_RedlineWhileTrue()
+        {
+            var doc = PreEpicSettingsMigrator.Bake(
+                DisplaySettings.ControlLegacy,
+                DisplaySettings.DefaultItmDefaultPage,
+                displayMode: "GearUpshiftBrackets",
+                itmCapable: false);
+
+            var page = Assert.Single(doc.Pages);
+            Assert.Equal("Gear", page.Name);
+            Assert.Equal(ContentKind.Gear, page.Base.Content.Kind);
+
+            var layer = Assert.Single(page.Layers);
+            Assert.Equal(32, layer.Id.Length);
+            Assert.Equal("Gear (brackets)", layer.Name);
+            Assert.Equal(ContentKind.GearBrackets, layer.Content.Kind);
+            Assert.Equal(ConditionOperator.IsTrue, layer.Condition.Operator);
+            Assert.Equal(ValueSourceKind.BuiltIn, layer.Condition.Source.Kind);
+            Assert.Equal(BuiltInProperties.RedlineReached, layer.Condition.Source.Name);
+            Assert.Equal(LifetimeKind.WhileTrue, layer.Lifetime.Kind);
+            Assert.Equal(RunsWhen.InGame, layer.Runs);
+        }
+
+        [Fact]
+        public void Bake_ModeNone_NoHostedPages_StillMarked()
+        {
+            var doc = PreEpicSettingsMigrator.Bake(
+                DisplaySettings.ControlItm,
+                DisplaySettings.DefaultItmDefaultPage,
+                displayMode: DisplaySettings.ModeNone,
+                itmCapable: true);
+
+            Assert.True(PreEpicSettingsMigrator.HasMarker(doc));
+            Assert.Empty(doc.Pages);
+            Assert.Equal(PageRefKind.ItmPage, doc.Priority.Rest.InSessionPage.Kind);
+        }
+
+        [Fact]
+        public void Bake_FreshDefaults_SynthesizeGear_NotSilence()
+        {
+            // Superseded v9 Gear synthesis equivalent for fresh/default mode.
+            var doc = PreEpicSettingsMigrator.Bake(
+                DisplaySettings.ControlItm,
+                DisplaySettings.DefaultItmDefaultPage,
+                displayMode: DisplaySettings.DefaultMode,
+                itmCapable: true);
+
+            var page = Assert.Single(doc.Pages);
+            Assert.Equal("Gear", page.Name);
+            Assert.Equal(ContentKind.Gear, page.Base.Content.Kind);
+            Assert.Equal("lapInfo", doc.Priority.Rest.InSessionPage.CatalogPageId);
+        }
+
+        // ── itmDefaultPage → rest.inSessionPage (ITM-capable only) ────────
 
         [Fact]
         public void Bake_DefaultItmDefaultPage_RestIsLapInfo()
@@ -143,7 +268,9 @@ namespace FanaBridge.Tests.Display
                 DisplaySettings.ControlItm,
                 itmDefaultPage: 99,
                 itmDeviceId: 1,
-                warnings.Add);
+                displayMode: DisplaySettings.ModeNone,
+                itmCapable: true,
+                log: warnings.Add);
 
             Assert.Null(doc.Priority.Rest.InSessionPage);
             Assert.True(PreEpicSettingsMigrator.HasMarker(doc));
@@ -152,19 +279,62 @@ namespace FanaBridge.Tests.Display
             Assert.Contains("rest.inSessionPage omitted", warnings[0]);
         }
 
+        // ── Segment-only: no ITM entries ───────────────────────────────────
+
+        [Fact]
+        public void Bake_SegmentOnly_NoItmRest_ModeContentStillBakes()
+        {
+            var doc = PreEpicSettingsMigrator.Bake(
+                DisplaySettings.ControlLegacy,
+                itmDefaultPage: 3,
+                itmDeviceId: 3,
+                displayMode: "Speed",
+                itmCapable: false);
+
+            Assert.True(PreEpicSettingsMigrator.HasMarker(doc));
+            Assert.Equal(SettingsMode.LegacyOnly, doc.Settings.Mode);
+
+            var page = Assert.Single(doc.Pages);
+            Assert.Equal(PageEntryKind.HostedPage, page.Kind);
+            Assert.Equal(ContentKind.Speed, page.Base.Content.Kind);
+            Assert.Equal(PageRefKind.HostedPage, doc.Priority.Rest.InSessionPage.Kind);
+            Assert.Equal(page.Id, doc.Priority.Rest.InSessionPage.Id);
+
+            // Schema law: no ITM-anything on segment-only documents.
+            Assert.DoesNotContain(doc.Pages, p => p.Kind == PageEntryKind.ItmPage);
+            Assert.Null(doc.Priority.Rest.InSessionPage.CatalogPageId);
+        }
+
+        [Fact]
+        public void Bake_SegmentOnly_ModeNone_NoPages_NoItmRest()
+        {
+            var doc = PreEpicSettingsMigrator.Bake(
+                DisplaySettings.ControlOff,
+                itmDefaultPage: 1,
+                itmDeviceId: 3,
+                displayMode: DisplaySettings.ModeNone,
+                itmCapable: false);
+
+            Assert.True(PreEpicSettingsMigrator.HasMarker(doc));
+            Assert.Empty(doc.Pages);
+            Assert.Null(doc.Priority.Rest.InSessionPage);
+        }
+
         // ── Mapping surface is closed ─────────────────────────────────────
 
         [Fact]
-        public void Bake_DoesNotReadOtherPreEpicKeys()
+        public void Bake_DoesNotReadShowTotalsOrOtherUnlistedKeys()
         {
-            // displayMode / show totals are deliberately ignored — only control + page.
-            // A baked document has no pages/cycles/fields/wheelScreen content.
+            // Only control + page + mode + display-kind input. Show-totals are ignored.
             var doc = PreEpicSettingsMigrator.Bake(
-                DisplaySettings.ControlLegacy, itmDefaultPage: 2);
+                DisplaySettings.ControlLegacy,
+                itmDefaultPage: 2,
+                displayMode: "Gear",
+                itmCapable: true);
 
             Assert.Equal(SettingsMode.LegacyOnly, doc.Settings.Mode);
             Assert.Equal("fuelErsDrs", doc.Priority.Rest.InSessionPage.CatalogPageId);
-            Assert.Empty(doc.Pages);
+            Assert.Single(doc.Pages); // Gear hosted
             Assert.Empty(doc.Cycles);
             Assert.Empty(doc.Fields);
             Assert.Empty(doc.WheelScreen.Rules);
@@ -172,10 +342,13 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Bake_RoundTripsMarkerThroughSerializer()
+        public void Bake_RoundTripsMarkerAndModeContentThroughSerializer()
         {
             var baked = PreEpicSettingsMigrator.Bake(
-                DisplaySettings.ControlItm, DisplaySettings.DefaultItmDefaultPage);
+                DisplaySettings.ControlItm,
+                DisplaySettings.DefaultItmDefaultPage,
+                displayMode: "Speed",
+                itmCapable: true);
             string json = DisplayConfigV2Serializer.Save(baked);
             var reloaded = DisplayConfigV2Serializer.Load(json, _ => { });
 
@@ -184,6 +357,9 @@ namespace FanaBridge.Tests.Display
                 PageRefKind.ItmPage,
                 reloaded.Priority.Rest.InSessionPage.Kind);
             Assert.Equal("lapInfo", reloaded.Priority.Rest.InSessionPage.CatalogPageId);
+            var page = Assert.Single(reloaded.Pages);
+            Assert.Equal(ContentKind.Speed, page.Base.Content.Kind);
+            Assert.Equal("Speed", page.Name);
         }
 
         // ── Pure map helpers ──────────────────────────────────────────────
