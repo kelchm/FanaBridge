@@ -133,6 +133,11 @@ namespace FanaBridge.Display.Schema2
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
 
+        /// <summary>Set when base presentation is unusable (e.g. unrecognized effect).
+        /// Runtime-only.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
+
         /// <summary>Runtime-only effect coercion (serialized <see cref="EffectRaw"/>
         /// preserved) — e.g. flash → blink.</summary>
         internal void CoerceEffect(ContentEffect effect) => _effect = effect;

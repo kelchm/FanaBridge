@@ -523,10 +523,10 @@ namespace FanaBridge.Tests.Display
                             Value = 10.0,
                             Hysteresis = 2.0,
                         },
+                        // DurationMs omitted → runtime default 5000 (absent, not authored).
                         Lifetime = new Lifetime
                         {
                             Kind = LifetimeKind.ForDuration,
-                            DurationMs = Lifetime.DefaultDurationMs,
                         },
                     },
                     new Summon

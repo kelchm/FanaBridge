@@ -152,6 +152,7 @@ namespace FanaBridge.Display.Schema2
 
         private string _kindRaw;
         private LifetimeKind? _kind;
+        private int? _durationMs;
         private string _directionRaw;
         private ChangeDirection? _direction;
         private string _thenRaw;
@@ -174,11 +175,25 @@ namespace FanaBridge.Display.Schema2
             set { _kind = value; _kindRaw = FanaBridge.Display.Rules.EnumText.Write(value); }
         }
 
-        /// <summary><see cref="LifetimeKind.ForDuration"/> / onChange-without-then: visit length.
-        /// Default 5000 (suppressed).</summary>
+        /// <summary>
+        /// <see cref="LifetimeKind.ForDuration"/> / onChange-without-then: visit length.
+        /// Default 5000 when absent. Authored presence is tracked separately from the
+        /// value so <c>durationMs:5000</c> round-trips and participates in then+durationMs
+        /// mutual-exclusivity degrade rules (never rewritten on save).
+        /// </summary>
         [JsonProperty("durationMs")]
-        [DefaultValue(DefaultDurationMs)]
-        public int DurationMs { get; set; } = DefaultDurationMs;
+        public int DurationMs
+        {
+            get => _durationMs ?? DefaultDurationMs;
+            set => _durationMs = value;
+        }
+
+        /// <summary>True when <c>durationMs</c> was present in JSON or explicitly assigned.</summary>
+        [JsonIgnore]
+        public bool DurationMsPresent => _durationMs.HasValue;
+
+        /// <summary>Serialize only when authored/assigned — absent stays absent (runtime default).</summary>
+        public bool ShouldSerializeDurationMs() => _durationMs.HasValue;
 
         /// <summary>Serialized form of <see cref="Direction"/> for onChange.
         /// Default <c>any</c> is suppressed on write.</summary>

@@ -15,12 +15,12 @@ namespace FanaBridge.Tests.Display
     /// </summary>
     public class Schema2ValidatorTests
     {
-        private static DisplayConfigV2 Norm(DisplayConfigV2 cfg, List<string> log = null,
-            WheelCatalog catalog = null)
+        private static DisplayConfigV2 Norm(DisplayConfigV2? cfg, List<string>? log = null,
+            WheelCatalog? catalog = null)
             => DisplayConfigV2Validator.Normalize(cfg, log == null ? (_ => { }) : (Action<string>)log.Add,
                 catalog);
 
-        private static DisplayConfigV2 Load(string json, List<string> log = null)
+        private static DisplayConfigV2 Load(string json, List<string>? log = null)
             => DisplayConfigV2Serializer.Load(json, log == null ? (_ => { }) : (Action<string>)log.Add);
 
         private static string Save(DisplayConfigV2 cfg)
@@ -32,7 +32,7 @@ namespace FanaBridge.Tests.Display
             {
                 NullValueHandling = NullValueHandling.Ignore,
                 DefaultValueHandling = DefaultValueHandling.Ignore,
-            });
+            })!;
 
         private static void AssertUtf8Equal(string expected, string actual)
             => Assert.Equal(
@@ -1117,6 +1117,38 @@ namespace FanaBridge.Tests.Display
             Norm(cfg);
             Assert.Equal(LifetimeKind.WhileTrue, life.Kind);
             Assert.Equal("onChange", life.KindRaw);
+            // FZ-011: bring-up lifetime coercion is degrade-visible on the owning row.
+            Assert.True(cfg.Priority.Rows[0].DegradedAtLoad);
+        }
+
+        [Fact]
+        public void Shape_ChildRefSatellite_LifetimeCoercion_MarksRowDegraded()
+        {
+            var cfg = DocWithHosted();
+            cfg.Pages[0].Layers = new List<LayerEntry>
+            {
+                new LayerEntry
+                {
+                    Id = "l1",
+                    ActsAsEntrypoint = true,
+                    Content = new ContentObject { Kind = ContentKind.Text, Text = "A" },
+                    Condition = LevelCondition(),
+                    Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                },
+            };
+            var life = new Lifetime { Kind = LifetimeKind.OnChange };
+            cfg.Priority.Rows.Add(new PriorityRow
+            {
+                Kind = PriorityRowKind.Satellite,
+                Id = "sat1",
+                ChildRef = new ChildRef { PageId = "p-a", LayerId = "l1" },
+                Lifetime = life,
+            });
+            cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+            Norm(cfg);
+            Assert.Equal(LifetimeKind.WhileTrue, life.Kind);
+            Assert.Equal("onChange", life.KindRaw);
+            Assert.True(cfg.Priority.Rows[0].DegradedAtLoad);
         }
 
         [Fact]
@@ -1447,22 +1479,22 @@ namespace FanaBridge.Tests.Display
                 Load("");
                 var messy = new DisplayConfigV2
                 {
-                    Pages = new List<PageEntry> { null, new PageEntry() },
-                    Cycles = new List<CycleEntry> { null },
+                    Pages = new List<PageEntry> { null!, new PageEntry() },
+                    Cycles = new List<CycleEntry> { null! },
                     Priority = new PriorityLadder
                     {
-                        Rows = new List<PriorityRow> { null, new PriorityRow() },
+                        Rows = new List<PriorityRow> { null!, new PriorityRow() },
                     },
                     Fields = new Dictionary<ushort, FieldEntry>
                     {
-                        [0] = null,
-                        [1] = new FieldEntry { Overrides = new List<FieldOverride> { null } },
+                        [0] = null!,
+                        [1] = new FieldEntry { Overrides = new List<FieldOverride> { null! } },
                     },
                     WheelScreen = new WheelScreenPlane
                     {
-                        Rules = new List<WheelScreenRule> { null },
+                        Rules = new List<WheelScreenRule> { null! },
                     },
-                    PageOrder = new List<PageRef> { null },
+                    PageOrder = new List<PageRef> { null! },
                 };
                 Norm(messy);
             });
@@ -2088,6 +2120,836 @@ namespace FanaBridge.Tests.Display
             Norm(cfg, catalog: cat);
             string after = JsonConvert.SerializeObject(cat, Formatting.None);
             Assert.Equal(before, after);
+        }
+
+        // ── Freeze-round fixes (FZ-002 … FZ-011) ─────────────────────────
+
+        [Theory]
+        [InlineData("summon")]
+        [InlineData("override")]
+        [InlineData("layer")]
+        [InlineData("fieldBase")]
+        [InlineData("content")]
+        [InlineData("wheelRule")]
+        public void FZ002_ScriptSource_ParsedButInert_OnEveryCarrier(string site)
+        {
+            var cfg = DocWithHosted();
+            var script = new ValueSource { Kind = ValueSourceKind.Script, Name = "myScript" };
+
+            switch (site)
+            {
+                case "summon":
+                    cfg.Priority.Rows.Add(new PriorityRow
+                    {
+                        Kind = PriorityRowKind.Seat,
+                        Id = "s1",
+                        Target = Hosted("p-a"),
+                        Summons = new List<Summon>
+                        {
+                            new Summon
+                            {
+                                Id = "e1",
+                                Condition = new Condition
+                                {
+                                    Source = script,
+                                    Operator = ConditionOperator.IsTrue,
+                                },
+                                Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                            },
+                        },
+                    });
+                    cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+                    Norm(cfg);
+                    Assert.True(script.DegradedAtLoad);
+                    Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
+                    Assert.False(cfg.Priority.Rows[0].Summons[0].EffectivelyEnabled);
+                    Assert.Equal("script", script.KindRaw);
+                    break;
+
+                case "override":
+                    cfg.Fields[1] = new FieldEntry
+                    {
+                        Overrides = new List<FieldOverride>
+                        {
+                            new FieldOverride
+                            {
+                                Id = "o1",
+                                Writes = FieldWrites.Value,
+                                Content = new ContentObject { Kind = ContentKind.Text, Text = "X" },
+                                Condition = new Condition
+                                {
+                                    Source = script,
+                                    Operator = ConditionOperator.IsTrue,
+                                },
+                                Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                            },
+                        },
+                    };
+                    Norm(cfg);
+                    Assert.True(script.DegradedAtLoad);
+                    Assert.True(cfg.Fields[1].Overrides[0].DegradedAtLoad);
+                    Assert.Equal("script", script.KindRaw);
+                    break;
+
+                case "layer":
+                    cfg.Pages[0].Layers = new List<LayerEntry>
+                    {
+                        new LayerEntry
+                        {
+                            Id = "l1",
+                            Content = new ContentObject { Kind = ContentKind.Text, Text = "X" },
+                            Condition = new Condition
+                            {
+                                Source = script,
+                                Operator = ConditionOperator.IsTrue,
+                            },
+                            Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                        },
+                    };
+                    Norm(cfg);
+                    Assert.True(script.DegradedAtLoad);
+                    Assert.True(cfg.Pages[0].Layers[0].DegradedAtLoad);
+                    Assert.Equal("script", script.KindRaw);
+                    break;
+
+                case "fieldBase":
+                    cfg.Fields[1] = new FieldEntry { Base = new FieldBase { Source = script } };
+                    Norm(cfg);
+                    Assert.True(script.DegradedAtLoad);
+                    Assert.Equal("script", script.KindRaw);
+                    break;
+
+                case "content":
+                    cfg.Pages[0].Base = new ContentWithEffect
+                    {
+                        Content = new ContentObject
+                        {
+                            Kind = ContentKind.Property,
+                            Source = script,
+                        },
+                    };
+                    Norm(cfg);
+                    Assert.True(script.DegradedAtLoad);
+                    Assert.True(cfg.Pages[0].Base.Content.DegradedAtLoad);
+                    Assert.Equal("script", script.KindRaw);
+                    break;
+
+                case "wheelRule":
+                    cfg.WheelScreen.Rules.Add(new WheelScreenRule
+                    {
+                        Id = "w1",
+                        Screen = WheelScreenCommand.Logo,
+                        Condition = new Condition
+                        {
+                            Source = script,
+                            Operator = ConditionOperator.IsTrue,
+                        },
+                        Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                    });
+                    Norm(cfg);
+                    Assert.True(script.DegradedAtLoad);
+                    Assert.True(cfg.WheelScreen.Rules[0].DegradedAtLoad);
+                    Assert.Equal("script", script.KindRaw);
+                    break;
+            }
+        }
+
+        [Fact]
+        public void FZ003_PageOrder_AbsentVsEmpty_AreDifferentStates()
+        {
+            // Absent → null on POCO; not emitted on save.
+            var absent = Load(@"{ ""schemaVersion"": 2 }");
+            Assert.Null(absent.PageOrder);
+            string absentSaved = Save(absent);
+            Assert.DoesNotContain("pageOrder", absentSaved);
+
+            // Explicit [] → empty list; emitted on save; round-trips.
+            var empty = Load(@"{ ""schemaVersion"": 2, ""pageOrder"": [] }");
+            Assert.NotNull(empty.PageOrder);
+            Assert.Empty(empty.PageOrder);
+            string emptySaved = Save(empty);
+            Assert.Contains("\"pageOrder\": []", emptySaved.Replace("\r\n", "\n"));
+            var empty2 = Load(emptySaved);
+            Assert.NotNull(empty2.PageOrder);
+            Assert.Empty(empty2.PageOrder);
+        }
+
+        [Fact]
+        public void FZ005_ThenPlusDurationMs5000_DegradesAndPreserves()
+        {
+            string json = @"{
+  ""schemaVersion"": 2,
+  ""pages"": [ { ""kind"": ""hostedPage"", ""id"": ""p-a"", ""name"": ""A"" } ],
+  ""priority"": {
+    ""rows"": [
+      {
+        ""kind"": ""seat"",
+        ""id"": ""s1"",
+        ""target"": { ""kind"": ""hostedPage"", ""id"": ""p-a"" },
+        ""summons"": [ {
+          ""id"": ""e1"",
+          ""condition"": {
+            ""source"": { ""kind"": ""builtIn"", ""name"": ""BrakeBias"" }
+          },
+          ""lifetime"": {
+            ""kind"": ""onChange"",
+            ""then"": ""untilDismissed"",
+            ""durationMs"": 5000
+          }
+        } ]
+      },
+      { ""kind"": ""manual"" }
+    ]
+  }
+}";
+            var cfg = Load(json);
+            var life = cfg.Priority.Rows[0].Summons[0].Lifetime;
+            Assert.True(life.DurationMsPresent);
+            Assert.Equal(5000, life.DurationMs);
+            Assert.True(life.DurationMsIgnored);
+            Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
+
+            // Authored durationMs preserved on save (never rewritten / suppressed).
+            string saved = Save(cfg);
+            Assert.Contains("\"durationMs\": 5000", saved);
+            var again = Load(saved);
+            Assert.True(again.Priority.Rows[0].Summons[0].Lifetime.DurationMsPresent);
+            Assert.Equal(5000, again.Priority.Rows[0].Summons[0].Lifetime.DurationMs);
+        }
+
+        [Fact]
+        public void FZ006_LandingPage_ItmPageRef_DegradedWithFallback()
+        {
+            var cfg = DocWithHosted();
+            cfg.Priority.Rest.LandingPage = Itm("fuelErsDrs");
+            Norm(cfg);
+            Assert.True(cfg.Priority.Rest.LandingPage.DegradedAtLoad);
+            Assert.True(cfg.Priority.Rest.LandingPageUseFallback);
+            Assert.Equal(PageRefKind.ItmPage, cfg.Priority.Rest.LandingPage.Kind);
+        }
+
+        [Fact]
+        public void FZ007_ReservedHostedPageId_DegradedAndUnresolved()
+        {
+            var cfg = new DisplayConfigV2();
+            cfg.Pages.Add(new PageEntry
+            {
+                Kind = PageEntryKind.HostedPage,
+                Id = "p-v1-legacy",
+                Name = "User claimed reserved",
+            });
+            cfg.Priority.Rest.LandingPage = Hosted("p-v1-legacy");
+            Norm(cfg);
+            Assert.True(cfg.Pages[0].DegradedAtLoad);
+            // Not indexed → landing remains unresolved (placeholder semantics).
+            Assert.True(cfg.Priority.Rest.LandingPage.DegradedAtLoad);
+            Assert.True(cfg.Priority.Rest.LandingPageUseFallback);
+        }
+
+        public static IEnumerable<object[]> UnknownEnumCarrierCases()
+        {
+            // One unknown-spelling case per enum-carrier pair (FZ-008).
+            yield return new object[] { "runs.summon", "runs", "futureMode" };
+            yield return new object[] { "runs.override", "runs", "futureMode" };
+            yield return new object[] { "runs.layer", "runs", "futureMode" };
+            yield return new object[] { "runs.wheelRule", "runs", "futureMode" };
+            yield return new object[] { "content.kind", "contentKind", "contentKindX" };
+            yield return new object[] { "effect.base", "effect", "sparkle" };
+            yield return new object[] { "effect.override", "effect", "sparkle" };
+            yield return new object[] { "effect.layer", "effect", "sparkle" };
+            yield return new object[] { "writes", "writes", "writesX" };
+            yield return new object[] { "alignment", "alignment", "leftish" };
+            yield return new object[] { "settings.mode", "mode", "telepathy" };
+            yield return new object[] { "idle.kind", "idleKind", "idleKindX" };
+            yield return new object[] { "idle.screen", "idleScreen", "holodeck" };
+            yield return new object[] { "direction", "direction", "sideways" };
+            yield return new object[] { "then", "then", "forAWhile" };
+            yield return new object[] { "row.kind", "rowKind", "rowKindX" };
+            yield return new object[] { "pageRef.kind", "pageRefKind", "pageRefX" };
+            yield return new object[] { "source.kind", "sourceKind", "sourceKindX" };
+            yield return new object[] { "operator", "operator", "sparkles" };
+            yield return new object[] { "page.kind", "pageKind", "pageKindX" };
+            yield return new object[] { "lifetime.kind", "lifetimeKind", "untilTomorrow" };
+            yield return new object[] { "wheel.screen", "wheelScreen", "holodeck" };
+        }
+
+        [Theory]
+        [MemberData(nameof(UnknownEnumCarrierCases))]
+        public void FZ008_UnknownEnumSpelling_DegradesCarrier(string caseId, string family, string spelling)
+        {
+            _ = family; // documented grouping only
+            DisplayConfigV2 cfg;
+            Action assertDegraded;
+
+            switch (caseId)
+            {
+                case "runs.summon":
+                    cfg = DocWithHosted();
+                    cfg.Priority.Rows.Add(new PriorityRow
+                    {
+                        Kind = PriorityRowKind.Seat,
+                        Id = "s1",
+                        Target = Hosted("p-a"),
+                        Summons = new List<Summon>
+                        {
+                            new Summon
+                            {
+                                Id = "e1",
+                                RunsRaw = spelling,
+                                Condition = LevelCondition(),
+                                Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                            },
+                        },
+                    });
+                    cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Priority.Rows[0].Summons[0].RunsRaw);
+                        Assert.Equal(RunsWhen.Unknown, cfg.Priority.Rows[0].Summons[0].Runs);
+                    };
+                    break;
+
+                case "runs.override":
+                    cfg = new DisplayConfigV2();
+                    cfg.Fields[1] = new FieldEntry
+                    {
+                        Overrides = new List<FieldOverride>
+                        {
+                            new FieldOverride
+                            {
+                                Id = "o1",
+                                Writes = FieldWrites.Value,
+                                RunsRaw = spelling,
+                                Content = new ContentObject { Kind = ContentKind.Text, Text = "X" },
+                                Condition = LevelCondition(),
+                                Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                            },
+                        },
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Fields[1].Overrides[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Fields[1].Overrides[0].RunsRaw);
+                    };
+                    break;
+
+                case "runs.layer":
+                    cfg = DocWithHosted();
+                    cfg.Pages[0].Layers = new List<LayerEntry>
+                    {
+                        new LayerEntry
+                        {
+                            Id = "l1",
+                            RunsRaw = spelling,
+                            Content = new ContentObject { Kind = ContentKind.Text, Text = "X" },
+                            Condition = LevelCondition(),
+                            Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                        },
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Pages[0].Layers[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Pages[0].Layers[0].RunsRaw);
+                    };
+                    break;
+
+                case "runs.wheelRule":
+                    cfg = new DisplayConfigV2();
+                    cfg.WheelScreen.Rules.Add(new WheelScreenRule
+                    {
+                        Id = "w1",
+                        Screen = WheelScreenCommand.Logo,
+                        RunsRaw = spelling,
+                        Condition = LevelCondition(),
+                        Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                    });
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.WheelScreen.Rules[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.WheelScreen.Rules[0].RunsRaw);
+                    };
+                    break;
+
+                case "content.kind":
+                    cfg = DocWithHosted();
+                    cfg.Pages[0].Base = new ContentWithEffect
+                    {
+                        Content = new ContentObject { KindRaw = spelling },
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Pages[0].Base.Content.DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Pages[0].Base.Content.KindRaw);
+                        Assert.Equal(ContentKind.Unknown, cfg.Pages[0].Base.Content.Kind);
+                    };
+                    break;
+
+                case "effect.base":
+                    cfg = DocWithHosted();
+                    cfg.Pages[0].Base = new ContentWithEffect
+                    {
+                        Content = new ContentObject { Kind = ContentKind.Text, Text = "X" },
+                        EffectRaw = spelling,
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Pages[0].Base.DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Pages[0].Base.EffectRaw);
+                        Assert.Equal(ContentEffect.Unknown, cfg.Pages[0].Base.Effect);
+                    };
+                    break;
+
+                case "effect.override":
+                    cfg = new DisplayConfigV2();
+                    cfg.Fields[1] = new FieldEntry
+                    {
+                        Overrides = new List<FieldOverride>
+                        {
+                            new FieldOverride
+                            {
+                                Id = "o1",
+                                Writes = FieldWrites.Value,
+                                EffectRaw = spelling,
+                                Content = new ContentObject { Kind = ContentKind.Text, Text = "X" },
+                                Condition = LevelCondition(),
+                                Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                            },
+                        },
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Fields[1].Overrides[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Fields[1].Overrides[0].EffectRaw);
+                    };
+                    break;
+
+                case "effect.layer":
+                    cfg = DocWithHosted();
+                    cfg.Pages[0].Layers = new List<LayerEntry>
+                    {
+                        new LayerEntry
+                        {
+                            Id = "l1",
+                            EffectRaw = spelling,
+                            Content = new ContentObject { Kind = ContentKind.Text, Text = "X" },
+                            Condition = LevelCondition(),
+                            Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                        },
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Pages[0].Layers[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Pages[0].Layers[0].EffectRaw);
+                    };
+                    break;
+
+                case "writes":
+                    cfg = new DisplayConfigV2();
+                    cfg.Fields[1] = new FieldEntry
+                    {
+                        Overrides = new List<FieldOverride>
+                        {
+                            new FieldOverride
+                            {
+                                Id = "o1",
+                                WritesRaw = spelling,
+                                Content = new ContentObject { Kind = ContentKind.Text, Text = "X" },
+                                Condition = LevelCondition(),
+                                Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                            },
+                        },
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Fields[1].Overrides[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Fields[1].Overrides[0].WritesRaw);
+                        Assert.Equal(FieldWrites.Unknown, cfg.Fields[1].Overrides[0].Writes);
+                    };
+                    break;
+
+                case "alignment":
+                    cfg = new DisplayConfigV2();
+                    cfg.Fields[1] = new FieldEntry
+                    {
+                        Overrides = new List<FieldOverride>
+                        {
+                            new FieldOverride
+                            {
+                                Id = "o1",
+                                Writes = FieldWrites.Value,
+                                AlignmentRaw = spelling,
+                                Content = new ContentObject { Kind = ContentKind.Text, Text = "X" },
+                                Condition = LevelCondition(),
+                                Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                            },
+                        },
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Fields[1].Overrides[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Fields[1].Overrides[0].AlignmentRaw);
+                        Assert.Equal(FieldAlignment.Unknown, cfg.Fields[1].Overrides[0].Alignment);
+                    };
+                    break;
+
+                case "settings.mode":
+                    cfg = new DisplayConfigV2 { Settings = new SettingsBlock { ModeRaw = spelling } };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Settings.DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Settings.ModeRaw);
+                        Assert.Equal(SettingsMode.Unknown, cfg.Settings.Mode);
+                    };
+                    break;
+
+                case "idle.kind":
+                    cfg = new DisplayConfigV2
+                    {
+                        Priority = new PriorityLadder
+                        {
+                            Rest = new RestBlock { Idle = new IdleSpec { KindRaw = spelling } },
+                        },
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Priority.Rest.Idle.DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Priority.Rest.Idle.KindRaw);
+                    };
+                    break;
+
+                case "idle.screen":
+                    cfg = new DisplayConfigV2
+                    {
+                        Priority = new PriorityLadder
+                        {
+                            Rest = new RestBlock
+                            {
+                                Idle = new IdleSpec
+                                {
+                                    Kind = IdleKind.Screen,
+                                    ScreenRaw = spelling,
+                                },
+                            },
+                        },
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Priority.Rest.Idle.DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Priority.Rest.Idle.ScreenRaw);
+                    };
+                    break;
+
+                case "direction":
+                    cfg = DocWithHosted();
+                    cfg.Priority.Rows.Add(new PriorityRow
+                    {
+                        Kind = PriorityRowKind.Seat,
+                        Id = "s1",
+                        Target = Hosted("p-a"),
+                        Summons = new List<Summon>
+                        {
+                            new Summon
+                            {
+                                Id = "e1",
+                                Condition = new Condition
+                                {
+                                    Source = new ValueSource
+                                    {
+                                        Kind = ValueSourceKind.BuiltIn,
+                                        Name = "BrakeBias",
+                                    },
+                                },
+                                Lifetime = new Lifetime
+                                {
+                                    Kind = LifetimeKind.OnChange,
+                                    DirectionRaw = spelling,
+                                },
+                            },
+                        },
+                    });
+                    cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
+                        Assert.True(cfg.Priority.Rows[0].Summons[0].Lifetime.DirectionCoercedToAny);
+                        Assert.Equal(spelling, cfg.Priority.Rows[0].Summons[0].Lifetime.DirectionRaw);
+                    };
+                    break;
+
+                case "then":
+                    cfg = DocWithHosted();
+                    cfg.Priority.Rows.Add(new PriorityRow
+                    {
+                        Kind = PriorityRowKind.Seat,
+                        Id = "s1",
+                        Target = Hosted("p-a"),
+                        Summons = new List<Summon>
+                        {
+                            new Summon
+                            {
+                                Id = "e1",
+                                Condition = new Condition
+                                {
+                                    Source = new ValueSource
+                                    {
+                                        Kind = ValueSourceKind.BuiltIn,
+                                        Name = "BrakeBias",
+                                    },
+                                },
+                                Lifetime = new Lifetime
+                                {
+                                    Kind = LifetimeKind.OnChange,
+                                    ThenRaw = spelling,
+                                },
+                            },
+                        },
+                    });
+                    cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
+                        Assert.True(cfg.Priority.Rows[0].Summons[0].Lifetime.ThenIgnored);
+                        Assert.Equal(spelling, cfg.Priority.Rows[0].Summons[0].Lifetime.ThenRaw);
+                    };
+                    break;
+
+                case "row.kind":
+                    cfg = new DisplayConfigV2();
+                    cfg.Priority.Rows.Add(new PriorityRow { KindRaw = spelling, Id = "x" });
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Priority.Rows[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Priority.Rows[0].KindRaw);
+                    };
+                    break;
+
+                case "pageRef.kind":
+                    cfg = DocWithHosted();
+                    cfg.PageOrder = new List<PageRef>
+                    {
+                        new PageRef { KindRaw = spelling, Id = "x" },
+                    };
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.PageOrder[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.PageOrder[0].KindRaw);
+                    };
+                    break;
+
+                case "source.kind":
+                    cfg = DocWithHosted();
+                    cfg.Priority.Rows.Add(new PriorityRow
+                    {
+                        Kind = PriorityRowKind.Seat,
+                        Id = "s1",
+                        Target = Hosted("p-a"),
+                        Summons = new List<Summon>
+                        {
+                            new Summon
+                            {
+                                Id = "e1",
+                                Condition = new Condition
+                                {
+                                    Source = new ValueSource { KindRaw = spelling, Name = "n" },
+                                    Operator = ConditionOperator.IsTrue,
+                                },
+                                Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                            },
+                        },
+                    });
+                    cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
+                        Assert.True(cfg.Priority.Rows[0].Summons[0].Condition.Source.DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Priority.Rows[0].Summons[0].Condition.Source.KindRaw);
+                    };
+                    break;
+
+                case "operator":
+                    cfg = DocWithHosted();
+                    cfg.Priority.Rows.Add(new PriorityRow
+                    {
+                        Kind = PriorityRowKind.Seat,
+                        Id = "s1",
+                        Target = Hosted("p-a"),
+                        Summons = new List<Summon>
+                        {
+                            new Summon
+                            {
+                                Id = "e1",
+                                Condition = new Condition
+                                {
+                                    Source = new ValueSource
+                                    {
+                                        Kind = ValueSourceKind.BuiltIn,
+                                        Name = "FuelPercent",
+                                    },
+                                    OperatorRaw = spelling,
+                                    Value = 1,
+                                },
+                                Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                            },
+                        },
+                    });
+                    cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Priority.Rows[0].Summons[0].Condition.OperatorRaw);
+                    };
+                    break;
+
+                case "page.kind":
+                    cfg = new DisplayConfigV2();
+                    cfg.Pages.Add(new PageEntry { KindRaw = spelling, Id = "x" });
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Pages[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Pages[0].KindRaw);
+                    };
+                    break;
+
+                case "lifetime.kind":
+                    cfg = DocWithHosted();
+                    cfg.Priority.Rows.Add(new PriorityRow
+                    {
+                        Kind = PriorityRowKind.Seat,
+                        Id = "s1",
+                        Target = Hosted("p-a"),
+                        Summons = new List<Summon>
+                        {
+                            new Summon
+                            {
+                                Id = "e1",
+                                Condition = LevelCondition(),
+                                Lifetime = new Lifetime { KindRaw = spelling },
+                            },
+                        },
+                    });
+                    cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.Priority.Rows[0].Summons[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.Priority.Rows[0].Summons[0].Lifetime.KindRaw);
+                    };
+                    break;
+
+                case "wheel.screen":
+                    cfg = new DisplayConfigV2();
+                    cfg.WheelScreen.Rules.Add(new WheelScreenRule
+                    {
+                        Id = "w1",
+                        ScreenRaw = spelling,
+                        Condition = LevelCondition(),
+                        Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                    });
+                    assertDegraded = () =>
+                    {
+                        Assert.True(cfg.WheelScreen.Rules[0].DegradedAtLoad);
+                        Assert.Equal(spelling, cfg.WheelScreen.Rules[0].ScreenRaw);
+                    };
+                    break;
+
+                default:
+                    throw new InvalidOperationException("unknown case " + caseId);
+            }
+
+            Norm(cfg);
+            assertDegraded();
+        }
+
+        [Fact]
+        public void FZ009_ChildRef_StoredTarget_IgnoredAndDegraded()
+        {
+            var cfg = DocWithHosted();
+            cfg.Pages[0].Layers = new List<LayerEntry>
+            {
+                new LayerEntry
+                {
+                    Id = "l1",
+                    ActsAsEntrypoint = true,
+                    Content = new ContentObject { Kind = ContentKind.Text, Text = "A" },
+                    Condition = LevelCondition(),
+                    Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                },
+            };
+            cfg.Priority.Rows.Add(new PriorityRow
+            {
+                Kind = PriorityRowKind.Satellite,
+                Id = "sat1",
+                Target = Hosted("p-a"),
+                ChildRef = new ChildRef { PageId = "p-a", LayerId = "l1" },
+            });
+            cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+            Norm(cfg);
+            Assert.True(cfg.Priority.Rows[0].TargetIgnored);
+            Assert.True(cfg.Priority.Rows[0].DegradedAtLoad);
+            Assert.Equal("p-a", cfg.Priority.Rows[0].Target.Id); // document preserved
+        }
+
+        [Fact]
+        public void FZ009_ChildRef_BothFieldAndLayerShapes_DegradedNoSilentPreference()
+        {
+            var cfg = DocWithHosted();
+            cfg.Fields[9] = new FieldEntry
+            {
+                Overrides = new List<FieldOverride>
+                {
+                    new FieldOverride
+                    {
+                        Id = "o1",
+                        ActsAsEntrypoint = true,
+                        Writes = FieldWrites.Value,
+                        Content = new ContentObject { Kind = ContentKind.Text, Text = "X" },
+                        Condition = LevelCondition(),
+                        Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                    },
+                },
+            };
+            cfg.Pages[0].Layers = new List<LayerEntry>
+            {
+                new LayerEntry
+                {
+                    Id = "l1",
+                    ActsAsEntrypoint = true,
+                    Content = new ContentObject { Kind = ContentKind.Text, Text = "A" },
+                    Condition = LevelCondition(),
+                    Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                },
+            };
+            cfg.Priority.Rows.Add(new PriorityRow
+            {
+                Kind = PriorityRowKind.Satellite,
+                Id = "sat1",
+                ChildRef = new ChildRef
+                {
+                    Field = "9",
+                    OverrideId = "o1",
+                    PageId = "p-a",
+                    LayerId = "l1",
+                },
+            });
+            cfg.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+            Norm(cfg);
+            Assert.True(cfg.Priority.Rows[0].ChildRefAmbiguous);
+            Assert.True(cfg.Priority.Rows[0].DegradedAtLoad);
+        }
+
+        [Fact]
+        public void FZ010_IdleScreenBlank_Degraded()
+        {
+            var cfg = new DisplayConfigV2();
+            cfg.Priority.Rest.Idle = new IdleSpec
+            {
+                Kind = IdleKind.Screen,
+                Screen = WheelScreenCommand.Blank,
+            };
+            Norm(cfg);
+            Assert.True(cfg.Priority.Rest.Idle.DegradedAtLoad);
+            Assert.True(cfg.Priority.Rest.Idle.ScreenIgnored);
+            Assert.Equal("blank", cfg.Priority.Rest.Idle.ScreenRaw); // raw preserved
         }
     }
 }

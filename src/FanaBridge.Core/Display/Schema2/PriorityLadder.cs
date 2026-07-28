@@ -137,6 +137,16 @@ namespace FanaBridge.Display.Schema2
         /// ignored at runtime. Document preserves both.</summary>
         [JsonIgnore]
         public bool SummonsIgnored { get; internal set; }
+
+        /// <summary>ChildRef satellite with a stored target: target is derived-only and
+        /// ignored at runtime. Document value preserved.</summary>
+        [JsonIgnore]
+        public bool TargetIgnored { get; internal set; }
+
+        /// <summary>ChildRef carrying both field and layer shapes: ambiguous, degraded.
+        /// Document preserves both; runtime does not silently prefer either shape.</summary>
+        [JsonIgnore]
+        public bool ChildRefAmbiguous { get; internal set; }
     }
 
     /// <summary>Priority row discriminator.</summary>

@@ -123,6 +123,15 @@ namespace FanaBridge.Display.Schema2
                             page.DegradedAtLoad = true;
                             warn("hosted page '" + (page.Name ?? "?") + "' degraded — no id");
                         }
+                        else if (IsReservedHostedPageId(page.Id))
+                        {
+                            // Reserved p-v1-* namespace — user ids must not claim it, and
+                            // must not enter the identity index (bare-Legacy placeholder
+                            // stays intentionally unresolved).
+                            page.DegradedAtLoad = true;
+                            warn("hosted page id '" + page.Id
+                                + "' uses reserved p-v1- prefix — degraded");
+                        }
                         else if (!hostedPageIds.Add(page.Id))
                         {
                             page.DegradedAtLoad = true;
@@ -207,8 +216,11 @@ namespace FanaBridge.Display.Schema2
             }
 
             NormalizeContentObject(layer.Content, label, warn);
-            CoerceFlashEffect(layer.Effect, raw => layer.CoerceEffect(ContentEffect.Blink),
-                label, warn);
+            NormalizeEffect(layer.Effect, layer.EffectRaw,
+                e => layer.CoerceEffect(ContentEffect.Blink),
+                label, warn, () => layer.DegradedAtLoad = true);
+            NormalizeRuns(layer.Runs, layer.RunsRaw, label, warn,
+                () => layer.DegradedAtLoad = true);
 
             NormalizeConditionLifetimePair(
                 layer.Condition, layer.Lifetime,
@@ -363,7 +375,27 @@ namespace FanaBridge.Display.Schema2
             }
 
             NormalizeContentObject(ov.Content, label, warn);
-            CoerceFlashEffect(ov.Effect, e => ov.CoerceEffect(ContentEffect.Blink), label, warn);
+            NormalizeEffect(ov.Effect, ov.EffectRaw,
+                e => ov.CoerceEffect(ContentEffect.Blink), label, warn,
+                () => ov.DegradedAtLoad = true);
+            NormalizeRuns(ov.Runs, ov.RunsRaw, label, warn,
+                () => ov.DegradedAtLoad = true);
+
+            if (ov.Writes == FieldWrites.Unknown)
+            {
+                ov.DegradedAtLoad = true;
+                warn(label + " degraded — "
+                    + (string.IsNullOrWhiteSpace(ov.WritesRaw) ? "no writes"
+                        : "unrecognized writes '" + ov.WritesRaw + "'"));
+            }
+
+            if (ov.Alignment == FieldAlignment.Unknown
+                && !string.IsNullOrWhiteSpace(ov.AlignmentRaw))
+            {
+                ov.DegradedAtLoad = true;
+                warn(label + " degraded — unrecognized alignment '"
+                    + ov.AlignmentRaw + "'");
+            }
 
             NormalizeConditionLifetimePair(
                 ov.Condition, ov.Lifetime,
@@ -622,13 +654,17 @@ namespace FanaBridge.Display.Schema2
 
                 // bringUpLifetime domain: whileTrue | forDuration only.
                 if (row.BringUpLifetime != null)
-                    NormalizeBringUpLifetime(row.BringUpLifetime, label + " bringUpLifetime", warn);
+                {
+                    NormalizeBringUpLifetime(row.BringUpLifetime, label + " bringUpLifetime", warn,
+                        () => row.DegradedAtLoad = true);
+                }
             }
             else if (row.Kind == PriorityRowKind.Satellite)
             {
                 bool hasSummons = row.Summons != null && row.Summons.Count > 0;
-                bool hasChildRef = row.ChildRef != null
-                    && (HasFieldChildRef(row.ChildRef) || HasLayerChildRef(row.ChildRef));
+                bool hasFieldShape = HasFieldChildRef(row.ChildRef);
+                bool hasLayerShape = HasLayerChildRef(row.ChildRef);
+                bool hasChildRef = hasFieldShape || hasLayerShape;
 
                 if (hasSummons && hasChildRef)
                 {
@@ -647,8 +683,27 @@ namespace FanaBridge.Display.Schema2
                 // a second pass once all pages/fields are indexed.
                 if (hasChildRef)
                 {
+                    // Target on childRef satellites is derived-only — stored target ignored.
+                    if (row.Target != null)
+                    {
+                        row.TargetIgnored = true;
+                        row.DegradedAtLoad = true;
+                        warn(label + ": childRef satellite has stored target — ignored (derived-only)");
+                    }
+
+                    // Both field and layer shapes → ambiguous; no silent preference.
+                    if (hasFieldShape && hasLayerShape)
+                    {
+                        row.ChildRefAmbiguous = true;
+                        row.DegradedAtLoad = true;
+                        warn(label + " degraded — childRef has both field and layer shapes");
+                    }
+
                     if (row.Lifetime != null)
-                        NormalizeBringUpLifetime(row.Lifetime, label + " lifetime", warn);
+                    {
+                        NormalizeBringUpLifetime(row.Lifetime, label + " lifetime", warn,
+                            () => row.DegradedAtLoad = true);
+                    }
                 }
 
                 if (hasSummons && !row.SummonsIgnored)
@@ -696,6 +751,14 @@ namespace FanaBridge.Display.Schema2
 
                 string label = "priority row '" + (row.Id ?? "?") + "' childRef";
                 var cr = row.ChildRef;
+
+                // Ambiguous dual-shape: already degraded; do not silently resolve either side.
+                if (row.ChildRefAmbiguous || (HasFieldChildRef(cr) && HasLayerChildRef(cr)))
+                {
+                    row.ChildRefAmbiguous = true;
+                    row.DegradedAtLoad = true;
+                    continue;
+                }
 
                 if (HasFieldChildRef(cr))
                 {
@@ -792,6 +855,9 @@ namespace FanaBridge.Display.Schema2
                 warn("duplicate summon id '" + summon.Id + "' — keeping the first");
             }
 
+            NormalizeRuns(summon.Runs, summon.RunsRaw, label, warn,
+                () => summon.DegradedAtLoad = true);
+
             NormalizeConditionLifetimePair(
                 summon.Condition, summon.Lifetime,
                 isFieldOverride: false,
@@ -829,11 +895,14 @@ namespace FanaBridge.Display.Schema2
 
             if (rest.LandingPage != null)
             {
-                if (rest.LandingPage.Kind == PageRefKind.Cycle)
+                // landingPage accepts hostedPage refs ONLY (§5 / FZ-006).
+                if (rest.LandingPage.Kind != PageRefKind.HostedPage)
                 {
                     rest.LandingPage.DegradedAtLoad = true;
                     rest.LandingPageUseFallback = true;
-                    warn("rest.landingPage references a cycle — degraded; runtime falls back");
+                    warn("rest.landingPage requires hostedPage — degraded ("
+                        + (rest.LandingPage.KindRaw ?? "no kind")
+                        + "); runtime falls back");
                 }
                 else if (!IsResolvablePageMember(rest.LandingPage, hostedPageIds, itmCatalogIds,
                     catalog, allowCycle: false, out string reason))
@@ -880,7 +949,14 @@ namespace FanaBridge.Display.Schema2
                     break;
 
                 case IdleKind.Screen:
-                    if (idle.Screen == WheelScreenCommand.Unknown)
+                    // blank has its own kind — screen:"blank" is not a legal screen value.
+                    if (idle.Screen == WheelScreenCommand.Blank)
+                    {
+                        idle.DegradedAtLoad = true;
+                        idle.ScreenIgnored = true;
+                        warn("rest.idle {kind:screen,screen:blank} degraded — use kind blank");
+                    }
+                    else if (idle.Screen == WheelScreenCommand.Unknown)
                     {
                         idle.DegradedAtLoad = true;
                         idle.ScreenIgnored = true;
@@ -1027,6 +1103,9 @@ namespace FanaBridge.Display.Schema2
                     }
                 }
 
+                NormalizeRuns(rule.Runs, rule.RunsRaw, label, warn,
+                    () => rule.DegradedAtLoad = true);
+
                 NormalizeConditionLifetimePair(
                     rule.Condition, rule.Lifetime,
                     isFieldOverride: false,
@@ -1045,8 +1124,9 @@ namespace FanaBridge.Display.Schema2
             if (config.Settings.Mode == SettingsMode.Unknown
                 && !string.IsNullOrWhiteSpace(config.Settings.ModeRaw))
             {
+                config.Settings.DegradedAtLoad = true;
                 warn("settings.mode unrecognized '" + config.Settings.ModeRaw
-                    + "' — raw preserved; runtime treats as on");
+                    + "' — degraded; raw preserved; runtime treats as on");
             }
         }
 
@@ -1076,7 +1156,7 @@ namespace FanaBridge.Display.Schema2
             }
 
             if (bringUpDomain && lifetime != null)
-                NormalizeBringUpLifetime(lifetime, label, warn);
+                NormalizeBringUpLifetime(lifetime, label, warn, degrade);
 
             // Source validation.
             SourceSite site = isFieldOverride ? SourceSite.FieldOverrideCondition
@@ -1173,15 +1253,13 @@ namespace FanaBridge.Display.Schema2
             bool thenActive = thenPresent && !lifetime.ThenIgnored
                 && lifetime.Then == LifetimeThen.UntilDismissed;
 
-            // then + durationMs mutual exclusivity: then wins, duration ignored.
-            // durationMs default is 5000 and suppressed on write when default — "present"
-            // means Then is set (duration always has a value). Spec: both present =
-            // durationMs ignored. So when then is active, always ignore durationMs.
+            // then + durationMs mutual exclusivity: then wins, duration ignored at runtime.
+            // Presence is tracked separately from the value — durationMs:5000 is still
+            // "both present" (degrade-visible). Authored durationMs is never rewritten.
             if (thenActive)
             {
                 lifetime.DurationMsIgnored = true;
-                // Only warn when durationMs was explicitly non-default (authored intent).
-                if (lifetime.DurationMs != Lifetime.DefaultDurationMs)
+                if (lifetime.DurationMsPresent)
                 {
                     warn(label + ": then + durationMs together — durationMs ignored");
                     degrade?.Invoke();
@@ -1201,7 +1279,7 @@ namespace FanaBridge.Display.Schema2
         }
 
         private static void NormalizeBringUpLifetime(
-            Lifetime lifetime, string label, Action<string> warn)
+            Lifetime lifetime, string label, Action<string> warn, Action degrade)
         {
             var k = lifetime.Kind;
             if (k == LifetimeKind.WhileTrue || k == LifetimeKind.ForDuration)
@@ -1216,6 +1294,8 @@ namespace FanaBridge.Display.Schema2
             lifetime.CoerceKind(LifetimeKind.WhileTrue);
             warn(label + ": bring-up lifetime domain is whileTrue|forDuration — coerced to whileTrue"
                 + (lifetime.KindRaw != null ? " (was '" + lifetime.KindRaw + "')" : ""));
+            // All coercions are degrade-visible on the owning row (§14 / FZ-011).
+            degrade?.Invoke();
         }
 
         private static void NormalizeValueSource(
@@ -1284,8 +1364,14 @@ namespace FanaBridge.Display.Schema2
 
                 case ValueSourceKind.SimHubProperty:
                 case ValueSourceKind.Action:
-                case ValueSourceKind.Script:
                     // Legal carries; action is migration-only.
+                    break;
+
+                case ValueSourceKind.Script:
+                    // Parsed-but-inert (ratified): preserve raw; source + carrier degraded.
+                    source.DegradedAtLoad = true;
+                    warn(label + " degraded — source kind 'script' is parsed but inert");
+                    degradeCarrier?.Invoke();
                     break;
             }
         }
@@ -1295,6 +1381,14 @@ namespace FanaBridge.Display.Schema2
         {
             if (content == null)
                 return;
+
+            if (content.Kind == ContentKind.Unknown)
+            {
+                content.DegradedAtLoad = true;
+                warn(label + " degraded — "
+                    + (string.IsNullOrWhiteSpace(content.KindRaw) ? "no content kind"
+                        : "unrecognized content kind '" + content.KindRaw + "'"));
+            }
 
             if (content.Kind == ContentKind.Property)
             {
@@ -1344,16 +1438,40 @@ namespace FanaBridge.Display.Schema2
             if (cwe == null)
                 return;
             NormalizeContentObject(cwe.Content, label, warn);
-            CoerceFlashEffect(cwe.Effect, e => cwe.CoerceEffect(ContentEffect.Blink), label, warn);
+            NormalizeEffect(cwe.Effect, cwe.EffectRaw,
+                e => cwe.CoerceEffect(ContentEffect.Blink), label, warn,
+                () => cwe.DegradedAtLoad = true);
         }
 
-        private static void CoerceFlashEffect(
-            ContentEffect effect, Action<ContentEffect> coerce, string label, Action<string> warn)
+        /// <summary>
+        /// Effect domain: flash coerces to blink (degrade-visible); unknown spellings
+        /// degrade the carrier while preserving raw text.
+        /// </summary>
+        private static void NormalizeEffect(
+            ContentEffect effect, string effectRaw, Action<ContentEffect> coerce,
+            string label, Action<string> warn, Action degrade)
         {
             if (effect == ContentEffect.Flash)
             {
+                // Known spelling; runtime coerce only (raw preserved). Not an unknown-enum path.
                 coerce(ContentEffect.Blink);
                 warn(label + ": effect 'flash' is not implemented — using blink");
+                return;
+            }
+            if (effect == ContentEffect.Unknown && !string.IsNullOrWhiteSpace(effectRaw))
+            {
+                warn(label + " degraded — unrecognized effect '" + effectRaw + "'");
+                degrade?.Invoke();
+            }
+        }
+
+        private static void NormalizeRuns(
+            RunsWhen runs, string runsRaw, string label, Action<string> warn, Action degrade)
+        {
+            if (runs == RunsWhen.Unknown && !string.IsNullOrWhiteSpace(runsRaw))
+            {
+                warn(label + " degraded — unrecognized runs '" + runsRaw + "'");
+                degrade?.Invoke();
             }
         }
 
@@ -1361,6 +1479,12 @@ namespace FanaBridge.Display.Schema2
         {
             // ContentObject has no effect — effects live on carriers. No-op retained for symmetry.
         }
+
+        /// <summary>Reserved hosted-page id prefix (bare-Legacy placeholder namespace).</summary>
+        internal static bool IsReservedHostedPageId(string id)
+            => id != null
+                && id.StartsWith(DisplayConfigV2Migration.ReservedHostedPageIdPrefix,
+                    StringComparison.Ordinal);
 
         // ── PageRef helpers ───────────────────────────────────────────────
 

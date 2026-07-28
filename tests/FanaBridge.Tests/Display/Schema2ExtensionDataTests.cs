@@ -364,7 +364,7 @@ namespace FanaBridge.Tests.Display
             yield return new object[]
             {
                 "alias.kind",
-                null, // handled specially via CatalogLoader
+                null!, // handled specially via CatalogLoader (no schema JSON)
                 "aliases[0].kind",
                 "aliasKindX",
                 typeof(AliasEntry),
@@ -393,9 +393,9 @@ namespace FanaBridge.Tests.Display
             }
         }
 
-        private static JToken Select(JToken root, string path)
+        private static JToken? Select(JToken root, string path)
         {
-            JToken cur = root;
+            JToken? cur = root;
             foreach (var part in path.Split('.'))
             {
                 if (cur == null) return null;
@@ -432,14 +432,14 @@ namespace FanaBridge.Tests.Display
             AssertUnknownMembersSurvive(saved);
 
             // Unknown enum spellings (member values, not members) also survive.
-            Assert.Equal("sparkle", (string)Select(saved, "pages[1].base.effect"));
-            Assert.Equal("sparkles", (string)Select(saved, "pages[1].layers[0].condition.operator"));
-            Assert.Equal("untilTomorrow", (string)Select(saved, "pages[1].layers[0].lifetime.kind"));
-            Assert.Equal("whenever", (string)Select(saved, "pages[1].layers[0].runs"));
-            Assert.Equal("leftish", (string)Select(saved, "fields.5.overrides[0].alignment"));
-            Assert.Equal("sideways", (string)Select(saved, "fields.5.overrides[0].lifetime.direction"));
-            Assert.Equal("holodeck", (string)Select(saved, "wheelScreen.rules[0].screen"));
-            Assert.Equal("telepathy", (string)Select(saved, "settings.mode"));
+            Assert.Equal("sparkle", (string?)Select(saved, "pages[1].base.effect"));
+            Assert.Equal("sparkles", (string?)Select(saved, "pages[1].layers[0].condition.operator"));
+            Assert.Equal("untilTomorrow", (string?)Select(saved, "pages[1].layers[0].lifetime.kind"));
+            Assert.Equal("whenever", (string?)Select(saved, "pages[1].layers[0].runs"));
+            Assert.Equal("leftish", (string?)Select(saved, "fields.5.overrides[0].alignment"));
+            Assert.Equal("sideways", (string?)Select(saved, "fields.5.overrides[0].lifetime.direction"));
+            Assert.Equal("holodeck", (string?)Select(saved, "wheelScreen.rules[0].screen"));
+            Assert.Equal("telepathy", (string?)Select(saved, "settings.mode"));
         }
 
         [Fact]
@@ -448,7 +448,9 @@ namespace FanaBridge.Tests.Display
             var cfg = Load(FutureDocument);
             Assert.Equal(3, cfg.SchemaVersion);
             var saved = ParseSaved(DisplayConfigV2Serializer.Save(cfg));
-            Assert.Equal(3, (int)saved["schemaVersion"]);
+            var ver = saved["schemaVersion"];
+            Assert.NotNull(ver);
+            Assert.Equal(3, (int)ver!);
         }
 
         [Fact]
@@ -457,7 +459,9 @@ namespace FanaBridge.Tests.Display
             var fresh = new DisplayConfigV2();
             Assert.Equal(DisplayConfigV2.CurrentSchemaVersion, fresh.SchemaVersion);
             var saved = ParseSaved(DisplayConfigV2Serializer.Save(fresh));
-            Assert.Equal(DisplayConfigV2.CurrentSchemaVersion, (int)saved["schemaVersion"]);
+            var ver = saved["schemaVersion"];
+            Assert.NotNull(ver);
+            Assert.Equal(DisplayConfigV2.CurrentSchemaVersion, (int)ver!);
         }
 
         [Fact]
@@ -568,7 +572,7 @@ namespace FanaBridge.Tests.Display
         [MemberData(nameof(UnknownSpellingCases))]
         public void UnknownSpelling_RoundTrips_ParsedFallbackAndExactSpelling(
             string label,
-            string schemaJson,
+            string? schemaJson,
             string jsonPath,
             string unknownSpelling,
             Type carrierType,
@@ -589,11 +593,12 @@ namespace FanaBridge.Tests.Display
                 Assert.Equal(unknownSpelling, table.Aliases[0].KindRaw);
 
                 var resaved = JObject.Parse(CatalogLoader.Save(table));
-                Assert.Equal(unknownSpelling, (string)Select(resaved, "aliases[0].kind"));
+                Assert.Equal(unknownSpelling, (string?)Select(resaved, "aliases[0].kind"));
                 return;
             }
 
-            var cfg = Load(schemaJson);
+            Assert.NotNull(schemaJson);
+            var cfg = Load(schemaJson!);
             object carrier = ResolveCarrier(cfg, carrierType, jsonPath);
             Assert.NotNull(carrier);
 
@@ -604,7 +609,7 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(expectedFallback, prop!.GetValue(carrier));
 
             var saved = ParseSaved(DisplayConfigV2Serializer.Save(cfg));
-            Assert.Equal(unknownSpelling, (string)Select(saved, jsonPath));
+            Assert.Equal(unknownSpelling, (string?)Select(saved, jsonPath));
         }
 
         private static object ResolveCarrier(DisplayConfigV2 cfg, Type carrierType, string jsonPath)
@@ -612,19 +617,19 @@ namespace FanaBridge.Tests.Display
             if (carrierType == typeof(PageEntry))
                 return cfg.Pages[0];
             if (carrierType == typeof(PageRef))
-                return cfg.PageOrder[0];
+                return cfg.PageOrder![0];
             if (carrierType == typeof(PriorityRow))
                 return cfg.Priority.Rows[0];
             if (carrierType == typeof(ContentObject))
-                return cfg.Pages[0].Base.Content;
+                return cfg.Pages[0].Base!.Content!;
             if (carrierType == typeof(ValueSource))
-                return cfg.Fields[1].Base.Source;
+                return cfg.Fields[1].Base!.Source!;
             if (carrierType == typeof(FieldOverride))
                 return cfg.Fields[1].Overrides[0];
             if (carrierType == typeof(IdleSpec))
-                return cfg.Priority.Rest.Idle;
+                return cfg.Priority.Rest!.Idle!;
             if (carrierType == typeof(Lifetime))
-                return cfg.Priority.Rows[0].Summons[0].Lifetime;
+                return cfg.Priority.Rows[0].Summons![0].Lifetime!;
             throw new InvalidOperationException("unmapped carrier " + carrierType.Name
                 + " for path " + jsonPath);
         }

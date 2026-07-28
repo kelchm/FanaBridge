@@ -2227,6 +2227,173 @@ namespace FanaBridge.Tests.Display
 }
 ";
 
+        // ── FZ-003: pageOrder absent vs explicit [] ──
+
+        [Fact]
+        public void PageOrder_ScreensExistNoneInRotation_EmitsEmptyArray()
+        {
+            AssertGolden(V1_ScreensExist_NoneInRotation, Golden_ScreensExist_NoneInRotation);
+        }
+
+        private const string V1_ScreensExist_NoneInRotation = @"
+{
+  ""schemaVersion"": 1,
+  ""segmentDisplay"": {
+    ""screens"": [
+      { ""id"": ""s1"", ""name"": ""A"", ""contentKind"": ""speed"", ""inRotation"": false },
+      { ""id"": ""s2"", ""name"": ""B"", ""text"": ""PIT"", ""inRotation"": false }
+    ]
+  }
+}
+";
+
+        private const string Golden_ScreensExist_NoneInRotation = @"
+{
+  ""schemaVersion"": 2,
+  ""pages"": [
+    {
+      ""kind"": ""hostedPage"",
+      ""id"": ""s1"",
+      ""name"": ""A"",
+      ""base"": {
+        ""content"": {
+          ""kind"": ""speed""
+        }
+      }
+    },
+    {
+      ""kind"": ""hostedPage"",
+      ""id"": ""s2"",
+      ""name"": ""B"",
+      ""base"": {
+        ""content"": {
+          ""kind"": ""text"",
+          ""text"": ""PIT""
+        }
+      }
+    }
+  ],
+  ""cycles"": [],
+  ""priority"": {
+    ""rows"": [],
+    ""rest"": {
+      ""idle"": {
+        ""kind"": ""blank""
+      }
+    }
+  },
+  ""pageOrder"": [],
+  ""fields"": {},
+  ""wheelScreen"": {
+    ""rules"": []
+  },
+  ""settings"": {}
+}
+";
+
+        [Fact]
+        public void PageOrder_NoScreens_Absent()
+        {
+            AssertGolden(V1_NoScreens_PageOrderAbsent, Golden_NoScreens_PageOrderAbsent);
+        }
+
+        private const string V1_NoScreens_PageOrderAbsent = @"
+{
+  ""schemaVersion"": 1,
+  ""itm"": {
+    ""basePage"": ""lapInfo""
+  }
+}
+";
+
+        private const string Golden_NoScreens_PageOrderAbsent = @"
+{
+  ""schemaVersion"": 2,
+  ""pages"": [],
+  ""cycles"": [],
+  ""priority"": {
+    ""rows"": [],
+    ""rest"": {
+      ""inSessionPage"": {
+        ""kind"": ""itmPage"",
+        ""catalogPageId"": ""lapInfo""
+      },
+      ""idle"": {
+        ""kind"": ""blank""
+      }
+    }
+  },
+  ""fields"": {},
+  ""wheelScreen"": {
+    ""rules"": []
+  },
+  ""settings"": {}
+}
+";
+
+        // ── FZ-007: reserved p-v1- namespace escape ──
+
+        [Fact]
+        public void ReservedHostedPageId_UserPageNamedPv1Legacy_IsNamespaceEscaped()
+        {
+            AssertGolden(V1_UserPageNamedPv1Legacy, Golden_UserPageNamedPv1Legacy);
+        }
+
+        private const string V1_UserPageNamedPv1Legacy = @"
+{
+  ""schemaVersion"": 1,
+  ""segmentDisplay"": {
+    ""baseScreenId"": ""p-v1-legacy"",
+    ""screens"": [
+      { ""id"": ""p-v1-legacy"", ""name"": ""Legacy-looking"", ""text"": ""LEG"", ""inRotation"": true }
+    ]
+  }
+}
+";
+
+        private const string Golden_UserPageNamedPv1Legacy = @"
+{
+  ""schemaVersion"": 2,
+  ""pages"": [
+    {
+      ""kind"": ""hostedPage"",
+      ""id"": ""u-p-v1-legacy"",
+      ""name"": ""Legacy-looking"",
+      ""base"": {
+        ""content"": {
+          ""kind"": ""text"",
+          ""text"": ""LEG""
+        }
+      }
+    }
+  ],
+  ""cycles"": [],
+  ""priority"": {
+    ""rows"": [],
+    ""rest"": {
+      ""inSessionPage"": {
+        ""kind"": ""hostedPage"",
+        ""id"": ""u-p-v1-legacy""
+      },
+      ""idle"": {
+        ""kind"": ""blank""
+      }
+    }
+  },
+  ""pageOrder"": [
+    {
+      ""kind"": ""hostedPage"",
+      ""id"": ""u-p-v1-legacy""
+    }
+  ],
+  ""fields"": {},
+  ""wheelScreen"": {
+    ""rules"": []
+  },
+  ""settings"": {}
+}
+";
+
         // ── MIG-007: input immutability ──
 
         [Fact]

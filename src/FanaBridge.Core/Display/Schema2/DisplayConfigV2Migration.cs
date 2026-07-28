@@ -20,6 +20,16 @@ namespace FanaBridge.Display.Schema2
         /// </summary>
         public const string BareLegacyHostedPageId = "p-v1-legacy";
 
+        /// <summary>
+        /// Reserved hosted-page id prefix. User/migrated screen ids that already start
+        /// with this prefix are namespace-escaped so they never collide with the
+        /// bare-Legacy placeholder (see <see cref="EscapeReservedHostedPageId"/>).
+        /// </summary>
+        public const string ReservedHostedPageIdPrefix = "p-v1-";
+
+        /// <summary>Prefix applied when escaping a pre-existing v1 id under the reserved namespace.</summary>
+        public const string ReservedHostedPageIdEscapePrefix = "u-";
+
         /// <summary>Reserved lifetime extension key for coerced/unknown edge hold spellings.</summary>
         public const string V1HoldKindKey = "v1HoldKind";
 
@@ -110,15 +120,21 @@ namespace FanaBridge.Display.Schema2
                 return;
 
             List<PageRef> pageOrder = null;
+            int screenCount = 0;
             foreach (var screen in v1.Legacy.Screens)
             {
                 if (screen == null)
                     continue;
 
+                screenCount++;
+                // Escape reserved p-v1-* ids so they never collide with the bare-Legacy
+                // placeholder (user page literally named p-v1-legacy → u-p-v1-legacy).
+                string hostedId = EscapeReservedHostedPageId(screen.Id);
+
                 var page = new PageEntry
                 {
                     Kind = PageEntryKind.HostedPage,
-                    Id = screen.Id,
+                    Id = hostedId,
                     Name = screen.Name,
                     Base = MigrateScreenBase(screen),
                     ExtensionData = CopyExtensionData(screen.ExtensionData),
@@ -132,13 +148,33 @@ namespace FanaBridge.Display.Schema2
                     pageOrder.Add(new PageRef
                     {
                         Kind = PageRefKind.HostedPage,
-                        Id = screen.Id,
+                        Id = hostedId,
                     });
                 }
             }
 
-            if (pageOrder != null && pageOrder.Count > 0)
-                v2.PageOrder = pageOrder;
+            // pageOrder: screens exist but none inRotation → explicit []; no screens → absent.
+            // Absent means compiled default; [] means empty walk (FZ-003 / §5b).
+            if (screenCount > 0)
+                v2.PageOrder = pageOrder ?? new List<PageRef>();
+        }
+
+        /// <summary>
+        /// Deterministically namespace-escapes a v1 screen id that falls under the reserved
+        /// <see cref="ReservedHostedPageIdPrefix"/> so migration never emits a colliding
+        /// user page for the bare-Legacy placeholder.
+        /// </summary>
+        public static string EscapeReservedHostedPageId(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                return id;
+            if (!id.StartsWith(ReservedHostedPageIdPrefix, StringComparison.Ordinal))
+                return id;
+            // Keep applying the escape prefix until the result is outside the reserved namespace.
+            string escaped = ReservedHostedPageIdEscapePrefix + id;
+            while (escaped.StartsWith(ReservedHostedPageIdPrefix, StringComparison.Ordinal))
+                escaped = ReservedHostedPageIdEscapePrefix + escaped;
+            return escaped;
         }
 
         private static ContentWithEffect MigrateScreenBase(LegacyScreen screen)
@@ -245,15 +281,16 @@ namespace FanaBridge.Display.Schema2
 
             if (!string.IsNullOrWhiteSpace(baseScreenId))
             {
+                string hostedBase = EscapeReservedHostedPageId(baseScreenId);
                 if (isItmShaped)
                 {
                     // ITM wheel: baseScreenId reborn as landingPage (own member).
-                    v2.Priority.Rest.LandingPage = HostedPageRef(baseScreenId);
+                    v2.Priority.Rest.LandingPage = HostedPageRef(hostedBase);
                 }
                 else if (v2.Priority.Rest.InSessionPage == null)
                 {
                     // Segment-only: baseScreenId → inSessionPage.
-                    v2.Priority.Rest.InSessionPage = HostedPageRef(baseScreenId);
+                    v2.Priority.Rest.InSessionPage = HostedPageRef(hostedBase);
                 }
             }
         }
@@ -338,8 +375,9 @@ namespace FanaBridge.Display.Schema2
                     case TargetKind.SegmentScreen:
                         if (string.IsNullOrWhiteSpace(show.ScreenId))
                             return false;
-                        destKey = "hosted:" + show.ScreenId;
-                        target = HostedPageRef(show.ScreenId);
+                        string segmentId = EscapeReservedHostedPageId(show.ScreenId);
+                        destKey = "hosted:" + segmentId;
+                        target = HostedPageRef(segmentId);
                         return true;
 
                     case TargetKind.Cycle:
@@ -641,7 +679,8 @@ namespace FanaBridge.Display.Schema2
                 && EnumText.Parse(hold.KindRaw, HoldKind.Unknown) == HoldKind.Unknown)
             {
                 life.KindRaw = hold.KindRaw;
-                life.DurationMs = hold.DurationMs;
+                if (hold.DurationMs != HoldSpec.DefaultDurationMs)
+                    life.DurationMs = hold.DurationMs;
                 return life;
             }
 
@@ -653,7 +692,10 @@ namespace FanaBridge.Display.Schema2
                     break;
                 case HoldKind.ForDuration:
                     life.Kind = LifetimeKind.ForDuration;
-                    life.DurationMs = hold.DurationMs;
+                    // Only author durationMs when non-default so absent-default round-trips
+                    // match v1's DefaultValue suppression (v1 has no presence bit).
+                    if (hold.DurationMs != HoldSpec.DefaultDurationMs)
+                        life.DurationMs = hold.DurationMs;
                     break;
                 case HoldKind.UntilDismissed:
                     life.Kind = LifetimeKind.UntilDismissed;
@@ -703,10 +745,11 @@ namespace FanaBridge.Display.Schema2
                 {
                     life.Then = LifetimeThen.UntilDismissed;
                 }
-                else
+                else if (hold.DurationMs != HoldSpec.DefaultDurationMs)
                 {
                     life.DurationMs = hold.DurationMs;
                 }
+                // else: absent durationMs → runtime default 5000 (matches v1 suppression).
 
                 // Coerced/unknown hold spellings re-home into onChange; preserve the
                 // original spelling under the reserved extension key.
@@ -781,13 +824,14 @@ namespace FanaBridge.Display.Schema2
             };
 
         /// <summary>
-        /// Bare Legacy → hosted page from <paramref name="baseScreenId"/> when present;
-        /// otherwise the reserved degraded placeholder <see cref="BareLegacyHostedPageId"/>.
+        /// Bare Legacy → hosted page from <paramref name="baseScreenId"/> when present
+        /// (namespace-escaped if it collides with the reserved prefix); otherwise the
+        /// reserved degraded placeholder <see cref="BareLegacyHostedPageId"/>.
         /// </summary>
         private static PageRef ResolveLegacyHostedRef(string baseScreenId)
             => HostedPageRef(
                 !string.IsNullOrWhiteSpace(baseScreenId)
-                    ? baseScreenId
+                    ? EscapeReservedHostedPageId(baseScreenId)
                     : BareLegacyHostedPageId);
 
         private static bool IsLegacyPageToken(string raw)

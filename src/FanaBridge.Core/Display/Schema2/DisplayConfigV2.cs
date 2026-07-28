@@ -37,7 +37,10 @@ namespace FanaBridge.Display.Schema2
         [JsonProperty("priority")]
         public PriorityLadder Priority { get; set; } = new PriorityLadder();
 
-        /// <summary>Walk order (itmPage / hostedPage refs). Absent/empty = compiled default.</summary>
+        /// <summary>
+        /// Walk order (itmPage / hostedPage refs). Absent (<c>null</c>) = compiled default;
+        /// explicit empty list = empty walk (no members). These are different states.
+        /// </summary>
         [JsonProperty("pageOrder")]
         public List<PageRef> PageOrder { get; set; }
 
@@ -108,9 +111,14 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set when settings carry an unusable value (e.g. unrecognized mode).
+        /// Runtime-only; raw spellings preserved.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
     }
 
-    /// <summary>Settings.mode value spellings (provisional — 🔶 §12.5).</summary>
+    /// <summary>Settings.mode value spellings.</summary>
     public enum SettingsMode
     {
         /// <summary>Lenient-load fallback — raw text preserved.</summary>
