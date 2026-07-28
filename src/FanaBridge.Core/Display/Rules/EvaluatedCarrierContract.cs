@@ -119,6 +119,11 @@ namespace FanaBridge.Display.Rules
         KeptAsIs = 1 << 3,
         CantRunHere = 1 << 4,
         Dismissed = 1 << 5,
+        /// <summary>
+        /// Diagnostics: carrier is outside its runs/session scope this tick
+        /// (e.g. runs:idle while in-game). Presence stays Waiting; UI copy maps later.
+        /// </summary>
+        OutOfSessionScope = 1 << 6,
     }
 
     /// <summary>
@@ -155,7 +160,7 @@ namespace FanaBridge.Display.Rules
             string carrierId,
             string surfaceId,
             string destinationId,
-            CarrierPresence presence,
+            CarrierPresence? presence,
             int? remainingMs,
             CarrierRowLabels rowLabels)
         {
@@ -172,7 +177,11 @@ namespace FanaBridge.Display.Rules
         public string SurfaceId { get; }
         /// <summary>Proposed destination context for this carrier (may differ from surface winner).</summary>
         public string DestinationId { get; }
-        public CarrierPresence Presence { get; }
+        /// <summary>
+        /// D10 presence on this surface, or null when the emitting arbiter does not own
+        /// presence for <see cref="SurfaceId"/> (E4 leaves field/page surfaces null; E5 fills).
+        /// </summary>
+        public CarrierPresence? Presence { get; }
         public int? RemainingMs { get; }
         public CarrierRowLabels RowLabels { get; }
     }
