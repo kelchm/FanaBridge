@@ -37,39 +37,11 @@
   "priority": {
     "rows": [
       {
-        "kind": "seat",
-        "id": "r1",
-        "target": {
-          "kind": "itmPage",
-          "catalogPageId": "fuelErsDrs"
-        },
-        "summons": [
-          {
-            "id": "s1",
-            "condition": {
-              "source": {
-                "kind": "builtIn",
-                "name": "Fuel"
-              },
-              "operator": "greaterThan",
-              "value": 10
-            },
-            "lifetime": {
-              "kind": "whileTrue"
-            }
-          }
-        ]
-      },
-      {
         "kind": "manual"
       }
     ],
     "rest": {
       "inSessionPage": {
-        "kind": "itmPage",
-        "catalogPageId": "lapInfo"
-      },
-      "landingPage": {
         "kind": "itmPage",
         "catalogPageId": "lapInfo"
       },

@@ -57,7 +57,8 @@
             "lifetime": {
               "kind": "forDuration",
               "durationMs": 5000
-            }
+            },
+            "runs": "idle"
           }
         ]
       },
@@ -67,10 +68,6 @@
     ],
     "rest": {
       "inSessionPage": {
-        "kind": "itmPage",
-        "catalogPageId": "lapInfo"
-      },
-      "landingPage": {
         "kind": "itmPage",
         "catalogPageId": "lapInfo"
       },

@@ -75,6 +75,18 @@ namespace FanaBridge.Tests.Display.Replay
         public override void Apply(ReplaySession session) => session.Transport.Connect(0);
     }
 
+    /// <summary>Re-apply current settings JSON to simulate a mid-session config reload.</summary>
+    internal sealed class ReloadConfigStep : ReplayStep
+    {
+        public override void Apply(ReplaySession session) => session.ReloadConfig();
+    }
+
+    /// <summary>Bump the wheelbase wheel-change counter so ITM cold-restarts.</summary>
+    internal sealed class WheelChangeStep : ReplayStep
+    {
+        public override void Apply(ReplaySession session) => session.SimulateWheelChange();
+    }
+
     /// <summary>Mutable telemetry bag shared by script steps.</summary>
     internal sealed class TelemetryState
     {
@@ -185,33 +197,50 @@ namespace FanaBridge.Tests.Display.Replay
                 AppendConditionStimulus(steps, cell);
 
             // Press paths via ITM page announces (wheel-side).
+            // FR-8: ManualPress vs AdoptedPress are distinct stimuli.
+            // ManualPress: cataloged page change that the director reports as manual nav.
+            // AdoptedPress: different page + second land on the same page to exercise the
+            // adopt edge (generation advance while uncommanded) rather than a duplicate report.
             if (cell.IsItmDevice && cell.Press != ReplayPress.None)
             {
-                byte page = cell.Press switch
+                switch (cell.Press)
                 {
-                    ReplayPress.ManualPress => 5,       // tyre temps — cataloged
-                    ReplayPress.AdoptedPress => 5,
-                    ReplayPress.RejectOnRevert => 7,     // may be out-of-table / uncommanded
-                    _ => 5,
-                };
-                steps.Add(new PushItmReportStep(PagePush(cell.ItmDeviceId, page)));
-                steps.Add(new FrameStep());
-                steps.Add(new AdvanceMsStep(80));
-                steps.Add(new FrameStep());
-                steps.Add(new AdvanceMsStep(30));
-                steps.Add(new FrameStep());
+                    case ReplayPress.ManualPress:
+                        // Tyre temps (wire 5) — cataloged manual navigation.
+                        steps.Add(new PushItmReportStep(PagePush(cell.ItmDeviceId, 5)));
+                        steps.Add(new FrameStep());
+                        steps.Add(new AdvanceMsStep(80));
+                        steps.Add(new FrameStep());
+                        steps.Add(new AdvanceMsStep(30));
+                        steps.Add(new FrameStep());
+                        break;
+                    case ReplayPress.AdoptedPress:
+                        // Fuel/ERS (wire 4) first, then re-land generation edge for adopt.
+                        steps.Add(new PushItmReportStep(PagePush(cell.ItmDeviceId, 4)));
+                        steps.Add(new FrameStep());
+                        steps.Add(new AdvanceMsStep(80));
+                        steps.Add(new FrameStep());
+                        // Second generation on same page is not continuous re-adopt;
+                        // land a different uncommanded page so the director adopt edge fires.
+                        steps.Add(new PushItmReportStep(PagePush(cell.ItmDeviceId, 6))); // Legacy
+                        steps.Add(new FrameStep());
+                        steps.Add(new AdvanceMsStep(80));
+                        steps.Add(new FrameStep());
+                        break;
+                    case ReplayPress.RejectOnRevert:
+                        // Out-of-intent page while rejectUncommanded is on.
+                        steps.Add(new PushItmReportStep(PagePush(cell.ItmDeviceId, 7)));
+                        steps.Add(new FrameStep());
+                        steps.Add(new AdvanceMsStep(80));
+                        steps.Add(new FrameStep());
+                        steps.Add(new AdvanceMsStep(30));
+                        steps.Add(new FrameStep());
+                        break;
+                }
             }
 
-            // Game-start kept cell: flip game id.
-            if (cell.KeptBehaviorName == "game-start-manual-reset")
-            {
-                steps.Add(new TelemetryStep { GameName = "AssettoCorsa", GameRunning = true });
-                steps.Add(new FrameStep());
-                steps.Add(new FrameStep());
-                steps.Add(new TelemetryStep { GameName = "iRacing", GameRunning = true });
-                steps.Add(new FrameStep());
-                steps.Add(new FrameStep());
-            }
+            // Kept-behavior scripts must DRIVE their named behavior (FR-7).
+            AppendKeptBehavior(steps, cell);
 
             // Idle-runs cells: drop out of game after stimulus.
             if (cell.Runs == ReplayRuns.Idle)
@@ -231,6 +260,171 @@ namespace FanaBridge.Tests.Display.Replay
             steps.Add(new FrameStep());
 
             return steps;
+        }
+
+        /// <summary>
+        /// FR-7: each named kept-behavior cell injects stimuli for its claimed law.
+        /// </summary>
+        private static void AppendKeptBehavior(List<ReplayStep> steps, ReplayCell cell)
+        {
+            string? name = cell.KeptBehaviorName;
+            if (name == null)
+                return;
+
+            switch (name)
+            {
+                case "game-start-manual-reset":
+                    steps.Add(new TelemetryStep { GameName = "AssettoCorsa", GameRunning = true });
+                    steps.Add(new FrameStep());
+                    steps.Add(new FrameStep());
+                    steps.Add(new TelemetryStep { GameName = "iRacing", GameRunning = true });
+                    steps.Add(new FrameStep());
+                    steps.Add(new FrameStep());
+                    break;
+
+                case "dismissal-law-generalization":
+                case "supersede-retired-untilDismissed-resumes":
+                    // Activate, then a manual press that dismisses untilDismissed claims.
+                    steps.Add(new TelemetryStep { Fuel = 50, PitLimiterOn = 1 });
+                    steps.Add(new FrameStep());
+                    steps.Add(new AdvanceMsStep(50));
+                    steps.Add(new FrameStep());
+                    if (cell.IsItmDevice)
+                    {
+                        steps.Add(new PushItmReportStep(PagePush(cell.ItmDeviceId, 5)));
+                        steps.Add(new FrameStep());
+                        steps.Add(new AdvanceMsStep(80));
+                        steps.Add(new FrameStep());
+                    }
+                    // Drop the high claim so superseded/dismissed resume can re-fire.
+                    steps.Add(new TelemetryStep { PitLimiterOn = 0 });
+                    steps.Add(new FrameStep());
+                    steps.Add(new FrameStep());
+                    break;
+
+                case "wheel-screen-release-reclaim-ordering":
+                    // Hold a wheel-screen special, then release and observe reclaim.
+                    steps.Add(new TelemetryStep { IsInPitLane = 1, Fuel = 50 });
+                    steps.Add(new FrameStep());
+                    steps.Add(new AdvanceMsStep(50));
+                    steps.Add(new FrameStep());
+                    steps.Add(new TelemetryStep { IsInPitLane = 0 });
+                    steps.Add(new FrameStep());
+                    steps.Add(new FrameStep());
+                    break;
+
+                case "config-reload-mid-crossing-x-wheel-screen-hold":
+                    // Cross into the condition, hold wheel-screen, then reload mid-hold.
+                    steps.Add(new TelemetryStep { Fuel = 50, IsInPitLane = 1 });
+                    steps.Add(new FrameStep());
+                    steps.Add(new FrameStep());
+                    steps.Add(new ReloadConfigStep());
+                    steps.Add(new FrameStep());
+                    steps.Add(new FrameStep());
+                    steps.Add(new TelemetryStep { IsInPitLane = 0 });
+                    steps.Add(new FrameStep());
+                    break;
+
+                case "wheel-change-x-reject-fight-x-keepalive":
+                    // Uncommanded page under reject, then wheel-change (lifecycle already
+                    // injected by Wire=LifecycleRecovery for this cell).
+                    if (cell.IsItmDevice)
+                    {
+                        steps.Add(new PushItmReportStep(PagePush(cell.ItmDeviceId, 7)));
+                        steps.Add(new FrameStep());
+                        steps.Add(new AdvanceMsStep(80));
+                        steps.Add(new FrameStep());
+                        steps.Add(new WheelChangeStep());
+                        steps.Add(new FrameStep());
+                        steps.Add(new AdvanceMsStep(100));
+                        steps.Add(new FrameStep());
+                    }
+                    break;
+
+                case "walk-wrap-over-removed-members":
+                    // Manual walk: successive page announces wrap the compiled walk.
+                    if (cell.IsItmDevice)
+                    {
+                        foreach (byte page in new byte[] { 1, 2, 3, 1 })
+                        {
+                            steps.Add(new PushItmReportStep(PagePush(cell.ItmDeviceId, page)));
+                            steps.Add(new FrameStep());
+                            steps.Add(new AdvanceMsStep(80));
+                            steps.Add(new FrameStep());
+                        }
+                    }
+                    break;
+
+                case "reject-uncommanded-fresh-fight":
+                case "reject-uncommanded-in-window-reassert":
+                case "reject-uncommanded-exhausted-surrender":
+                    // Press path already injects RejectOnRevert; extend reassert/exhaust.
+                    if (cell.IsItmDevice)
+                    {
+                        int repeats = name.Contains("exhausted") ? 4
+                            : name.Contains("reassert") ? 2
+                            : 1;
+                        for (int i = 0; i < repeats; i++)
+                        {
+                            steps.Add(new PushItmReportStep(PagePush(cell.ItmDeviceId, 7)));
+                            steps.Add(new FrameStep());
+                            steps.Add(new AdvanceMsStep(name.Contains("reassert") ? 50 : 200));
+                            steps.Add(new FrameStep());
+                        }
+                    }
+                    break;
+
+                case "cycle-free-run-resume":
+                    // Let the cycle tick across a period, interrupt, then resume.
+                    steps.Add(new TelemetryStep { Fuel = 50 });
+                    steps.Add(new FrameStep());
+                    steps.Add(new AdvanceMsStep(1500));
+                    steps.Add(new FrameStep());
+                    steps.Add(new AdvanceMsStep(1500));
+                    steps.Add(new FrameStep());
+                    steps.Add(new AdvanceMsStep(1500));
+                    steps.Add(new FrameStep());
+                    break;
+
+                case "blank-compile-three-row-split":
+                    // Idle-floor blank path: leave game so rest.idle compiles.
+                    steps.Add(new TelemetryStep { GameRunning = false });
+                    steps.Add(new FrameStep());
+                    steps.Add(new FrameStep());
+                    break;
+
+                case "unknown-page-at-connect-propagation":
+                    // Knowledge axis already omits page announce; give a late land.
+                    if (cell.IsItmDevice)
+                    {
+                        steps.Add(new AdvanceMsStep(200));
+                        steps.Add(new FrameStep());
+                        steps.Add(new PushItmReportStep(PagePush(cell.ItmDeviceId, 1)));
+                        steps.Add(new FrameStep());
+                        steps.Add(new AdvanceMsStep(80));
+                        steps.Add(new FrameStep());
+                    }
+                    break;
+
+                case "hysteresis-boundary-x-declined-send-x-cycle-flip":
+                    // Hysteresis sequence is appended by the Hysteresis block path; for
+                    // this kept cell, drive a threshold cross with declined window open.
+                    steps.Add(new SetTransportAcceptsStep(false));
+                    steps.Add(new TelemetryStep { Fuel = 5 });
+                    steps.Add(new FrameStep());
+                    steps.Add(new TelemetryStep { Fuel = 15 });
+                    steps.Add(new FrameStep());
+                    steps.Add(new SetTransportAcceptsStep(true));
+                    steps.Add(new FrameStep());
+                    break;
+
+                case "param-budget-at-16":
+                case "param-budget-at-17":
+                case "suffix-blink-v2-only":
+                case "itm-special-outranks-legacy-special":
+                    // Document axes + condition stimulus already exercise these.
+                    break;
+            }
         }
 
         private static void AppendConditionStimulus(List<ReplayStep> steps, ReplayCell cell)

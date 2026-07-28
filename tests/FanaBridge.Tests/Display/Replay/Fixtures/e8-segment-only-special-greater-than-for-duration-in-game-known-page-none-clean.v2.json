@@ -45,10 +45,6 @@
         "kind": "hostedPage",
         "id": "spd"
       },
-      "landingPage": {
-        "kind": "hostedPage",
-        "id": "spd"
-      },
       "idle": {
         "kind": "blank"
       }

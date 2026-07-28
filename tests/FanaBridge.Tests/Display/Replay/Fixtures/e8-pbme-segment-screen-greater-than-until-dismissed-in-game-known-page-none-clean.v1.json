@@ -2,7 +2,28 @@
   "schemaVersion": 1,
   "itm": {
     "basePage": "lapInfo",
-    "rules": []
+    "rules": [
+      {
+        "id": "r1",
+        "name": "replay-r1",
+        "when": {
+          "kind": "greaterThan",
+          "source": {
+            "kind": "builtIn",
+            "name": "Fuel"
+          },
+          "value": 10
+        },
+        "show": {
+          "kind": "segmentScreen",
+          "screenId": "pit"
+        },
+        "hold": {
+          "kind": "untilDismissed"
+        },
+        "runs": "inGame"
+      }
+    ]
   },
   "segmentDisplay": {
     "baseScreenId": "spd",
@@ -29,8 +50,8 @@
     ],
     "rules": [
       {
-        "id": "r1",
-        "name": "replay-r1",
+        "id": "r1-legacy-mirror",
+        "name": "replay-r1-legacy-mirror",
         "when": {
           "kind": "greaterThan",
           "source": {

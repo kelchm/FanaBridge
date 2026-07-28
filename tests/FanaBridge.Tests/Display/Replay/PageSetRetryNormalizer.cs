@@ -1,15 +1,24 @@
+using System;
 using System.Collections.Generic;
 
 namespace FanaBridge.Tests.Display.Replay
 {
     /// <summary>
-    /// The sole sanctioned stream normalization (seam-map §4.4): collapse maximal runs
-    /// of consecutive same-channel byte-identical SetPage reports where every attempt
-    /// except possibly the last is declined, into a single entry retaining the run's
-    /// last attempt and first FrameIndex.
+    /// The sole sanctioned stream normalization (seam-map §4.4): collapse true PageSet
+    /// retry jitter — consecutive same-channel byte-identical SetPage reports within the
+    /// documented retry window where every attempt except possibly the last is declined —
+    /// into a single entry retaining the run's last attempt and first FrameIndex.
+    /// Does not merge identical SetPages across arbitrary silent frames.
     /// </summary>
     internal static class PageSetRetryNormalizer
     {
+        /// <summary>
+        /// Max frame gap between consecutive declined retries of the same SetPage
+        /// (ItmLifecycleController.PageSetSpacingMs ≈ 100 ms ≈ a few 16 ms frames;
+        /// seam-map §4.4 residual ±2 after collapse).
+        /// </summary>
+        public const int MaxRetryFrameGap = 2;
+
         /// <summary>ITM SetPage report: FF 05 04 &lt;deviceId&gt; &lt;page&gt; …</summary>
         public static bool IsSetPage(byte[] payload)
             => payload != null
@@ -32,19 +41,21 @@ namespace FanaBridge.Tests.Display.Replay
                     continue;
                 }
 
-                // Maximal run of consecutive same-channel byte-identical SetPage.
+                // True retry run: consecutive stream entries, same channel/payload,
+                // each prior attempt declined, and FrameIndex within MaxRetryFrameGap.
                 int runStart = i;
                 int j = i + 1;
                 while (j < raw.Count
                     && raw[j].Channel == a.Channel
                     && IsSetPage(raw[j].Payload)
-                    && WireAttempt.PayloadBytesEqual(raw[j].Payload, a.Payload))
+                    && WireAttempt.PayloadBytesEqual(raw[j].Payload, a.Payload)
+                    && Math.Abs(raw[j].FrameIndex - raw[j - 1].FrameIndex) <= MaxRetryFrameGap)
                 {
                     j++;
                 }
 
                 // Collapse only when every attempt except possibly the last is declined.
-                bool collapsible = j - runStart >= 1;
+                bool collapsible = j - runStart > 1;
                 if (collapsible)
                 {
                     for (int k = runStart; k < j - 1; k++)
@@ -57,7 +68,7 @@ namespace FanaBridge.Tests.Display.Replay
                     }
                 }
 
-                if (collapsible && j - runStart > 1)
+                if (collapsible)
                 {
                     var last = raw[j - 1];
                     var first = raw[runStart];

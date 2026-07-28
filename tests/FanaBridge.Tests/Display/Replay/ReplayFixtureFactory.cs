@@ -52,21 +52,15 @@ namespace FanaBridge.Tests.Display.Replay
             }
         }
 
-        public static string LoadOrBuildV1(ReplayCell cell)
-        {
-            string path = Path.Combine(FixturesDirectory(), cell.Id + ".v1.json");
-            if (File.Exists(path))
-                return File.ReadAllText(path);
-            return BuildV1(cell);
-        }
+        /// <summary>
+        /// Always generate from the cell axes (FR-9: never prefer stale on-disk fixtures).
+        /// </summary>
+        public static string LoadOrBuildV1(ReplayCell cell) => BuildV1(cell);
 
-        public static string LoadOrBuildV2(ReplayCell cell)
-        {
-            string path = Path.Combine(FixturesDirectory(), cell.Id + ".v2.json");
-            if (File.Exists(path))
-                return File.ReadAllText(path);
-            return BuildV2(cell);
-        }
+        /// <summary>
+        /// Always generate from the cell axes (FR-9: never prefer stale on-disk fixtures).
+        /// </summary>
+        public static string LoadOrBuildV2(ReplayCell cell) => BuildV2(cell);
 
         // ── v1 document ──────────────────────────────────────────────────
 
@@ -128,8 +122,21 @@ namespace FanaBridge.Tests.Display.Replay
                 ["runs"] = runs,
             };
 
-            if (cell.Target == ReplayTarget.SegmentScreen || cell.Target == ReplayTarget.Special)
+            // SegmentScreen: ITM rule set owns director intent (v9 director reads only
+            // itm.Intent — codex class-b / FR-5). Also mirror onto legacyRules so col01
+            // paints the same segment face (legacy engine owns DriveLegacyCol01).
+            // Mirror id must be deterministic and distinct (v1 cross-set uniqueness;
+            // random GUID replacement would flake). Special stays on legacy only.
+            if (cell.Target == ReplayTarget.Special)
                 legacyRules.Add(rule);
+            else if (cell.Target == ReplayTarget.SegmentScreen)
+            {
+                itmRules.Add(rule);
+                var mirror = (JObject)rule.DeepClone();
+                mirror["id"] = "r1-legacy-mirror";
+                mirror["name"] = "replay-r1-legacy-mirror";
+                legacyRules.Add(mirror);
+            }
             else
                 itmRules.Add(rule);
 
@@ -367,8 +374,9 @@ namespace FanaBridge.Tests.Display.Replay
 
             var rows = new JArray();
 
-            // Seat row for the primary rule (when it maps to an ITM/hosted destination).
-            if (cell.Target != ReplayTarget.Special || cell.Device != ReplayDevice.SegmentOnly)
+            // Seat row for the primary rule. Special is wheel-screen only — do not author
+            // an extra fuelErsDrs seat (codex MAJOR 4: that manufactured special-v2-trailing-setpage).
+            if (cell.Target != ReplayTarget.Special)
                 rows.Add(BuildV2Seat(cell));
 
             rows.Add(new JObject { ["kind"] = "manual" });
@@ -399,7 +407,6 @@ namespace FanaBridge.Tests.Display.Replay
                 ["rest"] = new JObject
                 {
                     ["inSessionPage"] = restInSession,
-                    ["landingPage"] = restInSession.DeepClone(),
                     ["idle"] = new JObject { ["kind"] = "blank" },
                 },
             };
@@ -543,8 +550,9 @@ namespace FanaBridge.Tests.Display.Replay
                     target = new JObject { ["kind"] = "cycle", ["id"] = "c1" };
                     break;
                 case ReplayTarget.Special:
-                    // Special is on wheelScreen; seat points at rest ITM page for parity skeleton.
-                    target = new JObject { ["kind"] = "itmPage", ["catalogPageId"] = "fuelErsDrs" };
+                    // Special is wheelScreen-only (no seat). Unreachable — BuildV2Seat not
+                    // called for Special; keep a hosted target if ever reused.
+                    target = new JObject { ["kind"] = "hostedPage", ["id"] = "spd" };
                     break;
                 default:
                     target = new JObject { ["kind"] = "itmPage", ["catalogPageId"] = "fuelErsDrs" };
@@ -559,24 +567,18 @@ namespace FanaBridge.Tests.Display.Replay
 
             var summons = new JArray
             {
-                new JObject
-                {
-                    ["id"] = "s1",
-                    ["condition"] = BuildV2Condition(cell),
-                    ["lifetime"] = BuildV2Lifetime(cell),
-                },
+                BuildV2Summon("s1", cell, BuildV2Condition(cell), BuildV2Lifetime(cell)),
             };
 
             if (cell.KeptBehaviorName == "supersede-retired-untilDismissed-resumes")
             {
                 summons = new JArray
                 {
-                    new JObject
-                    {
-                        ["id"] = "s-low",
-                        ["condition"] = BuildV2Condition(cell),
-                        ["lifetime"] = new JObject { ["kind"] = "untilDismissed" },
-                    },
+                    BuildV2Summon(
+                        "s-low",
+                        cell,
+                        BuildV2Condition(cell),
+                        new JObject { ["kind"] = "untilDismissed" }),
                 };
                 // Higher seat row for pit limiter.
                 return new JObject
@@ -595,6 +597,28 @@ namespace FanaBridge.Tests.Display.Replay
                 ["target"] = target,
                 ["summons"] = summons,
             };
+        }
+
+        /// <summary>
+        /// Build a v2 summon and propagate the cell's Runs axis (omitted when InGame —
+        /// schema default). Fixture hygiene: idle/always cells must carry the axis even
+        /// when firmware blank still governs the idle-floor wire outcome.
+        /// </summary>
+        private static JObject BuildV2Summon(
+            string id, ReplayCell cell, JObject condition, JObject lifetime)
+        {
+            var summon = new JObject
+            {
+                ["id"] = id,
+                ["condition"] = condition,
+                ["lifetime"] = lifetime,
+            };
+            if (cell.Runs != ReplayRuns.InGame)
+            {
+                // Matches schema RunsWhen camelCase (idle / always).
+                summon["runs"] = cell.Runs == ReplayRuns.Idle ? "idle" : "always";
+            }
+            return summon;
         }
 
         private static JObject BuildV2Condition(ReplayCell cell)

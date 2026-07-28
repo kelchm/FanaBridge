@@ -247,10 +247,108 @@ namespace FanaBridge.Tests.Display.Replay
             {
                 if (_all != null)
                     return _all;
-                _all = BuildAll();
+                _all = BuildAll().Select(AttachRuledKnownDiffs).ToList();
                 return _all;
             }
         }
+
+        /// <summary>
+        /// Named ruled model diffs (FR-4). Bytes verified against live streams after
+        /// FR-1 landing fix — see e8-col01-class-adjudication §3 and codex class-c.
+        /// </summary>
+        private static ReplayCell AttachRuledKnownDiffs(ReplayCell cell)
+        {
+            if (!cell.IsRepresentable || cell.KnownDiffs.Count > 0)
+                return cell;
+
+            // Named NEW-behavior: v2-only suffix blink changes value-update payload.
+            if (cell.KeptBehaviorName == "suffix-blink-v2-only")
+            {
+                return WithKnownDiffs(cell, new[]
+                {
+                    ReplayKnownDiffs.SuffixBlinkV2Only,
+                });
+            }
+
+            // Class C: PBME idle floor → v2 firmware Blank screen (0x50), no v1 twin.
+            if (cell.Runs == ReplayRuns.Idle
+                && cell.Device == ReplayDevice.Pbme
+                && cell.Target == ReplayTarget.Page
+                && cell.KeptBehaviorName == null)
+            {
+                return WithKnownDiffs(cell, new[]
+                {
+                    ReplayKnownDiffs.BlankCompileFirmwareIdle,
+                });
+            }
+
+            // Segment-screen: itm-rest-page-is-v1-only (v1 dual rest planes vs v2 one floor;
+            // SetPage + lapInfo VAL/DEF pins). Segment-only cells must stay strict.
+            if (cell.Target == ReplayTarget.SegmentScreen
+                && cell.Device != ReplayDevice.SegmentOnly)
+            {
+                var diffs = new List<KnownDiff>
+                {
+                    cell.Device == ReplayDevice.Bentley
+                        ? ReplayKnownDiffs.ItmRestPageIsV1OnlyBentley
+                        : ReplayKnownDiffs.ItmRestPageIsV1OnlyPbme,
+                };
+                // --blank-compile-three-row-split residual after VAL/DEF pin is the
+                // firmware blank face; stack blank-compile (no new class name).
+                if (cell.KeptBehaviorName != null
+                    && cell.KeptBehaviorName.IndexOf("blank-compile", StringComparison.Ordinal) >= 0)
+                {
+                    diffs.Add(ReplayKnownDiffs.BlankCompileFirmwareIdle);
+                }
+                return WithKnownDiffs(cell, diffs);
+            }
+
+            // Special: no manufactured named class (extra fuelErsDrs seat removed).
+            // Cells pass strict or report real E8-PARITY diffs.
+
+            // Subclass A: v1 has no segmentDisplay world → LegacyModeMigration bakes Gear;
+            // v2 paints first-hosted Speed (FR-1 §14 chain).
+            if (IsLegacyModeBakeCell(cell))
+            {
+                return WithKnownDiffs(cell, new[]
+                {
+                    ReplayKnownDiffs.LegacyModeBakeIsV1Only,
+                });
+            }
+
+            return cell;
+        }
+
+        /// <summary>
+        /// True when v1 omits segmentDisplay (mode-bake Gear) while v2 has hosted pages
+        /// (first-hosted Speed after FR-1). Mirrors ReplayFixtureFactory needsSegmentWorld.
+        /// </summary>
+        internal static bool IsLegacyModeBakeCell(ReplayCell cell)
+        {
+            if (cell.Device == ReplayDevice.SegmentOnly)
+                return false;
+            if (cell.Target == ReplayTarget.SegmentScreen || cell.Target == ReplayTarget.Special)
+                return false;
+            if (cell.KeptBehaviorName != null
+                && (cell.KeptBehaviorName.Contains("wheel-screen")
+                    || cell.KeptBehaviorName.Contains("blank-compile")
+                    || cell.KeptBehaviorName.Contains("special")))
+                return false;
+            // Idle cells use the firmware-blank known diff, not mode-bake.
+            if (cell.Runs == ReplayRuns.Idle)
+                return false;
+            return true;
+        }
+
+        private static ReplayCell WithKnownDiffs(ReplayCell cell, IReadOnlyList<KnownDiff> diffs)
+            => new ReplayCell(
+                cell.Id, cell.Block, cell.Device, cell.Target, cell.Condition, cell.Hold,
+                cell.Runs, cell.Knowledge, cell.Press, cell.Wire,
+                unrepresentableReason: cell.UnrepresentableReason,
+                knownDiffs: diffs,
+                keptBehaviorName: cell.KeptBehaviorName,
+                hysteresis: cell.Hysteresis,
+                notes: cell.Notes);
 
         public static IEnumerable<object[]> AllTheoryData()
             => All().Select(c => new object[] { c.Id });

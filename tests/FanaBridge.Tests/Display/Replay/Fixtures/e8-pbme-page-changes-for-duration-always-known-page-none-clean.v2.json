@@ -56,7 +56,8 @@
               "kind": "onChange",
               "direction": "any",
               "durationMs": 5000
-            }
+            },
+            "runs": "always"
           }
         ]
       },
@@ -66,10 +67,6 @@
     ],
     "rest": {
       "inSessionPage": {
-        "kind": "itmPage",
-        "catalogPageId": "lapInfo"
-      },
-      "landingPage": {
         "kind": "itmPage",
         "catalogPageId": "lapInfo"
       },

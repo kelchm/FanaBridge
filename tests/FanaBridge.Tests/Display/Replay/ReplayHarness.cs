@@ -42,6 +42,9 @@ namespace FanaBridge.Tests.Display.Replay
         public TelemetryState Telemetry { get; } = new TelemetryState();
         public int FrameIndex { get; private set; }
         public string EngineLabel { get; set; } = "";
+        public JObject Settings { get; set; } = new JObject();
+        public string WheelCode { get; set; } = "CSSWFORMV3";
+        public byte WheelWireCode { get; set; }
 
         public void Frame()
         {
@@ -52,6 +55,26 @@ namespace FanaBridge.Tests.Display.Replay
             var data = ReplayScript.ToGameData(Telemetry);
             // pm: null so DisplayActionHub.EnsureRegistered no-ops (RISK-7).
             Instance.DataUpdate(null, ref data);
+        }
+
+        /// <summary>Re-apply the session settings bag (config-reload kept behavior).</summary>
+        public void ReloadConfig()
+            => Instance.SetSettings(Settings, isDefault: false);
+
+        /// <summary>
+        /// Force a wheel-change count bump via a transient different identity commit
+        /// (wheel-change kept behavior).
+        /// </summary>
+        public void SimulateWheelChange()
+        {
+            // Swap to a different rim identity then back so WheelChangeCount advances twice.
+            byte alt = WheelWireCode == 0x04 ? (byte)0x0E : (byte)0x04; // CSSWFORMV3 vs PSWBMW-ish
+            Transport.Identity.Enqueue(ReplayHarness.IdentityReport(0x0C, alt));
+            Clock.T += 250;
+            Wheelbase.UpdateIdentity();
+            Transport.Identity.Enqueue(ReplayHarness.IdentityReport(0x0C, WheelWireCode));
+            Clock.T += 250;
+            Wheelbase.UpdateIdentity();
         }
 
         public IReadOnlyList<WireAttempt> Attempts => Transport.Attempts;
@@ -66,7 +89,10 @@ namespace FanaBridge.Tests.Display.Replay
         private static byte WheelWire(string code)
             => FanatecDeviceTables.Wheels.First(kv => kv.Value == code).Key;
 
-        private static byte[] Ff08(byte baseType, byte wire)
+        private static byte[] Ff08(byte baseType, byte wire) => IdentityReport(baseType, wire);
+
+        /// <summary>FF 08 identity report used by session bring-up and wheel-change steps.</summary>
+        internal static byte[] IdentityReport(byte baseType, byte wire)
         {
             var b = new byte[64];
             b[0] = 0xFF;
@@ -98,11 +124,15 @@ namespace FanaBridge.Tests.Display.Replay
 
         private static ReplaySession Start(ReplayCell cell, JObject settings, string label)
         {
+            byte wire = WheelWire(cell.WheelCode);
             var s = new ReplaySession
             {
                 Transport = new WireAttemptRecorder(),
                 Clock = new ReplayClock(),
                 EngineLabel = label,
+                Settings = settings,
+                WheelCode = cell.WheelCode,
+                WheelWireCode = wire,
             };
             s.Transport.BindClock(s.Clock.Now);
 
@@ -111,7 +141,7 @@ namespace FanaBridge.Tests.Display.Replay
                 throw new InvalidOperationException("AutoConnect failed for " + label);
 
             // Commit identity for the cell's wheel.
-            s.Transport.Identity.Enqueue(Ff08(0x0C, WheelWire(cell.WheelCode)));
+            s.Transport.Identity.Enqueue(Ff08(0x0C, wire));
             s.Clock.T += 10;
             s.Wheelbase.UpdateIdentity();
             s.Clock.T += 250;

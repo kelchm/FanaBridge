@@ -86,10 +86,6 @@
         "kind": "itmPage",
         "catalogPageId": "lapInfo"
       },
-      "landingPage": {
-        "kind": "itmPage",
-        "catalogPageId": "lapInfo"
-      },
       "idle": {
         "kind": "blank"
       }
