@@ -614,8 +614,14 @@ namespace FanaBridge.Adapters
             // Switched away from ITM (e.g. override to a basic-display profile): the
             // runtime stops the session (a no-op when it holds no driver) so the next Itm
             // selection re-runs bring-up, and republishes the now-null envelope.
+            // DisplayType.None also clears composition diagnostics even when the ITM
+            // driver is already null (basic-v2 → None; FR-3).
             if (displayType != DisplayType.Itm)
-                _displayRuntime.OnDisplayTypeLeftItm(plugin);
+            {
+                _displayRuntime.OnDisplayTypeLeftItm(
+                    plugin,
+                    clearCompositionWithoutDriver: displayType == DisplayType.None);
+            }
 
             if (displayType == DisplayType.Itm)
             {
@@ -735,19 +741,19 @@ namespace FanaBridge.Adapters
         // ── Legacy col01 arbitration (single writer: LegacyDisplayDriver) ─
 
         /// <summary>
-        /// True when the rule/composition path owns col01: flag on and the frame-latched
-        /// config has a non-empty legacy world (v1) OR a live v2 composition document
-        /// (RISK-4). Uses <see cref="DeviceDisplayRuntime.FrameConfig"/> /
+        /// True when the rule/composition path owns col01. A live v2 document always owns
+        /// col01 (RISK-4 — no flag combination may produce two col01 writers). Otherwise
+        /// flag-on + non-empty v1 legacy world. Uses frame-latched
+        /// <see cref="DeviceDisplayRuntime.FrameConfig"/> /
         /// <see cref="DeviceDisplayRuntime.FrameConfigV2"/> (the acquire Tick /
-        /// TickLegacyRules already made) — never re-reads the volatiles, so a concurrent
-        /// UI Apply between the tick and this drive cannot split ownership (rule sink +
-        /// mode Update both writing col01 in one frame). Flag-off keeps the mode-based
+        /// TickLegacyRules already made) — never re-reads the volatiles. Flag-off without
+        /// a live v2 document keeps the mode-based
         /// <see cref="LegacyDisplayDriver.Update"/> fallback; flag-on empty world is silence.
         /// </summary>
         private bool UseLegacyRulePath
-            => DisplayRuleStack.LegacyRuleWrites
-                && (DisplayRuleStack.HasLegacyWorld(_displayRuntime.FrameConfig)
-                    || DeviceDisplayRuntime.IsLiveCompositionV2(_displayRuntime.FrameConfigV2));
+            => DeviceDisplayRuntime.IsLiveCompositionV2(_displayRuntime.FrameConfigV2)
+                || (DisplayRuleStack.LegacyRuleWrites
+                    && DisplayRuleStack.HasLegacyWorld(_displayRuntime.FrameConfig));
 
         private void EnsureLegacyDriver(FanatecPlugin plugin, bool logCreate = false)
         {

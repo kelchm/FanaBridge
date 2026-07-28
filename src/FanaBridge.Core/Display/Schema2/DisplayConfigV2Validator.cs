@@ -911,25 +911,9 @@ namespace FanaBridge.Display.Schema2
                 }
             }
 
-            if (rest.LandingPage != null)
-            {
-                // landingPage accepts hostedPage refs ONLY (§5 / FZ-006).
-                if (rest.LandingPage.Kind != PageRefKind.HostedPage)
-                {
-                    rest.LandingPage.DegradedAtLoad = true;
-                    rest.LandingPageUseFallback = true;
-                    warn("rest.landingPage requires hostedPage — degraded ("
-                        + (rest.LandingPage.KindRaw ?? "no kind")
-                        + "); runtime falls back");
-                }
-                else if (!IsResolvablePageMember(rest.LandingPage, hostedPageIds, itmCatalogIds,
-                    catalog, allowCycle: false, out string reason))
-                {
-                    rest.LandingPage.DegradedAtLoad = true;
-                    rest.LandingPageUseFallback = true;
-                    warn("rest.landingPage degraded — " + reason + "; runtime falls back");
-                }
-            }
+            // FA3 / FREEZE AMENDMENT 3: rest.landingPage removed. Bare-Legacy seed is
+            // engine law (LegacySeedResolver: first non-degraded hosted page in strip
+            // order) — no config member, no validator mark.
 
             if (rest.Idle != null)
                 NormalizeIdle(rest.Idle, hostedPageIds, itmCatalogIds, catalog, warn);

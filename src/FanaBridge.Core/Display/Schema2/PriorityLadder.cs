@@ -21,7 +21,7 @@ namespace FanaBridge.Display.Schema2
         [JsonProperty("rows")]
         public List<PriorityRow> Rows { get; set; } = new List<PriorityRow>();
 
-        /// <summary>Fixed floor: in-session page, landing page, idle. Not a row.</summary>
+        /// <summary>Fixed floor: in-session page, idle. Not a row.</summary>
         [JsonProperty("rest")]
         public RestBlock Rest { get; set; } = new RestBlock();
 
@@ -259,17 +259,12 @@ namespace FanaBridge.Display.Schema2
         public bool EffectivelyEnabled => Enabled && !DegradedAtLoad;
     }
 
-    /// <summary>Fixed rest floor: in-session page, landing page, idle.</summary>
+    /// <summary>Fixed rest floor: in-session page, idle.</summary>
     public class RestBlock
     {
         /// <summary>Page shown when nothing is active in-session (itmPage | hostedPage only).</summary>
         [JsonProperty("inSessionPage")]
         public PageRef InSessionPage { get; set; }
-
-        /// <summary>ITM wheels: hosted page a bare native-button Legacy arrival shows
-        /// before any remembered page exists. Absent on segment-only wheels.</summary>
-        [JsonProperty("landingPage")]
-        public PageRef LandingPage { get; set; }
 
         /// <summary>Idle presentation. Absent ≡ blank.</summary>
         [JsonProperty("idle")]
@@ -284,11 +279,6 @@ namespace FanaBridge.Display.Schema2
         /// the compiled default walk's first member (engine resolves further).</summary>
         [JsonIgnore]
         public bool InSessionPageUseDefaultWalk { get; internal set; }
-
-        /// <summary>When <see cref="LandingPage"/> is degraded, runtime falls back to
-        /// in-session when hosted, else the first hosted page.</summary>
-        [JsonIgnore]
-        public bool LandingPageUseFallback { get; internal set; }
     }
 
     /// <summary>

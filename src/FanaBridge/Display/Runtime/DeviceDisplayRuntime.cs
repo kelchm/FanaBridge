@@ -513,14 +513,28 @@ namespace FanaBridge.Display.Runtime
 
         /// <summary>
         /// Display type switched away from ITM (e.g. an override to a basic-display
-        /// profile): stop the session so the next Itm selection re-runs bring-up. A no-op
-        /// when no driver is held. Republishes the (now null) envelope — the frame path's
-        /// Tick won't run on the non-ITM path, so nothing else would clear it.
+        /// profile): stop the session so the next Itm selection re-runs bring-up.
+        /// When <paramref name="clearCompositionWithoutDriver"/> is true (DisplayType.None
+        /// teardown), also clears composition diagnostics even if the ITM driver is already
+        /// null (basic-v2 → None must not retain a stale envelope). When false and no driver
+        /// is held (basic path every frame), composition is left alone so TickLegacyRules
+        /// can keep driving it.
         /// </summary>
-        internal void OnDisplayTypeLeftItm(FanatecPlugin plugin)
+        internal void OnDisplayTypeLeftItm(
+            FanatecPlugin plugin,
+            bool clearCompositionWithoutDriver = false)
         {
             if (_itmDisplay == null)
+            {
+                if (!clearCompositionWithoutDriver)
+                    return;
+                DropEngines();
+                _propertySource = null;
+                _itmFieldBuffer = null;
+                _compositionProperties = null;
+                MaybePublishPanelSnapshot();
                 return;
+            }
             _itmDisplay.Stop();
             _itmDisplay = null;
             // The twin models the ITM panel — it goes with the driver. Detach it from the
@@ -529,7 +543,7 @@ namespace FanaBridge.Display.Runtime
             plugin.DetachItmObserver(_itmTwin);
             _itmTwin = null;
             _itmWasRunning = false;
-            DropEngines();                // rules only drive an ITM display
+            DropEngines();
             _propertySource = null;
             _itmFieldBuffer = null;
             _compositionProperties = null;
@@ -1047,7 +1061,6 @@ namespace FanaBridge.Display.Runtime
                 return false;
 
             if (IsItmPageRef(config.Priority?.Rest?.InSessionPage)
-                || IsItmPageRef(config.Priority?.Rest?.LandingPage)
                 || IsItmPageRef(config.Priority?.Rest?.Idle?.Page))
                 return true;
 

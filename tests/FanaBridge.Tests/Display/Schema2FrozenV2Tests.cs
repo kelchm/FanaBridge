@@ -203,10 +203,6 @@ namespace FanaBridge.Tests.Display
         ""kind"": ""hostedPage"",
         ""id"": ""p-speed""
       },
-      ""landingPage"": {
-        ""kind"": ""hostedPage"",
-        ""id"": ""p-speed""
-      },
       ""idle"": {
         ""kind"": ""screen"",
         ""screen"": ""logo""
@@ -619,8 +615,6 @@ namespace FanaBridge.Tests.Display
                 ReturnToRestAfterMs = 15000,
             });
             cfg.Priority.Rest.InSessionPage =
-                new PageRef { Kind = PageRefKind.HostedPage, Id = "p-speed" };
-            cfg.Priority.Rest.LandingPage =
                 new PageRef { Kind = PageRefKind.HostedPage, Id = "p-speed" };
             cfg.Priority.Rest.Idle = new IdleSpec
             {

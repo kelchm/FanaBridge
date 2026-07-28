@@ -196,8 +196,9 @@ namespace FanaBridge.Display.Arbitration
         public bool HasRememberedTarget { get; set; }
 
         /// <summary>
-        /// rest.landingPage destination when authored and not degraded; else null.
-        /// E7 law 11: bare Legacy lands on remembered else landing else in-session.
+        /// Strip-order seed (first non-degraded hosted page in walk order) for bare
+        /// Legacy arrival when no remembered page exists (FA3 / FREEZE AMENDMENT 3).
+        /// Null when the walk has no hosted member (zero-hosted → silence).
         /// </summary>
         public string LandingDestinationId { get; set; }
 

@@ -1171,6 +1171,38 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void ColdEntry_PageSetInBringUpBurst_DespiteRecentPageSet()
+        {
+            // H5: reconnect / wheel-change cold entry must emit PageSet inside the bring-up
+            // burst even when a PageSet was accepted less than PageSetSpacingMs ago (e.g.
+            // hosted-only v2 park-on-Legacy just before disconnect). Spacing still applies
+            // to mid-session switches and recovery rungs — only full cold entry clears it.
+            var c = Make(out var t, out var clock);
+            Sync(c, t, clock);
+
+            // Recent in-session PageSet (within spacing of the cold entry below).
+            c.RequestPage(6); // Legacy
+            Tick(c, clock, c.SwitchQuietMs); // PageSet(6) out; do NOT wait full spacing
+            Assert.Contains(t.Sent, IsPageSetTo(6));
+            t.Sent.Clear();
+
+            // Reconnect-shaped cold entry without waiting out the spacing floor.
+            c.Stop();
+            c.Start();
+            Tick(c, clock, advance: 1); // << PageSetSpacingMs since PageSet(6)
+
+            int reset = t.Sent.FindIndex(IsReset);
+            int gate = t.Sent.FindIndex(IsGateOn);
+            int enable = t.Sent.FindIndex(IsEnable);
+            int page = t.Sent.FindIndex(IsPageSet);
+            Assert.True(reset >= 0 && gate >= 0 && enable >= 0 && page >= 0,
+                "full cold bring-up burst must include PageSet");
+            Assert.True(reset < gate && gate < enable && enable < page,
+                "order: Reset → GateOn → Enable → PageSet (PageSet not deferred by prior-session spacing)");
+            Assert.Equal(ItmLifecycleState.AwaitPush, c.State);
+        }
+
+        [Fact]
         public void WheelChanged_WhileIdle_DoesNothing()
         {
             var c = Make(out var t, out var clock);

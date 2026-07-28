@@ -547,6 +547,12 @@ namespace FanaBridge.Display.Session
         // kept for official-software parity — it has never been observed to do anything, and no
         // state transition depends on it. The handle map is dropped: host state must never be
         // used to infer firmware state.
+        //
+        // PageSet spacing is also cleared: a full cold restart must emit PageSet inside the
+        // bring-up burst (before any face paint on the next frame path). Prior-session
+        // spacing would otherwise push the cold PageSet two frames later — the H5 residual
+        // under hosted-only v2 (recent park-on-Legacy SetPage + reconnect AdvanceMs < spacing).
+        // Mid-session recovery rungs still honor PageSetSpacingMs (not a cold entry).
         private void ColdEntry(string why)
         {
             AbandonInFlight();
@@ -554,6 +560,7 @@ namespace FanaBridge.Display.Session
             _subsSnapshot = null;
             CurrentPage = 0;
             _pendingRequest = 0;
+            _lastPageSetMs = -1_000_000_000;
 
             byte page = EffectiveDefaultPage();
             _targetPage = page;

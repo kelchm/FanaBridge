@@ -197,7 +197,6 @@ namespace FanaBridge.Tests.Display
     ""rows"": [ { ""kind"": ""manual"" } ],
     ""rest"": {
       ""inSessionPage"": { ""kind"": ""itmPage"", ""catalogPageId"": ""fuelErsDrs"" },
-      ""landingPage"": { ""kind"": ""hostedPage"", ""id"": ""p-pit"" },
       ""idle"": { ""kind"": ""blank"" }
     }
   },
@@ -223,7 +222,6 @@ namespace FanaBridge.Tests.Display
     ""rows"": [ { ""kind"": ""manual"" } ],
     ""rest"": {
       ""inSessionPage"": { ""kind"": ""hostedPage"", ""id"": ""p-pit"" },
-      ""landingPage"": { ""kind"": ""hostedPage"", ""id"": ""p-pit"" },
       ""idle"": { ""kind"": ""blank"" }
     }
   },
@@ -244,10 +242,34 @@ namespace FanaBridge.Tests.Display
         /// <summary>
         /// Same shape as <c>RuleWorldActive_ModeUpdateNeverCalled_OnLiveFrames</c>
         /// (LegacyRuleCol01Tests): when a v2 document is live, the frame-latched gate
-        /// owns col01 so LegacyDisplayDriver.Update is never entered.
+        /// owns col01 so LegacyDisplayDriver.Update is never entered — flag ON arm.
         /// </summary>
         [Fact]
         public void V2DocumentLive_ModeUpdateNeverCalled_OnLiveFrames()
+        {
+            AssertV2LiveGatesOutModeUpdate(legacyRuleWrites: true);
+        }
+
+        /// <summary>
+        /// RISK-4 flag-off arm: a live v2 document still owns col01 when
+        /// <see cref="DisplayRuleStack.LegacyRuleWrites"/> is false — no dual writer.
+        /// </summary>
+        [Fact]
+        public void V2DocumentLive_FlagOff_ModeUpdateNeverCalled_OnLiveFrames()
+        {
+            bool prior = DisplayRuleStack.LegacyRuleWrites;
+            DisplayRuleStack.LegacyRuleWrites = false;
+            try
+            {
+                AssertV2LiveGatesOutModeUpdate(legacyRuleWrites: false);
+            }
+            finally
+            {
+                DisplayRuleStack.LegacyRuleWrites = prior;
+            }
+        }
+
+        private static void AssertV2LiveGatesOutModeUpdate(bool legacyRuleWrites)
         {
             var runtime = new DeviceDisplayRuntime(
                 new DeviceConfig
@@ -278,11 +300,13 @@ namespace FanaBridge.Tests.Display
             for (int i = 0; i < 5; i++)
             {
                 runtime.TickLegacyRules(null, Live(gear: "7"), settings);
-                // Production UseLegacyRulePath expression (shared predicates).
-                bool useRulePath = DisplayRuleStack.LegacyRuleWrites
-                    && (DisplayRuleStack.HasLegacyWorld(runtime.FrameConfig)
-                        || DeviceDisplayRuntime.IsLiveCompositionV2(runtime.FrameConfigV2));
-                Assert.True(useRulePath, "v2 live frame must own col01 via the rule path");
+                // Production UseLegacyRulePath expression (shared predicates; FR-2).
+                bool useRulePath = DeviceDisplayRuntime.IsLiveCompositionV2(runtime.FrameConfigV2)
+                    || (DisplayRuleStack.LegacyRuleWrites
+                        && DisplayRuleStack.HasLegacyWorld(runtime.FrameConfig));
+                Assert.True(useRulePath,
+                    "v2 live frame must own col01 via the rule path (LegacyRuleWrites="
+                    + legacyRuleWrites + ")");
                 Assert.True(DeviceDisplayRuntime.IsLiveCompositionV2(runtime.FrameConfigV2));
                 if (!useRulePath)
                 {
@@ -293,6 +317,35 @@ namespace FanaBridge.Tests.Display
 
             Assert.Equal(0, updateCalls);
             Assert.NotNull(runtime.Composition);
+        }
+
+        /// <summary>
+        /// FR-3: DisplayType.None teardown clears composition diagnostics even when the
+        /// ITM driver is already null (basic-v2 → None).
+        /// </summary>
+        [Fact]
+        public void DisplayTypeNone_Teardown_ClearsCompositionWhenItmDriverAlreadyNull()
+        {
+            var runtime = new DeviceDisplayRuntime(
+                new DeviceConfig
+                {
+                    Profile = WheelProfileStore.FindByWheelType("PSWBMW"),
+                    Capabilities = new WheelCapabilities(
+                        WheelProfileStore.FindByWheelType("PSWBMW")!),
+                },
+                itmClock: () => null,
+                log: _ => { });
+
+            var doc = DisplayConfigV2Serializer.Load(V2LegacyOnly().ToString(), _ => { });
+            runtime.SetConfigV2(doc);
+            runtime.TickLegacyRules(null, Live(gear: "7"), new DisplaySettings { DisplayMode = "Gear" });
+            Assert.NotNull(runtime.Composition);
+            Assert.NotNull(runtime.ComposedResolution);
+
+            // Basic path never built an ITM driver; None teardown must still drop v2 state.
+            runtime.OnDisplayTypeLeftItm(plugin: null!, clearCompositionWithoutDriver: true);
+            Assert.Null(runtime.Composition);
+            Assert.Null(runtime.ComposedResolution);
         }
 
         private sealed class RecordingTransport : IDeviceTransport

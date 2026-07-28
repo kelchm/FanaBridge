@@ -116,8 +116,8 @@ namespace FanaBridge.Display.Composition
 
             var rest = _config.Priority?.Rest;
             _inSessionDestinationId = DestinationIds.FromPageRef(rest?.InSessionPage);
-            _landingHostedPageId = ResolveHostedId(DestinationIds.FromPageRef(rest?.LandingPage))
-                ?? ResolveHostedId(_inSessionDestinationId);
+            // Spec §14 two-step seed (shared with SeatArbiter): first hosted in strip order.
+            _landingHostedPageId = LegacySeedResolver.ResolveSeedHostedPageId(_config);
 
             ConfiguredBase = ResolveConfiguredBaseItm();
             BaseWirePage = ResolveBaseWirePage();
@@ -434,8 +434,10 @@ namespace FanaBridge.Display.Composition
         {
             if (TryHostedId(displayedDestinationId, out string hosted))
                 return hosted;
-            // Buffer continuity while an ITM page owns the display: land on remembered
-            // hosted / landing page so col01 stays a continuous stream.
+            // Segment-plane continuity face while an ITM page owns the display (FA3 engine
+            // law / evaluated-carrier-contract §6.2 law 2): reuse the strip-order seed
+            // (LegacySeedResolver) so col01 stays a continuous stream. This is not the
+            // bare-Legacy remembered-page seed path — same resolver, second use.
             return _landingHostedPageId;
         }
 
@@ -453,9 +455,6 @@ namespace FanaBridge.Display.Composition
                 return wire;
             return 0; // absent/degraded rest = Blank (model-ruled)
         }
-
-        private static string ResolveHostedId(string destinationId)
-            => TryHostedId(destinationId, out string id) ? id : null;
 
         private static bool TryHostedId(string destinationId, out string hostedId)
         {

@@ -858,14 +858,11 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Manual_LandingDestinationExposed()
         {
+            // FA3: seed = first non-degraded hosted page in strip order (MinimalLadder: p-a).
             var doc = MinimalLadder();
-            doc.Priority.Rest.LandingPage = new PageRef
-            {
-                Kind = PageRefKind.HostedPage, Id = "p-c",
-            };
             var arb = new SeatArbiter(Normalize(doc));
             var r = arb.Tick(In(0));
-            Assert.Equal(DestinationIds.Hosted("p-c"), r.Manual.LandingDestinationId);
+            Assert.Equal(DestinationIds.Hosted("p-a"), r.Manual.LandingDestinationId);
             Assert.False(r.Manual.HasRememberedTarget);
 
             var nav = In(10);
@@ -1026,6 +1023,73 @@ namespace FanaBridge.Tests.Display
 
             r = arb.Tick(In(SeatArbiter.MinDwellMs + 100, Snap("e-above", true), Snap("e-below", true)));
             Assert.Equal("e-above", r.Intent.WinnerCarrierId);
+        }
+
+        /// <summary>
+        /// FA3-M1: null strip-order seed (ITM-only document) must not invent a
+        /// destination-less manual winner that suppresses a live lower-ranked claim.
+        /// Parked + no remembered target + null seed → fall through to bestBelow.
+        /// </summary>
+        [Fact]
+        public void NullSeed_ParkedManual_DoesNotSuppressLowerRankedClaim()
+        {
+            var doc = new DisplayConfigV2
+            {
+                // Zero hosted pages → LegacySeedResolver seed is null.
+                Pages = new List<PageEntry>
+                {
+                    new PageEntry
+                    {
+                        Kind = PageEntryKind.ItmPage,
+                        CatalogPageId = "lapInfo",
+                    },
+                },
+                Priority = new PriorityLadder
+                {
+                    Rows = new List<PriorityRow>
+                    {
+                        new PriorityRow { Kind = PriorityRowKind.Manual },
+                        new PriorityRow
+                        {
+                            Kind = PriorityRowKind.Seat, Id = "s-below",
+                            Target = new PageRef
+                            {
+                                Kind = PageRefKind.ItmPage,
+                                CatalogPageId = "fuelErsDrs",
+                            },
+                            Summons = new List<Summon>
+                            {
+                                MakeSummon("e-below", BuiltInProperties.IsInPitLane),
+                            },
+                        },
+                    },
+                    Rest = new RestBlock
+                    {
+                        InSessionPage = new PageRef
+                        {
+                            Kind = PageRefKind.ItmPage,
+                            CatalogPageId = "lapInfo",
+                        },
+                    },
+                },
+            };
+            var arb = new SeatArbiter(Normalize(doc));
+
+            // Uncataloged adopt parks manual with no remembered destination + null seed.
+            var nav = In(0);
+            nav.Manual = SeatManualInput.NavigateUnknownPage();
+            var r = arb.Tick(nav);
+            Assert.True(r.Manual.AdoptedUnknownPage);
+            Assert.False(r.Manual.HasRememberedTarget);
+            Assert.Null(r.Manual.RememberedDestinationId);
+            Assert.Null(r.Manual.LandingDestinationId);
+            // Destination-less parked manual does not own the display (no claim).
+            Assert.False(r.Manual.OwnsDisplay);
+
+            // Parked null-seed manual must not block the live seat below (after dwell).
+            r = arb.Tick(In(SeatArbiter.MinDwellMs + 100, Snap("e-below", true)));
+            Assert.Equal("e-below", r.Intent.WinnerCarrierId);
+            Assert.Equal(DestinationIds.Itm("fuelErsDrs"), r.Intent.DestinationId);
         }
 
         [Fact]
@@ -1242,11 +1306,13 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(DestinationIds.Hosted("p-t"), r.Intent.DestinationId);
 
             // t=1000 press with c-a still active → derived + member latched, manual wins.
+            // Dismiss consumes the press (no target change); destination = strip-order seed
+            // (first hosted p-t), not inSession p-rest (FA3: inSession is not a seed step).
             var press = In(1000, Snap("c-a", active: true));
             press.Manual = SeatManualInput.Navigate(DestinationIds.Hosted("p-rest"));
             r = arb.Tick(press);
             Assert.Equal(SeatArbiter.ManualCarrierId, r.Intent.WinnerCarrierId);
-            Assert.Equal(DestinationIds.Hosted("p-rest"), r.Intent.DestinationId);
+            Assert.Equal(DestinationIds.Hosted("p-t"), r.Intent.DestinationId);
             Assert.True(r.PressConsumedByDismissal);
             Assert.Contains("bringUp:s-t", r.DismissedCarrierIds);
             Assert.Contains("c-a", r.DismissedCarrierIds);

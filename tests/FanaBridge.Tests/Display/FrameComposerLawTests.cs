@@ -840,10 +840,6 @@ namespace FanaBridge.Tests.Display
                             Kind = PageRefKind.ItmPage,
                             CatalogPageId = "fuelErsDrs",
                         },
-                        LandingPage = new PageRef
-                        {
-                            Kind = PageRefKind.HostedPage, Id = "p-shift",
-                        },
                         Idle = new IdleSpec { Kind = IdleKind.Blank },
                     },
                 },

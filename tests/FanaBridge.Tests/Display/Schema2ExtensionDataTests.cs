@@ -140,11 +140,6 @@ namespace FanaBridge.Tests.Display
         ""id"": ""p-x"",
         ""v3InSession"": true
       },
-      ""landingPage"": {
-        ""kind"": ""hostedPage"",
-        ""id"": ""p-x"",
-        ""v3Landing"": true
-      },
       ""idle"": {
         ""kind"": ""screen"",
         ""screen"": ""logo"",
@@ -245,7 +240,6 @@ namespace FanaBridge.Tests.Display
             ("priority.rows[2].v3Manual", @"""m"""),
             ("priority.rest.v3Rest", @"1"),
             ("priority.rest.inSessionPage.v3InSession", @"true"),
-            ("priority.rest.landingPage.v3Landing", @"true"),
             ("priority.rest.idle.v3Idle", @"""i"""),
             ("pageOrder[0].v3Order", @"1"),
             ("fields.5.v3Field", @"{""precision"":1}"),

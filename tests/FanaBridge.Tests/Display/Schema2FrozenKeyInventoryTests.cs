@@ -40,7 +40,7 @@ namespace FanaBridge.Tests.Display
             "PageRef: catalogPageId, id, kind",
             "PriorityLadder: rest, rows",
             "PriorityRow: bringUpLifetime, childRef, id, kind, lifetime, returnToRestAfterMs, summons, target",
-            "RestBlock: idle, inSessionPage, landingPage",
+            "RestBlock: idle, inSessionPage",
             "SettingsBlock: mode, rejectUncommandedChanges",
             "Summon: condition, enabled, id, lifetime, name, runs",
             "ValueSource: kind, name",

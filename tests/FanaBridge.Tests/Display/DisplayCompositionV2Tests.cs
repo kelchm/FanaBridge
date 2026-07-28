@@ -172,11 +172,6 @@ namespace FanaBridge.Tests.Display
                             Kind = PageRefKind.HostedPage,
                             Id = "p-a",
                         },
-                        LandingPage = new PageRef
-                        {
-                            Kind = PageRefKind.HostedPage,
-                            Id = "p-a",
-                        },
                         Idle = new IdleSpec { Kind = IdleKind.Blank },
                     },
                 },
@@ -220,6 +215,50 @@ namespace FanaBridge.Tests.Display
             {
                 WheelId = "test",
                 ScreenCommands = FullScreenCaps(),
+            };
+
+        /// <summary>
+        /// Catalog envelope that hosts param 42 as overridable + ascii so field overrides
+        /// produce a real mapper plan (FR-10 lag-1 probe).
+        /// </summary>
+        private static WheelCatalog CatalogWithOverridableParam42()
+            => new WheelCatalog
+            {
+                WheelId = "test",
+                ScreenCommands = FullScreenCaps(),
+                Itm = new ItmCatalogSection
+                {
+                    LegacyPageIndex = 6,
+                    Pages = new List<CatalogPage>
+                    {
+                        new CatalogPage
+                        {
+                            Id = "tyreTemps",
+                            Index = 5,
+                            Name = "Tyre Temps",
+                            Fields = new List<CatalogField>
+                            {
+                                new CatalogField
+                                {
+                                    FieldId = "tyreFL",
+                                    ParamId = 42,
+                                    PrimaryHost = true,
+                                    Overridable = true,
+                                    Value = new FieldValueCapability
+                                    {
+                                        Numeric = false,
+                                        Ascii = true,
+                                    },
+                                    Suffix = new FieldSuffixCapability
+                                    {
+                                        Supported = true,
+                                        Width = 1,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
             };
 
         private sealed class Harness
@@ -435,17 +474,17 @@ namespace FanaBridge.Tests.Display
                 Runs = RunsWhen.Always,
             };
             var doc = MinimalDoc(fieldOverride: ov, fieldParam: 42);
-            var h = Harness.Create(doc);
+            // FR-10: catalog hosts param 42 so the override can win on the mapper seam.
+            var h = Harness.Create(doc, catalog: CatalogWithOverridableParam42());
 
-            // Frame 0: condition false — resting plan (or empty override).
+            // Frame 0: condition false — resting plan (override not winner).
             h.Props.Set(BuiltInProperties.PitLimiterOn, 0);
             h.Tick();
             Assert.Single(h.AppliedPlans);
             var plans0 = h.AppliedPlans[0];
-            // Capture whether fov-1 was the winner on frame 0.
             bool fovWon0 = plans0.Any(p =>
                 p != null && string.Equals(p.WinnerCarrierId, "fov-1", StringComparison.Ordinal));
-            Assert.False(fovWon0);
+            Assert.False(fovWon0, "override must not win while condition is false");
 
             // Frame N: condition rises — plan change produced THIS tick, applied at end.
             h.Advance();
@@ -453,27 +492,28 @@ namespace FanaBridge.Tests.Display
             h.Tick();
             Assert.Equal(2, h.AppliedPlans.Count);
             var plansN = h.AppliedPlans[1];
-            // Mapper received the new plan only at end of Tick N (call count advanced once).
-            // There is no mid-tick re-apply: exactly one ApplyFieldPlans per Tick.
+            // Mapper-seam observation: override won on this tick's end-of-tick apply.
+            FieldRegionPlan? wonN = plansN.FirstOrDefault(p =>
+                p != null && string.Equals(p.WinnerCarrierId, "fov-1", StringComparison.Ordinal));
+            Assert.NotNull(wonN);
+            Assert.True(wonN!.ValueFromOverride);
+            Assert.NotNull(wonN.ValueContent);
+            Assert.Equal("HI", wonN.ValueContent.Text);
+            // Exactly one ApplyFieldPlans per Tick (no mid-tick re-apply).
             Assert.Equal(2, h.AppliedPlans.Count);
 
-            // Frame N+1: mapper still has plansN (composition re-applies each tick end;
-            // the design law is that frame N's Update already used the previous plans).
-            // Pin: the plan that first appeared at end of N is the one present entering N+1.
+            // Frame N+1: the plan that first appeared at end of N is present entering N+1.
             h.Advance();
             var planEnteringN1 = h.AppliedPlans[h.AppliedPlans.Count - 1];
+            bool fovWonEnteringN1 = planEnteringN1.Any(p =>
+                p != null && string.Equals(p.WinnerCarrierId, "fov-1", StringComparison.Ordinal));
+            Assert.True(fovWonEnteringN1, "override that won at end of N is what mapper holds into N+1");
             h.Tick();
             Assert.Equal(3, h.AppliedPlans.Count);
-            // Winner identity continuity into N+1 (same override still active).
-            bool fovWonN = planEnteringN1.Any(p =>
-                p != null && string.Equals(p.WinnerCarrierId, "fov-1", StringComparison.Ordinal));
-            // Capability envelope may leave ladder inert without real catalog hosts —
-            // still assert apply cadence: one apply per tick, never zero on a composed frame.
             Assert.NotNull(h.Composition.LastFieldPlans);
-            Assert.Equal(3, h.AppliedPlans.Count);
-            // Cadence pin of lag-1: ApplyFieldPlans is post-write/end-of-tick, not pre-eval.
-            // (If it ran mid-eval, a second apply or pre-count change would show here.)
-            _ = fovWonN; // may be false without field capability; cadence is the law pin
+            bool fovWonN1 = h.AppliedPlans[2].Any(p =>
+                p != null && string.Equals(p.WinnerCarrierId, "fov-1", StringComparison.Ordinal));
+            Assert.True(fovWonN1, "override still wins on N+1 while condition holds");
         }
 
         // ════════════════════════════════════════════════════════════════
@@ -503,16 +543,15 @@ namespace FanaBridge.Tests.Display
             h.Tick();
             Assert.Empty(h.SegmentWrites);
 
-            // Release: rule inactive → reclaim path may write segments / release.
+            // Release: FR-10 requires same-tick reclaim write, not just the callback.
             h.Advance();
             h.Props.Set(BuiltInProperties.IsInPitLane, 0);
+            h.SegmentWrites.Clear();
+            int releasesBefore = h.SpecialReleaseCount;
             h.Tick();
-            Assert.True(h.SpecialReleaseCount >= 1 || h.SegmentWrites.Count >= 0);
-            // After release, segment writes are allowed again (reclaim or content).
-            // At least one of release-or-segment must have observed the edge.
-            Assert.True(
-                h.SpecialReleaseCount >= 1 || h.SegmentWrites.Count >= 1,
-                "release edge should arm reclaim (OnSpecialReleased and/or segment write)");
+            Assert.True(h.SpecialReleaseCount > releasesBefore,
+                "release edge must fire OnSpecialReleased");
+            Assert.NotEmpty(h.SegmentWrites);
         }
 
         [Fact]
@@ -531,10 +570,11 @@ namespace FanaBridge.Tests.Display
             h.Advance();
             h.Props.Set(BuiltInProperties.IsInPitLane, 0);
             h.SegmentWrites.Clear();
-            h.Tick(); // release edge
+            h.Tick(); // release edge — same-tick reclaim write required (FR-10)
             Assert.True(h.SpecialReleaseCount >= 1);
+            Assert.NotEmpty(h.SegmentWrites);
 
-            // Subsequent quiet content tick: segments may write (surface free).
+            // Subsequent quiet content tick: segments may still write (surface free).
             h.Advance();
             h.SegmentWrites.Clear();
             h.Tick();

@@ -121,7 +121,8 @@ namespace FanaBridge.Display.Arbitration
             var rest = _config.Priority?.Rest;
             _defaultInSessionDestinationId = DestinationIds.FromPageRef(rest?.InSessionPage)
                 ?? DestinationIds.RestInSession;
-            _landingDestinationId = ResolveLandingDestination(rest);
+            // FA3: seed only — first non-degraded hosted page in strip order (no config member).
+            _landingDestinationId = LegacySeedResolver.ResolveSeedDestination(_config);
             _idle = rest?.Idle;
             // Never-navigated: no remembered target (landing is a separate fallback).
             _manualTarget = null;
@@ -271,14 +272,6 @@ namespace FanaBridge.Display.Arbitration
         }
 
         // ── Construction ─────────────────────────────────────────────────
-
-        private static string ResolveLandingDestination(RestBlock rest)
-        {
-            if (rest?.LandingPage == null || rest.LandingPage.DegradedAtLoad
-                || rest.LandingPageUseFallback)
-                return null;
-            return DestinationIds.FromPageRef(rest.LandingPage);
-        }
 
         private void BuildPlans()
         {
@@ -1090,10 +1083,13 @@ namespace FanaBridge.Display.Arbitration
             return true;
         }
 
+        /// <summary>
+        /// Remembered page wins; else the strip-order seed (FA3 two-step law).
+        /// <c>inSessionPage</c> is the rest floor, not a seed-chain step.
+        /// </summary>
         private string EffectiveManualDestination()
             => _manualTarget
-               ?? _landingDestinationId
-               ?? _defaultInSessionDestinationId;
+               ?? _landingDestinationId;
 
         private void EvaluateAggregates(
             long now,
@@ -1163,16 +1159,22 @@ namespace FanaBridge.Display.Arbitration
                 if (row.Kind == PriorityRowKind.Manual)
                 {
                     // Manual claims only after first press (parked) and while returnToRest
-                    // has not expired. Destination = remembered ?? landing ?? in-session.
+                    // has not expired. Destination = remembered ?? strip-order seed (FA3).
+                    // No destination → no manual claim (null seed on ITM-only docs must
+                    // not suppress lower-ranked live summons).
                     if (manualClaimAllowed)
                     {
-                        manual = new LogicalWinner
+                        string dest = EffectiveManualDestination();
+                        if (dest != null)
                         {
-                            Rank = row.Rank,
-                            RowId = row.RowId,
-                            CarrierId = ManualCarrierId,
-                            DestinationId = EffectiveManualDestination(),
-                        };
+                            manual = new LogicalWinner
+                            {
+                                Rank = row.Rank,
+                                RowId = row.RowId,
+                                CarrierId = ManualCarrierId,
+                                DestinationId = dest,
+                            };
+                        }
                     }
                     continue;
                 }

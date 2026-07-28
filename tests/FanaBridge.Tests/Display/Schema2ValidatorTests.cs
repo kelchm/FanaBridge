@@ -623,15 +623,7 @@ namespace FanaBridge.Tests.Display
             Assert.True(cfg.Priority.Rest.InSessionPageUseDefaultWalk);
         }
 
-        [Fact]
-        public void Ref_RestLandingPage_Unresolved_FallbackFlag()
-        {
-            var cfg = DocWithHosted();
-            cfg.Priority.Rest.LandingPage = Hosted("missing");
-            Norm(cfg);
-            Assert.True(cfg.Priority.Rest.LandingPage.DegradedAtLoad);
-            Assert.True(cfg.Priority.Rest.LandingPageUseFallback);
-        }
+        // FA3: rest.landingPage removed — no validator marks for that carrier.
 
         [Fact]
         public void Ref_RestIdlePage_Unresolved_FallbackBlank()
@@ -1922,17 +1914,6 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Ref_Catalog_RestLandingPage_UnresolvedItm()
-        {
-            var cat = CatalogWithPages("lapInfo");
-            var cfg = new DisplayConfigV2();
-            cfg.Priority.Rest.LandingPage = Itm("nope");
-            Norm(cfg, catalog: cat);
-            Assert.True(cfg.Priority.Rest.LandingPage.DegradedAtLoad);
-            Assert.True(cfg.Priority.Rest.LandingPageUseFallback);
-        }
-
-        [Fact]
         public void Ref_Catalog_RestIdlePage_UnresolvedItm()
         {
             var cat = CatalogWithPages("lapInfo");
@@ -1945,21 +1926,6 @@ namespace FanaBridge.Tests.Display
             Norm(cfg, catalog: cat);
             Assert.True(cfg.Priority.Rest.Idle.DegradedAtLoad);
             Assert.True(cfg.Priority.Rest.Idle.Page.DegradedAtLoad);
-        }
-
-        [Fact]
-        public void Ref_RestLandingPage_Cycle_FallbackFlag()
-        {
-            var cfg = DocWithHosted();
-            cfg.Cycles.Add(new CycleEntry
-            {
-                Id = "c1",
-                Members = new List<PageRef> { Hosted("p-a"), Hosted("p-a") },
-            });
-            cfg.Priority.Rest.LandingPage = CycleRef("c1");
-            Norm(cfg);
-            Assert.True(cfg.Priority.Rest.LandingPage.DegradedAtLoad);
-            Assert.True(cfg.Priority.Rest.LandingPageUseFallback);
         }
 
         [Fact]
@@ -2337,16 +2303,7 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(5000, again.Priority.Rows[0].Summons[0].Lifetime.DurationMs);
         }
 
-        [Fact]
-        public void FZ006_LandingPage_ItmPageRef_DegradedWithFallback()
-        {
-            var cfg = DocWithHosted();
-            cfg.Priority.Rest.LandingPage = Itm("fuelErsDrs");
-            Norm(cfg);
-            Assert.True(cfg.Priority.Rest.LandingPage.DegradedAtLoad);
-            Assert.True(cfg.Priority.Rest.LandingPageUseFallback);
-            Assert.Equal(PageRefKind.ItmPage, cfg.Priority.Rest.LandingPage.Kind);
-        }
+        // FA3: FZ006 rest.landingPage rule DELETED with the member (FREEZE AMENDMENT 3).
 
         // FA2: FZ007 reserved hosted-page-prefix rule DELETED with the v1→v2 converter.
 
