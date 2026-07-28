@@ -21,20 +21,21 @@ namespace FanaBridge.Tests.Display.TestSupport
                 AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", ".."));
         }
 
-        /// <summary>PBME catalog draft fixture (tests tree, with scratch fallback).</summary>
-        public static string CatalogPath()
+        /// <summary>
+        /// PBME shipped catalog JSON (single source of truth in FanaBridge.Core).
+        /// Prefer <see cref="FanaBridge.Display.Catalog.CatalogLoader.TryResolve"/> for
+        /// parsed catalogs; this returns the raw resource body for callers that still
+        /// load via string.
+        /// </summary>
+        public static string CatalogJson()
         {
-            var path = Path.Combine(
-                RepoRoot(), "tests", "FanaBridge.Tests", "Display",
-                "Fixtures", "pbme-catalog-draft.json");
-            if (!File.Exists(path))
-            {
-                path = Path.Combine(
-                    RepoRoot(), "scratch", "plans", "display-customization",
-                    "catalog", "pbme-catalog-draft.json");
-            }
-            Assert.True(File.Exists(path), "catalog fixture missing: " + path);
-            return path;
+            var json = FanaBridge.Display.Catalog.CatalogLoader.ReadShippedResource(
+                "pbme-catalog.json");
+            Assert.False(string.IsNullOrEmpty(json), "shipped pbme-catalog.json missing");
+            return json!;
         }
+
+        /// <summary>Obsolete disk path helper — use <see cref="CatalogJson"/>.</summary>
+        public static string CatalogPath() => CatalogJson();
     }
 }

@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
 using FanaBridge.Display.Catalog;
+using FanaBridge.Display.Composition;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 using Xunit;
@@ -11,21 +11,23 @@ using Xunit;
 namespace FanaBridge.Tests.Display
 {
     /// <summary>
-    /// Catalog draft fixtures (embedded copies of the scratch drafts): parse, round-trip
-    /// unknown members, and stay consistent with the code's ITM page/param vocabulary
-    /// (<see cref="ItmDeviceCatalog"/>, <see cref="ItmTelemetry"/>, <see cref="ItmParam"/>).
+    /// Shipped catalogs (Core embedded resources via <see cref="CatalogLoader.LoadShipped"/>):
+    /// parse, round-trip unknown members, and stay consistent with the code's ITM
+    /// page/param vocabulary (<see cref="ItmDeviceCatalog"/>, <see cref="ItmTelemetry"/>,
+    /// <see cref="ItmParam"/>).
     /// </summary>
     public class CatalogConsistencyTests
     {
-        private static string LoadFixture(string fileName)
+        private static WheelCatalog Pbme()
         {
-            var asm = typeof(CatalogConsistencyTests).Assembly;
-            string suffix = ".Display.Fixtures." + fileName;
-            string resource = asm.GetManifestResourceNames()
-                .Single(n => n.EndsWith(suffix, StringComparison.Ordinal));
-            using (var stream = asm.GetManifestResourceStream(resource))
-            using (var reader = new StreamReader(stream!))
-                return reader.ReadToEnd();
+            Assert.True(CatalogLoader.TryResolve("pbme", out var c, _ => { }));
+            return c!;
+        }
+
+        private static WheelCatalog Bentley()
+        {
+            Assert.True(CatalogLoader.TryResolve("pswbent", out var c, _ => { }));
+            return c!;
         }
 
         private static HashSet<ushort> KnownItmParams()
@@ -46,7 +48,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void PbmeCatalog_Parses()
         {
-            var catalog = CatalogLoader.LoadWheelCatalog(LoadFixture("pbme-catalog-draft.json"), _ => { });
+            var catalog = Pbme();
             Assert.Equal(1, catalog.CatalogVersion);
             Assert.Equal("pbme", catalog.WheelId);
             Assert.False(catalog.Provisional);
@@ -62,8 +64,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void BentleyCatalog_Parses()
         {
-            var catalog = CatalogLoader.LoadWheelCatalog(
-                LoadFixture("bentley-catalog-draft.json"), _ => { });
+            var catalog = Bentley();
             Assert.Equal(1, catalog.CatalogVersion);
             Assert.Equal("pswbent", catalog.WheelId);
             Assert.True(catalog.Provisional);
@@ -75,7 +76,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void AliasTable_Parses()
         {
-            var table = CatalogLoader.LoadAliasTable(LoadFixture("alias-table-draft.json"), _ => { });
+            var table = CatalogLoader.LoadShippedAliasTable(_ => { });
             Assert.Equal(1, table.AliasTableVersion);
             Assert.NotEmpty(table.Aliases);
             Assert.NotEmpty(table.PatternRules);
@@ -129,7 +130,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Pbme_PageIds_MatchStandardItmDeviceCatalog_ExcludingLegacy()
         {
-            var catalog = CatalogLoader.LoadWheelCatalog(LoadFixture("pbme-catalog-draft.json"), _ => { });
+            var catalog = Pbme();
             // Standard set (any non-Bentley device id) — PBME is device 3.
             var codePages = ItmDeviceCatalog.PagesFor(deviceId: 3)
                 .Where(p => p.Page != ItmPage.Legacy)
@@ -147,7 +148,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Pbme_ParamsPerPage_MatchItmTelemetryParamsFor()
         {
-            var catalog = CatalogLoader.LoadWheelCatalog(LoadFixture("pbme-catalog-draft.json"), _ => { });
+            var catalog = Pbme();
             foreach (var page in catalog.Itm!.Pages)
             {
                 var itmPage = EnumText.ParseNullable<ItmPage>(page.Id);
@@ -162,8 +163,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Bentley_PageIds_MatchItmDeviceCatalog_ExcludingLegacy()
         {
-            var catalog = CatalogLoader.LoadWheelCatalog(
-                LoadFixture("bentley-catalog-draft.json"), _ => { });
+            var catalog = Bentley();
             var codePages = ItmDeviceCatalog.PagesFor(deviceId: 4)
                 .Where(p => p.Page != ItmPage.Legacy)
                 .Select(p => EnumText.Write(p.Page))
@@ -180,8 +180,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Bentley_ParamsPerPage_MatchItmTelemetryParamsFor()
         {
-            var catalog = CatalogLoader.LoadWheelCatalog(
-                LoadFixture("bentley-catalog-draft.json"), _ => { });
+            var catalog = Bentley();
             foreach (var page in catalog.Itm!.Pages)
             {
                 var itmPage = EnumText.ParseNullable<ItmPage>(page.Id);
@@ -197,15 +196,14 @@ namespace FanaBridge.Tests.Display
         public void EveryParamId_InBothCatalogs_ExistsInItmParam()
         {
             var known = KnownItmParams();
-            foreach (var file in new[] { "pbme-catalog-draft.json", "bentley-catalog-draft.json" })
+            foreach (var catalog in new[] { Pbme(), Bentley() })
             {
-                var catalog = CatalogLoader.LoadWheelCatalog(LoadFixture(file), _ => { });
                 foreach (var page in catalog.Itm!.Pages)
                 {
                     foreach (var field in page.Fields)
                     {
                         Assert.True(known.Contains(field.ParamId),
-                            file + " page " + page.Id + " field " + field.FieldId
+                            catalog.WheelId + " page " + page.Id + " field " + field.FieldId
                             + " has paramId " + field.ParamId + " not in ItmParam");
                     }
                 }
@@ -215,9 +213,8 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void EveryParamId_HasExactlyOnePrimaryHost_InBothCatalogs()
         {
-            foreach (var file in new[] { "pbme-catalog-draft.json", "bentley-catalog-draft.json" })
+            foreach (var catalog in new[] { Pbme(), Bentley() })
             {
-                var catalog = CatalogLoader.LoadWheelCatalog(LoadFixture(file), _ => { });
                 var byParam = catalog.Itm!.Pages
                     .SelectMany(p => p.Fields.Select(f => new { PageId = p.Id, Field = f }))
                     .GroupBy(x => x.Field.ParamId);
@@ -226,13 +223,60 @@ namespace FanaBridge.Tests.Display
                 {
                     int hosts = group.Count(x => x.Field.PrimaryHost == true);
                     Assert.True(hosts == 1,
-                        file + " paramId " + group.Key + " has " + hosts
+                        catalog.WheelId + " paramId " + group.Key + " has " + hosts
                         + " primaryHost designation(s); expected exactly 1. Hosts: "
                         + string.Join(", ",
                             group.Where(x => x.Field.PrimaryHost == true)
                                 .Select(x => x.PageId + ":" + x.Field.FieldId)));
                 }
             }
+        }
+
+        [Fact]
+        public void LoadShipped_IndexesByLowercasedWheelCode()
+        {
+            var set = CatalogLoader.LoadShipped(_ => { });
+            Assert.True(set.ContainsKey("pbme"));
+            Assert.True(set.ContainsKey("pswbent"));
+            Assert.Equal(2, set.Count);
+            Assert.Equal((byte?)3, CatalogLoader.ReadDeclaredDeviceId(set["pbme"]));
+            Assert.Equal((byte?)4, CatalogLoader.ReadDeclaredDeviceId(set["pswbent"]));
+        }
+
+        [Fact]
+        public void TryResolve_KnownCode_ReturnsCatalog_CaseInsensitive()
+        {
+            Assert.True(CatalogLoader.TryResolve("PBME", out var pbme, _ => { }, itmDeviceId: 3));
+            Assert.Equal("pbme", pbme!.WheelId);
+            Assert.True(CatalogLoader.TryResolve("PswBent", out var bent, _ => { }, itmDeviceId: 4));
+            Assert.Equal("pswbent", bent!.WheelId);
+        }
+
+        [Fact]
+        public void TryResolve_UnknownCode_MissesWithWarning()
+        {
+            var warnings = new List<string>();
+            Assert.False(CatalogLoader.TryResolve("no-such-wheel", out var catalog, warnings.Add));
+            Assert.Null(catalog);
+            Assert.Contains(warnings, w => w.Contains("no shipped catalog") && w.Contains("no-such-wheel"));
+        }
+
+        [Fact]
+        public void TryResolve_DeviceIdMismatch_LogsAndStillReturns()
+        {
+            var warnings = new List<string>();
+            Assert.True(CatalogLoader.TryResolve("pbme", out var catalog, warnings.Add, itmDeviceId: 99));
+            Assert.NotNull(catalog);
+            Assert.Contains(warnings, w => w.Contains("deviceId mismatch") && w.Contains("pbme"));
+        }
+
+        [Fact]
+        public void FieldCapability_FromShippedCatalogs_NonEmpty_ForPbmeAndBentley()
+        {
+            var pbmeCaps = FieldCapability.FromCatalog(Pbme());
+            Assert.NotEmpty(pbmeCaps);
+            var bentCaps = FieldCapability.FromCatalog(Bentley());
+            Assert.NotEmpty(bentCaps);
         }
 
         /// <summary>

@@ -1,6 +1,4 @@
-using System.IO;
 using System.Linq;
-using System.Reflection;
 using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Protocol;
@@ -11,22 +9,10 @@ namespace FanaBridge.Tests.Display
     /// <summary>E7/E8: ItmPage → catalogPageId adapter (PBME + Bentley coverage).</summary>
     public class CatalogPageIdAdapterTests
     {
-        private static string LoadFixture(string fileName)
-        {
-            var asm = typeof(CatalogPageIdAdapterTests).Assembly;
-            string suffix = ".Display.Fixtures." + fileName;
-            string resource = asm.GetManifestResourceNames()
-                .Single(n => n.EndsWith(suffix, System.StringComparison.Ordinal));
-            using (var stream = asm.GetManifestResourceStream(resource))
-            using (var reader = new StreamReader(stream!))
-                return reader.ReadToEnd();
-        }
-
         [Fact]
         public void EveryItmPage_InPbmeTable_MapsToCatalog()
         {
-            var catalog = CatalogLoader.LoadWheelCatalog(
-                LoadFixture("pbme-catalog-draft.json"), _ => { });
+            Assert.True(CatalogLoader.TryResolve("pbme", out var catalog, _ => { }));
             var table = ItmPageTable.ForDevice(3); // PBME
             // Legacy is the segment host — adapter spelling exists, but catalogs do not
             // list it as an ITM telemetry page entry. Filter to telemetry pages.
@@ -45,8 +31,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void EveryItmPage_InBentleyTable_MapsToCatalog()
         {
-            var catalog = CatalogLoader.LoadWheelCatalog(
-                LoadFixture("bentley-catalog-draft.json"), _ => { });
+            Assert.True(CatalogLoader.TryResolve("pswbent", out var catalog, _ => { }));
             var table = ItmPageTable.ForDevice(4); // Bentley — no Car Settings
             var missing = CatalogPageIdAdapter.MissingFromCatalog(table, catalog)
                 .Where(p => p != ItmPage.Legacy)

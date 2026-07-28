@@ -729,8 +729,7 @@ namespace FanaBridge.Tests.Display
         public void Capability_ParamLocked_GearFromPbmeCatalog_Inert()
         {
             // E5-05: real pbme fixture — param 4 overridable:false.
-            var path = TestPaths.CatalogPath();
-            var catalog = CatalogLoader.LoadWheelCatalog(File.ReadAllText(path), _ => { });
+            var catalog = CatalogLoader.LoadWheelCatalog(TestPaths.CatalogJson(), _ => { });
             var map = FieldCapability.FromCatalog(catalog);
             Assert.Equal(false, map[4].Overridable);
 
@@ -1824,8 +1823,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void FieldCapability_FromCatalog_MergesHostsAndPrimary()
         {
-            var path = TestPaths.CatalogPath();
-            var catalog = CatalogLoader.LoadWheelCatalog(File.ReadAllText(path), _ => { });
+            var catalog = CatalogLoader.LoadWheelCatalog(TestPaths.CatalogJson(), _ => { });
             var map = FieldCapability.FromCatalog(catalog);
 
             Assert.True(map.ContainsKey(42));

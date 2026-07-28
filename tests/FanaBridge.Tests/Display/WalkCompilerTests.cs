@@ -22,13 +22,8 @@ namespace FanaBridge.Tests.Display
 
         private static WheelCatalog LoadPbmeCatalog()
         {
-            var asm = typeof(WalkCompilerTests).Assembly;
-            const string suffix = ".Display.Fixtures.pbme-catalog-draft.json";
-            string resource = asm.GetManifestResourceNames()
-                .Single(n => n.EndsWith(suffix, StringComparison.Ordinal));
-            using (var stream = asm.GetManifestResourceStream(resource))
-            using (var reader = new StreamReader(stream!))
-                return CatalogLoader.LoadWheelCatalog(reader.ReadToEnd(), _ => { });
+            Assert.True(CatalogLoader.TryResolve("pbme", out var catalog, _ => { }));
+            return catalog!;
         }
 
         private static DisplayConfigV2 Normalize(DisplayConfigV2 doc, WheelCatalog catalog = null)

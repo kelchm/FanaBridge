@@ -42,6 +42,8 @@
        User-created profiles are loaded from a separate directory. -->
   <ItemGroup>
     <EmbeddedResource Include="Resources\Profiles\*.json" />
+    <!-- Shipped wheel catalogs + alias table (single source of truth for tests + runtime). -->
+    <EmbeddedResource Include="Display\Catalog\Resources\*.json" />
   </ItemGroup>
 
   <ItemGroup>

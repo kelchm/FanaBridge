@@ -52,10 +52,7 @@
       <_Parameter2>$(SimHubDir)</_Parameter2>
     </AssemblyAttribute>
     <None Include="Snapshots\SimHub.FanatecManaged.enums.txt" CopyToOutputDirectory="PreserveNewest" />
-    <!-- Schema-v2 catalog drafts (copied from scratch; tests must not read scratch\). -->
-    <EmbeddedResource Include="Display\Fixtures\pbme-catalog-draft.json" />
-    <EmbeddedResource Include="Display\Fixtures\bentley-catalog-draft.json" />
-    <EmbeddedResource Include="Display\Fixtures\alias-table-draft.json" />
+    <!-- Canonical catalogs live in FanaBridge.Core (CatalogLoader.LoadShipped). -->
     <EmbeddedResource Include="Display\Fixtures\evaluator-differential-traces.golden.txt" />
     <!-- FA2: frozen v2 counterparts for the FrameComposer parity battery (v1 stays inline). -->
     <EmbeddedResource Include="Display\Fixtures\parity-pairs\*.v2.json" />
