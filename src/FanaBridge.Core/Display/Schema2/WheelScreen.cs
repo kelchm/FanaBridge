@@ -35,6 +35,11 @@ namespace FanaBridge.Display.Schema2
         [JsonProperty("id")]
         public string Id { get; set; }
 
+        /// <summary>Optional user label; null = generated sentence (same as summons).
+        /// Carried from v1 special-rule names during migration.</summary>
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
         /// <summary>Serialized form of <see cref="Screen"/>, preserved verbatim.
         /// Spelling <c>logoInverted</c> (not "inverted").</summary>
         [JsonProperty("screen")]
