@@ -1,0 +1,53 @@
+﻿{
+  "schemaVersion": 1,
+  "itm": {
+    "basePage": "lapInfo",
+    "rules": []
+  },
+  "segmentDisplay": {
+    "baseScreenId": "spd",
+    "screens": [
+      {
+        "id": "spd",
+        "name": "Speed",
+        "contentKind": "speed",
+        "inRotation": true
+      },
+      {
+        "id": "pit",
+        "name": "Pit",
+        "contentKind": "text",
+        "text": "PIT",
+        "inRotation": false
+      },
+      {
+        "id": "gear",
+        "name": "Gear",
+        "contentKind": "gear",
+        "inRotation": false
+      }
+    ],
+    "rules": [
+      {
+        "id": "r1",
+        "name": "replay-r1",
+        "when": {
+          "kind": "greaterThan",
+          "source": {
+            "kind": "builtIn",
+            "name": "Fuel"
+          },
+          "value": 10
+        },
+        "show": {
+          "kind": "segmentScreen",
+          "screenId": "pit"
+        },
+        "hold": {
+          "kind": "untilDismissed"
+        },
+        "runs": "inGame"
+      }
+    ]
+  }
+}

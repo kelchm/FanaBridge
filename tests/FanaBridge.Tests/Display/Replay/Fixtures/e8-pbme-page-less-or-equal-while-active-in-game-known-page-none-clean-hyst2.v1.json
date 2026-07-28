@@ -1,0 +1,29 @@
+﻿{
+  "schemaVersion": 1,
+  "itm": {
+    "basePage": "lapInfo",
+    "rules": [
+      {
+        "id": "r1",
+        "name": "replay-r1",
+        "when": {
+          "kind": "lessOrEqual",
+          "source": {
+            "kind": "builtIn",
+            "name": "Fuel"
+          },
+          "value": 10,
+          "hysteresis": 2.0
+        },
+        "show": {
+          "kind": "page",
+          "page": "fuelErsDrs"
+        },
+        "hold": {
+          "kind": "whileActive"
+        },
+        "runs": "inGame"
+      }
+    ]
+  }
+}

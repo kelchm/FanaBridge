@@ -1,0 +1,70 @@
+﻿{
+  "schemaVersion": 1,
+  "itm": {
+    "basePage": "lapInfo",
+    "rules": [
+      {
+        "id": "r-itm-special",
+        "when": {
+          "kind": "isTrue",
+          "source": {
+            "kind": "builtIn",
+            "name": "IsInPitLane"
+          }
+        },
+        "show": {
+          "kind": "special",
+          "command": "raceFlag"
+        },
+        "hold": {
+          "kind": "whileActive"
+        },
+        "runs": "inGame"
+      }
+    ]
+  },
+  "segmentDisplay": {
+    "baseScreenId": "spd",
+    "screens": [
+      {
+        "id": "spd",
+        "name": "Speed",
+        "contentKind": "speed",
+        "inRotation": true
+      },
+      {
+        "id": "pit",
+        "name": "Pit",
+        "contentKind": "text",
+        "text": "PIT",
+        "inRotation": false
+      },
+      {
+        "id": "gear",
+        "name": "Gear",
+        "contentKind": "gear",
+        "inRotation": false
+      }
+    ],
+    "rules": [
+      {
+        "id": "r-leg-special",
+        "when": {
+          "kind": "isTrue",
+          "source": {
+            "kind": "builtIn",
+            "name": "IsInPitLane"
+          }
+        },
+        "show": {
+          "kind": "special",
+          "command": "drs"
+        },
+        "hold": {
+          "kind": "whileActive"
+        },
+        "runs": "inGame"
+      }
+    ]
+  }
+}

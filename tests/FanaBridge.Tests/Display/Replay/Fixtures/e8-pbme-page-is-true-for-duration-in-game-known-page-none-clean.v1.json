@@ -1,0 +1,28 @@
+﻿{
+  "schemaVersion": 1,
+  "itm": {
+    "basePage": "lapInfo",
+    "rules": [
+      {
+        "id": "r1",
+        "name": "replay-r1",
+        "when": {
+          "kind": "isTrue",
+          "source": {
+            "kind": "builtIn",
+            "name": "IsInPitLane"
+          }
+        },
+        "show": {
+          "kind": "page",
+          "page": "fuelErsDrs"
+        },
+        "hold": {
+          "kind": "forDuration",
+          "durationMs": 5000
+        },
+        "runs": "inGame"
+      }
+    ]
+  }
+}

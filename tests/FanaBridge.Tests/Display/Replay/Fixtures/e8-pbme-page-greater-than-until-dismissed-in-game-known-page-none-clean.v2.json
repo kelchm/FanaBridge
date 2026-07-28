@@ -1,0 +1,102 @@
+﻿{
+  "schemaVersion": 2,
+  "pages": [
+    {
+      "kind": "hostedPage",
+      "id": "spd",
+      "name": "Speed",
+      "base": {
+        "content": {
+          "kind": "speed"
+        }
+      }
+    },
+    {
+      "kind": "hostedPage",
+      "id": "pit",
+      "name": "Pit",
+      "base": {
+        "content": {
+          "kind": "text",
+          "text": "PIT"
+        }
+      }
+    },
+    {
+      "kind": "hostedPage",
+      "id": "gear",
+      "name": "Gear",
+      "base": {
+        "content": {
+          "kind": "gear"
+        }
+      }
+    }
+  ],
+  "cycles": [],
+  "priority": {
+    "rows": [
+      {
+        "kind": "seat",
+        "id": "r1",
+        "target": {
+          "kind": "itmPage",
+          "catalogPageId": "fuelErsDrs"
+        },
+        "summons": [
+          {
+            "id": "s1",
+            "condition": {
+              "source": {
+                "kind": "builtIn",
+                "name": "Fuel"
+              },
+              "operator": "greaterThan",
+              "value": 10
+            },
+            "lifetime": {
+              "kind": "untilDismissed"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "manual"
+      }
+    ],
+    "rest": {
+      "inSessionPage": {
+        "kind": "itmPage",
+        "catalogPageId": "lapInfo"
+      },
+      "landingPage": {
+        "kind": "itmPage",
+        "catalogPageId": "lapInfo"
+      },
+      "idle": {
+        "kind": "blank"
+      }
+    }
+  },
+  "pageOrder": [
+    {
+      "kind": "hostedPage",
+      "id": "spd"
+    },
+    {
+      "kind": "hostedPage",
+      "id": "pit"
+    },
+    {
+      "kind": "hostedPage",
+      "id": "gear"
+    }
+  ],
+  "fields": {},
+  "wheelScreen": {
+    "rules": []
+  },
+  "settings": {
+    "mode": "on"
+  }
+}
