@@ -11,7 +11,8 @@ namespace FanaBridge.Display.Schema2
     /// every schema-closure type), unknown enum values degrade only at runtime (raw text
     /// is preserved verbatim so a save after a load never destroys what a future version
     /// wrote), and a document that cannot be parsed at all yields defaults with a warning.
-    /// Loading never throws. No validator in this phase — load is parse-only.
+    /// Loading never throws. Every load runs <see cref="DisplayConfigV2Validator.Normalize"/>,
+    /// so a loaded config always carries runtime degrade marks for §14 survivors-model rules.
     /// </summary>
     public static class DisplayConfigV2Serializer
     {
@@ -20,9 +21,12 @@ namespace FanaBridge.Display.Schema2
             => JsonConvert.SerializeObject(config, Settings);
 
         /// <summary>
-        /// Parses a document. Null/blank input yields a fresh default config silently;
-        /// anything else that fails to parse yields the same default with a warning to
-        /// <paramref name="log"/>. Never throws. Does not validate or coerce.
+        /// Parses and normalizes a document. Null/blank input yields a fresh default config
+        /// silently; anything else that fails to parse yields the same default with a
+        /// warning to <paramref name="log"/>. Never throws. Always runs
+        /// <see cref="DisplayConfigV2Validator.Normalize"/> (capability rules skipped —
+        /// no catalog at the store boundary; callers that have a <c>WheelCatalog</c> may
+        /// re-Normalize with it).
         /// </summary>
         public static DisplayConfigV2 Load(string json, Action<string> log)
         {
@@ -39,7 +43,7 @@ namespace FanaBridge.Display.Schema2
                         "DisplayConfigV2: could not parse config — using defaults (" + ex.Message + ")");
                 }
             }
-            return config ?? new DisplayConfigV2();
+            return DisplayConfigV2Validator.Normalize(config ?? new DisplayConfigV2(), log);
         }
 
         /// <summary>Invokes <paramref name="log"/> without letting a throwing callback

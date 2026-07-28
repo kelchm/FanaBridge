@@ -45,6 +45,11 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set by load-time validation when this ref is unresolved, illegal
+        /// at its carrier, or a duplicate — runtime-only, never serialized.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
     }
 
     /// <summary>Page-reference discriminator spellings.</summary>

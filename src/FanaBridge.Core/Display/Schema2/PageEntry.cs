@@ -73,6 +73,11 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set when this entry loses the identity race (duplicate id /
+        /// catalogPageId). Runtime-only; never serialized.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
     }
 
     /// <summary>Pages[] entry discriminator.</summary>
@@ -127,6 +132,10 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Runtime-only effect coercion (serialized <see cref="EffectRaw"/>
+        /// preserved) — e.g. flash → blink.</summary>
+        internal void CoerceEffect(ContentEffect effect) => _effect = effect;
     }
 
     /// <summary>
@@ -171,6 +180,16 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>When true, render the v1 no-data convention (property source unusable)
+        /// or treat over-length text via <see cref="EffectiveText"/>. Runtime-only.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
+
+        /// <summary>Runtime-clamped text for over-length hand-authored content. Null means
+        /// use <see cref="Text"/> as-authored. Document <see cref="Text"/> is never rewritten.</summary>
+        [JsonIgnore]
+        public string EffectiveText { get; internal set; }
     }
 
     /// <summary>Content-kind roster (v1 contentKind spellings, camelCase).</summary>
@@ -299,6 +318,23 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set when this layer is unusable on this build (duplicate id, bad
+        /// condition/source, capability miss, …). Runtime-only.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
+
+        /// <summary>When true, <see cref="ActsAsEntrypoint"/> is inert (capability /
+        /// removed host). Document flag preserved.</summary>
+        [JsonIgnore]
+        public bool ActsAsEntrypointIgnored { get; internal set; }
+
+        /// <summary>Whether the layer may compete: user-enabled and honored by this build.</summary>
+        [JsonIgnore]
+        public bool EffectivelyEnabled => Enabled && !DegradedAtLoad;
+
+        /// <summary>Runtime-only effect coercion (serialized raw preserved).</summary>
+        internal void CoerceEffect(ContentEffect effect) => _effect = effect;
     }
 
     /// <summary>A named cycle of pages (2+ members; ITM, hosted, or mixed).</summary>
@@ -326,5 +362,10 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set when the cycle has fewer than two resolvable members, or loses
+        /// the identity race. Runtime-only.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
     }
 }

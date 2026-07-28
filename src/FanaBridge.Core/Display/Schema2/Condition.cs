@@ -60,6 +60,11 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>When true, <see cref="Hysteresis"/> is present on a non-level
+        /// condition and must be ignored at runtime. Document value preserved.</summary>
+        [JsonIgnore]
+        public bool HysteresisIgnored { get; internal set; }
     }
 
     /// <summary>
@@ -98,6 +103,11 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set when the source is unusable on this build (unknown built-in,
+        /// malformed param id, illegal <c>self</c>). Runtime-only.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
     }
 
     /// <summary>Condition / content source kind spellings.</summary>
@@ -212,7 +222,9 @@ namespace FanaBridge.Display.Schema2
         }
 
         /// <summary>Edge-then-stick: latch immediately on the edge (no timed phase).
-        /// Null when absent.</summary>
+        /// Null when absent. When <see cref="ThenIgnored"/>, the engine treats then as
+        /// absent; the parsed value (incl. <see cref="LifetimeThen.Unknown"/>) is unchanged
+        /// so unknown-spelling round-trip tests still observe the fallback.</summary>
         [JsonIgnore]
         public LifetimeThen? Then
         {
@@ -236,6 +248,26 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>When true, ignore authored <see cref="DurationMs"/> (e.g. mutually
+        /// exclusive with <c>then</c>). Document value preserved.</summary>
+        [JsonIgnore]
+        public bool DurationMsIgnored { get; internal set; }
+
+        /// <summary>When true, ignore authored <c>then</c> (illegal domain or coerced
+        /// away). Parsed <see cref="Then"/> stays as-read (Unknown for bad spellings);
+        /// the engine consults this flag.</summary>
+        [JsonIgnore]
+        public bool ThenIgnored { get; internal set; }
+
+        /// <summary>When true, authored direction was outside any/up/down — engine uses
+        /// <see cref="ChangeDirection.Any"/>. Parsed <see cref="Direction"/> stays Unknown.</summary>
+        [JsonIgnore]
+        public bool DirectionCoercedToAny { get; internal set; }
+
+        /// <summary>Load-time coercion that changes only what the engine sees — the
+        /// serialized <see cref="KindRaw"/> stays untouched.</summary>
+        internal void CoerceKind(LifetimeKind kind) => _kind = kind;
     }
 
     /// <summary>Lifetime kind spellings (model vocabulary; v1 whileActive → whileTrue).</summary>

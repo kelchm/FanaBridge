@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using Newtonsoft.Json;
@@ -11,7 +12,12 @@ namespace FanaBridge.Display.Schema2
     /// </summary>
     public class PriorityLadder
     {
-        /// <summary>Ranked rows: seat / satellite / manual. Array order is rank.</summary>
+        /// <summary>
+        /// Storage-only ranked rows as authored (seat / satellite / manual). Array order
+        /// is rank. Never rewritten by load-time validation — restored manuals and
+        /// materialized home seats live only on the runtime projection
+        /// (<see cref="EffectiveRows"/>).
+        /// </summary>
         [JsonProperty("rows")]
         public List<PriorityRow> Rows { get; set; } = new List<PriorityRow>();
 
@@ -23,6 +29,34 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>
+        /// Runtime projection built by <see cref="DisplayConfigV2Validator.Normalize"/>:
+        /// document rows (with degrade marks) plus any restored manual row and
+        /// materialized home seats. Never serialized. Prefer
+        /// <see cref="EffectiveRows"/> for consumers.
+        /// </summary>
+        [JsonIgnore]
+        public List<PriorityRow> RuntimeRows { get; internal set; }
+
+        /// <summary>
+        /// Authoritative ranked-row view for runtime consumers. After Normalize this is
+        /// the full projection (document + restored manual + materializations). Before
+        /// Normalize (or when the projection is unset), falls back deterministically to
+        /// the stored <see cref="Rows"/> list (empty when null).
+        /// </summary>
+        [JsonIgnore]
+        public IReadOnlyList<PriorityRow> EffectiveRows
+        {
+            get
+            {
+                if (RuntimeRows != null)
+                    return RuntimeRows;
+                if (Rows != null)
+                    return Rows;
+                return Array.Empty<PriorityRow>();
+            }
+        }
     }
 
     /// <summary>
@@ -87,6 +121,22 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set when the row is inert on this build (duplicate id/home, unresolved
+        /// target/childRef, satellite neither shape, …). Runtime-only.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
+
+        /// <summary>True when this row was synthesized into
+        /// <see cref="PriorityLadder.EffectiveRows"/> (restored manual or materialized
+        /// home seat) and is not present in the authored document.</summary>
+        [JsonIgnore]
+        public bool MaterializedAtLoad { get; internal set; }
+
+        /// <summary>Satellite with both summons and childRef: childRef wins; summons are
+        /// ignored at runtime. Document preserves both.</summary>
+        [JsonIgnore]
+        public bool SummonsIgnored { get; internal set; }
     }
 
     /// <summary>Priority row discriminator.</summary>
@@ -188,6 +238,15 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set when this summon is unusable (duplicate id, bad condition, …).
+        /// Runtime-only.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
+
+        /// <summary>Whether the summon may fire: user-enabled and honored by this build.</summary>
+        [JsonIgnore]
+        public bool EffectivelyEnabled => Enabled && !DegradedAtLoad;
     }
 
     /// <summary>Fixed rest floor: in-session page, landing page, idle.</summary>
@@ -210,6 +269,16 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>When <see cref="InSessionPage"/> is degraded, runtime falls back to
+        /// the compiled default walk's first member (engine resolves further).</summary>
+        [JsonIgnore]
+        public bool InSessionPageUseDefaultWalk { get; internal set; }
+
+        /// <summary>When <see cref="LandingPage"/> is degraded, runtime falls back to
+        /// in-session when hosted, else the first hosted page.</summary>
+        [JsonIgnore]
+        public bool LandingPageUseFallback { get; internal set; }
     }
 
     /// <summary>
@@ -264,6 +333,20 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set when idle is unusable (unsupported screen, unresolved page).
+        /// Runtime-only. Fallback for page kind is <see cref="IdleKind.Blank"/>.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
+
+        /// <summary>When true, blank idle on a command-less ITM wheel uses the
+        /// park-on-Legacy compile policy (§5 / §14).</summary>
+        [JsonIgnore]
+        public bool ParkOnLegacyForBlank { get; internal set; }
+
+        /// <summary>When true, authored screen is unsupported and idle is inert.</summary>
+        [JsonIgnore]
+        public bool ScreenIgnored { get; internal set; }
     }
 
     /// <summary>Idle kind discriminator.</summary>

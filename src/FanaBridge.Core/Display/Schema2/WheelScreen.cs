@@ -102,5 +102,14 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set when this rule is unusable (duplicate id, bad condition,
+        /// unsupported screen, …). Runtime-only.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
+
+        /// <summary>Whether the rule may fire: user-enabled and honored by this build.</summary>
+        [JsonIgnore]
+        public bool EffectivelyEnabled => Enabled && !DegradedAtLoad;
     }
 }

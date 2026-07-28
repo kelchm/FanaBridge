@@ -188,6 +188,23 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>Set when this override is unusable on this build (duplicate id, bad
+        /// condition/source, capability miss, …). Runtime-only.</summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
+
+        /// <summary>When true, <see cref="ActsAsEntrypoint"/> is inert (capability /
+        /// removed host). Document flag preserved.</summary>
+        [JsonIgnore]
+        public bool ActsAsEntrypointIgnored { get; internal set; }
+
+        /// <summary>Whether the override may compete: user-enabled and honored by this build.</summary>
+        [JsonIgnore]
+        public bool EffectivelyEnabled => Enabled && !DegradedAtLoad;
+
+        /// <summary>Runtime-only effect coercion (serialized raw preserved).</summary>
+        internal void CoerceEffect(ContentEffect effect) => _effect = effect;
     }
 
     /// <summary>Which field regions an override paints.</summary>
