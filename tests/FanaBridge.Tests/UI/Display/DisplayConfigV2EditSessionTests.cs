@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Runtime;
@@ -28,6 +29,7 @@ namespace FanaBridge.Tests.UI.Display
             public DisplaySettings DisplaySettings { get; } = new DisplaySettings();
             public DisplayType DisplayType => DisplayType.Itm;
             public byte ItmDeviceId => 3;
+            public string WheelCode { get; set; } = "pbme";
             public DisplayCustomizationConfig GetDisplayConfig() => null!;
             public void ApplyDisplayConfig(DisplayCustomizationConfig config) { }
             public DisplayConfigV2 GetDisplayConfigV2() => Live;
@@ -293,6 +295,7 @@ namespace FanaBridge.Tests.UI.Display
             public DisplaySettings DisplaySettings { get; } = new DisplaySettings();
             public DisplayType DisplayType => DisplayType.Itm;
             public byte ItmDeviceId => 3;
+            public string WheelCode => "pbme";
             public DisplayCustomizationConfig GetDisplayConfig() => null!;
             public void ApplyDisplayConfig(DisplayCustomizationConfig config) { }
             public DisplayConfigV2 GetDisplayConfigV2() => _runtime.CurrentConfigV2;
@@ -575,6 +578,475 @@ namespace FanaBridge.Tests.UI.Display
             session.SetActsAsEntrypoint(ActsAsEntrypointTarget.Layer, "P-X", "L-1", true);
             var page = session.Document.Pages.First(p => p.Id == "p-x");
             Assert.True(page.Layers.First(l => l.Id == "l-1").ActsAsEntrypoint);
+        }
+
+        // ── Removal variants (owner ruling) ──────────────────────────────
+
+        [Fact]
+        public void RemoveRowsForTarget_DropsMatchingRows_PageAndOverridesSurvive()
+        {
+            var live = SeedLive();
+            // Two rows targeting lapTimes + one override on field 5.
+            live.Priority.Rows.Add(new PriorityRow
+            {
+                Kind = PriorityRowKind.Seat,
+                Id = "seat-lap-b",
+                Target = new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapTimes" },
+                Summons = new List<Summon>(),
+            });
+            // seat-2 already targets lapTimes in SeedLive.
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { });
+
+            Assert.Equal(1, live.Fields[5].Overrides.Count);
+            Assert.Contains(live.Priority.Rows, r => r.Id == "seat-2");
+
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.RemoveRowsForTarget(new PageRef
+            {
+                Kind = PageRefKind.ItmPage,
+                CatalogPageId = "lapTimes",
+            });
+
+            Assert.DoesNotContain(session.Document.Priority.Rows, r => r.Id == "seat-2");
+            Assert.DoesNotContain(session.Document.Priority.Rows, r => r.Id == "seat-lap-b");
+            // PageEntry untouched; overrides survive.
+            Assert.Equal(1, session.Document.Fields[5].Overrides.Count);
+            Assert.Contains(session.Document.Pages, p => p.Id == "p-x");
+            Assert.False(session.Document.Pages.First(p => p.Id == "p-x").Removed);
+        }
+
+        [Fact]
+        public void RemovePageContent_Hosted_ClearsLayers_PageEntrySurvives()
+        {
+            var live = SeedLive();
+            live.Priority.Rows.Add(new PriorityRow
+            {
+                Kind = PriorityRowKind.Seat,
+                Id = "seat-hosted",
+                Target = new PageRef { Kind = PageRefKind.HostedPage, Id = "p-x" },
+                Summons = new List<Summon>(),
+            });
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { });
+
+            Assert.Single(live.Pages.First(p => p.Id == "p-x").Layers);
+
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.RemovePageContent(new PageRef
+            {
+                Kind = PageRefKind.HostedPage,
+                Id = "p-x",
+            });
+
+            Assert.DoesNotContain(session.Document.Priority.Rows, r => r.Id == "seat-hosted");
+            var page = Assert.Single(session.Document.Pages, p => p.Id == "p-x");
+            Assert.False(page.Removed);
+            Assert.Empty(page.Layers ?? new List<LayerEntry>());
+        }
+
+        [Fact]
+        public void RemovePageContent_Itm_WithCatalog_DeletesOverridesOnPage()
+        {
+            var live = SeedLive();
+            // Attribute field 5 to lapInfo via a tiny catalog primary placement.
+            var catalog = new WheelCatalog
+            {
+                Itm = new ItmCatalogSection
+                {
+                    Pages = new List<CatalogPage>
+                    {
+                        new CatalogPage
+                        {
+                            Id = "lapInfo",
+                            Index = 1,
+                            Name = "Lap Info",
+                            Fields = new List<CatalogField>
+                            {
+                                new CatalogField { ParamId = 5, ShortCode = "FUEL" },
+                            },
+                        },
+                    },
+                },
+            };
+            // seat-1 targets lapInfo.
+            Assert.Equal("lapInfo", live.Priority.Rows.First(r => r.Id == "seat-1").Target.CatalogPageId);
+            Assert.Single(live.Fields[5].Overrides);
+
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.RemovePageContent(
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+                catalog);
+
+            Assert.DoesNotContain(session.Document.Priority.Rows, r => r.Id == "seat-1");
+            Assert.Empty(session.Document.Fields[5].Overrides);
+        }
+
+        [Fact]
+        public void SetInSessionPage_WritesRestInSessionPage()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            var page = new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "tyreTemps" };
+            session.SetInSessionPage(page);
+            Assert.Equal(PageRefKind.ItmPage, session.Document.Priority.Rest.InSessionPage.Kind);
+            Assert.Equal("tyreTemps", session.Document.Priority.Rest.InSessionPage.CatalogPageId);
+            Assert.NotSame(page, session.Document.Priority.Rest.InSessionPage);
+        }
+
+        [Fact]
+        public void UpdateSummon_ReplacesAuthoredFields()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.UpdateSummon("seat-1", "sum-1", new Summon
+            {
+                Name = "renamed",
+                Enabled = false,
+                Lifetime = new Lifetime { Kind = LifetimeKind.UntilDismissed },
+            });
+            var s = session.Document.Priority.Rows
+                .First(r => r.Id == "seat-1").Summons
+                .First(x => x.Id == "sum-1");
+            Assert.Equal("renamed", s.Name);
+            Assert.False(s.Enabled);
+            Assert.Equal(LifetimeKind.UntilDismissed, s.Lifetime.Kind);
+        }
+
+        [Fact]
+        public void UpdateSummon_PreservesExtensionData_AndHysteresis()
+        {
+            var live = SeedLive();
+            var existing = live.Priority.Rows.First(r => r.Id == "seat-1")
+                .Summons.First(x => x.Id == "sum-1");
+            existing.Name = "keep-name";
+            existing.Runs = RunsWhen.Always;
+            existing.Condition.Hysteresis = 1.5;
+            existing.ExtensionData = new Dictionary<string, JToken>
+            {
+                ["v3SummonExtra"] = JToken.FromObject("preserve-me"),
+            };
+
+            var session = DisplayConfigV2EditSession.Open(live);
+            // Sparse form write: condition source/op/value + lifetime only.
+            session.UpdateSummon("seat-1", "sum-1", new Summon
+            {
+                Enabled = true,
+                Condition = new Condition
+                {
+                    Source = new ValueSource
+                    {
+                        Kind = ValueSourceKind.SimHubProperty,
+                        Name = "DataCorePlugin.GameData.Fuel",
+                    },
+                    Operator = ConditionOperator.LessThan,
+                    Value = 4,
+                },
+                Lifetime = new Lifetime { Kind = LifetimeKind.ForDuration, DurationMs = 3000 },
+            });
+
+            var s = session.Document.Priority.Rows
+                .First(r => r.Id == "seat-1").Summons
+                .First(x => x.Id == "sum-1");
+            Assert.Equal("keep-name", s.Name);
+            Assert.Equal(RunsWhen.Always, s.Runs);
+            Assert.Equal(1.5, s.Condition.Hysteresis);
+            Assert.Equal(4.0, s.Condition.Value);
+            Assert.Equal("DataCorePlugin.GameData.Fuel", s.Condition.Source.Name);
+            Assert.Equal(LifetimeKind.ForDuration, s.Lifetime.Kind);
+            Assert.NotNull(s.ExtensionData);
+            Assert.Equal("preserve-me", (string)s.ExtensionData["v3SummonExtra"]);
+        }
+
+        [Fact]
+        public void UpdateSummon_DeepMerge_SourceAndLifetime_UnauthoredMembersSurvive()
+        {
+            // Fixture carries ALL unauthored members: source extension data; lifetime
+            // direction, then-state, extension data. Form edit touches none of them.
+            var live = SeedLive();
+            var existing = live.Priority.Rows.First(r => r.Id == "seat-1")
+                .Summons.First(x => x.Id == "sum-1");
+            existing.Condition.Source = new ValueSource
+            {
+                Kind = ValueSourceKind.BuiltIn,
+                Name = "Fuel",
+                ExtensionData = new Dictionary<string, JToken>
+                {
+                    ["v3SourceExtra"] = JToken.FromObject("src-keep"),
+                },
+            };
+            existing.Lifetime = new Lifetime
+            {
+                Kind = LifetimeKind.OnChange,
+                Direction = ChangeDirection.Up,
+                Then = LifetimeThen.UntilDismissed,
+                ExtensionData = new Dictionary<string, JToken>
+                {
+                    ["v3LifeExtra"] = JToken.FromObject(7),
+                },
+            };
+
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.UpdateSummon("seat-1", "sum-1", new Summon
+            {
+                Enabled = true,
+                Condition = new Condition
+                {
+                    Source = new ValueSource
+                    {
+                        Kind = ValueSourceKind.SimHubProperty,
+                        Name = "DataCorePlugin.GameData.Fuel",
+                    },
+                    Operator = ConditionOperator.LessThan,
+                    Value = 4,
+                },
+                Lifetime = new Lifetime
+                {
+                    Kind = LifetimeKind.ForDuration,
+                    DurationMs = 3000,
+                },
+            });
+
+            var s = session.Document.Priority.Rows
+                .First(r => r.Id == "seat-1").Summons
+                .First(x => x.Id == "sum-1");
+            Assert.Equal(ValueSourceKind.SimHubProperty, s.Condition.Source.Kind);
+            Assert.Equal("DataCorePlugin.GameData.Fuel", s.Condition.Source.Name);
+            Assert.NotNull(s.Condition.Source.ExtensionData);
+            Assert.Equal("src-keep", (string)s.Condition.Source.ExtensionData["v3SourceExtra"]);
+            Assert.Equal(LifetimeKind.ForDuration, s.Lifetime.Kind);
+            Assert.Equal(3000, s.Lifetime.DurationMs);
+            Assert.Equal(ChangeDirection.Up, s.Lifetime.Direction);
+            Assert.Equal(LifetimeThen.UntilDismissed, s.Lifetime.Then);
+            Assert.NotNull(s.Lifetime.ExtensionData);
+            Assert.Equal(7, (int)s.Lifetime.ExtensionData["v3LifeExtra"]);
+        }
+
+        [Fact]
+        public void RemovePageContent_PlanApply_OneSet_EndToEnd()
+        {
+            // Confirm path: one session plans the exclusive set; apply uses THAT set.
+            Assert.True(CatalogLoader.TryResolve("pbme", out var catalog, _ => { }));
+            var live = SeedLive();
+            live.Fields[505] = new FieldEntry
+            {
+                Overrides = new List<FieldOverride>
+                {
+                    new FieldOverride { Id = "ov-exclusive" },
+                },
+            };
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { }, catalog);
+
+            var host = new FakeHost { Live = live };
+            var session = DisplayConfigV2EditSession.Open(host.GetDisplayConfigV2());
+            Assert.True(session.TryPlanRemovePageContent(
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+                catalog,
+                out var plan));
+            Assert.True(plan.RankCount >= 1);
+            Assert.True(plan.ContentCount >= 1);
+            Assert.Contains((ushort)505, plan.ExclusiveParams);
+
+            session.ApplyPageContentRemoval(plan);
+            var result = session.TryApply(host);
+            Assert.True(result.Succeeded);
+            Assert.DoesNotContain(host.Live.Priority.Rows, r => r.Id == "seat-1");
+            Assert.Empty(host.Live.Fields[505].Overrides);
+        }
+
+        [Fact]
+        public void CanRemovePageContent_ResolvesTargetPage_NotAnyNonempty()
+        {
+            // Any-nonempty catalog is NOT resolution — target page must exist.
+            var catalog = new WheelCatalog
+            {
+                Itm = new ItmCatalogSection
+                {
+                    Pages = new List<CatalogPage>
+                    {
+                        new CatalogPage { Id = "otherPage", Index = 0, Name = "Other" },
+                    },
+                },
+            };
+            Assert.False(DisplayConfigV2EditSession.CanRemovePageContent(
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+                catalog));
+            Assert.True(DisplayConfigV2EditSession.CanRemovePageContent(
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "otherPage" },
+                catalog));
+        }
+
+        [Fact]
+        public void EnsureAuthoredRow_InsertsMissingMaterializedSeat()
+        {
+            var live = SeedLive();
+            // No seat with this id yet.
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.EnsureAuthoredRow(new PriorityRow
+            {
+                Kind = PriorityRowKind.Seat,
+                Id = "materialized-itm:x",
+                Target = new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "x" },
+            });
+            Assert.Contains(session.Document.Priority.Rows, r => r.Id == "materialized-itm:x");
+            // Second call is a no-op (generation unchanged after first).
+            int gen = session.Generation;
+            session.EnsureAuthoredRow(new PriorityRow
+            {
+                Kind = PriorityRowKind.Seat,
+                Id = "materialized-itm:x",
+                Target = new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "x" },
+            });
+            Assert.Equal(gen, session.Generation);
+        }
+
+        [Fact]
+        public void EnsureAuthoredRow_FullClone_PreservesSeedFields()
+        {
+            var seed = new PriorityRow
+            {
+                Kind = PriorityRowKind.Seat,
+                Id = "mat-full",
+                Target = new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+                BringUpLifetime = new Lifetime { Kind = LifetimeKind.UntilDismissed },
+                Lifetime = new Lifetime { Kind = LifetimeKind.ForDuration, DurationMs = 2000 },
+                ReturnToRestAfterMs = 9000,
+                ChildRef = new ChildRef { Field = "5", OverrideId = "ov-1" },
+                Summons = new List<Summon>
+                {
+                    new Summon { Id = "s", Name = "seeded", Enabled = true },
+                },
+                ExtensionData = new Dictionary<string, JToken>
+                {
+                    ["v3Seed"] = JToken.FromObject(42),
+                },
+            };
+
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.EnsureAuthoredRow(seed);
+
+            var row = session.Document.Priority.Rows.First(r => r.Id == "mat-full");
+            Assert.Equal(LifetimeKind.UntilDismissed, row.BringUpLifetime.Kind);
+            Assert.Equal(LifetimeKind.ForDuration, row.Lifetime.Kind);
+            Assert.Equal(9000, row.ReturnToRestAfterMs);
+            Assert.Equal("5", row.ChildRef.Field);
+            Assert.Equal("ov-1", row.ChildRef.OverrideId);
+            Assert.Equal("seeded", row.Summons.Single().Name);
+            Assert.Equal(42, (int)row.ExtensionData["v3Seed"]);
+            Assert.NotSame(seed, row);
+            Assert.NotSame(seed.Target, row.Target);
+        }
+
+        [Fact]
+        public void SetInSessionPage_RejectsCycleRef_WithValidationNote()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            var before = session.Document.Priority.Rest?.InSessionPage;
+            int gen = session.Generation;
+            session.SetInSessionPage(new PageRef
+            {
+                Kind = PageRefKind.Cycle,
+                Id = "c1",
+            });
+            Assert.Equal(gen, session.Generation);
+            Assert.Equal(before?.CatalogPageId, session.Document.Priority.Rest?.InSessionPage?.CatalogPageId);
+            Assert.Contains(
+                DisplayCopy.InSessionPageMustBeItmOrHosted,
+                session.ValidationNotes);
+        }
+
+        [Fact]
+        public void RemovePageContent_SharedMultiPageLadder_SurvivesSinglePageRemoveAll()
+        {
+            // Real pbme catalog: params 1 and 4 are placed on all five ITM pages.
+            Assert.True(CatalogLoader.TryResolve("pbme", out var catalog, _ => { }));
+            var live = SeedLive();
+            live.Fields[1] = new FieldEntry
+            {
+                Overrides = new List<FieldOverride>
+                {
+                    new FieldOverride { Id = "ov-speed", ActsAsEntrypoint = true },
+                },
+            };
+            live.Fields[4] = new FieldEntry
+            {
+                Overrides = new List<FieldOverride>
+                {
+                    new FieldOverride { Id = "ov-gear" },
+                },
+            };
+            // Exclusive-to-lapInfo param (505 appears only on lapInfo in pbme).
+            live.Fields[505] = new FieldEntry
+            {
+                Overrides = new List<FieldOverride>
+                {
+                    new FieldOverride { Id = "ov-laps-exclusive" },
+                },
+            };
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { }, catalog);
+
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.RemovePageContent(
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+                catalog);
+
+            // Shared ladders survive.
+            Assert.Single(session.Document.Fields[1].Overrides);
+            Assert.Single(session.Document.Fields[4].Overrides);
+            // Exclusive ladder deleted.
+            Assert.Empty(session.Document.Fields[505].Overrides);
+            // Seat for lapInfo removed.
+            Assert.DoesNotContain(session.Document.Priority.Rows, r => r.Id == "seat-1");
+        }
+
+        [Fact]
+        public void RemovePageContent_NoCatalog_IsNoOp_FailClosed()
+        {
+            var live = SeedLive();
+            Assert.Single(live.Fields[5].Overrides);
+            var session = DisplayConfigV2EditSession.Open(live);
+            int gen = session.Generation;
+            session.RemovePageContent(
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+                catalog: null);
+            Assert.Equal(gen, session.Generation);
+            Assert.Single(session.Document.Fields[5].Overrides);
+            Assert.Contains(session.Document.Priority.Rows, r => r.Id == "seat-1");
+            Assert.False(DisplayConfigV2EditSession.CanRemovePageContent(
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+                catalog: null));
+        }
+
+        [Fact]
+        public void RemoveRowsForTarget_PreservesUnknownMembers()
+        {
+            var live = SeedLive();
+            var beforeJson = DisplayConfigV2Serializer.Save(live);
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.RemoveRowsForTarget(new PageRef
+            {
+                Kind = PageRefKind.ItmPage,
+                CatalogPageId = "lapTimes",
+            });
+            var afterJson = DisplayConfigV2Serializer.Save(session.Document);
+            AssertUnknownMembersSurvived(beforeJson, afterJson);
+            Assert.Equal(beforeJson, DisplayConfigV2Serializer.Save(live));
+        }
+
+        [Fact]
+        public void RemovePageContent_PreservesUnknownMembers()
+        {
+            var live = SeedLive();
+            var beforeJson = DisplayConfigV2Serializer.Save(live);
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.RemovePageContent(new PageRef
+            {
+                Kind = PageRefKind.HostedPage,
+                Id = "p-x",
+            });
+            var afterJson = DisplayConfigV2Serializer.Save(session.Document);
+            AssertUnknownMembersSurvived(beforeJson, afterJson);
+            Assert.Equal(beforeJson, DisplayConfigV2Serializer.Save(live));
         }
 
         // ── Clone fail-closed ────────────────────────────────────────────

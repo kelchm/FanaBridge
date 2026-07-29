@@ -908,6 +908,8 @@ namespace FanaBridge.Adapters
 
         DisplaySettings IDisplayPanelHost.DisplaySettings => _displaySettings;
 
+        string IDisplayPanelHost.WheelCode => _config?.WheelCode;
+
         // The Display tab picks its ITM-vs-basic layout and which page table to populate
         // from DisplayType/ItmDeviceId, so both must report the caps the RUNTIME actually
         // drives: override-resolved via the current plugin (ResolveCapsFor), exactly as the

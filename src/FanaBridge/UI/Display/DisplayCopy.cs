@@ -784,5 +784,504 @@ namespace FanaBridge.UI.Display
                 default: return OpChanges;
             }
         }
+
+        // ── Lifetime pairs (Q8 ruled scheme) ─────────────────────────────
+        // Ladder short form + form long form, both generated from LifetimeKind +
+        // DurationMs. Canvas/brief lifetime sets die; ConditionSentence and ladder
+        // details consume these. Cycle composes period + summon lifetime.
+
+        /// <summary>
+        /// Ladder detail-cell lifetime suffix (dimmer tail after the condition).
+        /// Includes the leading " · " separator when non-empty.
+        /// </summary>
+        public static string LifetimeLadderSuffix(LifetimeKind kind, int durationMs = 0)
+        {
+            switch (kind)
+            {
+                case LifetimeKind.WhileTrue:
+                    return " · while it's true";
+                case LifetimeKind.ForDuration:
+                    return string.Format(
+                        CultureInfo.InvariantCulture,
+                        " · for {0} s",
+                        SecondsFromMs(durationMs));
+                case LifetimeKind.UntilDismissed:
+                    return " · until dismissed";
+                case LifetimeKind.OnChange:
+                    return " · when it changes";
+                default:
+                    return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// Form radio / label for a lifetime kind (5f "For how long").
+        /// Duration kinds include the shown N seconds.
+        /// </summary>
+        public static string LifetimeFormLabel(LifetimeKind kind, int durationMs = 0)
+        {
+            switch (kind)
+            {
+                case LifetimeKind.WhileTrue:
+                    return "While the condition is true";
+                case LifetimeKind.ForDuration:
+                    return string.Format(
+                        CultureInfo.InvariantCulture,
+                        "For a duration ({0} s)",
+                        SecondsFromMs(durationMs));
+                case LifetimeKind.UntilDismissed:
+                    return "Until dismissed";
+                case LifetimeKind.OnChange:
+                    return "When the value changes";
+                default:
+                    return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// OnChange form label with direction: "When the value changes" + rises/falls.
+        /// </summary>
+        public static string LifetimeFormLabelOnChange(ChangeDirection direction)
+        {
+            string baseLabel = LifetimeFormLabel(LifetimeKind.OnChange);
+            switch (direction)
+            {
+                case ChangeDirection.Up:
+                    return string.Format(
+                        CultureInfo.InvariantCulture, "{0} (rises)", baseLabel);
+                case ChangeDirection.Down:
+                    return string.Format(
+                        CultureInfo.InvariantCulture, "{0} (falls)", baseLabel);
+                default:
+                    return baseLabel;
+            }
+        }
+
+        /// <summary>
+        /// Cycle period composed with the selected summon's primary lifetime (Q8):
+        /// " · every {N} s while it's true" / " · every {N} s for {M} s" /
+        /// " · every {N} s until dismissed" / " · every {N} s when it changes".
+        /// </summary>
+        public static string LifetimeCycleLadderSuffix(
+            int periodMs,
+            LifetimeKind summonKind = LifetimeKind.WhileTrue,
+            int summonDurationMs = 0)
+        {
+            string period = string.Format(
+                CultureInfo.InvariantCulture,
+                " · every {0} s",
+                SecondsFromMs(periodMs));
+            switch (summonKind)
+            {
+                case LifetimeKind.ForDuration:
+                    return string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0} for {1} s",
+                        period,
+                        SecondsFromMs(summonDurationMs > 0
+                            ? summonDurationMs
+                            : Lifetime.DefaultDurationMs));
+                case LifetimeKind.UntilDismissed:
+                    return period + " until dismissed";
+                case LifetimeKind.OnChange:
+                    return period + " when it changes";
+                default:
+                    return period + " while it's true";
+            }
+        }
+
+        /// <summary>Derived flagged-children aggregate pin: " · while one is active".</summary>
+        public const string LifetimeWhileOneActive = " · while one is active";
+
+        /// <summary>
+        /// Aggregate membership when each child carries its own lifetime:
+        /// " · each with its own lifetime".
+        /// </summary>
+        public const string LifetimeEachOwn = " · each with its own lifetime";
+
+        private static int SecondsFromMs(int durationMs)
+        {
+            if (durationMs <= 0)
+                return 0;
+            // Round to nearest whole second for ladder/form display.
+            return (durationMs + 500) / 1000;
+        }
+
+        // ── Priority ladder framing (5b / 5j) ────────────────────────────
+
+        /// <summary>"PRIORITY · {N} ENTRIES" — N = ranked rows only (pinned excluded).</summary>
+        public static string LadderHeaderCount(int rankedRows)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "PRIORITY · {0} ENTRIES",
+                rankedRows);
+        }
+
+        /// <summary>5b ladder subtitle (full form).</summary>
+        public const string PriorityLadderSubtitle =
+            "drag to reorder · the top row whose condition is live owns the display";
+
+        /// <summary>5j ladder subtitle (short form — no second clause).</summary>
+        public const string PriorityLadderSubtitleShort = "drag to reorder";
+
+        /// <summary>Ladder header add affordance (phase 3b gated).</summary>
+        public const string AddAPage = "+ Add a page";
+
+        /// <summary>Column header: rank.</summary>
+        public const string ColRank = "#";
+
+        /// <summary>Column header: page / destination.</summary>
+        public const string ColPage = "PAGE";
+
+        /// <summary>Column header: entrypoint / detail.</summary>
+        public const string ColEntrypoint = "ENTRYPOINT";
+
+        /// <summary>Column header: status (right-aligned).</summary>
+        public const string ColRightNow = "RIGHT NOW";
+
+        /// <summary>Grip glyph drawn on every ranked row.</summary>
+        public const string GripGlyph = "⠿";
+
+        /// <summary>Overflow menu glyph drawn on every row.</summary>
+        public const string OverflowGlyph = "⋯";
+
+        /// <summary>Expanded-row disclosure glyph (only when expanded — Q4).</summary>
+        public const string ExpandedGlyph = "▼";
+
+        // ── Priority detail / aggregate ───────────────────────────────────
+
+        /// <summary>
+        /// Manual row detail on Priority (always "standing" form; unmapped amber
+        /// lives in the Manual expansion, not the detail cell — digest §5.2).
+        /// </summary>
+        public const string ManualPagingStanding =
+            "standing · targets the page you last stepped to";
+
+        /// <summary>
+        /// Expanded seat count summary: "{n} entrypoints · {m} override(s)".
+        /// Q9 provisional: entrypoints = enabled summons + derived aggregate;
+        /// overrides = all overrides on the destination page.
+        /// </summary>
+        public static string SeatCountSummary(int entrypoints, int overrides)
+        {
+            string ep = entrypoints == 1
+                ? "1 entrypoint"
+                : string.Format(CultureInfo.InvariantCulture, "{0} entrypoints", entrypoints);
+            string ov = overrides == 1
+                ? "1 override"
+                : string.Format(CultureInfo.InvariantCulture, "{0} overrides", overrides);
+            return string.Format(CultureInfo.InvariantCulture, "{0} · {1}", ep, ov);
+        }
+
+        // ── Expansion sub-headers ────────────────────────────────────────
+
+        /// <summary>ENTRYPOINTS section label.</summary>
+        public const string EntrypointsSection = "ENTRYPOINTS";
+
+        /// <summary>"the page holds rank {n} through the first of them".</summary>
+        public static string EntrypointsSectionHint(int rank)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "the page holds rank {0} through the first of them",
+                rank);
+        }
+
+        /// <summary>Add entrypoint affordance inside a seat expansion.</summary>
+        public const string AddAnEntrypoint = "+ Add an entrypoint";
+
+        /// <summary>OVERRIDES section label.</summary>
+        public const string OverridesSection = "OVERRIDES";
+
+        /// <summary>Read-only overrides hint with link text.</summary>
+        public const string OverridesReadOnlyHint =
+            "read-only here — edit them on the field";
+
+        /// <summary>Link fragment inside the overrides hint.</summary>
+        public const string EditThemOnTheField = "edit them on the field";
+
+        /// <summary>LAYERS ON THIS PAGE section label (5j).</summary>
+        public const string LayersSection = "LAYERS ON THIS PAGE";
+
+        /// <summary>Read-only layers hint with link text.</summary>
+        public const string LayersReadOnlyHint =
+            "read-only here — edit them on the page";
+
+        /// <summary>Link fragment inside the layers hint.</summary>
+        public const string EditThemOnThePage = "edit them on the page";
+
+        /// <summary>Dashed BASE block label on a segment page with no base content.</summary>
+        public const string BaseBlockLabel = "BASE";
+
+        /// <summary>Dashed BASE block body when the page is layers-only.</summary>
+        public const string BaseBlockBlank =
+            "blank — this page is only up when one of its layers fires";
+
+        /// <summary>Field-override writes chip: suffix.</summary>
+        public const string WritesSuffix = "suffix";
+
+        /// <summary>Layer kind chip label.</summary>
+        public const string LayerChip = "layer";
+
+        // ── Manual-row options ───────────────────────────────────────────
+
+        /// <summary>Return-to-base checkbox label prefix.</summary>
+        public const string ReturnToBaseAfter = "Return to the Base page after";
+
+        /// <summary>Return-to-base units suffix.</summary>
+        public const string SecondsOfNoInput = "s of no input";
+
+        /// <summary>Return-to-base counting note.</summary>
+        public const string CountedFromLastPress = "· counted from the last press";
+
+        /// <summary>
+        /// Manual expansion consequence when nothing is ranked below (default).
+        /// </summary>
+        public const string ManualShieldNoneBelow =
+            "Rows below this one — currently none — can't interrupt while you're parked on a page. Drag it up to shield more of the ladder, down to shield less.";
+
+        /// <summary>
+        /// Manual expansion consequence when ranked rows sit above and nothing below.
+        /// </summary>
+        public static string ManualShieldNothingBelowNamed(string aboveNames)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Nothing is ranked below this row, so browsing interrupts nothing. {0} both sit above it and can still take the display.",
+                aboveNames ?? string.Empty);
+        }
+
+        /// <summary>Amber line when next/previous are unmapped.</summary>
+        public const string ManualUnmappedAmber =
+            "Next and previous aren't mapped on this wheel, so this row can never fire.";
+
+        /// <summary>Link on the amber unmapped line.</summary>
+        public const string MapThemInControls = "Map them in Controls";
+
+        // ── Overflow menu (seat; Q3 flagged — seats only this phase) ─────
+
+        /// <summary>Menu: navigate to page fields (not a write).</summary>
+        public const string EditThisPagesFields = "Edit this page's fields…";
+
+        /// <summary>Menu: open the entrypoint form for a new summon.</summary>
+        public const string AddAnEntrypointMenu = "Add an entrypoint…";
+
+        /// <summary>Menu: disable the seat's primary summon.</summary>
+        public const string TurnThisEntrypointOff = "Turn this entrypoint off";
+
+        /// <summary>Menu: re-enable a disabled summon.</summary>
+        public const string TurnThisEntrypointOn = "Turn this entrypoint on";
+
+        /// <summary>
+        /// PROVISIONAL (naming loop): remove rows only — page + authored overrides survive.
+        /// Owner ruling: two distinct removal options.
+        /// </summary>
+        public static string RemovePageRowsOnly(string pageName)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Remove {0} from Priority (keep page & overrides)",
+                pageName ?? string.Empty);
+        }
+
+        /// <summary>
+        /// PROVISIONAL confirm sub-line for rows-only removal — names orphaned overrides.
+        /// </summary>
+        public static string RemovePageRowsOnlyConfirm(int rankCount, int overrideCount)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "The page stays on the wheel. {0} priority row(s) leave the ladder; its {1} override(s) stay authored on the page.",
+                rankCount,
+                overrideCount);
+        }
+
+        /// <summary>
+        /// PROVISIONAL (naming loop): remove rows + the page's authored overrides.
+        /// PageEntry still untouched ("the page stays on the wheel").
+        /// </summary>
+        public static string RemovePageAndOverrides(string pageName)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Remove {0} from Priority and delete its overrides",
+                pageName ?? string.Empty);
+        }
+
+        /// <summary>PROVISIONAL confirm sub-line for destructive removal.</summary>
+        public static string RemovePageAndOverridesConfirm(int rankCount, int overrideCount)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "The page stays on the wheel. {0} priority row(s) leave the ladder, along with its {1} override(s).",
+                rankCount,
+                overrideCount);
+        }
+
+        /// <summary>
+        /// Fail-closed: destructive remove-all disabled when no resolvable catalog
+        /// (cannot apply the exclusivity law).
+        /// </summary>
+        public const string RemovePageAndOverridesUnavailable =
+            "Can't delete overrides safely without a wheel catalog — only remove from Priority (keep page & overrides) is available.";
+
+        /// <summary>Validation note: Rest.InSessionPage rejects cycle refs.</summary>
+        public const string InSessionPageMustBeItmOrHosted =
+            "Base page must be an ITM or hosted page (cycles are not allowed).";
+
+        /// <summary>Q6 / 8b: whole-row click tooltip on a layer sub-row.</summary>
+        public const string OpenThisLayersForm = "Open this layer's form";
+
+        // ── Base-row menu (UNBOARDED — owner ruling #2) ───────────────────
+
+        /// <summary>
+        /// PROVISIONAL: base-row ⋯ menu item. Deliberate mock-fidelity break —
+        /// no board draws this editor; owner ordered it built from the 5n shell
+        /// minus screens/playlists.
+        /// </summary>
+        public const string ChooseTheBasePage = "Choose the Base page…";
+
+        // ── Explainer cards ──────────────────────────────────────────────
+
+        /// <summary>5b explainer card label.</summary>
+        public const string TwoPinnedRows = "TWO PINNED ROWS";
+
+        /// <summary>5b TWO PINNED ROWS body.</summary>
+        public const string TwoPinnedRowsBody =
+            "Nothing ranks below them. Base page is where the display falls in a session; Outside a session is where it falls out of one — a row like any other, whose target is picked from the pages on this wheel, the built-in screens, or a playlist.";
+
+        /// <summary>5b DISMISSING card label.</summary>
+        public const string Dismissing = "DISMISSING";
+
+        /// <summary>5b DISMISSING body (no canvas-only "See it happen ›" link).</summary>
+        public const string DismissingBody =
+            "A press of next or previous while a row owns the display waves that row off until its condition fires again, and the display falls to the next live row. A second press steps the Rotation. A row above Manual paging that fires fresh still interrupts.";
+
+        /// <summary>5j ONE LAW card label.</summary>
+        public const string OneLaw = "ONE LAW";
+
+        /// <summary>5j ONE LAW body.</summary>
+        public const string OneLawBody =
+            "A layer applies whenever its page is on the wheel, however it got there. Fuel isn't in this list — it has no entrypoint, and is reached through the Rotation.";
+
+        // ── Idle picker (5n) ─────────────────────────────────────────────
+
+        /// <summary>Picker search placeholder.</summary>
+        public const string SearchPagesScreensPlaylists =
+            "Search pages, screens and playlists";
+
+        /// <summary>Picker group: authored pages.</summary>
+        public const string PagesOnThisWheel = "PAGES ON THIS WHEEL";
+
+        /// <summary>Picker group: built-in screens.</summary>
+        public const string BuiltInScreens = "BUILT-IN SCREENS";
+
+        /// <summary>
+        /// Picker group: playlists (task #22 lights this; structure via DisplayCopy only).
+        /// </summary>
+        public const string PlaylistsGroup = "PLAYLISTS";
+
+        /// <summary>Trailing note on the page that is also the Base page.</summary>
+        public const string AlsoTheBasePage = "also the Base page";
+
+        /// <summary>Screen capability: supported on this device.</summary>
+        public const string SupportedHere = "supported here";
+
+        /// <summary>Screen capability: null capability (untested).</summary>
+        public const string UntestedOnThisWheel = "untested on this wheel";
+
+        /// <summary>Selected row trailing note.</summary>
+        public const string Selected = "selected";
+
+        /// <summary>5j idle note when no playlist target is set (correct today).</summary>
+        public const string NoPlaylistOnThisProfile = "no playlist on this profile";
+
+        /// <summary>Picker footer provenance.</summary>
+        public const string PlaylistsWrittenBySetups =
+            "Playlists are written by setups — there is no playlist editor in v1.";
+
+        /// <summary>5n THREE CLAIMS card label.</summary>
+        public const string ThreeClaimsNotTwo = "THREE CLAIMS, NOT TWO";
+
+        /// <summary>5n THREE CLAIMS body (first sentence).</summary>
+        public const string ThreeClaimsBody =
+            "A built-in screen is marked supported only where we have driven it on this device. Untested on this wheel stays selectable with the risk said out loud, and anything the catalog says this rim cannot do is listed greyed with the reason — nothing is greyed on this one.";
+
+        /// <summary>5n THREE CLAIMS body (second sentence).</summary>
+        public const string ThreeClaimsBodyCycles =
+            "Cycles are not offered here: a cycle is an entrypoint, and outside a session there is nothing to rank. A playlist is the honest way to alternate while idle.";
+
+        // ── Entrypoint form (5f) ─────────────────────────────────────────
+
+        /// <summary>Form title prefix: "An entrypoint to".</summary>
+        public const string AnEntrypointTo = "An entrypoint to";
+
+        /// <summary>When section label.</summary>
+        public const string When = "When";
+
+        /// <summary>Source-kind segment: ITM field.</summary>
+        public const string SourceItmField = "ITM field";
+
+        /// <summary>Source-kind segment: SimHub property.</summary>
+        public const string SourceSimHubProperty = "SimHub property";
+
+        /// <summary>Source-kind segment: Script.</summary>
+        public const string SourceScript = "Script";
+
+        /// <summary>Live property value badge.</summary>
+        public const string Live = "LIVE";
+
+        /// <summary>Property-row hint under the click target.</summary>
+        public const string PropertyRowHint =
+            "The whole row is the click target; the value on the right is what the property reads right now.";
+
+        /// <summary>Lifetime section label.</summary>
+        public const string ForHowLong = "For how long";
+
+        /// <summary>Until-dismissed amber consequence.</summary>
+        public const string UntilDismissedConsequence =
+            "A press of next or previous dismisses this. If those aren't mapped to a control, nothing may be able to.";
+
+        /// <summary>Until-dismissed amber link / second sentence.</summary>
+        public const string MapControlOrTimedHold =
+            "Map a control, or choose a timed hold.";
+
+        /// <summary>Echo section label.</summary>
+        public const string ThisEntrypointReads = "This entrypoint reads";
+
+        /// <summary>Echo section hint.</summary>
+        public const string AssembledFromBinding =
+            "assembled from the binding — the same sentence the ladder shows";
+
+        /// <summary>Rank section label.</summary>
+        public const string WhereItRanks = "Where it ranks";
+
+        /// <summary>"Priority {n} — shared with this page's other entrypoints."</summary>
+        public static string PrioritySharedRank(int rank)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Priority {0} — shared with this page's other entrypoints.",
+                rank);
+        }
+
+        /// <summary>Rank section second line.</summary>
+        public const string WhileRowAboveLiveWaits =
+            "While a row above it is live, this one waits.";
+
+        /// <summary>Form footer: Delete.</summary>
+        public const string Delete = "Delete";
+
+        /// <summary>Form footer: Cancel.</summary>
+        public const string Cancel = "Cancel";
+
+        /// <summary>Form footer: Save.</summary>
+        public const string Save = "Save";
+
+        // ── Segment preview (5j) ─────────────────────────────────────────
+
+        /// <summary>Live segment preview column label.</summary>
+        public const string TheSegmentsNow = "THE SEGMENTS NOW";
     }
 }

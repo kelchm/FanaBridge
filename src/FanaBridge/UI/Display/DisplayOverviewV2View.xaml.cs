@@ -18,7 +18,7 @@ namespace FanaBridge.UI.Display
     /// Overview (v2) hub view — digest §2 structure, §4 navigation pins only.
     /// Pure projection via <see cref="DisplayOverviewV2Model"/>; reuses
     /// <see cref="ItmDisplayMirror"/> for the optimistic preview (§5.2).
-    /// Rows are inert (O5); spokes navigate (N3 live; N1/N2 later-phase disabled).
+    /// Rows are inert (O5); spokes navigate (N3 live; N2 live this phase; N1 later-phase disabled).
     /// </summary>
     public partial class DisplayOverviewV2View : UserControl
     {
@@ -29,15 +29,13 @@ namespace FanaBridge.UI.Display
         private bool _suppressEvents;
         private DisplayOverviewV2Model _model;
 
-        // E9 later-phase: N1/N2 destination views (v2 Pages & Fields / Priority) are not
-        // built yet — spokes stay disabled with a DisplayCopy tooltip. Do NOT route to
-        // the v1 editors (wrong document). Wire when those views land:
-        //   PagesAndFieldsRequested → v2 Pages & Fields
-        //   PriorityRequested → v2 Priority
+        // E9 later-phase: N1 destination (v2 Pages & Fields) is not built yet — spoke
+        // stays disabled with a DisplayCopy tooltip. Do NOT route to the v1 editors
+        // (wrong document). N2 Priority is LIVE (phase 3a).
         /// <summary>N1: Pages &amp; Fields › (later phase — disabled).</summary>
         public event EventHandler PagesAndFieldsRequested;
 
-        /// <summary>N2: Priority › (later phase — disabled).</summary>
+        /// <summary>N2: Priority › (phase 3a — live).</summary>
         public event EventHandler PriorityRequested;
 
         /// <summary>N3: Open Control mapper › (out of FanaBridge into SimHub).</summary>
@@ -130,10 +128,9 @@ namespace FanaBridge.UI.Display
             txtPriorityHeader.Text = DisplayCopy.PrioritySection;
             txtLadderSubtitle.Text = DisplayCopy.LadderSubtitle;
             SetHyperlinkText(linkPriority, DisplayCopy.PrioritySpoke);
-            // N2 later phase: disabled spoke + tooltip; wiring point tagged above.
-            linkPriority.IsEnabled = false;
-            linkPriority.ToolTip = DisplayCopy.SpokeArrivingLater(DisplayCopy.Priority);
-            System.Windows.Controls.ToolTipService.SetShowOnDisabled(linkPriority, true);
+            // N2 phase 3a: Priority view is LIVE — enable the spoke.
+            linkPriority.IsEnabled = true;
+            linkPriority.ToolTip = null;
             txtReadingIt.Text = DisplayCopy.ReadingIt;
             txtLadderLegend.Text = DisplayCopy.LadderLegend;
             txtMirrorWatermark.Text = DisplayCopy.MirrorWatermark;

@@ -7,6 +7,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using FanaBridge;
 using FanaBridge.Adapters;
+using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;
@@ -38,7 +39,7 @@ namespace FanaBridge.UI.Display
     /// </summary>
     public partial class DisplayTabPanel : UserControl
     {
-        private enum TabView { Overview, Triggers, Pages, Legacy, Diagnostics }
+        private enum TabView { Overview, Triggers, Pages, Legacy, Diagnostics, Priority }
 
         private IDisplayPanelHost _host;
         private IDisplayPropertyCatalog _propertyCatalog;
@@ -140,6 +141,20 @@ namespace FanaBridge.UI.Display
             IMappedRoleCatalog roleCatalog,
             IDisplayPickerStore pickerStore)
         {
+            // Dispatch layer covered by the runtime UI verification pass (E9 exit).
+            BindCore(host, propertyCatalog, roleCatalog, pickerStore);
+        }
+
+        /// <summary>
+        /// Production bind body: host + editor catalogs, TryResolve wheel catalog (same
+        /// keys as ApplyDisplayConfigV2), and Priority/Overview child Bind wiring.
+        /// </summary>
+        internal void BindCore(
+            IDisplayPanelHost host,
+            IDisplayPropertyCatalog propertyCatalog,
+            IMappedRoleCatalog roleCatalog,
+            IDisplayPickerStore pickerStore)
+        {
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _propertyCatalog = propertyCatalog ?? throw new ArgumentNullException(nameof(propertyCatalog));
             _roleCatalog = roleCatalog ?? throw new ArgumentNullException(nameof(roleCatalog));
@@ -157,6 +172,7 @@ namespace FanaBridge.UI.Display
                 { TabView.Pages,    viewPages },
                 { TabView.Legacy,   viewLegacy },
                 { TabView.Diagnostics, viewDiagnostics },
+                { TabView.Priority, viewPriorityV2 },
             };
 
             // The Triggers editor is its own control now — bind it to the same host, catalogs,
@@ -194,17 +210,24 @@ namespace FanaBridge.UI.Display
             legacyMonitorTable.Mode = TriggerTableMode.Monitor;
             legacyMonitorTable.RowActivated += id => NavigateTo(TabView.Triggers, id);
 
+            // Same TryResolve path as IDisplayPanelHost.ApplyDisplayConfigV2 — fail-closed
+            // when the wheel code is unknown (catalog stays null; remove-all disabled).
+            WheelCatalog wheelCatalog = null;
+            CatalogLoader.TryResolve(
+                _host.WheelCode,
+                out wheelCatalog,
+                msg => { /* UI bind: resolution failure is fail-closed, not logged here */ },
+                itmDeviceId: _host.ItmDeviceId);
+
             // E9 phase 1: v2 Overview — bound only when a v2 document is live.
-            // N1/N2: v2 Pages & Fields / Priority views are later phases — spokes are
-            // DISABLED on the view (DisplayCopy tooltip). Do NOT route to v1 editors
-            // (wrong document). Phase-tag wiring points:
-            //   // E9 later-phase: N1 → v2 Pages & Fields
-            //   // E9 later-phase: N2 → v2 Priority
+            // N1: v2 Pages & Fields still later phase — spoke DISABLED (DisplayCopy tooltip).
+            // N2: v2 Priority is LIVE this phase (3a).
             // N3: SimHub Control mapper via PluginManager.ShowPluginUI<ControlMapperPlugin>.
             // Diagnostics: NEW affordance (RE-SEQUENCE ruling) — not a board spoke.
-            viewOverviewV2.Bind(_host);
+            viewOverviewV2.Bind(_host, catalog: wheelCatalog);
             viewOverviewV2.ControlMapperRequested += (s, e) => OpenControlMapper();
             viewOverviewV2.DiagnosticsRequested += (s, e) => NavigateTo(TabView.Diagnostics);
+            viewOverviewV2.PriorityRequested += (s, e) => NavigateTo(TabView.Priority);
             viewOverviewV2.ConfigApplied += (s, e) =>
             {
                 // Mode write-through may have mutated DisplaySettings — refresh v1 chrome.
@@ -215,6 +238,30 @@ namespace FanaBridge.UI.Display
             // E9 minimal diagnostics — same host, read-only; ‹ back to Overview.
             viewDiagnostics.Bind(_host);
             viewDiagnostics.BackRequested += (s, e) => NavigateTo(TabView.Overview);
+
+            // E9 phase 3a: Priority ladder — session writes; ‹ back to Overview.
+            // Property/role catalogs feed 5f picker + next/prev mapping (digest §5).
+            // Wheel catalog (same TryResolve as host apply) enables remove-all exclusivity.
+            viewPriorityV2.Bind(
+                _host,
+                catalog: wheelCatalog,
+                propertyCatalog: _propertyCatalog,
+                roleCatalog: _roleCatalog,
+                pickerStore: _pickerStore);
+            viewPriorityV2.BackRequested += (s, e) => NavigateTo(TabView.Overview);
+            // Q6 end-to-end: DisplayTabPanel owns destination liveness. v2 Pages & Fields
+            // (PX3) is a later phase — N1 discipline identical to Overview: destination
+            // NOT live → layer-row / overflow / section links draw DISABLED with
+            // SpokeArrivingLater (no cursor-only fakes, no dead handlers). Event is
+            // subscribed only when the destination is live:
+            //   viewPriorityV2.SetPagesAndFieldsDestinationLive(true);
+            //   viewPriorityV2.PagesAndFieldsRequested += (s, e) => NavigateTo(/* v2 */);
+            viewPriorityV2.SetPagesAndFieldsDestinationLive(false);
+            viewPriorityV2.ConfigApplied += (s, e) =>
+            {
+                _settings = _host.DisplaySettings ?? _settings;
+                UpdateModeState();
+            };
 
             // DISPLAY MODE segments — tri-state ITM / Legacy / Off, driven by
             // DisplaySettings.DisplayControl. Off's selected fill is amber; the others
@@ -493,6 +540,10 @@ namespace FanaBridge.UI.Display
             if (view == TabView.Diagnostics && _host != null)
                 viewDiagnostics.Poll(force: true);
 
+            // E9 phase 3a Priority: force a fresh projection on entry.
+            if (view == TabView.Priority && _host != null)
+                viewPriorityV2.Poll(force: true);
+
             // The DISPLAY MODE header belongs to the hub — it shows on Overview (ITM) and
             // whenever control is Off, never inside an editor unless Off keeps it up.
             RefreshModeHeader();
@@ -639,13 +690,13 @@ namespace FanaBridge.UI.Display
             // panel is collapsed. A no-op in steady state (two compares).
             SyncResolvedCaps();
 
-            // Doc removed while Diagnostics open: navigate back + restore v1 BEFORE the
-            // live early-return. diagnosticsV2 is false when the doc is gone, and every
-            // other surface is still collapsed under the v2 gate — without this the poll
-            // returns and the panel stays blank.
+            // Doc removed while Diagnostics/Priority open: navigate back + restore v1
+            // BEFORE the live early-return. Without this the poll returns and the panel
+            // stays blank under the v2 gate.
             bool v2Live = _host?.GetDisplayConfigV2() != null;
             if (DisplayShellRouting.LeaveDiagnosticsAfterV2Removed(
-                    _currentView == TabView.Diagnostics, v2Live))
+                    _currentView == TabView.Diagnostics, v2Live)
+                || (_currentView == TabView.Priority && !v2Live))
             {
                 NavigateTo(TabView.Overview);
                 RestoreV1OverviewSurface();
@@ -656,10 +707,12 @@ namespace FanaBridge.UI.Display
             bool overviewV2 = viewOverviewV2.Visibility == Visibility.Visible
                 && _currentView == TabView.Overview;
             bool diagnosticsV2 = _currentView == TabView.Diagnostics && v2Live;
+            bool priorityV2 = _currentView == TabView.Priority && v2Live;
             bool editorActive = _currentView == TabView.Triggers
                 || _currentView == TabView.Pages
                 || _currentView == TabView.Legacy;
-            if (!itmLive && !legacyLive && !editorActive && !overviewV2 && !diagnosticsV2)
+            if (!itmLive && !legacyLive && !editorActive && !overviewV2 && !diagnosticsV2
+                && !priorityV2)
                 return;
 
             // ONE volatile read — the envelope; the parts gate their own re-renders
@@ -684,6 +737,9 @@ namespace FanaBridge.UI.Display
             // E9 diagnostics: same poll gate as Overview (composed resolution is the source).
             if (diagnosticsV2 && (force || composedChanged || statusChanged || valuesChanged))
                 viewDiagnostics.Poll(force: force);
+            // E9 phase 3a Priority: re-project on the same envelope changes.
+            if (priorityV2 && (force || composedChanged || statusChanged || valuesChanged))
+                viewPriorityV2.Poll(force: force);
             // Re-evaluate v2 surface if the document appeared/disappeared mid-session.
             if (force || composedChanged || snapshotChanged)
                 ApplyOverviewDocumentSurface();

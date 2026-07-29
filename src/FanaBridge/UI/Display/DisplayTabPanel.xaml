@@ -304,6 +304,10 @@
                 <!-- E9 minimal diagnostics (RE-SEQUENCE product feature; no board).
                      Same v2-document gate as Overview; read-only; ‹ back to Overview. -->
                 <ui:DisplayDiagnosticsView x:Name="viewDiagnostics" Visibility="Collapsed" />
+
+                <!-- E9 phase 3a: v2 Priority ladder (5b/5j/5n/5f). Hub-and-spoke from
+                     Overview N2; same v2-document gate; ‹ back to Overview. -->
+                <ui:DisplayPriorityV2View x:Name="viewPriorityV2" Visibility="Collapsed" />
             </Grid>
 
         </StackPanel>

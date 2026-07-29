@@ -1,0 +1,322 @@
+<UserControl x:Class="FanaBridge.UI.Display.DisplayPriorityV2View"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:FanaBridge.UI.Display"
+             xmlns:shared="clr-namespace:FanaBridge.UI.Display.Shared">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/FanaBridge;component/UI/Display/Shared/DisplayStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!--
+      Priority ladder (boards 5b / 5j / 5n / 5f). Copy applied from DisplayCopy.
+      Structure: digest §2. Writes via DisplayConfigV2EditSession.
+    -->
+    <DockPanel LastChildFill="True">
+
+        <!-- PriorityHeaderRow [5b-B] -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                <Button Style="{StaticResource GhostBack}" Click="Back_Click">
+                    <TextBlock Style="{StaticResource GhostBackGlyph}" />
+                </Button>
+                <TextBlock Text="/" Foreground="#5A5A5C" Margin="6,0" VerticalAlignment="Center" FontSize="14" />
+                <TextBlock x:Name="txtTitle" FontSize="17" FontWeight="SemiBold"
+                           Foreground="#F0F0F0" VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <TextBlock x:Name="txtSurfaceWord" FontWeight="SemiBold"
+                           Foreground="#EAEAEA" FontSize="12.5" VerticalAlignment="Center" />
+                <TextBlock x:Name="txtDivider" Foreground="#5A5A5C" Margin="8,0"
+                           VerticalAlignment="Center" FontSize="12" />
+                <Ellipse x:Name="dotSituation" Width="9" Height="9"
+                         Fill="#35E06A" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <TextBlock x:Name="txtSituation" FontSize="12" Foreground="#8FBF9A"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Conflict banner (ConfigEditConflict) -->
+        <Border x:Name="bannerConflict" DockPanel.Dock="Top" Background="#3A2A1A"
+                BorderBrush="#C9A95F" BorderThickness="1" Padding="10,8" Margin="0,0,0,8"
+                Visibility="Collapsed">
+            <TextBlock x:Name="txtConflict" FontSize="12.5" Foreground="#E8D5A0"
+                       TextWrapping="Wrap" />
+        </Border>
+
+        <!-- LadderHeaderRow [5b-C] -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock x:Name="txtLadderHeader" FontSize="13" FontWeight="SemiBold"
+                           Foreground="#8F8F8F" VerticalAlignment="Center" />
+                <TextBlock x:Name="txtLadderSubtitle" FontSize="12.5" Foreground="#7A7A7A"
+                           Margin="12,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+            <Button x:Name="btnAddPage" DockPanel.Dock="Right" HorizontalAlignment="Right"
+                    Padding="10,5" Background="#232325" BorderBrush="#454547"
+                    BorderThickness="1" Foreground="#C8C8C8" FontSize="12.5"
+                    Click="AddPage_Click" />
+        </DockPanel>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+
+                <TextBlock x:Name="txtModeOffEmpty" FontSize="13" Foreground="#8F8F8F"
+                           TextWrapping="Wrap" Margin="0,12,0,0" Visibility="Collapsed" />
+
+                <Grid x:Name="panelLadder">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="colPreview" Width="0" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- 5j segment preview column -->
+                    <StackPanel x:Name="panelPreview" Grid.Column="0" Margin="0,0,16,0"
+                                Visibility="Collapsed" Width="250">
+                        <TextBlock x:Name="txtPreviewLabel" FontSize="9.5" FontFamily="Consolas"
+                                   Foreground="#8F8F8F" Margin="0,0,0,6" />
+                        <Border Background="#000000" Width="190" Height="80"
+                                HorizontalAlignment="Left" ClipToBounds="True">
+                            <ContentControl x:Name="hostPreviewFace" />
+                        </Border>
+                        <TextBlock x:Name="txtPreviewCaption" FontSize="12.5" FontWeight="SemiBold"
+                                   Foreground="#B0B0B0" Margin="0,8,0,0" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1">
+                        <!-- Column header strip [5b-D] -->
+                        <Grid x:Name="gridColHeaders" Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="16" />
+                                <ColumnDefinition Width="24" />
+                                <ColumnDefinition x:Name="colPageHdr" Width="236" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition x:Name="colStatusHdr" Width="104" />
+                                <ColumnDefinition Width="16" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="1" x:Name="txtColRank" FontSize="9.5"
+                                       FontFamily="Consolas" Foreground="#6A6A6C"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" x:Name="txtColPage" FontSize="9.5"
+                                       FontFamily="Consolas" Foreground="#6A6A6C"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="3" x:Name="txtColEntrypoint" FontSize="9.5"
+                                       FontFamily="Consolas" Foreground="#6A6A6C"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="4" x:Name="txtColRightNow" FontSize="9.5"
+                                       FontFamily="Consolas" Foreground="#6A6A6C"
+                                       HorizontalAlignment="Right" VerticalAlignment="Center" />
+                        </Grid>
+
+                        <ItemsControl x:Name="listRows">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <!-- Rows built in code-behind for grip drag, menus, expansion -->
+                        </ItemsControl>
+
+                        <ItemsControl x:Name="listExplainers" Margin="0,16,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#232325" Padding="12,10" Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Label}" FontSize="9.5"
+                                                       FontFamily="Consolas" FontWeight="SemiBold"
+                                                       Foreground="#8F8F8F" Margin="0,0,0,4" />
+                                            <TextBlock Text="{Binding Body}" FontSize="12.5"
+                                                       Foreground="#A0A0A0" TextWrapping="Wrap"
+                                                       LineHeight="18" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Idle / Base picker popup (5n shell) -->
+        <Popup x:Name="popupPicker" Placement="MousePoint" StaysOpen="False"
+               AllowsTransparency="True">
+            <Border Background="#2B2B2D" BorderBrush="#545456" BorderThickness="1"
+                    Width="452" MaxHeight="420" Padding="0,8,0,8">
+                <DockPanel>
+                    <TextBox x:Name="txtPickerSearch" DockPanel.Dock="Top"
+                             Margin="10,0,10,8" Padding="6,5" FontSize="12.5"
+                             Background="#1E1E20" Foreground="#E6E6E6"
+                             BorderBrush="#545456" TextChanged="PickerSearch_Changed" />
+                    <TextBlock x:Name="txtPickerFooter" DockPanel.Dock="Bottom"
+                               FontSize="11" Foreground="#7A7A7A" TextWrapping="Wrap"
+                               Margin="12,8,12,4" />
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="320">
+                        <ItemsControl x:Name="listPickerGroups">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="0,0,0,8">
+                                        <TextBlock Text="{Binding Header}" FontSize="9.5"
+                                                   FontFamily="Consolas" Foreground="#8F8F8F"
+                                                   Margin="12,4,12,4" />
+                                        <ItemsControl ItemsSource="{Binding Items}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Padding="12,7" Cursor="Hand"
+                                                            Background="Transparent"
+                                                            MouseLeftButtonUp="PickerItem_Click"
+                                                            Tag="{Binding}">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="16" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0"
+                                                                       FontSize="12" Foreground="#35E06A"
+                                                                       VerticalAlignment="Center">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Text" Value="" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                                <Setter Property="Text" Value="✓" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                            <TextBlock Grid.Column="1" Text="{Binding Badge}"
+                                                                       FontSize="11" FontFamily="Consolas"
+                                                                       Foreground="#9FB4C4" Margin="0,0,8,0"
+                                                                       VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="2" Text="{Binding Name}"
+                                                                       FontSize="12.5" Foreground="#EAEAEA"
+                                                                       VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="3" Text="{Binding TrailingNote}"
+                                                                       FontSize="11" Foreground="#7FCE9A"
+                                                                       Margin="8,0,0,0"
+                                                                       VerticalAlignment="Center" />
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Popup>
+
+        <!-- 5f entrypoint form modal -->
+        <Popup x:Name="popupEntrypoint" Placement="Center" PlacementTarget="{Binding RelativeSource={RelativeSource AncestorType=UserControl}}"
+               StaysOpen="True" AllowsTransparency="True">
+            <Border Background="#252525" BorderBrush="#545456" BorderThickness="1"
+                    Width="560" Padding="20,16">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,14">
+                        <TextBlock x:Name="txtEpTitle" FontSize="15" FontWeight="SemiBold"
+                                   Foreground="#F0F0F0" DockPanel.Dock="Left" />
+                        <Button Content="✕" DockPanel.Dock="Right" HorizontalAlignment="Right"
+                                Background="Transparent" BorderThickness="0" Foreground="#8F8F8F"
+                                FontSize="14" Click="EntrypointCancel_Click" />
+                    </DockPanel>
+
+                    <TextBlock x:Name="txtEpWhen" FontSize="11" FontWeight="SemiBold"
+                               Foreground="#8FB0C8" Margin="0,0,0,6" />
+                    <!-- 5f: three-SEGMENT source control (SegmentedControl idiom) -->
+                    <shared:SegmentedControl x:Name="segEpSourceKind" Margin="0,0,0,8"
+                                             HorizontalAlignment="Left" />
+                    <!-- Property-picker row: friendly / path / LIVE value + chevron -->
+                    <Border x:Name="btnEpPropertyRow" Margin="0,0,0,4" Padding="8,8"
+                            Background="#1E1E20" BorderBrush="#545456" BorderThickness="1"
+                            Cursor="Hand" MouseLeftButtonUp="EpPropertyRow_Click">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock x:Name="txtEpSourceFriendly" FontSize="13"
+                                           Foreground="#E6E6E6" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="txtEpSourcePath" FontSize="11"
+                                           Foreground="#8F8F8F" FontFamily="Consolas"
+                                           TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                        VerticalAlignment="Center" Margin="10,0,6,0">
+                                <TextBlock x:Name="txtEpLiveBadge" FontSize="10" FontWeight="SemiBold"
+                                           Foreground="#7FCE9A" Margin="0,0,6,0"
+                                           VerticalAlignment="Center" />
+                                <TextBlock x:Name="txtEpLiveValue" FontSize="12"
+                                           Foreground="#C8C8C8" FontFamily="Consolas"
+                                           VerticalAlignment="Center" MinWidth="32" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="2" Text="›" FontSize="16" Foreground="#8F8F8F"
+                                       VerticalAlignment="Center" Margin="4,0,0,0" />
+                        </Grid>
+                    </Border>
+                    <TextBlock x:Name="txtEpPropertyHint" FontSize="11" Foreground="#7A7A7A"
+                               TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <DockPanel Margin="0,0,0,10">
+                        <ComboBox x:Name="cmbEpOperator" Width="140" Margin="0,0,8,0"
+                                  DockPanel.Dock="Left" />
+                        <TextBox x:Name="txtEpUnit" Width="48" Margin="8,0,0,0" Padding="6,5"
+                                 DockPanel.Dock="Right"
+                                 Background="#1E1E20" Foreground="#C8C8C8" BorderBrush="#545456"
+                                 ToolTip="unit" />
+                        <TextBox x:Name="txtEpValue" Padding="6,5"
+                                 Background="#1E1E20" Foreground="#E6E6E6" BorderBrush="#545456" />
+                    </DockPanel>
+
+                    <TextBlock x:Name="txtEpForHowLong" FontSize="11" FontWeight="SemiBold"
+                               Foreground="#8FB0C8" Margin="0,4,0,6" />
+                    <StackPanel x:Name="panelEpLifetime" Margin="0,0,0,6" />
+                    <!-- 5f: until-dismissed consequence as drawn bordered amber card -->
+                    <Border x:Name="cardEpUntilDismissed" Margin="0,0,0,10" Padding="10,8"
+                            BorderBrush="#C9A95F" BorderThickness="1" CornerRadius="2"
+                            Background="#2A2618" Visibility="Collapsed">
+                        <TextBlock x:Name="txtEpUntilDismissedNote" FontSize="11.5"
+                                   Foreground="#C9A95F" TextWrapping="Wrap" />
+                    </Border>
+
+                    <TextBlock x:Name="txtEpReads" FontSize="11" FontWeight="SemiBold"
+                               Foreground="#8FB0C8" Margin="0,4,0,4" />
+                    <TextBlock x:Name="txtEpSentence" FontSize="12.5" Foreground="#C8C8C8"
+                               TextWrapping="Wrap" Margin="0,0,0,4" />
+                    <TextBlock x:Name="txtEpAssembled" FontSize="11" Foreground="#7A7A7A"
+                               Margin="0,0,0,10" />
+
+                    <TextBlock x:Name="txtEpWhere" FontSize="11" FontWeight="SemiBold"
+                               Foreground="#8FB0C8" Margin="0,4,0,4" />
+                    <TextBlock x:Name="txtEpRank" FontSize="12.5" Foreground="#C8C8C8"
+                               Margin="0,0,0,2" />
+                    <TextBlock x:Name="txtEpRankHint" FontSize="11.5" Foreground="#7A7A7A"
+                               Margin="0,0,0,14" />
+
+                    <DockPanel>
+                        <Button x:Name="btnEpDelete" DockPanel.Dock="Left"
+                                Foreground="#D68B8B" Background="Transparent" BorderThickness="0"
+                                Padding="0,4" Click="EntrypointDelete_Click" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button x:Name="btnEpCancel" Padding="12,6" Margin="0,0,8,0"
+                                    Background="#2A2A2C" Foreground="#C8C8C8" BorderBrush="#454547"
+                                    Click="EntrypointCancel_Click" />
+                            <Button x:Name="btnEpSave" Padding="14,6"
+                                    Background="#1E8FD5" Foreground="#FFFFFF" BorderThickness="0"
+                                    Click="EntrypointSave_Click" />
+                        </StackPanel>
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+        </Popup>
+    </DockPanel>
+</UserControl>

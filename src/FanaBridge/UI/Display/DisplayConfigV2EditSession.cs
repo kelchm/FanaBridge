@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Schema2;
+using Newtonsoft.Json.Linq;
 
 namespace FanaBridge.UI.Display
 {
@@ -390,6 +392,392 @@ namespace FanaBridge.UI.Display
             return Mutate(doc => TrySetActsAsEntrypoint(doc, target, containerId, memberId, value));
         }
 
+        /// <summary>
+        /// Clone-existing-then-mutate a summon. The existing node is fully cloned
+        /// (Name / Runs / source variants / hysteresis / directions / extension data
+        /// survive); only non-null authored fields on <paramref name="summon"/> replace
+        /// the corresponding existing fields. Id is always <paramref name="summonId"/>.
+        /// No-op when the row or summon is missing.
+        /// </summary>
+        public DisplayConfigV2 UpdateSummon(string rowId, string summonId, Summon summon)
+        {
+            if (summon == null || string.IsNullOrEmpty(summonId))
+                return _document;
+
+            return Mutate(doc =>
+            {
+                var row = FindRow(doc, rowId);
+                if (row?.Summons == null)
+                    return false;
+
+                int sIndex = IndexOfSummon(row.Summons, summonId);
+                if (sIndex < 0)
+                    return false;
+
+                var existing = row.Summons[sIndex];
+                if (existing == null)
+                    return false;
+
+                var owned = DisplayConfigV2Serializer.CloneNode(existing);
+                owned.Id = summonId;
+                ApplySummonEdits(owned, summon);
+                row.Summons[sIndex] = owned;
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Set <see cref="RestBlock.InSessionPage"/> (Base page). Accepts only
+        /// <see cref="PageRefKind.ItmPage"/> | <see cref="PageRefKind.HostedPage"/>;
+        /// cycle (and other) refs are rejected with a validation note and leave the
+        /// document unchanged. Null clears the choice (engine default walk).
+        /// </summary>
+        public DisplayConfigV2 SetInSessionPage(PageRef page)
+        {
+            if (page != null
+                && page.Kind != PageRefKind.ItmPage
+                && page.Kind != PageRefKind.HostedPage)
+            {
+                _validationNotes = new[] { DisplayCopy.InSessionPageMustBeItmOrHosted };
+                return _document;
+            }
+
+            var owned = page == null ? null : DisplayConfigV2Serializer.CloneNode(page);
+
+            return Mutate(doc =>
+            {
+                EnsurePriority(doc);
+                if (doc.Priority.Rest == null)
+                    doc.Priority.Rest = new RestBlock();
+                doc.Priority.Rest.InSessionPage = owned;
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Q2: ensure a MaterializedAtLoad seat exists in authored <see cref="PriorityLadder.Rows"/>
+        /// before its first reorder. Inserts a full clone of <paramref name="seed"/>
+        /// (BringUpLifetime, ChildRef, lifetime, timer, raw discriminators, extension data)
+        /// when missing. No-op when already present.
+        /// </summary>
+        public DisplayConfigV2 EnsureAuthoredRow(PriorityRow seed)
+        {
+            if (seed == null || string.IsNullOrEmpty(seed.Id))
+                return _document;
+
+            return Mutate(doc =>
+            {
+                var rows = RowsOf(doc);
+                if (IndexOfRow(rows, seed.Id) >= 0)
+                    return false;
+
+                var owned = DisplayConfigV2Serializer.CloneNode(seed);
+                if (owned.Kind == PriorityRowKind.Unknown)
+                    owned.Kind = PriorityRowKind.Seat;
+                // Insert above any manual row (materialized seats sit above manual).
+                int insertAt = rows.Count;
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    if (rows[i] != null && rows[i].Kind == PriorityRowKind.Manual)
+                    {
+                        insertAt = i;
+                        break;
+                    }
+                }
+                rows.Insert(insertAt, owned);
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Owner ruling (removal a): remove every ranked row whose
+        /// <see cref="PriorityRow.Target"/> resolves to <paramref name="target"/>.
+        /// <see cref="PageEntry"/> and authored field overrides are untouched.
+        /// Manual rows are never removed by target. No-op when target is null / unmatched.
+        /// </summary>
+        public DisplayConfigV2 RemoveRowsForTarget(PageRef target)
+        {
+            if (target == null)
+                return _document;
+
+            string key = TargetKey(target);
+            if (key == null)
+                return _document;
+
+            return Mutate(doc =>
+            {
+                var rows = RowsOf(doc);
+                bool any = false;
+                for (int i = rows.Count - 1; i >= 0; i--)
+                {
+                    var row = rows[i];
+                    if (row == null || row.Kind == PriorityRowKind.Manual)
+                        continue;
+                    if (!string.Equals(TargetKey(row.Target), key, StringComparison.Ordinal))
+                        continue;
+                    rows.RemoveAt(i);
+                    any = true;
+                }
+                return any;
+            });
+        }
+
+        /// <summary>
+        /// Precomputed remove-all set: one session opens at confirm-entry, computes this
+        /// set once under the exclusivity law, the confirm renders from it, and Yes
+        /// applies <em>this</em> set via the same session (conflict → re-confirm).
+        /// </summary>
+        public sealed class PageContentRemovalPlan
+        {
+            internal PageContentRemovalPlan(
+                PageRef target,
+                string targetKey,
+                int rankCount,
+                int contentCount,
+                HashSet<ushort> exclusiveParams,
+                bool clearHostedLayers)
+            {
+                Target = target;
+                TargetKey = targetKey;
+                RankCount = rankCount;
+                ContentCount = contentCount;
+                ExclusiveParams = exclusiveParams ?? new HashSet<ushort>();
+                ClearHostedLayers = clearHostedLayers;
+            }
+
+            public PageRef Target { get; }
+            public int RankCount { get; }
+            /// <summary>Exclusive override ladders (ITM) or hosted layers cleared.</summary>
+            public int ContentCount { get; }
+            internal string TargetKey { get; }
+            internal HashSet<ushort> ExclusiveParams { get; }
+            internal bool ClearHostedLayers { get; }
+        }
+
+        /// <summary>
+        /// Compute the remove-all set once against this session's working document.
+        /// Fail-closed when the target page is not resolvable in the catalog.
+        /// </summary>
+        public bool TryPlanRemovePageContent(
+            PageRef target, WheelCatalog catalog, out PageContentRemovalPlan plan)
+        {
+            plan = null;
+            if (!CanRemovePageContent(target, catalog))
+                return false;
+
+            string key = TargetKey(target);
+            if (key == null)
+                return false;
+
+            int rankCount = 0;
+            var rows = _document?.Priority?.Rows;
+            if (rows != null)
+            {
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    var row = rows[i];
+                    if (row == null || row.Kind == PriorityRowKind.Manual)
+                        continue;
+                    if (string.Equals(TargetKey(row.Target), key, StringComparison.Ordinal))
+                        rankCount++;
+                }
+            }
+
+            var exclusive = new HashSet<ushort>();
+            int contentCount = 0;
+            bool clearHosted = false;
+
+            if (target.Kind == PageRefKind.ItmPage)
+            {
+                exclusive = ExclusiveParamsOnCatalogPage(catalog, target.CatalogPageId);
+                if (_document?.Fields != null)
+                {
+                    foreach (var kv in _document.Fields)
+                    {
+                        if (!exclusive.Contains(kv.Key))
+                            continue;
+                        if (kv.Value?.Overrides != null)
+                            contentCount += kv.Value.Overrides.Count;
+                    }
+                }
+            }
+            else if (target.Kind == PageRefKind.HostedPage)
+            {
+                clearHosted = true;
+                if (_document?.Pages != null)
+                {
+                    for (int p = 0; p < _document.Pages.Count; p++)
+                    {
+                        var page = _document.Pages[p];
+                        if (page == null
+                            || page.Kind != PageEntryKind.HostedPage
+                            || !string.Equals(page.Id, target.Id, StringComparison.Ordinal))
+                            continue;
+                        contentCount = page.Layers?.Count ?? 0;
+                        break;
+                    }
+                }
+            }
+
+            plan = new PageContentRemovalPlan(
+                target, key, rankCount, contentCount, exclusive, clearHosted);
+            return true;
+        }
+
+        /// <summary>
+        /// Apply a plan produced by <see cref="TryPlanRemovePageContent"/> on this
+        /// session — the exclusive param set and row key are taken from the plan
+        /// (not recomputed).
+        /// </summary>
+        public DisplayConfigV2 ApplyPageContentRemoval(PageContentRemovalPlan plan)
+        {
+            if (plan == null || plan.TargetKey == null)
+                return _document;
+
+            return Mutate(doc =>
+            {
+                bool any = false;
+                string key = plan.TargetKey;
+
+                var rows = RowsOf(doc);
+                for (int i = rows.Count - 1; i >= 0; i--)
+                {
+                    var row = rows[i];
+                    if (row == null || row.Kind == PriorityRowKind.Manual)
+                        continue;
+                    if (!string.Equals(TargetKey(row.Target), key, StringComparison.Ordinal))
+                        continue;
+                    rows.RemoveAt(i);
+                    any = true;
+                }
+
+                if (plan.ExclusiveParams.Count > 0 && doc.Fields != null)
+                {
+                    foreach (var kv in doc.Fields)
+                    {
+                        if (!plan.ExclusiveParams.Contains(kv.Key))
+                            continue;
+                        var entry = kv.Value;
+                        if (entry?.Overrides == null || entry.Overrides.Count == 0)
+                            continue;
+                        entry.Overrides.Clear();
+                        any = true;
+                    }
+                }
+
+                if (plan.ClearHostedLayers
+                    && plan.Target != null
+                    && !string.IsNullOrEmpty(plan.Target.Id)
+                    && doc.Pages != null)
+                {
+                    for (int p = 0; p < doc.Pages.Count; p++)
+                    {
+                        var page = doc.Pages[p];
+                        if (page == null
+                            || page.Kind != PageEntryKind.HostedPage
+                            || !string.Equals(page.Id, plan.Target.Id, StringComparison.Ordinal))
+                            continue;
+                        if (page.Layers != null && page.Layers.Count > 0)
+                        {
+                            page.Layers.Clear();
+                            any = true;
+                        }
+                    }
+                }
+
+                return any;
+            });
+        }
+
+        /// <summary>
+        /// Owner ruling (removal b) + exclusivity law: plan then apply in one call.
+        /// Prefer the plan/apply pair at the UI confirm boundary so count and delete
+        /// share one set. No-op / fail-closed when the target is unresolvable.
+        /// </summary>
+        public DisplayConfigV2 RemovePageContent(PageRef target, WheelCatalog catalog = null)
+        {
+            if (!TryPlanRemovePageContent(target, catalog, out var plan))
+                return _document;
+            return ApplyPageContentRemoval(plan);
+        }
+
+        /// <summary>
+        /// Whether the destructive remove-all option is available for
+        /// <paramref name="target"/>. ITM requires the <em>target page</em> to resolve
+        /// in the catalog (any-nonempty catalog is not resolution). Fail-closed.
+        /// </summary>
+        public static bool CanRemovePageContent(PageRef target, WheelCatalog catalog)
+        {
+            if (target == null)
+                return false;
+            if (target.Kind == PageRefKind.HostedPage)
+                return !string.IsNullOrEmpty(target.Id);
+            if (target.Kind == PageRefKind.ItmPage)
+            {
+                return !string.IsNullOrEmpty(target.CatalogPageId)
+                    && FindCatalogPage(catalog, target.CatalogPageId) != null;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Count override ladders that would be deleted by remove-all under the
+        /// exclusivity law (confirm copy helper; prefer a
+        /// <see cref="PageContentRemovalPlan"/> at the UI boundary).
+        /// </summary>
+        public static int CountExclusiveOverridesForRemoval(
+            DisplayConfigV2 config, PageRef target, WheelCatalog catalog)
+        {
+            if (target == null || config == null)
+                return 0;
+
+            if (target.Kind == PageRefKind.HostedPage && config.Pages != null)
+            {
+                for (int i = 0; i < config.Pages.Count; i++)
+                {
+                    var p = config.Pages[i];
+                    if (p != null
+                        && string.Equals(p.Id, target.Id, StringComparison.Ordinal)
+                        && p.Layers != null)
+                        return p.Layers.Count;
+                }
+                return 0;
+            }
+
+            if (target.Kind != PageRefKind.ItmPage
+                || string.IsNullOrEmpty(target.CatalogPageId)
+                || FindCatalogPage(catalog, target.CatalogPageId) == null
+                || config.Fields == null)
+                return 0;
+
+            var exclusive = ExclusiveParamsOnCatalogPage(catalog, target.CatalogPageId);
+            int count = 0;
+            foreach (var kv in config.Fields)
+            {
+                if (!exclusive.Contains(kv.Key))
+                    continue;
+                if (kv.Value?.Overrides != null)
+                    count += kv.Value.Overrides.Count;
+            }
+            return count;
+        }
+
+        /// <summary>Resolve a catalog page by id; null when missing (fail-closed).</summary>
+        internal static CatalogPage FindCatalogPage(WheelCatalog catalog, string catalogPageId)
+        {
+            var pages = catalog?.Itm?.Pages;
+            if (pages == null || string.IsNullOrEmpty(catalogPageId))
+                return null;
+            for (int i = 0; i < pages.Count; i++)
+            {
+                var page = pages[i];
+                if (page != null
+                    && string.Equals(page.Id, catalogPageId, StringComparison.Ordinal))
+                    return page;
+            }
+            return null;
+        }
+
         // ── Internals ────────────────────────────────────────────────────
 
         private DisplayConfigV2 Mutate(Func<DisplayConfigV2, bool> edit)
@@ -537,6 +925,232 @@ namespace FanaBridge.UI.Display
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Stable target key matching validator materialization keys:
+        /// "itm:{catalogPageId}" / "hosted:{id}" / "cycle:{id}".
+        /// </summary>
+        private static string TargetKey(PageRef target)
+        {
+            if (target == null)
+                return null;
+            switch (target.Kind)
+            {
+                case PageRefKind.ItmPage:
+                    return string.IsNullOrEmpty(target.CatalogPageId)
+                        ? null
+                        : "itm:" + target.CatalogPageId;
+                case PageRefKind.HostedPage:
+                    return string.IsNullOrEmpty(target.Id)
+                        ? null
+                        : "hosted:" + target.Id;
+                case PageRefKind.Cycle:
+                    return string.IsNullOrEmpty(target.Id)
+                        ? null
+                        : "cycle:" + target.Id;
+                default:
+                    return null;
+            }
+        }
+
+        private static HashSet<ushort> ParamsOnCatalogPage(WheelCatalog catalog, string catalogPageId)
+        {
+            var set = new HashSet<ushort>();
+            var pages = catalog?.Itm?.Pages;
+            if (pages == null || string.IsNullOrEmpty(catalogPageId))
+                return set;
+            for (int i = 0; i < pages.Count; i++)
+            {
+                var page = pages[i];
+                if (page == null
+                    || !string.Equals(page.Id, catalogPageId, StringComparison.Ordinal))
+                    continue;
+                if (page.Fields == null)
+                    break;
+                for (int f = 0; f < page.Fields.Count; f++)
+                {
+                    if (page.Fields[f] != null)
+                        set.Add(page.Fields[f].ParamId);
+                }
+                break;
+            }
+            return set;
+        }
+
+        /// <summary>
+        /// Catalog placement = REACH, not ownership. A param is exclusive to
+        /// <paramref name="catalogPageId"/> when it appears on that page and on no other
+        /// catalog page. Shared ladders (e.g. pbme params 1/4 on all five ITM pages)
+        /// are excluded.
+        /// </summary>
+        internal static HashSet<ushort> ExclusiveParamsOnCatalogPage(
+            WheelCatalog catalog, string catalogPageId)
+        {
+            var exclusive = new HashSet<ushort>();
+            var onPage = ParamsOnCatalogPage(catalog, catalogPageId);
+            if (onPage.Count == 0)
+                return exclusive;
+
+            var pages = catalog?.Itm?.Pages;
+            if (pages == null)
+                return exclusive;
+
+            foreach (ushort paramId in onPage)
+            {
+                int placements = 0;
+                for (int i = 0; i < pages.Count; i++)
+                {
+                    var page = pages[i];
+                    if (page?.Fields == null)
+                        continue;
+                    for (int f = 0; f < page.Fields.Count; f++)
+                    {
+                        if (page.Fields[f] != null && page.Fields[f].ParamId == paramId)
+                        {
+                            placements++;
+                            break;
+                        }
+                    }
+                    if (placements > 1)
+                        break;
+                }
+                if (placements == 1)
+                    exclusive.Add(paramId);
+            }
+            return exclusive;
+        }
+
+        /// <summary>
+        /// Overlay form-edited fields onto a cloned existing summon. Condition merges
+        /// Source/Operator/Value field-wise (source extension data survives; hysteresis
+        /// only when the patch authors it). Lifetime merges field-wise: kind/duration
+        /// from the form; direction, then-state, and lifetime extension data survive
+        /// verbatim. Name/Enabled/Runs apply when the patch authors them; summon
+        /// ExtensionData stays on the clone.
+        /// </summary>
+        private static void ApplySummonEdits(Summon target, Summon patch)
+        {
+            if (target == null || patch == null)
+                return;
+
+            if (patch.Condition != null)
+            {
+                if (target.Condition == null)
+                {
+                    target.Condition = DisplayConfigV2Serializer.CloneNode(patch.Condition);
+                }
+                else
+                {
+                    if (patch.Condition.Source != null)
+                        MergeValueSource(target.Condition, patch.Condition.Source);
+                    target.Condition.Operator = patch.Condition.Operator;
+                    target.Condition.Value = patch.Condition.Value;
+                    // Hysteresis: only overwrite when the patch authors one; otherwise keep.
+                    if (patch.Condition.Hysteresis != null)
+                        target.Condition.Hysteresis = patch.Condition.Hysteresis;
+                }
+            }
+
+            if (patch.Lifetime != null)
+                MergeLifetime(target, patch.Lifetime);
+
+            if (patch.Name != null)
+                target.Name = patch.Name;
+
+            // Enabled: form/edit paths that preserve the prior value must copy it onto the
+            // patch first (default true would otherwise re-enable a turned-off summon).
+            target.Enabled = patch.Enabled;
+
+            if (patch.RunsRaw != null)
+                target.RunsRaw = patch.RunsRaw;
+
+            // ExtensionData stays on the clone. Additive keys from a full-replace patch
+            // are merged without dropping existing unknowns.
+            if (patch.ExtensionData != null && patch.ExtensionData.Count > 0)
+            {
+                if (target.ExtensionData == null)
+                    target.ExtensionData = new Dictionary<string, JToken>();
+                foreach (var kv in patch.ExtensionData)
+                    target.ExtensionData[kv.Key] = kv.Value;
+            }
+        }
+
+        /// <summary>
+        /// Field-wise source merge: kind + name from the patch; extension data on the
+        /// existing source survives when the form does not author any.
+        /// </summary>
+        private static void MergeValueSource(Condition targetCondition, ValueSource patchSource)
+        {
+            if (targetCondition == null || patchSource == null)
+                return;
+
+            if (targetCondition.Source == null)
+            {
+                targetCondition.Source = DisplayConfigV2Serializer.CloneNode(patchSource);
+                return;
+            }
+
+            var existing = targetCondition.Source;
+            // Kind: prefer patch when authored.
+            if (patchSource.Kind != ValueSourceKind.Unknown
+                || !string.IsNullOrEmpty(patchSource.KindRaw))
+            {
+                existing.Kind = patchSource.Kind;
+            }
+            if (patchSource.Name != null)
+                existing.Name = patchSource.Name;
+            // ExtensionData: keep existing; only add keys the patch authors.
+            if (patchSource.ExtensionData != null && patchSource.ExtensionData.Count > 0)
+            {
+                if (existing.ExtensionData == null)
+                    existing.ExtensionData = new Dictionary<string, JToken>();
+                foreach (var kv in patchSource.ExtensionData)
+                    existing.ExtensionData[kv.Key] = kv.Value;
+            }
+        }
+
+        /// <summary>
+        /// Field-wise lifetime merge: kind + durationMs from the form patch;
+        /// direction, then-state, and extension data on the existing lifetime survive
+        /// when the form does not author them.
+        /// </summary>
+        private static void MergeLifetime(Summon target, Lifetime patchLife)
+        {
+            if (target == null || patchLife == null)
+                return;
+
+            if (target.Lifetime == null)
+            {
+                target.Lifetime = DisplayConfigV2Serializer.CloneNode(patchLife);
+                return;
+            }
+
+            var existing = target.Lifetime;
+            if (patchLife.Kind != LifetimeKind.Unknown
+                || !string.IsNullOrEmpty(patchLife.KindRaw))
+            {
+                existing.Kind = patchLife.Kind;
+            }
+            if (patchLife.DurationMsPresent)
+                existing.DurationMs = patchLife.DurationMs;
+            // Direction / Then / ExtensionData: leave existing when patch is sparse
+            // (form never authors them). Only overwrite when the patch supplies them.
+            if (!string.IsNullOrEmpty(patchLife.DirectionRaw)
+                || (patchLife.Direction != ChangeDirection.Any
+                    && patchLife.Direction != ChangeDirection.Unknown))
+            {
+                existing.Direction = patchLife.Direction;
+            }
+            if (patchLife.Then != null || !string.IsNullOrEmpty(patchLife.ThenRaw))
+                existing.Then = patchLife.Then;
+            if (patchLife.ExtensionData != null && patchLife.ExtensionData.Count > 0)
+            {
+                if (existing.ExtensionData == null)
+                    existing.ExtensionData = new Dictionary<string, JToken>();
+                foreach (var kv in patchLife.ExtensionData)
+                    existing.ExtensionData[kv.Key] = kv.Value;
+            }
         }
     }
 }

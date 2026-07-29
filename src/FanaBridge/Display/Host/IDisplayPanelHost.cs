@@ -34,6 +34,13 @@ namespace FanaBridge.Display.Host
         /// <summary>The ITM display-device id (page tables are per device id).</summary>
         byte ItmDeviceId { get; }
 
+        /// <summary>
+        /// Wheel code used by <c>CatalogLoader.TryResolve</c> on the apply path
+        /// (same key the runtime stamps as composition <c>DeviceKey</c>). Null/empty
+        /// when unknown — callers fail closed on catalog resolution.
+        /// </summary>
+        string WheelCode { get; }
+
         /// <summary>The current customization config snapshot, or null when none is
         /// active. Reference-stable between edits — never mutate the returned
         /// instance; build a new document and pass it to
