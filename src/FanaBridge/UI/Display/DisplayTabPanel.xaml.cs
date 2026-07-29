@@ -5,10 +5,12 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using FanaBridge;
 using FanaBridge.Adapters;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;
+using FanaBridge.Display.Rules;
 using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
@@ -68,6 +70,7 @@ namespace FanaBridge.UI.Display
         private DisplayRuleSnapshot _lastSnapshot;
         private DisplayValuesSnapshot _lastValues;
         private string _lastStatus;
+        private ComposedResolutionRecord _lastComposed;
 
         public DisplayTabPanel()
         {
@@ -190,6 +193,22 @@ namespace FanaBridge.UI.Display
             legacyMonitorTable.Mode = TriggerTableMode.Monitor;
             legacyMonitorTable.RowActivated += id => NavigateTo(TabView.Triggers, id);
 
+            // E9 phase 1: v2 Overview — bound only when a v2 document is live.
+            // N1/N2: v2 Pages & Fields / Priority views are later phases — spokes are
+            // DISABLED on the view (DisplayCopy tooltip). Do NOT route to v1 editors
+            // (wrong document). Phase-tag wiring points:
+            //   // E9 later-phase: N1 → v2 Pages & Fields
+            //   // E9 later-phase: N2 → v2 Priority
+            // N3: SimHub Control mapper via PluginManager.ShowPluginUI<ControlMapperPlugin>.
+            viewOverviewV2.Bind(_host);
+            viewOverviewV2.ControlMapperRequested += (s, e) => OpenControlMapper();
+            viewOverviewV2.ConfigApplied += (s, e) =>
+            {
+                // Mode write-through may have mutated DisplaySettings — refresh v1 chrome.
+                _settings = _host.DisplaySettings ?? _settings;
+                UpdateModeState();
+            };
+
             // DISPLAY MODE segments — tri-state ITM / Legacy / Off, driven by
             // DisplaySettings.DisplayControl. Off's selected fill is amber; the others
             // keep the default accent. SelectionChanged fires on user activation only;
@@ -224,9 +243,82 @@ namespace FanaBridge.UI.Display
 
             NavigateTo(TabView.Overview);
             UpdateModeState();
+            ApplyOverviewDocumentSurface();
 
             _suppressEvents = false;
             Poll(force: true);
+        }
+
+        /// <summary>
+        /// E9 phase 1: when a v2 document is live, show DisplayOverviewV2View and hide
+        /// the v1 Overview chrome (ITM live / legacy live / options). When the v2
+        /// document disappears, restore mode-dependent v1 visibility (no blank panel).
+        /// </summary>
+        private void ApplyOverviewDocumentSurface()
+        {
+            bool v2 = _host?.GetDisplayConfigV2() != null;
+            viewOverviewV2.Visibility = v2 ? Visibility.Visible : Visibility.Collapsed;
+            if (v2)
+            {
+                // Collapse v1 Overview sections — v2 hub owns the surface.
+                panelItmLive.Visibility = Visibility.Collapsed;
+                panelLegacyLive.Visibility = Visibility.Collapsed;
+                borderItmInfo.Visibility = Visibility.Collapsed;
+                sectionItmOptions.Visibility = Visibility.Collapsed;
+                panelOffCard.Visibility = Visibility.Collapsed;
+                panelModeHeader.Visibility = Visibility.Collapsed;
+                lineModeHeader.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                // v2 removed — restore the v1 surface under the current DisplayControl.
+                RestoreV1OverviewSurface();
+            }
+        }
+
+        /// <summary>
+        /// Mode-dependent v1 Overview panels (mirrors the non-v2 branch of
+        /// <see cref="UpdateModeState"/>). Used when a v2 document is absent or cleared.
+        /// </summary>
+        private void RestoreV1OverviewSurface()
+        {
+            string control = _settings?.DisplayControl ?? DisplaySettings.ControlItm;
+            var type = _isItm ? DisplayType.Itm : DisplayType.Basic;
+            DisplayShellRouting.V1OverviewSurfaceAfterV2Removed(
+                type, control, out bool itmUi, out bool legacyUi, out bool isOff);
+
+            panelOffCard.Visibility = isOff ? Visibility.Visible : Visibility.Collapsed;
+
+            if (isOff)
+            {
+                NavigateTo(TabView.Overview);
+                panelItmLive.Visibility = Visibility.Collapsed;
+                panelLegacyLive.Visibility = Visibility.Collapsed;
+                borderItmInfo.Visibility = Visibility.Collapsed;
+                sectionItmOptions.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                panelItmLive.Visibility = itmUi ? Visibility.Visible : Visibility.Collapsed;
+                panelLegacyLive.Visibility = legacyUi ? Visibility.Visible : Visibility.Collapsed;
+                var itmChrome = itmUi ? Visibility.Visible : Visibility.Collapsed;
+                borderItmInfo.Visibility = itmChrome;
+                sectionItmOptions.Visibility = itmChrome;
+                if (_settings != null)
+                    panelDefaultPage.IsEnabled = _settings.ItmActive;
+            }
+
+            RefreshModeHeader();
+        }
+
+        /// <summary>
+        /// N3: jump SimHub to the Control Mapper plugin surface
+        /// (<c>ShowPluginUI&lt;ControlMapperPlugin&gt;</c> via reflection).
+        /// </summary>
+        private static void OpenControlMapper()
+        {
+            var pm = FanatecPlugin.Instance?.PluginManager;
+            ControlMapperReflection.ShowControlMapperUi(pm);
         }
 
         // ── DISPLAY MODE toggle (owns DisplaySettings.DisplayControl) ────
@@ -274,7 +366,11 @@ namespace FanaBridge.UI.Display
 
             panelOffCard.Visibility = isOff ? Visibility.Visible : Visibility.Collapsed;
 
-            if (isOff)
+            // E9: v2 document owns its own mode chrome (THIS DEVICE card). While v2 is
+            // live, suppress the v1 mode header + Off card so they do not double up.
+            bool v2Doc = _host?.GetDisplayConfigV2() != null;
+
+            if (isOff && !v2Doc)
             {
                 // Off is mode state: force Overview, hide every normal Overview section
                 // (and with it every link into an editor), show only the Off card + header.
@@ -284,7 +380,7 @@ namespace FanaBridge.UI.Display
                 borderItmInfo.Visibility = Visibility.Collapsed;
                 sectionItmOptions.Visibility = Visibility.Collapsed;
             }
-            else
+            else if (!v2Doc)
             {
                 // Itm/Legacy: Off card already collapsed; live cards per shell routing —
                 // ITM Overview while ITM is the active world, legacy Overview on basic
@@ -310,9 +406,29 @@ namespace FanaBridge.UI.Display
 
                 panelDefaultPage.IsEnabled = _settings.ItmActive;
             }
+            else
+            {
+                // v2 Overview owns mode + ladder; keep v1 Overview sections collapsed.
+                panelItmLive.Visibility = Visibility.Collapsed;
+                panelLegacyLive.Visibility = Visibility.Collapsed;
+                borderItmInfo.Visibility = Visibility.Collapsed;
+                sectionItmOptions.Visibility = Visibility.Collapsed;
+                panelOffCard.Visibility = Visibility.Collapsed;
+            }
 
             // Header visibility depends on control as well as view/_isItm.
-            RefreshModeHeader();
+            // v2 Overview draws Display Mode in THIS DEVICE — hide the v1 mode header.
+            if (v2Doc)
+            {
+                panelModeHeader.Visibility = Visibility.Collapsed;
+                lineModeHeader.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                RefreshModeHeader();
+            }
+
+            ApplyOverviewDocumentSurface();
         }
 
         // ── View navigation (hub-and-spoke, wizard-style panel visibility):
@@ -514,24 +630,36 @@ namespace FanaBridge.UI.Display
 
             bool itmLive = panelItmLive.Visibility == Visibility.Visible;
             bool legacyLive = panelLegacyLive.Visibility == Visibility.Visible;
+            bool overviewV2 = viewOverviewV2.Visibility == Visibility.Visible
+                && _currentView == TabView.Overview;
             bool editorActive = _currentView == TabView.Triggers
                 || _currentView == TabView.Pages
                 || _currentView == TabView.Legacy;
-            if (!itmLive && !legacyLive && !editorActive)
+            if (!itmLive && !legacyLive && !editorActive && !overviewV2)
                 return;
 
             // ONE volatile read — the envelope; the parts gate their own re-renders
             // below (values part → the mirror; rule part / status line → the rows).
             var envelope = _host.Snapshot;
             var snapshot = envelope?.Rules;
+            var composed = envelope?.ComposedResolution;
             var values = envelope?.Values;
             string status = envelope?.ItmStatus;
             bool snapshotChanged = !ReferenceEquals(snapshot, _lastSnapshot);
+            bool composedChanged = !ReferenceEquals(composed, _lastComposed);
             bool valuesChanged = !ReferenceEquals(values, _lastValues);
             bool statusChanged = !string.Equals(status, _lastStatus, StringComparison.Ordinal);
             _lastSnapshot = snapshot;
+            _lastComposed = composed;
             _lastValues = values;
             _lastStatus = status;
+
+            // E9 v2 Overview: re-project when values / composed resolution / status change.
+            if (overviewV2 && (force || valuesChanged || composedChanged || statusChanged))
+                viewOverviewV2.Poll(force: force);
+            // Re-evaluate v2 surface if the document appeared/disappeared mid-session.
+            if (force || composedChanged || snapshotChanged)
+                ApplyOverviewDocumentSurface();
 
             // The LIVE card: the mirror redraws only on a values-snapshot reference
             // change; the captions also follow the status line (their fallback path).

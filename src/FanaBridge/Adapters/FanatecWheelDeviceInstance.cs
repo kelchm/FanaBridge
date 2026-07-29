@@ -996,6 +996,20 @@ namespace FanaBridge.Adapters
         void IDisplayPanelHost.ApplyDisplayConfig(DisplayCustomizationConfig config)
             => ApplyDisplayConfig(config);
 
+        // O13: additive v2 surface — v1 members untouched until E9-exit.
+        DisplayConfigV2 IDisplayPanelHost.GetDisplayConfigV2() => _displayRuntime.CurrentConfigV2;
+
+        void IDisplayPanelHost.ApplyDisplayConfigV2(DisplayConfigV2 config)
+        {
+            WheelCatalog catalog = null;
+            CatalogLoader.TryResolve(
+                _config.WheelCode,
+                out catalog,
+                msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg),
+                itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
+            _displayRuntime.ApplyDisplayConfigV2(config, catalog);
+        }
+
         DisplayPanelSnapshot IDisplayPanelHost.Snapshot => _displayRuntime.Snapshot;
 
         void IDisplayPanelHost.NotifySettingsChanged()

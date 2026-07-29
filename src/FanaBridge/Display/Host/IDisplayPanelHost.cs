@@ -1,4 +1,5 @@
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Schema2;
 using FanaBridge.Profiles;
 using FanaBridge.Display.Runtime;
 
@@ -17,6 +18,8 @@ namespace FanaBridge.Display.Host
     /// editor catalogs (property picker, mapped roles) are separate narrow contracts —
     /// <see cref="IDisplayPropertyCatalog"/> and <see cref="IMappedRoleCatalog"/> — so a
     /// view receives only the contracts it actually uses.
+    ///
+    /// O13: v2 surface is additive — v1 members stay until E9-exit.
     /// </summary>
     internal interface IDisplayPanelHost
     {
@@ -41,6 +44,19 @@ namespace FanaBridge.Display.Host
         /// path. The frame path rebuilds the rule stack; SimHub persists via
         /// GetSettings on its schedule.</summary>
         void ApplyDisplayConfig(DisplayCustomizationConfig config);
+
+        /// <summary>
+        /// O13: the current v2 document, or null when none is live (v1-only / empty).
+        /// Reference-stable between edits — never mutate; build a new document and
+        /// pass it to <see cref="ApplyDisplayConfigV2"/>.
+        /// </summary>
+        DisplayConfigV2 GetDisplayConfigV2();
+
+        /// <summary>
+        /// O13: publishes a UI-built v2 document through Normalize. Null clears.
+        /// Does not touch the v1 bag (until E9-exit).
+        /// </summary>
+        void ApplyDisplayConfigV2(DisplayConfigV2 config);
 
         /// <summary>The latest display envelope (ITM status line, rule snapshot,
         /// values snapshot), or null while this device has nothing to show — poll it,

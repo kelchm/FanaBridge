@@ -72,6 +72,25 @@ namespace FanaBridge.Tests.UI
             Assert.False(DisplayShellRouting.CanOpenVirtualPages(DisplaySettings.ControlOff));
         }
 
+        [Theory]
+        [InlineData(DisplayType.Itm, DisplaySettings.ControlItm, true, false, false)]
+        [InlineData(DisplayType.Itm, DisplaySettings.ControlLegacy, false, true, false)]
+        [InlineData(DisplayType.Itm, DisplaySettings.ControlOff, false, false, true)]
+        [InlineData(DisplayType.Basic, DisplaySettings.ControlItm, false, true, false)]
+        [InlineData(DisplayType.Basic, DisplaySettings.ControlOff, false, false, true)]
+        public void V1OverviewSurfaceAfterV2Removed_NeverBlank(
+            DisplayType type, string control,
+            bool expectItm, bool expectLegacy, bool expectOff)
+        {
+            // v2→removed must restore a mode-dependent v1 surface (no blank panel).
+            DisplayShellRouting.V1OverviewSurfaceAfterV2Removed(
+                type, control, out bool itm, out bool legacy, out bool off);
+            Assert.Equal(expectItm, itm);
+            Assert.Equal(expectLegacy, legacy);
+            Assert.Equal(expectOff, off);
+            Assert.True(itm || legacy || off, "v2 removed must not leave a blank Overview");
+        }
+
         [Fact]
         public void VirtualPagesLinkLabel_DiffersByWheel()
         {

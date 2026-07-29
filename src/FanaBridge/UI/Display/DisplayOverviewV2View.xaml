@@ -1,0 +1,349 @@
+<UserControl x:Class="FanaBridge.UI.Display.DisplayOverviewV2View"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:FanaBridge.UI.Display"
+             xmlns:shared="clr-namespace:FanaBridge.UI.Display.Shared">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/FanaBridge;component/UI/Display/Shared/DisplayStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!-- Digest §2: Overview hub. Copy strings are applied in code-behind from DisplayCopy. -->
+    <DockPanel LastChildFill="True">
+
+        <!-- OverviewHeaderRow [5a-D] — profile chrome is SimHub-owned; FanaBridge shows title + mode/situation. -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+            <TextBlock x:Name="txtOverviewTitle" FontSize="17" FontWeight="SemiBold"
+                       Foreground="#F0F0F0" DockPanel.Dock="Left"
+                       VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                        VerticalAlignment="Center">
+                <TextBlock x:Name="txtSurfaceWord" FontWeight="SemiBold"
+                           Foreground="#EAEAEA" FontSize="12.5"
+                           VerticalAlignment="Center" />
+                <TextBlock x:Name="txtModeProfileDivider" Foreground="#5A5A5C" Margin="8,0"
+                           VerticalAlignment="Center" FontSize="12" />
+                <Ellipse x:Name="dotSituation" Width="9" Height="9"
+                         Fill="#35E06A" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <TextBlock x:Name="txtSituation" FontSize="12" Foreground="#8FBF9A"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+        </DockPanel>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+
+                <!-- TopFold [5a-E/F] -->
+                <Grid Margin="0,0,0,16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="502" />
+                        <ColumnDefinition Width="22" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- MirrorCard [5a-E] -->
+                    <StackPanel Grid.Column="0">
+                        <DockPanel Margin="0,0,0,6">
+                            <TextBlock x:Name="txtOnTheWheelNow" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="#8F8F8F"
+                                       DockPanel.Dock="Left" VerticalAlignment="Center" />
+                            <TextBlock FontSize="13.5" FontWeight="SemiBold"
+                                       HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Hyperlink x:Name="linkPagesAndFields" Style="{StaticResource Link}"
+                                           Click="PagesAndFields_Click" />
+                            </TextBlock>
+                        </DockPanel>
+                        <Border Background="#2B2B2D" CornerRadius="4" Padding="10,10,10,8">
+                            <StackPanel>
+                                <Border Background="#000000" Width="480" Height="120"
+                                        HorizontalAlignment="Center" ClipToBounds="True">
+                                    <Grid>
+                                        <ui:ItmDisplayMirror x:Name="displayMirror" />
+                                        <TextBlock x:Name="txtMirrorWatermark"
+                                                   FontSize="8" Foreground="#3A3A3C"
+                                                   HorizontalAlignment="Right"
+                                                   VerticalAlignment="Top"
+                                                   Margin="0,4,6,0" />
+                                    </Grid>
+                                </Border>
+                                <TextBlock x:Name="txtMirrorCaption" FontSize="12.5"
+                                           Foreground="#B0B0B0" HorizontalAlignment="Center"
+                                           Margin="0,8,0,0" FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- PriorityMonitorCard [5a-F] -->
+                    <StackPanel Grid.Column="2" x:Name="panelPriorityCard">
+                        <DockPanel Margin="0,0,0,6">
+                            <TextBlock x:Name="txtPriorityHeader" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="#8F8F8F"
+                                       DockPanel.Dock="Left" VerticalAlignment="Center" />
+                            <TextBlock x:Name="txtLadderSubtitle" FontSize="12"
+                                       Foreground="#7A7A7A" Margin="10,0,0,0"
+                                       VerticalAlignment="Center" />
+                            <TextBlock FontSize="13.5" FontWeight="SemiBold"
+                                       HorizontalAlignment="Right" VerticalAlignment="Center"
+                                       DockPanel.Dock="Right">
+                                <Hyperlink x:Name="linkPriority" Style="{StaticResource Link}"
+                                           Click="Priority_Click" />
+                            </TextBlock>
+                        </DockPanel>
+
+                        <!-- ItemsControl — NOT ListBox: rows inert (O5), no selection. -->
+                        <ItemsControl x:Name="listPriorityRows">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <!-- Grid host so pinned rows can draw a dashed outline (Border has no DashArray). -->
+                                    <Grid Margin="0,0,0,2">
+                                        <Border x:Name="rowBorder" Padding="8,11"
+                                                Background="#2A2A2C">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding State}" Value="Winner">
+                                                            <Setter Property="Background" Value="#1E2F3D" />
+                                                            <Setter Property="BorderBrush" Value="#1E8FD5" />
+                                                            <Setter Property="BorderThickness" Value="3,0,0,0" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding State}" Value="Off">
+                                                            <Setter Property="Background" Value="#252527" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding State}" Value="Pinned">
+                                                            <Setter Property="Background" Value="#232325" />
+                                                            <Setter Property="Margin" Value="0,3,0,0" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="24" />
+                                                    <ColumnDefinition Width="196" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="104" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{Binding RankText}"
+                                                           FontFamily="Consolas" FontSize="11"
+                                                           Foreground="#7A7A7A"
+                                                           VerticalAlignment="Center" />
+                                                <!-- Destination: badges + name (+ cycle ⇄ in badge list); Opacity .55 when Off. -->
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                                            VerticalAlignment="Center">
+                                                    <StackPanel.Style>
+                                                        <Style TargetType="StackPanel">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding State}" Value="Off">
+                                                                    <Setter Property="Opacity" Value="0.55" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </StackPanel.Style>
+                                                    <ItemsControl ItemsSource="{Binding Destination.Badges}">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate>
+                                                                <StackPanel Orientation="Horizontal" />
+                                                            </ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <!-- Cycle join glyph (⇄) is in the badge list as DisplayCopy.CycleBadgeJoin. -->
+                                                                <Border Background="#3A4550" CornerRadius="2"
+                                                                        Padding="5,1" Margin="0,0,4,0">
+                                                                    <TextBlock Text="{Binding}" FontSize="10"
+                                                                               FontWeight="SemiBold"
+                                                                               Foreground="#D0D8E0" />
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                    <TextBlock Text="{Binding Destination.Name}"
+                                                               FontSize="12.5" FontWeight="SemiBold"
+                                                               Foreground="#FFFFFF"
+                                                               VerticalAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding Detail}"
+                                                           FontSize="12" Foreground="#9FB4C4"
+                                                           VerticalAlignment="Center" Margin="12,0,8,0"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <!-- Status content slot: plain word, empty winner, or outlined OFF chip. -->
+                                                <Grid Grid.Column="3" HorizontalAlignment="Right"
+                                                      VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding StatusCopy}"
+                                                               FontSize="11.5" Foreground="#8F8F8F"
+                                                               HorizontalAlignment="Right"
+                                                               VerticalAlignment="Center">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsOutlinedStatusChip}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <Border BorderBrush="#8F8F8F" BorderThickness="1"
+                                                            CornerRadius="2" Padding="6,1"
+                                                            HorizontalAlignment="Right">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsOutlinedStatusChip}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding StatusCopy}"
+                                                                   FontSize="10.5" FontWeight="SemiBold"
+                                                                   Foreground="#B0B0B0" />
+                                                    </Border>
+                                                </Grid>
+                                            </Grid>
+                                        </Border>
+                                        <!-- Digest §2: pinned rows use a dashed outline (#3a3a3c). -->
+                                        <Rectangle IsHitTestVisible="False"
+                                                   Stroke="#3A3A3C" StrokeThickness="1"
+                                                   StrokeDashArray="3 2" RadiusX="2" RadiusY="2"
+                                                   Margin="0,3,0,0">
+                                            <Rectangle.Style>
+                                                <Style TargetType="Rectangle">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding State}" Value="Pinned">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Rectangle.Style>
+                                        </Rectangle>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- LegendCard — hidden with the ladder when Mode is Off. -->
+                        <Border x:Name="borderLadderLegend" Background="#232325" CornerRadius="4"
+                                Padding="12,10" Margin="0,8,0,0">
+                            <StackPanel>
+                                <TextBlock x:Name="txtReadingIt" FontSize="9.5"
+                                           FontFamily="Consolas" Foreground="#8F8F8F"
+                                           Margin="0,0,0,4" />
+                                <TextBlock x:Name="txtLadderLegend" FontSize="11.5"
+                                           Foreground="#A0A0A0" TextWrapping="Wrap"
+                                           LineHeight="17" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- O1 provisional Off empty-state -->
+                        <TextBlock x:Name="txtModeOffEmpty" FontSize="13" Foreground="#8F8F8F"
+                                   TextWrapping="Wrap" Margin="0,12,0,0" Visibility="Collapsed" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- Separator [5a-G] -->
+                <Rectangle Height="1" Fill="#2B2B2D" Margin="0,0,0,16" />
+
+                <!-- BottomFold [5a-H/I] -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="502" />
+                        <ColumnDefinition Width="22" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- ThisDeviceCard [5a-H] -->
+                    <StackPanel Grid.Column="0">
+                        <TextBlock x:Name="txtThisDevice" FontSize="9.5" FontFamily="Consolas"
+                                   Foreground="#8F8F8F" Margin="0,0,0,6" />
+                        <Border Background="#232325" BorderBrush="#3A3A3C" BorderThickness="1"
+                                CornerRadius="4" Padding="14,12">
+                            <StackPanel>
+                                <!-- DisplayModeGroup TOPMOST — 8b ruling -->
+                                <TextBlock x:Name="txtDisplayMode" FontSize="13" FontWeight="SemiBold"
+                                           Foreground="#EAEAEA" Margin="0,0,0,8" />
+                                <shared:SegmentedControl x:Name="segMode" HorizontalAlignment="Left"
+                                                         SegmentPadding="14,6" SegmentFontSize="12"
+                                                         OuterCornerRadius="4" />
+                                <TextBlock x:Name="txtModeHint" FontSize="11.5" Foreground="#8F8F8F"
+                                           TextWrapping="Wrap" Margin="0,8,0,0" MaxWidth="460" />
+                                <Rectangle Height="1" Fill="#3A3A3C" Margin="0,12" />
+                                <!-- RejectChangesGroup -->
+                                <StackPanel Orientation="Horizontal">
+                                    <CheckBox x:Name="chkReject" VerticalAlignment="Top"
+                                              Margin="0,2,10,0"
+                                              Checked="Reject_Changed" Unchecked="Reject_Changed" />
+                                    <StackPanel>
+                                        <TextBlock x:Name="txtRejectLabel" FontSize="12.5"
+                                                   Foreground="#EAEAEA" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="txtRejectExplainer" FontSize="11.5"
+                                                   Foreground="#8F8F8F" TextWrapping="Wrap"
+                                                   Margin="0,4,0,0" LineHeight="17" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- ControlsCard [5a-I] -->
+                    <StackPanel Grid.Column="2">
+                        <TextBlock x:Name="txtControls" FontSize="9.5" FontFamily="Consolas"
+                                   Foreground="#8F8F8F" Margin="0,0,0,6" />
+                        <Border Background="#232325" BorderBrush="#3A3A3C" BorderThickness="1"
+                                CornerRadius="4" Padding="14,12">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="96" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="txtNextPage" FontSize="12" Foreground="#A0A0A0"
+                                               VerticalAlignment="Center" />
+                                    <Border Grid.Column="1" Background="#2C3239" BorderBrush="#565658"
+                                            BorderThickness="1" CornerRadius="3" Padding="8,5">
+                                        <DockPanel>
+                                            <TextBlock x:Name="txtNextMapped" FontSize="12"
+                                                       Foreground="#E6E6E6" DockPanel.Dock="Left" />
+                                            <TextBlock x:Name="txtNextReadOnly" FontSize="10.5"
+                                                       Foreground="#7A7A7A" HorizontalAlignment="Right" />
+                                        </DockPanel>
+                                    </Border>
+                                </Grid>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="96" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="txtPrevPage" FontSize="12" Foreground="#A0A0A0"
+                                               VerticalAlignment="Center" />
+                                    <Border Grid.Column="1" Background="#2C3239" BorderBrush="#565658"
+                                            BorderThickness="1" CornerRadius="3" Padding="8,5">
+                                        <DockPanel>
+                                            <TextBlock x:Name="txtPrevMapped" FontSize="12"
+                                                       Foreground="#E6E6E6" DockPanel.Dock="Left" />
+                                            <TextBlock x:Name="txtPrevReadOnly" FontSize="10.5"
+                                                       Foreground="#7A7A7A" HorizontalAlignment="Right" />
+                                        </DockPanel>
+                                    </Border>
+                                </Grid>
+                                <TextBlock FontSize="12.5" Margin="0,0,0,10">
+                                    <Hyperlink x:Name="linkControlMapper" Style="{StaticResource Link}"
+                                               Click="ControlMapper_Click" />
+                                </TextBlock>
+                                <Rectangle Height="1" Fill="#3A3A3C" Margin="0,0,0,10" />
+                                <StackPanel x:Name="panelConsequenceLines" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

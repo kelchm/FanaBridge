@@ -52,6 +52,10 @@ namespace FanaBridge.Display.Composition
             Array.Empty<FieldRegionPlan>();
         private SeatManualInput? _lastSeatManualInput;
         private bool _lastSeatPressThisTick;
+        // O12: seat diagnostics the composed-resolution record does not carry.
+        private IReadOnlyList<AggregateMembership> _lastAggregates =
+            Array.Empty<AggregateMembership>();
+        private ManualRowState _lastManual;
 
         /// <summary>
         /// Builds a composition over a NORMALIZED <see cref="DisplayConfigV2"/>
@@ -183,6 +187,18 @@ namespace FanaBridge.Display.Composition
         public SeatManualInput? LastSeatManualInput => _lastSeatManualInput;
 
         /// <summary>
+        /// O12: last seat-tick aggregate n-of-m (for Overview "N of M firing" lines).
+        /// Empty when no seat tick has run.
+        /// </summary>
+        public IReadOnlyList<AggregateMembership> LastAggregates => _lastAggregates;
+
+        /// <summary>
+        /// O12: last seat-tick manual-row state (for Overview Manual paging detail).
+        /// Null when no seat tick has run.
+        /// </summary>
+        public ManualRowState LastManual => _lastManual;
+
+        /// <summary>
         /// Wheel-screen press flag fed this tick (previous director Manual/Adopt edge).
         /// </summary>
         public bool LastSeatPressThisTick => _lastSeatPressThisTick;
@@ -246,6 +262,9 @@ namespace FanaBridge.Display.Composition
                 Manual = manual,
                 CompiledWalk = _walk.DestinationIds,
             });
+            // O12 publish: keep aggregates + manual for the UI envelope.
+            _lastAggregates = seatResult.Aggregates ?? Array.Empty<AggregateMembership>();
+            _lastManual = seatResult.Manual;
 
             // ── 3. Wheel-screen dismissal latch (press from previous director edge) ─
             bool pressThisTick = _pendingPressLastTick;

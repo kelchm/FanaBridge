@@ -1,4 +1,5 @@
 using System.Globalization;
+using FanaBridge.Display.Schema2;
 
 namespace FanaBridge.UI.Display
 {
@@ -103,6 +104,12 @@ namespace FanaBridge.UI.Display
         /// <summary>Field ladder pinned base row.</summary>
         public const string FieldBase = "base";
 
+        /// <summary>
+        /// Priority ladder pinned base-row rank cell (same spelling as
+        /// <see cref="FieldBase"/>; scoped so the two ladder homes never collide in docs).
+        /// </summary>
+        public const string PriorityBaseRank = "base";
+
         // ── Rotation & manual paging ─────────────────────────────────────
 
         /// <summary>UI for the frozen pageOrder key — in-rotation pages.</summary>
@@ -186,6 +193,441 @@ namespace FanaBridge.UI.Display
                 name ?? string.Empty,
                 totalItmPages,
                 ShowAllFields);
+        }
+
+        // ── Overview section / card labels (board 5a) ─────────────────────
+
+        /// <summary>Overview hub title.</summary>
+        public const string Overview = "Overview";
+
+        /// <summary>Mirror card section label (uppercased by style).</summary>
+        public const string OnTheWheelNow = "ON THE WHEEL NOW";
+
+        /// <summary>Priority card section label (uppercased by style).</summary>
+        public const string PrioritySection = "PRIORITY";
+
+        /// <summary>Legend card label under the ladder.</summary>
+        public const string ReadingIt = "READING IT";
+
+        /// <summary>Device settings card section label.</summary>
+        public const string ThisDevice = "THIS DEVICE";
+
+        /// <summary>Controls card section label.</summary>
+        public const string Controls = "CONTROLS";
+
+        // ── Spoke / action links ─────────────────────────────────────────
+
+        /// <summary>Mirror-card spoke to Pages &amp; Fields.</summary>
+        public const string PagesAndFieldsSpoke = "Pages & Fields ›";
+
+        /// <summary>Priority-card spoke to the full Priority view.</summary>
+        public const string PrioritySpoke = "Priority ›";
+
+        /// <summary>Controls-card link out to SimHub Control mapper.</summary>
+        public const string OpenControlMapperSpoke = "Open Control mapper ›";
+
+        /// <summary>View name for the Pages &amp; Fields spoke (no chevron).</summary>
+        public const string PagesAndFields = "Pages & Fields";
+
+        /// <summary>
+        /// Disabled-spoke tooltip while the destination view is a later phase.
+        /// Example: "Opens the Pages &amp; Fields view — arriving in a later build".
+        /// </summary>
+        public static string SpokeArrivingLater(string viewName)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Opens the {0} view — arriving in a later build",
+                viewName ?? string.Empty);
+        }
+
+        // ── Mode / profile summary ───────────────────────────────────────
+
+        /// <summary>Surface word for an ITM-capable wheel.</summary>
+        public const string ItmDisplay = "ITM display";
+
+        /// <summary>Surface word for a segment-only wheel.</summary>
+        public const string SegmentDisplay = "Segment display";
+
+        /// <summary>Header divider between surface word and situation pill.</summary>
+        public const string ModeProfileDivider = "|";
+
+        /// <summary>In-game situation pill.</summary>
+        public const string InGame = "in game";
+
+        /// <summary>Idle situation pill (no live game data).</summary>
+        public const string SituationIdle = "idle";
+
+        // ── Settings card ────────────────────────────────────────────────
+
+        /// <summary>Display Mode group title (topmost in THIS DEVICE).</summary>
+        public const string DisplayMode = "Display Mode";
+
+        /// <summary>Mode hint for ITM wheels (three segments).</summary>
+        public const string ModeHintItm =
+            "Three states because this wheel has both displays. A segment-only wheel gets two — On / Off — there being no ITM display to turn off.";
+
+        /// <summary>Mode hint for segment-only wheels (two segments).</summary>
+        public const string ModeHintSegment =
+            "Two states because this wheel has only a segment display.";
+
+        /// <summary>Ruled reject-toggle label (§B6; C2).</summary>
+        public const string RejectUncommandedChanges =
+            "Reject un-commanded page changes";
+
+        /// <summary>Reject-toggle explainer under the label.</summary>
+        public const string RejectUncommandedChangesExplainer =
+            "Anything that moves the wheel off our page — its own button combos, or the page-loss bug some wheels have — is put back. Turn it off and those changes are adopted; the wheel's button then steps the firmware's order and the page it remembers moves with it.";
+
+        // ── Controls card ────────────────────────────────────────────────
+
+        /// <summary>Next-page mapping row label.</summary>
+        public const string NextPage = "Next page";
+
+        /// <summary>Previous-page mapping row label.</summary>
+        public const string PreviousPage = "Previous page";
+
+        /// <summary>Unmapped control-mapper field value.</summary>
+        public const string NotMapped = "not mapped";
+
+        /// <summary>Read-only marker on mapping fields.</summary>
+        public const string ReadOnly = "read-only";
+
+        /// <summary>Controls consequence when rejection is on.</summary>
+        public const string ControlsConsequenceRejectOn =
+            "While un-commanded page changes are rejected, a press of the wheel's own button is put straight back.";
+
+        /// <summary>Controls consequence when rejection is off.</summary>
+        public const string ControlsConsequenceRejectOff =
+            "With rejection off, that press is adopted — and it dismisses whatever hold is showing, exactly as a mapped press would.";
+
+        /// <summary>Amber consequence when neither next nor previous is mapped.</summary>
+        public const string ControlsConsequenceNothingMapped =
+            "Nothing is mapped here, so the Manual paging row can never fire and nothing can be dismissed by hand.";
+
+        // ── Ladder framing ───────────────────────────────────────────────
+
+        /// <summary>Priority card subtitle under the section label.</summary>
+        public const string LadderSubtitle =
+            "the top page whose entrypoint is live is the one you see";
+
+        /// <summary>Full legend sentence under READING IT.</summary>
+        public const string LadderLegend =
+            "waiting its condition is false · outranked true, but a row above it won · off-screen true and unbeaten, but its page isn't up. The winner carries the badge. OFF and DISMISSED are row labels, not states of the same kind.";
+
+        /// <summary>Base-row detail when nothing above is live.</summary>
+        public const string WhenNothingAboveIsLive = "when nothing above is live";
+
+        /// <summary>Em-dash placeholder in pinned-row status cells.</summary>
+        public const string StatusDash = "—";
+
+        /// <summary>Idle-row destination label.</summary>
+        public const string OutsideASession = "Outside a session";
+
+        /// <summary>Idle-row target prefix glyph.</summary>
+        public const string IdleTargetPrefix = "→";
+
+        /// <summary>Playlist badge on an idle target (task #22 lights this path).</summary>
+        public const string PlaylistBadge = "PLAYLIST";
+
+        /// <summary>Built-in screen: the wheel's logo.</summary>
+        public const string TheWheelsLogo = "The wheel's logo";
+
+        /// <summary>Built-in screen: blank display.</summary>
+        public const string ABlankDisplay = "A blank display";
+
+        /// <summary>Built-in screen: white fill.</summary>
+        public const string WhiteScreen = "White";
+
+        /// <summary>Built-in screen: inverted logo.</summary>
+        public const string LogoInvertedScreen = "Logo inverted";
+
+        /// <summary>Mirror watermark (constant; not live telemetry).</summary>
+        public const string MirrorWatermark = "MIRROR";
+
+        /// <summary>
+        /// PROVISIONAL (design-backlog) O1: empty-state body when Display Mode is Off.
+        /// Design session owns the real board; this is a neutral placeholder.
+        /// </summary>
+        public const string ModeOffEmptyState =
+            "Display is off — FanaBridge is not driving this wheel.";
+
+        // ── Condition operator phrases (finite grammar; O8) ──────────────
+
+        /// <summary>Level operator &lt;.</summary>
+        public const string OpBelow = "is below";
+
+        /// <summary>Level operator ≤.</summary>
+        public const string OpAtOrBelow = "is at or below";
+
+        /// <summary>Level operator &gt;.</summary>
+        public const string OpAbove = "is above";
+
+        /// <summary>Level operator ≥.</summary>
+        public const string OpAtOrAbove = "is at or above";
+
+        /// <summary>Level operator =.</summary>
+        public const string OpEquals = "is";
+
+        /// <summary>Level operator ≠.</summary>
+        public const string OpNotEquals = "is not";
+
+        /// <summary>Bool operator isTrue.</summary>
+        public const string OpIsOn = "is on";
+
+        /// <summary>Bool operator isFalse.</summary>
+        public const string OpIsOff = "is off";
+
+        /// <summary>onChange any / lifetime whileTrue edge phrasing.</summary>
+        public const string OpChanges = "changes";
+
+        /// <summary>onChange up.</summary>
+        public const string OpIncreases = "increases";
+
+        /// <summary>onChange down.</summary>
+        public const string OpDecreases = "decreases";
+
+        // ── Overview format methods ──────────────────────────────────────
+
+        /// <summary>"2 of its 4 entrypoint overrides are firing".</summary>
+        public static string EntrypointsFiringLine(int firing, int total)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} of its {1} entrypoint overrides are firing",
+                firing,
+                total);
+        }
+
+        /// <summary>Manual-paging detail: remembered target + mapping state.</summary>
+        public static string ManualPagingDetail(
+            bool hasRememberedTarget,
+            bool nextMapped,
+            bool prevMapped)
+        {
+            string left = hasRememberedTarget
+                ? "targets the page you last stepped to"
+                : "nothing paged to yet";
+            if (!nextMapped && !prevMapped)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0} · no next/previous mapped",
+                    left);
+            }
+
+            if (nextMapped && prevMapped)
+                return left;
+
+            if (nextMapped)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0} · previous not mapped",
+                    left);
+            }
+
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} · next not mapped",
+                left);
+        }
+
+        /// <summary>Idle-row detail: "→ Screensaver · logo 60 s → blank".</summary>
+        public static string IdleTargetLine(string targetName, string summary)
+        {
+            if (string.IsNullOrEmpty(summary))
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0} {1}",
+                    IdleTargetPrefix,
+                    targetName ?? string.Empty);
+            }
+
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} {1} · {2}",
+                IdleTargetPrefix,
+                targetName ?? string.Empty,
+                summary);
+        }
+
+        /// <summary>Mirror caption: "ITM 5 · Tire Temps" (page name only — 8b D1).</summary>
+        public static string PageCaption(string badge, string name)
+        {
+            if (string.IsNullOrEmpty(badge))
+                return name ?? string.Empty;
+            if (string.IsNullOrEmpty(name))
+                return badge;
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} · {1}",
+                badge,
+                name);
+        }
+
+        /// <summary>ITM page badge from catalog index: "ITM 5".</summary>
+        public static string ItmPageBadge(int index)
+        {
+            return string.Format(CultureInfo.InvariantCulture, "{0} {1}", ModeItm, index);
+        }
+
+        /// <summary>
+        /// ITM badge when the catalog index is unknown (fallback spelling of
+        /// <see cref="ModeItm"/>).
+        /// </summary>
+        public const string ItmBadge = ModeItm;
+
+        /// <summary>Drawn cycle-badge join glyph between two page badges.</summary>
+        public const string CycleBadgeJoin = "⇄";
+
+        /// <summary>
+        /// Child label for the outranked second clause: "FN1 override".
+        /// </summary>
+        public static string OverrideChildLabel(string childName)
+        {
+            if (string.IsNullOrEmpty(childName))
+                return Override;
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} {1}",
+                childName,
+                Override);
+        }
+
+        /// <summary>
+        /// Condition sentence: level comparison.
+        /// Example: "Fuel remaining is below 4.0 L".
+        /// </summary>
+        public static string ConditionLevelSentence(
+            string sourcePhrase,
+            string operatorPhrase,
+            string valueWithUnit)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} {1} {2}",
+                sourcePhrase ?? string.Empty,
+                operatorPhrase ?? string.Empty,
+                valueWithUnit ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Condition sentence: boolean source.
+        /// Example: "Pit limiter is on".
+        /// </summary>
+        public static string ConditionBoolSentence(string sourcePhrase, string operatorPhrase)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} {1}",
+                sourcePhrase ?? string.Empty,
+                operatorPhrase ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Condition sentence: onChange / edge.
+        /// Example: "Brake bias changes".
+        /// </summary>
+        public static string ConditionChangeSentence(string sourcePhrase, string changePhrase)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} {1}",
+                sourcePhrase ?? string.Empty,
+                changePhrase ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Value with optional unit: "4.0 L", "0.5 s", or bare "4".
+        /// </summary>
+        public static string ConditionValue(double value, string unit)
+        {
+            string num = value.ToString("0.###", CultureInfo.InvariantCulture);
+            if (string.IsNullOrEmpty(unit))
+                return num;
+            return string.Format(CultureInfo.InvariantCulture, "{0} {1}", num, unit);
+        }
+
+        /// <summary>
+        /// Second detail clause when a row is outranked and a child is off-screen.
+        /// Example: "this entrypoint is outranked; the page's FN1 override is off-screen".
+        /// </summary>
+        public static string OutrankedOffScreenClause(string childLabel)
+        {
+            if (string.IsNullOrEmpty(childLabel))
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "this entrypoint is {0}",
+                    Outranked);
+            }
+
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "this entrypoint is {0}; the page's {1} is {2}",
+                Outranked,
+                childLabel,
+                OffScreen);
+        }
+
+        /// <summary>Join a primary detail with an em-dash second clause.</summary>
+        public static string DetailWithClause(string primary, string clause)
+        {
+            if (string.IsNullOrEmpty(clause))
+                return primary ?? string.Empty;
+            if (string.IsNullOrEmpty(primary))
+                return clause;
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} — {1}",
+                primary,
+                clause);
+        }
+
+        /// <summary>
+        /// Condition phrase with a cycle carrier-kind suffix.
+        /// Example: "in the pit box · cycle (2+ pages)" (first-mention glossary form).
+        /// </summary>
+        public static string ConditionWithCycleSuffix(string conditionPhrase, bool firstMention)
+        {
+            string cycle = firstMention ? CycleDefinition : Cycle;
+            if (string.IsNullOrEmpty(conditionPhrase))
+                return cycle;
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} · {1}",
+                conditionPhrase,
+                cycle);
+        }
+
+        /// <summary>Operator phrase for a <see cref="ConditionOperator"/>.</summary>
+        public static string OperatorPhrase(ConditionOperator op)
+        {
+            switch (op)
+            {
+                case ConditionOperator.LessThan: return OpBelow;
+                case ConditionOperator.LessOrEqual: return OpAtOrBelow;
+                case ConditionOperator.GreaterThan: return OpAbove;
+                case ConditionOperator.GreaterOrEqual: return OpAtOrAbove;
+                case ConditionOperator.Equals: return OpEquals;
+                case ConditionOperator.NotEquals: return OpNotEquals;
+                case ConditionOperator.IsTrue: return OpIsOn;
+                case ConditionOperator.IsFalse: return OpIsOff;
+                default: return string.Empty;
+            }
+        }
+
+        /// <summary>Change-direction phrase for onChange lifetimes.</summary>
+        public static string ChangeDirectionPhrase(ChangeDirection direction)
+        {
+            switch (direction)
+            {
+                case ChangeDirection.Up: return OpIncreases;
+                case ChangeDirection.Down: return OpDecreases;
+                default: return OpChanges;
+            }
         }
     }
 }

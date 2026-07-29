@@ -62,5 +62,34 @@ namespace FanaBridge.Adapters
             try { return o?.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(o); }
             catch { return null; }
         }
+
+        /// <summary>
+        /// Navigate SimHub to the Control Mapper plugin UI via
+        /// <c>PluginManager.ShowPluginUI&lt;ControlMapperPlugin&gt;()</c> (same tab
+        /// route Devices uses with <c>ShowPluginUI&lt;DevicesPlugin&gt;()</c>).
+        /// No-op when the manager, type, or method is missing.
+        /// </summary>
+        public static void ShowControlMapperUi(object pluginManager)
+        {
+            if (pluginManager == null)
+                return;
+            try
+            {
+                Type cmType = FindPluginType(pluginManager);
+                if (cmType == null)
+                    return;
+
+                MethodInfo open = pluginManager.GetType()
+                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(m => m.Name == "ShowPluginUI"
+                                      && m.IsGenericMethodDefinition
+                                      && m.GetParameters().Length == 0);
+                open?.MakeGenericMethod(cmType).Invoke(pluginManager, null);
+            }
+            catch
+            {
+                // Control Mapper absent / reflection shape drift — leave the user put.
+            }
+        }
     }
 }

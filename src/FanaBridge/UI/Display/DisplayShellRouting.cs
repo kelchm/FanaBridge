@@ -47,6 +47,30 @@ namespace FanaBridge.UI.Display
                 && DisplayModeHeaderModel.IsSameControl(
                     displayControl ?? DisplaySettings.ControlItm, DisplaySettings.ControlItm);
 
+        /// <summary>
+        /// v2 document removed: restore the v1 Overview live surface under the current
+        /// control. Exactly one of (ITM live, Legacy live, Off card) is true — never a
+        /// blank panel.
+        /// </summary>
+        public static void V1OverviewSurfaceAfterV2Removed(
+            DisplayType displayType,
+            string displayControl,
+            out bool showItmLive,
+            out bool showLegacyLive,
+            out bool showOffCard)
+        {
+            showOffCard = DisplayModeHeaderModel.IsOff(displayControl);
+            if (showOffCard)
+            {
+                showItmLive = false;
+                showLegacyLive = false;
+                return;
+            }
+
+            showItmLive = ShowItmOverview(displayType, displayControl);
+            showLegacyLive = ShowLegacyOverview(displayType, displayControl);
+        }
+
         /// <summary>True when Virtual pages is reachable: not Off. ITM wheels reach it
         /// via the Page-6 card / footer link; basic wheels via the Overview link.</summary>
         public static bool CanOpenVirtualPages(string displayControl)

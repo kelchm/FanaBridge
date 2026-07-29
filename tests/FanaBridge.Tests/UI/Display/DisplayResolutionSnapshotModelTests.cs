@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Rules;
 using FanaBridge.UI.Display;
 using Xunit;
@@ -151,6 +152,12 @@ namespace FanaBridge.Tests.UI.Display
             Assert.False(model.RevertedThisTick);
             Assert.False(model.AdoptWarnedThisTick);
             Assert.Empty(model.Carriers);
+            // O12 defaults on empty
+            Assert.False(model.InGame);
+            Assert.False(model.IsConnected);
+            Assert.Empty(model.SurfaceWinners);
+            Assert.Empty(model.Aggregates);
+            Assert.Null(model.Manual);
         }
 
         // ── Device block passthrough ─────────────────────────────────────
@@ -243,6 +250,93 @@ namespace FanaBridge.Tests.UI.Display
             Assert.Equal(
                 new[] { DisplayCopy.CantRunHere, DisplayCopy.Dismissed },
                 model.Carriers[2].RowLabelCopies);
+        }
+
+        // ── O12 published engine values ──────────────────────────────────
+
+        [Fact]
+        public void From_SurfaceWinners_Projected()
+        {
+            var winners = new List<SurfaceWinner>
+            {
+                new SurfaceWinner("display", "s1", "itm:tyreTemps"),
+                new SurfaceWinner("wheelScreen", null, null),
+            };
+            var record = new ComposedResolutionRecord(
+                tickMs: 1,
+                deviceKey: "x",
+                surfaceWinners: winners,
+                carrierStatuses: new List<CarrierResolutionStatus>(),
+                carrierSnapshots: new List<CarrierTickSnapshot>());
+
+            var model = DisplayResolutionSnapshotModel.From(record);
+
+            Assert.Equal(2, model.SurfaceWinners.Count);
+            Assert.Equal("display", model.SurfaceWinners[0].SurfaceId);
+            Assert.Equal("s1", model.SurfaceWinners[0].WinnerCarrierId);
+            Assert.Equal("itm:tyreTemps", model.SurfaceWinners[0].DestinationId);
+        }
+
+        [Fact]
+        public void From_InGame_And_IsConnected_PassThrough()
+        {
+            var record = new ComposedResolutionRecord(
+                tickMs: 1,
+                deviceKey: "x",
+                surfaceWinners: new List<SurfaceWinner>(),
+                carrierStatuses: new List<CarrierResolutionStatus>(),
+                carrierSnapshots: new List<CarrierTickSnapshot>());
+
+            var model = DisplayResolutionSnapshotModel.From(
+                record, inGame: true, isConnected: true, aggregates: null, manual: null);
+
+            Assert.True(model.InGame);
+            Assert.True(model.IsConnected);
+        }
+
+        [Fact]
+        public void From_Aggregates_And_Manual_Projected()
+        {
+            var aggregates = new List<AggregateMembership>
+            {
+                new AggregateMembership
+                {
+                    SeatId = "s1",
+                    DestinationId = "itm:tyreTemps",
+                    DerivedCarrierId = "agg:s1",
+                    ActiveCount = 2,
+                    TotalCount = 4,
+                    MemberCarrierIds = new[] { "c1", "c2" },
+                    MembershipDegraded = false,
+                },
+            };
+            var manual = new ManualRowState
+            {
+                HasRememberedTarget = true,
+                RememberedDestinationId = "itm:lapInfo",
+                OwnsDisplay = false,
+            };
+
+            var model = DisplayResolutionSnapshotModel.From(
+                null, inGame: false, isConnected: true, aggregates: aggregates, manual: manual);
+
+            Assert.True(model.IsConnected);
+            Assert.False(model.InGame);
+            Assert.Single(model.Aggregates);
+            Assert.Equal("s1", model.Aggregates[0].SeatId);
+            Assert.Equal(2, model.Aggregates[0].ActiveCount);
+            Assert.Equal(4, model.Aggregates[0].TotalCount);
+            Assert.NotNull(model.Manual);
+            Assert.True(model.Manual.HasRememberedTarget);
+            Assert.Equal("itm:lapInfo", model.Manual.RememberedDestinationId);
+        }
+
+        [Fact]
+        public void From_Disconnected_IsEmpty()
+        {
+            var model = DisplayResolutionSnapshotModel.From(
+                null, inGame: false, isConnected: false, aggregates: null, manual: null);
+            Assert.Same(DisplayResolutionSnapshotModel.Empty, model);
         }
 
         /// <summary>

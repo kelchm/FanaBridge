@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using FanaBridge;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Composition;
 using FanaBridge.Display.Rules;
@@ -97,6 +99,8 @@ namespace FanaBridge.Display.Runtime
         private IPropertyReader _compositionProperties;
         // Game-identity edge for SeatArbiter / CarrierEvaluator (GameChanged).
         private string _lastGameId;
+        // O12: last in-game flag published on the UI envelope.
+        private bool _lastInGame;
 
         // Shared property source for the rule stack AND the ITM mapper's field-mapping
         // overrides. Null on the empty-config fast path (parity gate). BeginFrame runs
@@ -198,6 +202,25 @@ namespace FanaBridge.Display.Runtime
 
         /// <summary>Drops the v2 document (no <c>display</c> key / cleared).</summary>
         internal void ClearConfigV2() => _configV2 = null;
+
+        /// <summary>
+        /// O13: UI-built v2 document through the same normalize path as SetSettings load.
+        /// Null / empty clears the v2 document. Does not touch the v1 bag.
+        /// </summary>
+        internal void ApplyDisplayConfigV2(DisplayConfigV2 config, WheelCatalog catalog = null)
+        {
+            if (config == null)
+            {
+                _configV2 = null;
+                return;
+            }
+
+            Action<string> warn = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
+            // Round-trip through serializer so extension data + raw spellings stay honest.
+            var loaded = DisplayConfigV2Serializer.Load(
+                DisplayConfigV2Serializer.Save(config), warn);
+            _configV2 = DisplayConfigV2Validator.Normalize(loaded, warn, catalog);
+        }
 
         /// <summary>Test seam: invoked at the end of <see cref="Tick"/> /
         /// <see cref="TickLegacyRules"/> after the frame config is latched and the stack
@@ -599,6 +622,11 @@ namespace FanaBridge.Display.Runtime
             var rules = _displayRuleSnapshot;
             var composed = _composedResolution;
             var values = _itmTwin?.Snapshot;
+            bool inGame = _lastInGame;
+            // Normalize null → empty so the no-composition path stays reference-stable
+            // against DisplayPanelSnapshot's empty fallback (recompose gate).
+            var aggregates = _compositionV2?.LastAggregates;
+            var manual = _compositionV2?.LastManual;
 
             var current = _panelSnapshot;
             if (current == null)
@@ -609,14 +637,34 @@ namespace FanaBridge.Display.Runtime
             else if (ReferenceEquals(current.Rules, rules)
                 && ReferenceEquals(current.ComposedResolution, composed)
                 && ReferenceEquals(current.Values, values)
-                && string.Equals(current.ItmStatus, status, StringComparison.Ordinal))
+                && string.Equals(current.ItmStatus, status, StringComparison.Ordinal)
+                && current.InGame == inGame
+                && SameAggregates(current.Aggregates, aggregates)
+                && ReferenceEquals(current.Manual, manual))
             {
                 return;
             }
 
             _panelSnapshot = status == null && rules == null && composed == null && values == null
                 ? null
-                : new DisplayPanelSnapshot(status, rules, values, DateTime.UtcNow, composed);
+                : new DisplayPanelSnapshot(
+                    status, rules, values, DateTime.UtcNow, composed,
+                    inGame, aggregates, manual);
+        }
+
+        /// <summary>
+        /// Aggregates equality for the recompose gate: null and empty are the same
+        /// (snapshot ctor maps null → empty array).
+        /// </summary>
+        private static bool SameAggregates(
+            IReadOnlyList<AggregateMembership> published,
+            IReadOnlyList<AggregateMembership> live)
+        {
+            if (ReferenceEquals(published, live))
+                return true;
+            bool pubEmpty = published == null || published.Count == 0;
+            bool liveEmpty = live == null || live.Count == 0;
+            return pubEmpty && liveEmpty;
         }
 
         // Hands one firmware subscription report to both consumers of the push stream: the
@@ -802,6 +850,7 @@ namespace FanaBridge.Display.Runtime
             string gameId = data != null ? data.GameName : null;
             bool gameChanged = !string.Equals(gameId, _lastGameId, StringComparison.Ordinal);
             _lastGameId = gameId;
+            _lastInGame = inGame;
 
             var content = BuildSegmentContent(data, inGame, _compositionProperties);
             _composedResolution = _compositionV2.Tick(new DisplayCompositionV2TickInput

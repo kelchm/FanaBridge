@@ -67,6 +67,10 @@
                 <!-- Overview -->
                 <StackPanel x:Name="viewOverview">
 
+                    <!-- E9 phase 1: v2 Overview hub — visible only when a v2 document is live.
+                         v1 / no-doc devices keep the v1 Overview exactly as-is. -->
+                    <ui:DisplayOverviewV2View x:Name="viewOverviewV2" Visibility="Collapsed" />
+
                     <!-- Live cards: current page + recent activity (ITM display mode only) -->
                     <StackPanel x:Name="panelItmLive">
                         <Grid Margin="0,0,0,16">

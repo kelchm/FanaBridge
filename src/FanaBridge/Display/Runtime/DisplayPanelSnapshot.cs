@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
@@ -33,18 +35,31 @@ namespace FanaBridge.Display.Runtime
     /// v1 frames publish <see cref="Rules"/> and leave <see cref="ComposedResolution"/>
     /// null; v2 frames publish <see cref="ComposedResolution"/> and leave
     /// <see cref="Rules"/> null (E8 OQ-6; UI adapter is E9).
+    ///
+    /// O12 additive fields (read-side): <see cref="InGame"/>, seat
+    /// <see cref="Aggregates"/> / <see cref="Manual"/>. Connection is envelope
+    /// presence (null = disconnected).
     /// </summary>
     public sealed class DisplayPanelSnapshot
     {
+        private static readonly IReadOnlyList<AggregateMembership> NoAggregates =
+            Array.Empty<AggregateMembership>();
+
         internal DisplayPanelSnapshot(string itmStatus, DisplayRuleSnapshot rules,
             DisplayValuesSnapshot values, DateTime composedAtUtc,
-            ComposedResolutionRecord composedResolution = null)
+            ComposedResolutionRecord composedResolution = null,
+            bool inGame = false,
+            IReadOnlyList<AggregateMembership> aggregates = null,
+            ManualRowState manual = null)
         {
             ItmStatus = itmStatus;
             Rules = rules;
             Values = values;
             ComposedAtUtc = composedAtUtc;
             ComposedResolution = composedResolution;
+            InGame = inGame;
+            Aggregates = aggregates ?? NoAggregates;
+            Manual = manual;
         }
 
         /// <summary>The ITM lifecycle status line, or null while this device isn't
@@ -71,5 +86,22 @@ namespace FanaBridge.Display.Runtime
         /// their own composition clocks — see
         /// <see cref="DisplayRuleSnapshot.ComposedAtUtc"/>).</summary>
         public DateTime ComposedAtUtc { get; }
+
+        /// <summary>
+        /// O12 (a): in-game vs idle for this frame. Anchored to
+        /// <c>DeviceDisplayRuntime</c> tick (<c>GameRunning &amp;&amp; NewData != null</c>).
+        /// </summary>
+        public bool InGame { get; }
+
+        /// <summary>
+        /// O12 (d): home-seat aggregate n-of-m from the last seat tick.
+        /// Empty when no v2 composition ran.
+        /// </summary>
+        public IReadOnlyList<AggregateMembership> Aggregates { get; }
+
+        /// <summary>
+        /// O12 (d): manual-row state from the last seat tick, or null.
+        /// </summary>
+        public ManualRowState Manual { get; }
     }
 }
