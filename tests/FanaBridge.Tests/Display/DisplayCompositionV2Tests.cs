@@ -815,6 +815,36 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void Tick_PublishesRecordGapDiagnostics_ReadSideOnly()
+        {
+            // Five record-gap facts: capability envelope, ITM device id, SurfaceHeld/
+            // ReleaseEdge, dismissal latch ids, full carrier snapshots (beyond RemainingMs).
+            var doc = MinimalDoc(summonId: "e-pit");
+            var h = Harness.Create(doc, itmDeviceId: 3);
+            h.Control.Land(1);
+            var r = h.Tick();
+
+            Assert.Equal((byte)3, r.ItmDeviceId);
+            Assert.True(r.HasCapabilityEnvelope);
+            Assert.NotNull(r.CapabilityEnvelope);
+            // Test catalog has screen commands + ITM fields → non-zero field count.
+            Assert.True(r.CapabilityEnvelope.FieldParamCount >= 0);
+            Assert.NotNull(r.DismissedCarrierIds);
+            // Latch list is ordered ordinal (empty is fine on a quiet tick).
+            Assert.Equal(
+                r.DismissedCarrierIds.OrderBy(id => id, StringComparer.Ordinal),
+                r.DismissedCarrierIds);
+            // CarrierSnapshots already carry full evaluator state beyond RemainingMs.
+            Assert.NotNull(r.CarrierSnapshots);
+            Assert.Equal(
+                r.CarrierSnapshots.Select(s => s.CarrierId).OrderBy(id => id, StringComparer.Ordinal),
+                r.CarrierSnapshots.Select(s => s.CarrierId));
+            // SurfaceHeld / ReleaseEdge are explicit bools from E6 (not inferred).
+            Assert.False(r.SurfaceHeld); // quiet tick, no wheel-screen hold
+            Assert.False(r.ReleaseEdge);
+        }
+
+        [Fact]
         public void Ctor_RejectsNullClock()
         {
             var doc = MinimalDoc();

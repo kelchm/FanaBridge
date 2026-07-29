@@ -13,8 +13,9 @@ namespace FanaBridge.UI.Display
     /// <see cref="DisplayResolutionSnapshotModel"/> already publishes from the
     /// composed-resolution record (plus config-side condition sentences for
     /// carriers that have triggers). Thin table rows only: reskin-friendly, no
-    /// engine surface. Missing record facts are documented in the E9 report, not
-    /// invented here.
+    /// engine surface. Record-gap facts (capability envelope, ITM device id,
+    /// SurfaceHeld/ReleaseEdge, latch ids, full carrier snapshots) project when
+    /// present on the record.
     /// </summary>
     public sealed class DisplayDiagnosticsModel
     {
@@ -124,6 +125,9 @@ namespace FanaBridge.UI.Display
             if (carriers == null || carriers.Count == 0)
                 return NoRows;
 
+            // Index snapshots by carrier id for timing/detail beyond RemainingMs.
+            var snapById = IndexSnapshots(resolution.CarrierSnapshots);
+
             var list = new List<DiagnosticsCarrierRowModel>(carriers.Count);
             for (int i = 0; i < carriers.Count; i++)
             {
@@ -135,9 +139,7 @@ namespace FanaBridge.UI.Display
                 string labels = JoinLabels(c.RowLabelCopies);
                 string condition = ResolveConditionSentence(c.CarrierId, config, aliases);
                 string destination = c.DestinationId ?? string.Empty;
-                string timing = c.RemainingMs.HasValue
-                    ? DisplayCopy.DiagnosticsRemainingMs(c.RemainingMs.Value)
-                    : string.Empty;
+                string timing = BuildTimingDetail(c, snapById);
 
                 list.Add(new DiagnosticsCarrierRowModel(
                     label: label,
@@ -153,6 +155,50 @@ namespace FanaBridge.UI.Display
             return list.Count == 0
                 ? NoRows
                 : new ReadOnlyCollection<DiagnosticsCarrierRowModel>(list);
+        }
+
+        private static Dictionary<string, CarrierSnapshotRowModel> IndexSnapshots(
+            IReadOnlyList<CarrierSnapshotRowModel> snapshots)
+        {
+            var map = new Dictionary<string, CarrierSnapshotRowModel>(StringComparer.Ordinal);
+            if (snapshots == null)
+                return map;
+            for (int i = 0; i < snapshots.Count; i++)
+            {
+                var s = snapshots[i];
+                if (s == null || string.IsNullOrEmpty(s.CarrierId))
+                    continue;
+                // First wins — snapshots are already union-by-id from the record.
+                if (!map.ContainsKey(s.CarrierId))
+                    map[s.CarrierId] = s;
+            }
+            return map;
+        }
+
+        private static string BuildTimingDetail(
+            CarrierResolutionRowModel carrier,
+            Dictionary<string, CarrierSnapshotRowModel> snapById)
+        {
+            CarrierSnapshotRowModel snap = null;
+            if (carrier.CarrierId != null
+                && snapById != null
+                && snapById.TryGetValue(carrier.CarrierId, out var found))
+                snap = found;
+
+            if (snap != null)
+            {
+                return DisplayCopy.DiagnosticsSnapshotDetail(
+                    snap.ConditionSatisfied,
+                    snap.Active,
+                    snap.Eligible,
+                    snap.FreshFire,
+                    snap.FiredThisTick,
+                    snap.RemainingMs ?? carrier.RemainingMs);
+            }
+
+            return carrier.RemainingMs.HasValue
+                ? DisplayCopy.DiagnosticsRemainingMs(carrier.RemainingMs.Value)
+                : string.Empty;
         }
 
         /// <summary>
@@ -310,13 +356,35 @@ namespace FanaBridge.UI.Display
         private static IReadOnlyList<string> BuildDeviceLines(
             DisplayResolutionSnapshotModel resolution)
         {
-            var lines = new List<string>(6);
+            var lines = new List<string>(8);
 
             // DeviceKey is stamped from WheelCode at composition build (runtime seam).
             string key = string.IsNullOrEmpty(resolution.DeviceKey)
                 ? DisplayCopy.StatusDash
                 : resolution.DeviceKey;
             lines.Add(DisplayCopy.DiagnosticsFactLine(DisplayCopy.DiagnosticsDeviceKey, key));
+
+            // Distinct ITM device id (DeviceKey is wheel code only).
+            if (resolution.ItmDeviceId.HasValue)
+            {
+                lines.Add(DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsItmDeviceId,
+                    DisplayCopy.DiagnosticsItmDeviceIdValue(resolution.ItmDeviceId.Value)));
+            }
+
+            // Capability-envelope summary (field count + screen-command tri-states).
+            if (resolution.HasCapabilityEnvelope && resolution.CapabilityEnvelope != null)
+            {
+                var env = resolution.CapabilityEnvelope;
+                lines.Add(DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsCapabilityEnvelope,
+                    DisplayCopy.DiagnosticsCapabilityEnvelopeSummary(
+                        env.FieldParamCount,
+                        env.ScreenLogo,
+                        env.ScreenBlank,
+                        env.ScreenWhite,
+                        env.ScreenLogoInverted)));
+            }
 
             if (!resolution.HasDeviceBlock)
             {
@@ -360,6 +428,8 @@ namespace FanaBridge.UI.Display
 
             // Absence of a wheel-screen slice publishes nothing — no invented
             // 'released' / 'clear'. Section stays empty (ruled empty presentation).
+            // SurfaceHeld/ReleaseEdge alone (without a winner row) still need a winner
+            // surface entry from the record; composition always emits one when E6 runs.
             if (winner == null)
                 return NoLines;
 
@@ -369,33 +439,43 @@ namespace FanaBridge.UI.Display
                     ? RuledDestinationDisplay(winner.DestinationId)
                     : DisplayCopy.StatusDash);
 
-            // Held when the plane has a screen destination (screen:…), else released.
-            bool held = !string.IsNullOrEmpty(winner.DestinationId)
-                && winner.DestinationId.StartsWith("screen:", StringComparison.Ordinal);
-            // Also treat a non-null screen winner carrier (rule id) with any dest as held
-            // when destination is a screen command id without prefix (defensive).
-            if (!held && !string.IsNullOrEmpty(winner.WinnerCarrierId)
-                && !string.IsNullOrEmpty(winner.DestinationId)
-                && !DestinationIds.IsRest(winner.DestinationId))
+            // Explicit SurfaceHeld from the record (no longer inferred from destination).
+            bool held = resolution.SurfaceHeld;
+
+            // Latch active from the published id list (preferred) or DISMISSED labels.
+            var latchIds = resolution.DismissedCarrierIds;
+            bool latchActive = latchIds != null && latchIds.Count > 0;
+            if (!latchActive)
             {
-                held = true;
+                latchActive = AnyDismissedOnSurface(
+                    resolution, DestinationIds.WheelScreenSurfaceId);
             }
 
-            bool latchActive = AnyDismissedOnSurface(
-                resolution, DestinationIds.WheelScreenSurfaceId);
-
-            var lines = new List<string>(3)
+            var lines = new List<string>(5)
             {
                 DisplayCopy.DiagnosticsFactLine(DisplayCopy.DiagnosticsOwner, owner),
                 DisplayCopy.DiagnosticsFactLine(
                     DisplayCopy.DiagnosticsHoldState,
                     held ? DisplayCopy.DiagnosticsHeld : DisplayCopy.DiagnosticsReleased),
                 DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsReleaseEdge,
+                    resolution.ReleaseEdge
+                        ? DisplayCopy.DiagnosticsYes
+                        : DisplayCopy.DiagnosticsNo),
+                DisplayCopy.DiagnosticsFactLine(
                     DisplayCopy.DiagnosticsDismissalLatch,
                     latchActive
                         ? DisplayCopy.DiagnosticsLatchActive
                         : DisplayCopy.DiagnosticsLatchClear),
             };
+
+            if (latchIds != null && latchIds.Count > 0)
+            {
+                lines.Add(DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsDismissalLatchIds,
+                    DisplayCopy.DiagnosticsLatchIdList(latchIds)));
+            }
+
             return new ReadOnlyCollection<string>(lines);
         }
 

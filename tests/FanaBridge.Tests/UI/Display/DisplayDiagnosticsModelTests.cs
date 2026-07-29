@@ -227,7 +227,9 @@ namespace FanaBridge.Tests.UI.Display
             {
                 new SurfaceWinner(DestinationIds.WheelScreenSurfaceId, "logo-rule", "screen:logo"),
             };
-            var resolution = Snapshot(statuses, winners, deviceKey: "PBME");
+            // Explicit SurfaceHeld on the record (no longer inferred from destination).
+            var resolution = Snapshot(
+                statuses, winners, deviceKey: "PBME", surfaceHeld: true);
 
             var model = DisplayDiagnosticsModel.Project(resolution);
 
@@ -237,6 +239,10 @@ namespace FanaBridge.Tests.UI.Display
             Assert.Contains(
                 DisplayCopy.DiagnosticsFactLine(
                     DisplayCopy.DiagnosticsHoldState, DisplayCopy.DiagnosticsHeld),
+                model.WheelScreenLines);
+            Assert.Contains(
+                DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsReleaseEdge, DisplayCopy.DiagnosticsNo),
                 model.WheelScreenLines);
             Assert.Contains(
                 DisplayCopy.DiagnosticsFactLine(
@@ -466,19 +472,138 @@ namespace FanaBridge.Tests.UI.Display
         private static DisplayResolutionSnapshotModel Snapshot(
             IReadOnlyList<CarrierResolutionStatus> statuses,
             IReadOnlyList<SurfaceWinner> winners,
-            string deviceKey)
+            string deviceKey,
+            bool surfaceHeld = false,
+            bool releaseEdge = false,
+            IReadOnlyList<string> dismissedCarrierIds = null,
+            byte? itmDeviceId = null,
+            CapabilityEnvelopeSummary capabilityEnvelope = null,
+            IReadOnlyList<CarrierTickSnapshot> carrierSnapshots = null)
         {
             var record = new ComposedResolutionRecord(
                 tickMs: 1000,
                 deviceKey: deviceKey,
                 surfaceWinners: winners ?? new List<SurfaceWinner>(),
                 carrierStatuses: statuses ?? new List<CarrierResolutionStatus>(),
-                carrierSnapshots: new List<CarrierTickSnapshot>(),
+                carrierSnapshots: carrierSnapshots ?? new List<CarrierTickSnapshot>(),
                 pageKnowledge: CurrentPageKnowledge.Unknown,
                 revertedThisTick: false,
-                adoptWarnedThisTick: false);
+                adoptWarnedThisTick: false,
+                itmDeviceId: itmDeviceId,
+                surfaceHeld: surfaceHeld,
+                releaseEdge: releaseEdge,
+                dismissedCarrierIds: dismissedCarrierIds,
+                capabilityEnvelope: capabilityEnvelope);
             return DisplayResolutionSnapshotModel.From(
                 record, inGame: true, isConnected: true, aggregates: null, manual: null);
+        }
+
+        // ── Record-gap publication pins ──────────────────────────────────
+
+        [Fact]
+        public void DeviceBlock_ItmDeviceIdAndCapabilityEnvelope_Surfaced()
+        {
+            var env = new CapabilityEnvelopeSummary(
+                fieldParamCount: 12,
+                screenLogo: true,
+                screenBlank: true,
+                screenWhite: null,
+                screenLogoInverted: false,
+                provisional: true);
+            var winners = new List<SurfaceWinner>
+            {
+                new SurfaceWinner(SeatArbiter.DisplaySurfaceId, null, DestinationIds.RestInSession),
+            };
+            var resolution = Snapshot(
+                new List<CarrierResolutionStatus>(), winners, deviceKey: "PBME",
+                itmDeviceId: 3, capabilityEnvelope: env);
+
+            var model = DisplayDiagnosticsModel.Project(resolution);
+
+            Assert.Contains(
+                DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsItmDeviceId,
+                    DisplayCopy.DiagnosticsItmDeviceIdValue(3)),
+                model.DeviceLines);
+            Assert.Contains(
+                DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsCapabilityEnvelope,
+                    DisplayCopy.DiagnosticsCapabilityEnvelopeSummary(
+                        12, true, true, null, false)),
+                model.DeviceLines);
+        }
+
+        [Fact]
+        public void WheelScreen_ExplicitReleaseEdge_AndLatchIdList()
+        {
+            var winners = new List<SurfaceWinner>
+            {
+                new SurfaceWinner(DestinationIds.WheelScreenSurfaceId, null, DestinationIds.RestIdle),
+            };
+            var resolution = Snapshot(
+                new List<CarrierResolutionStatus>(), winners, deviceKey: "PBME",
+                surfaceHeld: false,
+                releaseEdge: true,
+                dismissedCarrierIds: new[] { "a-rule", "b-rule" });
+
+            var model = DisplayDiagnosticsModel.Project(resolution);
+
+            Assert.Contains(
+                DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsHoldState, DisplayCopy.DiagnosticsReleased),
+                model.WheelScreenLines);
+            Assert.Contains(
+                DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsReleaseEdge, DisplayCopy.DiagnosticsYes),
+                model.WheelScreenLines);
+            Assert.Contains(
+                DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsDismissalLatch, DisplayCopy.DiagnosticsLatchActive),
+                model.WheelScreenLines);
+            Assert.Contains(
+                DisplayCopy.DiagnosticsFactLine(
+                    DisplayCopy.DiagnosticsDismissalLatchIds,
+                    DisplayCopy.DiagnosticsLatchIdList(new[] { "a-rule", "b-rule" })),
+                model.WheelScreenLines);
+        }
+
+        [Fact]
+        public void Ladder_TimingDetail_FromFullSnapshot_BeyondRemainingMs()
+        {
+            var statuses = new List<CarrierResolutionStatus>
+            {
+                new CarrierResolutionStatus(
+                    "fuel", SeatArbiter.DisplaySurfaceId, "itm:fuel",
+                    CarrierPresence.OnScreen, remainingMs: 1500, CarrierRowLabels.None),
+            };
+            var snaps = new List<CarrierTickSnapshot>
+            {
+                new CarrierTickSnapshot(
+                    "fuel",
+                    conditionSatisfied: true,
+                    active: true,
+                    freshFire: true,
+                    firedThisTick: true,
+                    legacySupersededV9: false,
+                    eligible: true,
+                    expiresAtMs: 5000,
+                    remainingMs: 1500),
+            };
+            var resolution = Snapshot(
+                statuses, new List<SurfaceWinner>(), deviceKey: "dev",
+                carrierSnapshots: snaps);
+
+            var model = DisplayDiagnosticsModel.Project(resolution);
+
+            Assert.Equal(
+                DisplayCopy.DiagnosticsSnapshotDetail(
+                    conditionSatisfied: true,
+                    active: true,
+                    eligible: true,
+                    freshFire: true,
+                    firedThisTick: true,
+                    remainingMs: 1500),
+                model.LadderRows[0].TimingDetail);
         }
     }
 }

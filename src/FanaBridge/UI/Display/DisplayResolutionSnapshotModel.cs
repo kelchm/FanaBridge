@@ -32,6 +32,12 @@ namespace FanaBridge.UI.Display
         private static readonly IReadOnlyList<AggregateMembershipModel> NoAggregates =
             new ReadOnlyCollection<AggregateMembershipModel>(Array.Empty<AggregateMembershipModel>());
 
+        private static readonly IReadOnlyList<string> NoDismissedIds =
+            new ReadOnlyCollection<string>(Array.Empty<string>());
+
+        private static readonly IReadOnlyList<CarrierSnapshotRowModel> NoSnapshots =
+            new ReadOnlyCollection<CarrierSnapshotRowModel>(Array.Empty<CarrierSnapshotRowModel>());
+
         /// <summary>Empty model for a null / missing record.</summary>
         public static DisplayResolutionSnapshotModel Empty { get; } =
             new DisplayResolutionSnapshotModel(
@@ -46,7 +52,14 @@ namespace FanaBridge.UI.Display
                 inGame: false,
                 isConnected: false,
                 aggregates: NoAggregates,
-                manual: null);
+                manual: null,
+                itmDeviceId: null,
+                surfaceHeld: false,
+                releaseEdge: false,
+                dismissedCarrierIds: NoDismissedIds,
+                hasCapabilityEnvelope: false,
+                capabilityEnvelope: null,
+                carrierSnapshots: NoSnapshots);
 
         private DisplayResolutionSnapshotModel(
             long tickMs,
@@ -60,7 +73,14 @@ namespace FanaBridge.UI.Display
             bool inGame,
             bool isConnected,
             IReadOnlyList<AggregateMembershipModel> aggregates,
-            ManualRowStateModel manual)
+            ManualRowStateModel manual,
+            byte? itmDeviceId,
+            bool surfaceHeld,
+            bool releaseEdge,
+            IReadOnlyList<string> dismissedCarrierIds,
+            bool hasCapabilityEnvelope,
+            CapabilityEnvelopeSummary capabilityEnvelope,
+            IReadOnlyList<CarrierSnapshotRowModel> carrierSnapshots)
         {
             TickMs = tickMs;
             DeviceKey = deviceKey ?? string.Empty;
@@ -74,6 +94,13 @@ namespace FanaBridge.UI.Display
             IsConnected = isConnected;
             Aggregates = aggregates ?? NoAggregates;
             Manual = manual;
+            ItmDeviceId = itmDeviceId;
+            SurfaceHeld = surfaceHeld;
+            ReleaseEdge = releaseEdge;
+            DismissedCarrierIds = dismissedCarrierIds ?? NoDismissedIds;
+            HasCapabilityEnvelope = hasCapabilityEnvelope;
+            CapabilityEnvelope = capabilityEnvelope;
+            CarrierSnapshots = carrierSnapshots ?? NoSnapshots;
         }
 
         /// <summary>Engine clock at tick evaluation; 0 when empty.</summary>
@@ -96,6 +123,31 @@ namespace FanaBridge.UI.Display
 
         /// <summary>Per-carrier rows with ruled presence / label copy.</summary>
         public IReadOnlyList<CarrierResolutionRowModel> Carriers { get; }
+
+        // ── Record-gap diagnostics publication (read-side) ────────────────
+
+        /// <summary>Distinct ITM device id; null when the record did not stamp one.</summary>
+        public byte? ItmDeviceId { get; }
+
+        /// <summary>Explicit wheel-screen col01 hold (not inferred from destination).</summary>
+        public bool SurfaceHeld { get; }
+
+        /// <summary>Explicit wheel-screen release edge this tick.</summary>
+        public bool ReleaseEdge { get; }
+
+        /// <summary>Dismissal latch carrier ids (ordered ordinal); empty when none.</summary>
+        public IReadOnlyList<string> DismissedCarrierIds { get; }
+
+        /// <summary>True when the record stamped a capability-envelope summary.</summary>
+        public bool HasCapabilityEnvelope { get; }
+
+        /// <summary>Capability-envelope summary; null when not stamped.</summary>
+        public CapabilityEnvelopeSummary CapabilityEnvelope { get; }
+
+        /// <summary>
+        /// Full per-carrier evaluator snapshots beyond RemainingMs (ordered by carrier id).
+        /// </summary>
+        public IReadOnlyList<CarrierSnapshotRowModel> CarrierSnapshots { get; }
 
         // ── O12 published engine values ──────────────────────────────────
 
@@ -166,7 +218,14 @@ namespace FanaBridge.UI.Display
                     inGame: inGame,
                     isConnected: true,
                     aggregates: ProjectAggregates(aggregates),
-                    manual: ProjectManual(manual));
+                    manual: ProjectManual(manual),
+                    itmDeviceId: null,
+                    surfaceHeld: false,
+                    releaseEdge: false,
+                    dismissedCarrierIds: NoDismissedIds,
+                    hasCapabilityEnvelope: false,
+                    capabilityEnvelope: null,
+                    carrierSnapshots: NoSnapshots);
             }
 
             var statuses = record.CarrierStatuses;
@@ -198,6 +257,39 @@ namespace FanaBridge.UI.Display
                 }
             }
 
+            var snaps = record.CarrierSnapshots;
+            var snapModels = new List<CarrierSnapshotRowModel>(snaps != null ? snaps.Count : 0);
+            if (snaps != null)
+            {
+                for (int i = 0; i < snaps.Count; i++)
+                {
+                    var snap = snaps[i];
+                    snapModels.Add(new CarrierSnapshotRowModel(
+                        snap.CarrierId,
+                        snap.ConditionSatisfied,
+                        snap.Active,
+                        snap.FreshFire,
+                        snap.FiredThisTick,
+                        snap.Eligible,
+                        snap.ExpiresAtMs,
+                        snap.RemainingMs));
+                }
+            }
+
+            var dismissed = record.DismissedCarrierIds;
+            IReadOnlyList<string> dismissedIds = NoDismissedIds;
+            if (dismissed != null && dismissed.Count > 0)
+            {
+                var dlist = new List<string>(dismissed.Count);
+                for (int i = 0; i < dismissed.Count; i++)
+                {
+                    if (dismissed[i] != null)
+                        dlist.Add(dismissed[i]);
+                }
+                if (dlist.Count > 0)
+                    dismissedIds = new ReadOnlyCollection<string>(dlist);
+            }
+
             return new DisplayResolutionSnapshotModel(
                 record.TickMs,
                 record.DeviceKey,
@@ -210,7 +302,16 @@ namespace FanaBridge.UI.Display
                 inGame,
                 isConnected,
                 ProjectAggregates(aggregates),
-                ProjectManual(manual));
+                ProjectManual(manual),
+                record.ItmDeviceId,
+                record.SurfaceHeld,
+                record.ReleaseEdge,
+                dismissedIds,
+                record.HasCapabilityEnvelope,
+                record.CapabilityEnvelope,
+                snapModels.Count == 0
+                    ? NoSnapshots
+                    : new ReadOnlyCollection<CarrierSnapshotRowModel>(snapModels));
         }
 
         private static IReadOnlyList<AggregateMembershipModel> ProjectAggregates(
@@ -364,6 +465,41 @@ namespace FanaBridge.UI.Display
         /// <summary>Ruled row-label strings from <see cref="DisplayCopy"/>.</summary>
         public IReadOnlyList<string> RowLabelCopies { get; }
 
+        public int? RemainingMs { get; }
+    }
+
+    /// <summary>
+    /// Full per-carrier evaluator snapshot projected for diagnostics (beyond RemainingMs).
+    /// </summary>
+    public sealed class CarrierSnapshotRowModel
+    {
+        public CarrierSnapshotRowModel(
+            string carrierId,
+            bool conditionSatisfied,
+            bool active,
+            bool freshFire,
+            bool firedThisTick,
+            bool eligible,
+            long expiresAtMs,
+            int? remainingMs)
+        {
+            CarrierId = carrierId ?? string.Empty;
+            ConditionSatisfied = conditionSatisfied;
+            Active = active;
+            FreshFire = freshFire;
+            FiredThisTick = firedThisTick;
+            Eligible = eligible;
+            ExpiresAtMs = expiresAtMs;
+            RemainingMs = remainingMs;
+        }
+
+        public string CarrierId { get; }
+        public bool ConditionSatisfied { get; }
+        public bool Active { get; }
+        public bool FreshFire { get; }
+        public bool FiredThisTick { get; }
+        public bool Eligible { get; }
+        public long ExpiresAtMs { get; }
         public int? RemainingMs { get; }
     }
 

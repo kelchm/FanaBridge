@@ -339,6 +339,55 @@ namespace FanaBridge.Tests.UI.Display
             Assert.Same(DisplayResolutionSnapshotModel.Empty, model);
         }
 
+        // ── Record-gap diagnostics projection ────────────────────────────
+
+        [Fact]
+        public void From_RecordGapFields_Projected()
+        {
+            var env = new CapabilityEnvelopeSummary(
+                fieldParamCount: 4,
+                screenLogo: true,
+                screenBlank: null,
+                screenWhite: false,
+                screenLogoInverted: true,
+                provisional: null);
+            var snaps = new List<CarrierTickSnapshot>
+            {
+                new CarrierTickSnapshot(
+                    "c1", true, true, false, true, false, true, 9000, 400),
+            };
+            var record = new ComposedResolutionRecord(
+                tickMs: 10,
+                deviceKey: "PBME",
+                surfaceWinners: new List<SurfaceWinner>(),
+                carrierStatuses: new List<CarrierResolutionStatus>(),
+                carrierSnapshots: snaps,
+                pageKnowledge: CurrentPageKnowledge.Unknown,
+                revertedThisTick: false,
+                adoptWarnedThisTick: false,
+                itmDeviceId: 4,
+                surfaceHeld: true,
+                releaseEdge: true,
+                dismissedCarrierIds: new[] { "x", "y" },
+                capabilityEnvelope: env);
+
+            var model = DisplayResolutionSnapshotModel.From(record);
+
+            Assert.Equal((byte)4, model.ItmDeviceId);
+            Assert.True(model.SurfaceHeld);
+            Assert.True(model.ReleaseEdge);
+            Assert.Equal(new[] { "x", "y" }, model.DismissedCarrierIds);
+            Assert.True(model.HasCapabilityEnvelope);
+            Assert.Equal(4, model.CapabilityEnvelope.FieldParamCount);
+            Assert.True(model.CapabilityEnvelope.ScreenLogo);
+            Assert.Null(model.CapabilityEnvelope.ScreenBlank);
+            Assert.Single(model.CarrierSnapshots);
+            Assert.Equal("c1", model.CarrierSnapshots[0].CarrierId);
+            Assert.True(model.CarrierSnapshots[0].Active);
+            Assert.True(model.CarrierSnapshots[0].FiredThisTick);
+            Assert.Equal(400, model.CarrierSnapshots[0].RemainingMs);
+        }
+
         /// <summary>
         /// Flags enums include composite values when members are combined in the
         /// definition; we only require each defined single-bit (or None) name.

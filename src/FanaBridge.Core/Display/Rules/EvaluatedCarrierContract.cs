@@ -211,13 +211,64 @@ namespace FanaBridge.Display.Rules
     }
 
     /// <summary>
+    /// Read-side capability-envelope summary for the composed-resolution record
+    /// (catalog §14). Projection of already-built field/screen capability — no
+    /// engine gating lives here. Null tri-states = untested.
+    /// </summary>
+    public sealed class CapabilityEnvelopeSummary
+    {
+        public static CapabilityEnvelopeSummary Empty { get; } =
+            new CapabilityEnvelopeSummary(0, null, null, null, null, null);
+
+        public CapabilityEnvelopeSummary(
+            int fieldParamCount,
+            bool? screenLogo,
+            bool? screenBlank,
+            bool? screenWhite,
+            bool? screenLogoInverted,
+            bool? provisional)
+        {
+            FieldParamCount = fieldParamCount < 0 ? 0 : fieldParamCount;
+            ScreenLogo = screenLogo;
+            ScreenBlank = screenBlank;
+            ScreenWhite = screenWhite;
+            ScreenLogoInverted = screenLogoInverted;
+            Provisional = provisional;
+        }
+
+        /// <summary>Count of params present on this wheel's field capability map.</summary>
+        public int FieldParamCount { get; }
+
+        /// <summary>Screen-command tri-state: logo.</summary>
+        public bool? ScreenLogo { get; }
+
+        /// <summary>Screen-command tri-state: blank.</summary>
+        public bool? ScreenBlank { get; }
+
+        /// <summary>Screen-command tri-state: white.</summary>
+        public bool? ScreenWhite { get; }
+
+        /// <summary>Screen-command tri-state: logo inverted.</summary>
+        public bool? ScreenLogoInverted { get; }
+
+        /// <summary>Catalog provisional badge on the screen-commands block.</summary>
+        public bool? Provisional { get; }
+    }
+
+    /// <summary>
     /// One-tick composed-resolution record: per-surface winners + per-carrier statuses.
     /// Shape pinned by E3; emitted by E7; one-tick golden lands with the emitter.
     /// The evaluator does NOT produce this — arbiters compose it from snapshots.
     /// Additive device-level block (E7): page knowledge + reject edge flags for E8.
+    /// Additive diagnostics publication (record-gap): ITM device id, SurfaceHeld /
+    /// ReleaseEdge, dismissal latch ids, capability-envelope summary. CarrierSnapshots
+    /// already carry full per-carrier evaluator state beyond RemainingMs.
     /// </summary>
     public sealed class ComposedResolutionRecord
     {
+        private static readonly IReadOnlyList<string> NoDismissedIds =
+            Array.Empty<string>();
+
         public ComposedResolutionRecord(
             long tickMs,
             string deviceKey,
@@ -226,7 +277,13 @@ namespace FanaBridge.Display.Rules
             IReadOnlyList<CarrierTickSnapshot> carrierSnapshots)
             : this(tickMs, deviceKey, surfaceWinners, carrierStatuses, carrierSnapshots,
                 CurrentPageKnowledge.Unknown, revertedThisTick: false, adoptWarnedThisTick: false,
-                hasDeviceBlock: false)
+                hasDeviceBlock: false,
+                itmDeviceId: null,
+                surfaceHeld: false,
+                releaseEdge: false,
+                dismissedCarrierIds: null,
+                capabilityEnvelope: null,
+                hasCapabilityEnvelope: false)
         {
         }
 
@@ -240,7 +297,42 @@ namespace FanaBridge.Display.Rules
             bool revertedThisTick,
             bool adoptWarnedThisTick)
             : this(tickMs, deviceKey, surfaceWinners, carrierStatuses, carrierSnapshots,
-                pageKnowledge, revertedThisTick, adoptWarnedThisTick, hasDeviceBlock: true)
+                pageKnowledge, revertedThisTick, adoptWarnedThisTick, hasDeviceBlock: true,
+                itmDeviceId: null,
+                surfaceHeld: false,
+                releaseEdge: false,
+                dismissedCarrierIds: null,
+                capabilityEnvelope: null,
+                hasCapabilityEnvelope: false)
+        {
+        }
+
+        /// <summary>
+        /// Full composition stamp: device block + read-side diagnostics publication.
+        /// Partial emitter slices use the shorter constructors.
+        /// </summary>
+        public ComposedResolutionRecord(
+            long tickMs,
+            string deviceKey,
+            IReadOnlyList<SurfaceWinner> surfaceWinners,
+            IReadOnlyList<CarrierResolutionStatus> carrierStatuses,
+            IReadOnlyList<CarrierTickSnapshot> carrierSnapshots,
+            CurrentPageKnowledge pageKnowledge,
+            bool revertedThisTick,
+            bool adoptWarnedThisTick,
+            byte? itmDeviceId,
+            bool surfaceHeld,
+            bool releaseEdge,
+            IReadOnlyList<string> dismissedCarrierIds,
+            CapabilityEnvelopeSummary capabilityEnvelope)
+            : this(tickMs, deviceKey, surfaceWinners, carrierStatuses, carrierSnapshots,
+                pageKnowledge, revertedThisTick, adoptWarnedThisTick, hasDeviceBlock: true,
+                itmDeviceId: itmDeviceId,
+                surfaceHeld: surfaceHeld,
+                releaseEdge: releaseEdge,
+                dismissedCarrierIds: dismissedCarrierIds,
+                capabilityEnvelope: capabilityEnvelope,
+                hasCapabilityEnvelope: capabilityEnvelope != null)
         {
         }
 
@@ -253,7 +345,13 @@ namespace FanaBridge.Display.Rules
             CurrentPageKnowledge pageKnowledge,
             bool revertedThisTick,
             bool adoptWarnedThisTick,
-            bool hasDeviceBlock)
+            bool hasDeviceBlock,
+            byte? itmDeviceId,
+            bool surfaceHeld,
+            bool releaseEdge,
+            IReadOnlyList<string> dismissedCarrierIds,
+            CapabilityEnvelopeSummary capabilityEnvelope,
+            bool hasCapabilityEnvelope)
         {
             TickMs = tickMs;
             DeviceKey = deviceKey;
@@ -264,6 +362,14 @@ namespace FanaBridge.Display.Rules
             RevertedThisTick = revertedThisTick;
             AdoptWarnedThisTick = adoptWarnedThisTick;
             HasDeviceBlock = hasDeviceBlock;
+            ItmDeviceId = itmDeviceId;
+            SurfaceHeld = surfaceHeld;
+            ReleaseEdge = releaseEdge;
+            DismissedCarrierIds = dismissedCarrierIds ?? NoDismissedIds;
+            CapabilityEnvelope = hasCapabilityEnvelope
+                ? (capabilityEnvelope ?? CapabilityEnvelopeSummary.Empty)
+                : null;
+            HasCapabilityEnvelope = hasCapabilityEnvelope;
         }
 
         /// <summary>Engine clock at tick evaluation.</summary>
@@ -278,7 +384,10 @@ namespace FanaBridge.Display.Rules
         /// <summary>Per-carrier UI presence + row labels, ladder order within each surface.</summary>
         public IReadOnlyList<CarrierResolutionStatus> CarrierStatuses { get; }
 
-        /// <summary>Raw evaluator snapshots (activation, fresh-fire, FiredThisTick, clocks).</summary>
+        /// <summary>
+        /// Raw evaluator snapshots (activation, fresh-fire, FiredThisTick, clocks).
+        /// Full per-carrier state beyond <see cref="CarrierResolutionStatus.RemainingMs"/>.
+        /// </summary>
         public IReadOnlyList<CarrierTickSnapshot> CarrierSnapshots { get; }
 
         // ── Additive device-level block (contract §6.1 / E7) ──────────────
@@ -300,5 +409,43 @@ namespace FanaBridge.Display.Rules
 
         /// <summary>Director adopt-with-warning this tick (edge flag).</summary>
         public bool AdoptWarnedThisTick { get; }
+
+        // ── Additive diagnostics publication (record-gap round) ───────────
+
+        /// <summary>
+        /// Distinct ITM display device id (3 = standard / PBME family, 4 = Bentley, …).
+        /// Null on partial emitter slices; composition stamps the constructor input.
+        /// <see cref="DeviceKey"/> remains the wheel code only.
+        /// </summary>
+        public byte? ItmDeviceId { get; }
+
+        /// <summary>
+        /// Explicit wheel-screen col01 hold this tick (E6 <c>SurfaceHeld</c>).
+        /// Not inferred from winner destination.
+        /// </summary>
+        public bool SurfaceHeld { get; }
+
+        /// <summary>
+        /// Explicit wheel-screen release edge this tick (E6 <c>ReleaseEdge</c>).
+        /// </summary>
+        public bool ReleaseEdge { get; }
+
+        /// <summary>
+        /// Dismissal latch carrier ids this tick (seat + wheel-screen latches, union).
+        /// Ordered ordinal for determinism. Empty when none latched.
+        /// </summary>
+        public IReadOnlyList<string> DismissedCarrierIds { get; }
+
+        /// <summary>
+        /// True when <see cref="CapabilityEnvelope"/> was stamped (composition tenure).
+        /// Partial slices leave this false.
+        /// </summary>
+        public bool HasCapabilityEnvelope { get; }
+
+        /// <summary>
+        /// Capability-envelope summary (field param count + screen-command tri-states).
+        /// Null when not stamped.
+        /// </summary>
+        public CapabilityEnvelopeSummary CapabilityEnvelope { get; }
     }
 }

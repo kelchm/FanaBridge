@@ -26,6 +26,8 @@ namespace FanaBridge.Display.Composition
         private readonly Action<string> _log;
         private readonly IPropertyReader _properties;
         private readonly string _deviceKey;
+        private readonly byte _itmDeviceId;
+        private readonly CapabilityEnvelopeSummary _capabilityEnvelope;
 
         private readonly SeatArbiter _seat;
         private readonly WheelScreenArbiter _wheelScreen;
@@ -85,10 +87,19 @@ namespace FanaBridge.Display.Composition
 
             options = options ?? new DisplayCompositionV2Options();
             _deviceKey = options.DeviceKey ?? "";
+            _itmDeviceId = itmDeviceId;
 
             var capabilities = FieldCapability.FromCatalog(_catalog);
             var primaryHosts = FieldCapability.PrimaryHostMapFromCapabilities(capabilities);
             var screenCommands = _catalog?.ScreenCommands;
+            // Pure projection of the already-built envelope — stamped on every tick record.
+            _capabilityEnvelope = new CapabilityEnvelopeSummary(
+                fieldParamCount: capabilities.Count,
+                screenLogo: screenCommands?.Logo,
+                screenBlank: screenCommands?.Blank,
+                screenWhite: screenCommands?.White,
+                screenLogoInverted: screenCommands?.LogoInverted,
+                provisional: screenCommands?.Provisional);
 
             _seat = new SeatArbiter(_config, new SeatArbiterOptions
             {
@@ -369,12 +380,16 @@ namespace FanaBridge.Display.Composition
             _pendingManual = MapDirectorManual(directed);
             _pendingPressLastTick = directed.Manual.HasValue || directed.AdoptedThisTick;
 
-            // ── 8. Merge + stamp device block (contract §6.1) ────────────────
+            // ── 8. Merge + stamp device block + read-side diagnostics (contract §6.1) ─
             var merged = ComposedResolutionMerger.Merge(
                 seatResult.Resolution,
                 frameResult.Resolution,
                 wsResult.Resolution,
                 onPresenceConflict: msg => _log(msg));
+
+            // Latch ids already sorted ordinal by seat / WheelScreenDismissal; union keeps order.
+            var dismissedIds = UnionOrderedLatchIds(
+                seatResult.DismissedCarrierIds, _wsLatches.Ids);
 
             return new ComposedResolutionRecord(
                 merged.TickMs,
@@ -384,7 +399,45 @@ namespace FanaBridge.Display.Composition
                 merged.CarrierSnapshots,
                 directed.PageKnowledge,
                 directed.RevertedThisTick,
-                directed.AdoptWarnedThisTick);
+                directed.AdoptWarnedThisTick,
+                itmDeviceId: _itmDeviceId,
+                surfaceHeld: wsResult.SurfaceHeld,
+                releaseEdge: wsResult.ReleaseEdge,
+                dismissedCarrierIds: dismissedIds,
+                capabilityEnvelope: _capabilityEnvelope);
+        }
+
+        /// <summary>
+        /// Union seat + wheel-screen dismissal latch ids. Deterministic ordinal order.
+        /// Pure exposure of lists the arbiters already produced this tick.
+        /// </summary>
+        private static IReadOnlyList<string> UnionOrderedLatchIds(
+            IReadOnlyCollection<string> seat,
+            IReadOnlyList<string> wheel)
+        {
+            var set = new HashSet<string>(StringComparer.Ordinal);
+            if (seat != null)
+            {
+                foreach (var id in seat)
+                {
+                    if (id != null)
+                        set.Add(id);
+                }
+            }
+            if (wheel != null)
+            {
+                for (int i = 0; i < wheel.Count; i++)
+                {
+                    var id = wheel[i];
+                    if (id != null)
+                        set.Add(id);
+                }
+            }
+            if (set.Count == 0)
+                return Array.Empty<string>();
+            var list = new List<string>(set);
+            list.Sort(StringComparer.Ordinal);
+            return list;
         }
 
         // ── Director intent (v9 ToDirectorIntent shape reference) ─────────

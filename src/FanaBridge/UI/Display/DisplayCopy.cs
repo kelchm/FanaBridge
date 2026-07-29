@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Schema2;
@@ -399,6 +400,12 @@ namespace FanaBridge.UI.Display
         /// <summary>Device-block row: device / wheel key from the record.</summary>
         public const string DiagnosticsDeviceKey = "Device key";
 
+        /// <summary>Device-block row: distinct ITM display device id.</summary>
+        public const string DiagnosticsItmDeviceId = "ITM device id";
+
+        /// <summary>Device-block row: capability-envelope summary.</summary>
+        public const string DiagnosticsCapabilityEnvelope = "Capability envelope";
+
         /// <summary>Device-block row: current-page knowledge state.</summary>
         public const string DiagnosticsPageKnowledge = "Page knowledge";
 
@@ -429,6 +436,9 @@ namespace FanaBridge.UI.Display
         /// <summary>Wheel-screen plane: held/released row label.</summary>
         public const string DiagnosticsHoldState = "Hold";
 
+        /// <summary>Wheel-screen plane: release-edge fact this tick.</summary>
+        public const string DiagnosticsReleaseEdge = "Release edge";
+
         /// <summary>Wheel-screen plane: dismissal latch row label.</summary>
         public const string DiagnosticsDismissalLatch = "Dismissal latch";
 
@@ -437,6 +447,39 @@ namespace FanaBridge.UI.Display
 
         /// <summary>Dismissal latch: none latched this tick.</summary>
         public const string DiagnosticsLatchClear = "clear";
+
+        /// <summary>Dismissal latch: id-list row label.</summary>
+        public const string DiagnosticsDismissalLatchIds = "Latched carriers";
+
+        /// <summary>Capability tri-state: supported.</summary>
+        public const string DiagnosticsCapSupported = "yes";
+
+        /// <summary>Capability tri-state: not supported.</summary>
+        public const string DiagnosticsCapUnsupported = "no";
+
+        /// <summary>Capability tri-state: untested (null).</summary>
+        public const string DiagnosticsCapUntested = "untested";
+
+        /// <summary>Snapshot bit: condition satisfied.</summary>
+        public const string DiagnosticsSnapSatisfied = "satisfied";
+
+        /// <summary>Snapshot bit: active activation.</summary>
+        public const string DiagnosticsSnapActive = "active";
+
+        /// <summary>Snapshot bit: inactive.</summary>
+        public const string DiagnosticsSnapInactive = "inactive";
+
+        /// <summary>Snapshot bit: eligible this tick.</summary>
+        public const string DiagnosticsSnapEligible = "eligible";
+
+        /// <summary>Snapshot bit: not eligible this tick.</summary>
+        public const string DiagnosticsSnapIneligible = "ineligible";
+
+        /// <summary>Snapshot bit: fresh fire this tick.</summary>
+        public const string DiagnosticsSnapFreshFire = "fresh fire";
+
+        /// <summary>Snapshot bit: fired this tick (including window restart).</summary>
+        public const string DiagnosticsSnapFired = "fired";
 
         /// <summary>Manual section: no remembered target yet.</summary>
         public const string DiagnosticsManualNothingPaged = "nothing paged to yet";
@@ -490,6 +533,79 @@ namespace FanaBridge.UI.Display
                 CultureInfo.InvariantCulture,
                 "{0} ms remaining",
                 remainingMs);
+        }
+
+        /// <summary>Tri-state capability word for diagnostics.</summary>
+        public static string DiagnosticsCapTriState(bool? value)
+        {
+            if (value == null)
+                return DiagnosticsCapUntested;
+            return value.Value ? DiagnosticsCapSupported : DiagnosticsCapUnsupported;
+        }
+
+        /// <summary>
+        /// Capability-envelope summary line: field param count + screen-command tri-states.
+        /// </summary>
+        public static string DiagnosticsCapabilityEnvelopeSummary(
+            int fieldParamCount,
+            bool? logo,
+            bool? blank,
+            bool? white,
+            bool? logoInverted)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} fields · logo {1} · blank {2} · white {3} · logo inverted {4}",
+                fieldParamCount,
+                DiagnosticsCapTriState(logo),
+                DiagnosticsCapTriState(blank),
+                DiagnosticsCapTriState(white),
+                DiagnosticsCapTriState(logoInverted));
+        }
+
+        /// <summary>ITM device id display (numeric wire id).</summary>
+        public static string DiagnosticsItmDeviceIdValue(byte id)
+        {
+            return id.ToString(CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// Join ordered latch ids for the diagnostics id-list line.
+        /// </summary>
+        public static string DiagnosticsLatchIdList(IReadOnlyList<string> ids)
+        {
+            if (ids == null || ids.Count == 0)
+                return DiagnosticsLatchClear;
+            if (ids.Count == 1)
+                return ids[0] ?? string.Empty;
+            return string.Join(", ", ids);
+        }
+
+        /// <summary>
+        /// Per-carrier snapshot detail beyond RemainingMs (bits already on the record).
+        /// </summary>
+        public static string DiagnosticsSnapshotDetail(
+            bool conditionSatisfied,
+            bool active,
+            bool eligible,
+            bool freshFire,
+            bool firedThisTick,
+            int? remainingMs)
+        {
+            var parts = new List<string>(6)
+            {
+                active ? DiagnosticsSnapActive : DiagnosticsSnapInactive,
+                eligible ? DiagnosticsSnapEligible : DiagnosticsSnapIneligible,
+            };
+            if (conditionSatisfied)
+                parts.Add(DiagnosticsSnapSatisfied);
+            if (freshFire)
+                parts.Add(DiagnosticsSnapFreshFire);
+            else if (firedThisTick)
+                parts.Add(DiagnosticsSnapFired);
+            if (remainingMs.HasValue)
+                parts.Add(DiagnosticsRemainingMs(remainingMs.Value));
+            return string.Join(" · ", parts);
         }
 
         /// <summary>Page knowledge with a known wire page.</summary>
