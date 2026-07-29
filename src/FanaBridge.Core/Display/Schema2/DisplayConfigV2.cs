@@ -33,6 +33,14 @@ namespace FanaBridge.Display.Schema2
         [JsonProperty("cycles")]
         public List<CycleEntry> Cycles { get; set; } = new List<CycleEntry>();
 
+        /// <summary>
+        /// Idle programs (ordered destination · duration steps). Absent (<c>null</c>) ≡
+        /// no playlists (not emitted); explicit empty list is rare but legal. Idle-slot
+        /// only in v1 (amendment A1 / spec §16).
+        /// </summary>
+        [JsonProperty("playlists")]
+        public List<PlaylistEntry> Playlists { get; set; }
+
         /// <summary>Priority ladder: ranked rows + fixed rest floor.</summary>
         [JsonProperty("priority")]
         public PriorityLadder Priority { get; set; } = new PriorityLadder();

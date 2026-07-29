@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Schema2;
 
@@ -18,6 +19,14 @@ namespace FanaBridge.Display.Arbitration
         /// edge (same as config) — membership is frozen for the arbiter instance.
         /// </summary>
         public IReadOnlyDictionary<ushort, string> PrimaryHostByParam { get; set; }
+
+        /// <summary>
+        /// Screen-command capability envelope from the wheel catalog (§14 tri-state).
+        /// Shared with <see cref="WheelScreenArbiter"/> so playlist step selection cannot
+        /// diverge between planes (IdleCompile shared-resolver law).
+        /// Null = every command untested (null does not drop steps).
+        /// </summary>
+        public ScreenCommandsCapability ScreenCommands { get; set; }
 
         /// <summary>Device key stamped on the composed-resolution record.</summary>
         public string DeviceKey { get; set; } = "";

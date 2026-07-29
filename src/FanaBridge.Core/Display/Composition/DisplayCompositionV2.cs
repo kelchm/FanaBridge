@@ -48,6 +48,9 @@ namespace FanaBridge.Display.Composition
         // ── Last-tick diagnostics / test seams ─────────────────────────
         private DirectorIntent _lastDirectorIntent;
         private FrameComposerTickInput _lastFrameInput;
+        private FrameComposerTickResult _lastFrameResult;
+        private WheelScreenArbiterTickResult _lastWheelScreenResult;
+        private SeatArbiterTickResult _lastSeatResult;
         private IReadOnlyList<FieldRegionPlan> _lastFieldPlans =
             Array.Empty<FieldRegionPlan>();
         private SeatManualInput? _lastSeatManualInput;
@@ -90,6 +93,8 @@ namespace FanaBridge.Display.Composition
             _seat = new SeatArbiter(_config, new SeatArbiterOptions
             {
                 PrimaryHostByParam = primaryHosts,
+                // Same envelope as wheel-screen — playlist step selection must not diverge.
+                ScreenCommands = screenCommands,
                 DeviceKey = _deviceKey,
                 Warn = _log,
             });
@@ -177,6 +182,15 @@ namespace FanaBridge.Display.Composition
         /// <summary>Last frame-composer input (ORDER-LAW probe / diagnostics).</summary>
         public FrameComposerTickInput LastFrameInput => _lastFrameInput;
 
+        /// <summary>Last frame-composer result (reclaim / segment write diagnostics).</summary>
+        public FrameComposerTickResult LastFrameResult => _lastFrameResult;
+
+        /// <summary>Last E6 wheel-screen result (release / hold diagnostics).</summary>
+        public WheelScreenArbiterTickResult LastWheelScreenResult => _lastWheelScreenResult;
+
+        /// <summary>Last E4 seat result (effective page / idle publish diagnostics).</summary>
+        public SeatArbiterTickResult LastSeatResult => _lastSeatResult;
+
         /// <summary>Last field plans produced this tick (before / at ApplyFieldPlans).</summary>
         public IReadOnlyList<FieldRegionPlan> LastFieldPlans => _lastFieldPlans;
 
@@ -262,6 +276,7 @@ namespace FanaBridge.Display.Composition
                 Manual = manual,
                 CompiledWalk = _walk.DestinationIds,
             });
+            _lastSeatResult = seatResult;
             // O12 publish: keep aggregates + manual for the UI envelope.
             _lastAggregates = seatResult.Aggregates ?? Array.Empty<AggregateMembership>();
             _lastManual = seatResult.Manual;
@@ -289,6 +304,7 @@ namespace FanaBridge.Display.Composition
             var hook = WheelScreenResultHook;
             if (hook != null)
                 wsResult = hook(wsResult) ?? wsResult;
+            _lastWheelScreenResult = wsResult;
 
             // ── 5. E5 frame (hold + reclaim from THIS tick's E6 result) ──────
             string displayed = seatResult.Intent?.EffectivePageDestinationId;
@@ -308,6 +324,7 @@ namespace FanaBridge.Display.Composition
             _lastFrameInput = frameInput;
 
             var frameResult = _frame.Tick(frameInput);
+            _lastFrameResult = frameResult;
 
             // ── 6. WRITES (special first, then segments — v9 exclusivity order) ─
             if (wsResult.SendRequested && wsResult.SendPattern.HasValue)

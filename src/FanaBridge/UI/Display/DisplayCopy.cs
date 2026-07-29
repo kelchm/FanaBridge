@@ -1,4 +1,5 @@
 using System.Globalization;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Schema2;
 
 namespace FanaBridge.UI.Display
@@ -33,6 +34,18 @@ namespace FanaBridge.UI.Display
 
         /// <summary>Not runnable on this wheel / surface.</summary>
         public const string CantRunHere = "CAN'T RUN HERE";
+
+        /// <summary>
+        /// Playlist step skipped by capability / degrade (read-only view label, P6 rider b).
+        /// Wording lives here only — no view spells the skip label inline.
+        /// </summary>
+        public const string PlaylistStepSkipped = "skipped · can't run here";
+
+        /// <summary>
+        /// Sub-floor duration clamp marker (P2 degrade-visible). Paired with the clamped
+        /// effective duration in <see cref="PlaylistStepDurationLabel"/>.
+        /// </summary>
+        public const string PlaylistStepDurationClamped = "clamped to floor";
 
         // ── Diagnostics vocabulary (non-check presence + extra labels) ───
 
@@ -606,6 +619,83 @@ namespace FanaBridge.UI.Display
                 IdleTargetPrefix,
                 targetName ?? string.Empty,
                 summary);
+        }
+
+        /// <summary>
+        /// Read-only playlist step line: "Logo · 60 s" or "Logo inverted · skipped · can't run here".
+        /// </summary>
+        public static string PlaylistStepLine(string stepName, string durationOrSkip)
+        {
+            if (string.IsNullOrEmpty(durationOrSkip))
+                return stepName ?? string.Empty;
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} · {1}",
+                stepName ?? string.Empty,
+                durationOrSkip);
+        }
+
+        /// <summary>Playlist step duration label: "60 s".</summary>
+        public static string PlaylistStepDuration(int durationMs)
+        {
+            if (durationMs >= 1000 && durationMs % 1000 == 0)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0} s",
+                    durationMs / 1000);
+            }
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} ms",
+                durationMs);
+        }
+
+        /// <summary>
+        /// Read-only duration label for a playlist step. Sub-floor authored durations
+        /// render the clamped effective value + <see cref="PlaylistStepDurationClamped"/>
+        /// (P2 degrade-visible; document value stays intact).
+        /// </summary>
+        public static string PlaylistStepDurationLabel(PlaylistStep step)
+        {
+            if (step == null || !step.DurationMsPresent)
+                return null;
+
+            int authored = step.DurationMs;
+            bool clamped = step.DurationClampedAtRuntime
+                || authored < SeatArbiter.MinDwellMs;
+            if (!clamped)
+                return PlaylistStepDuration(authored);
+
+            int effective = SeatArbiter.MinDwellMs;
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} · {1}",
+                PlaylistStepDuration(effective),
+                PlaylistStepDurationClamped);
+        }
+
+        /// <summary>
+        /// Diagnostics idle/floor line when a playlist is active:
+        /// "Outside a session · Screensaver · step Logo (skipped: …)".
+        /// </summary>
+        public static string DiagnosticsPlaylistFloor(
+            string playlistName, string activeStepName, string skipSummary)
+        {
+            if (string.IsNullOrEmpty(skipSummary))
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0} · {1}",
+                    playlistName ?? string.Empty,
+                    activeStepName ?? string.Empty);
+            }
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} · {1} ({2})",
+                playlistName ?? string.Empty,
+                activeStepName ?? string.Empty,
+                skipSummary);
         }
 
         /// <summary>Mirror caption: "ITM 5 · Tire Temps" (page name only — 8b D1).</summary>

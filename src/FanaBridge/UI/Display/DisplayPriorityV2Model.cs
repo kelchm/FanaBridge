@@ -494,10 +494,11 @@ namespace FanaBridge.UI.Display
             string idleLabel = IdleTargetLabel(idle, config, catalog);
             bool isWinner = string.Equals(winnerDest, DestinationIds.RestIdle, StringComparison.Ordinal);
 
-            // task #22: playlist badge when IdleSpec gains a playlist target.
-            bool showPlaylistBadge = false;
+            bool showPlaylistBadge = idle != null
+                && idle.Kind == IdleKind.Playlist
+                && !string.IsNullOrWhiteSpace(idle.Playlist);
             string idleNote = null;
-            // 5j draws "no playlist on this profile" when no playlist — correct today.
+            // 5j draws "no playlist on this profile" when idle is not a playlist target.
             if (!showPlaylistBadge)
                 idleNote = DisplayCopy.NoPlaylistOnThisProfile;
 
@@ -1065,7 +1066,8 @@ namespace FanaBridge.UI.Display
                         capabilityNote: null,
                         idleKind: IdleKind.Page,
                         pageRef: pageRef,
-                        screen: WheelScreenCommand.Unknown));
+                        screen: WheelScreenCommand.Unknown,
+                        playlistId: null));
                 }
             }
 
@@ -1102,7 +1104,8 @@ namespace FanaBridge.UI.Display
                         capabilityNote: null,
                         idleKind: IdleKind.Page,
                         pageRef: pageRef,
-                        screen: WheelScreenCommand.Unknown));
+                        screen: WheelScreenCommand.Unknown,
+                        playlistId: null));
                 }
             }
 
@@ -1134,11 +1137,50 @@ namespace FanaBridge.UI.Display
                 DisplayCopy.BuiltInScreens,
                 new ReadOnlyCollection<PriorityPickerItemModel>(screenItems)));
 
-            // PLAYLISTS group — structure via DisplayCopy only; lights up at task #22.
-            // Empty items today; group header reserved so the shape is ready.
+            // PLAYLISTS group — document playlists, read-only (setup-authored; no editor).
+            // P6 rider (b): degraded / all-skipped playlists stay VISIBLE and marked with
+            // their steps + skip labels — never dropped from the presentation.
+            var playlistItems = new List<PriorityPickerItemModel>();
+            if (config?.Playlists != null)
+            {
+                for (int i = 0; i < config.Playlists.Count; i++)
+                {
+                    var pl = config.Playlists[i];
+                    if (pl == null || string.IsNullOrWhiteSpace(pl.Id))
+                        continue;
+                    string key = "playlist:" + pl.Id;
+                    bool selected = string.Equals(selectedKey, key, StringComparison.Ordinal);
+                    string name = !string.IsNullOrEmpty(pl.Name)
+                        ? pl.Name
+                        : GeneratedPlaylistName(pl, config, catalog);
+                    string stepSummary = PlaylistStepSummary(pl, catalog);
+                    // Degraded whole (0 resolvable / duplicate / reserved): still listed;
+                    // capability note carries skip/degrade labels so honesty set holds.
+                    bool enabled = !pl.DegradedAtLoad;
+                    string note = selected
+                        ? DisplayCopy.Selected
+                        : (stepSummary ?? (pl.DegradedAtLoad ? DisplayCopy.PlaylistStepSkipped : null));
+                    playlistItems.Add(new PriorityPickerItemModel(
+                        key: key,
+                        badge: DisplayCopy.PlaylistBadge,
+                        name: name,
+                        trailingNote: note,
+                        isSelected: selected,
+                        isEnabled: enabled,
+                        capabilityNote: stepSummary
+                            ?? (pl.DegradedAtLoad ? DisplayCopy.PlaylistStepSkipped : null),
+                        idleKind: IdleKind.Playlist,
+                        pageRef: null,
+                        screen: WheelScreenCommand.Unknown,
+                        playlistId: pl.Id));
+                }
+            }
+
             groups.Add(new PriorityPickerGroupModel(
                 DisplayCopy.PlaylistsGroup,
-                NoPickerItems));
+                playlistItems.Count == 0
+                    ? NoPickerItems
+                    : new ReadOnlyCollection<PriorityPickerItemModel>(playlistItems)));
 
             return new PriorityPickerModel(
                 searchPlaceholder: DisplayCopy.SearchPagesScreensPlaylists,
@@ -1188,7 +1230,8 @@ namespace FanaBridge.UI.Display
                         capabilityNote: src.CapabilityNote,
                         idleKind: IdleKind.Page,
                         pageRef: src.PageRef,
-                        screen: WheelScreenCommand.Unknown));
+                        screen: WheelScreenCommand.Unknown,
+                        playlistId: null));
                 }
                 remapped.Add(new PriorityPickerGroupModel(
                     pageGroupOnly[g].Header,
@@ -1224,7 +1267,8 @@ namespace FanaBridge.UI.Display
                 capabilityNote: note,
                 idleKind: screen == WheelScreenCommand.Blank ? IdleKind.Blank : IdleKind.Screen,
                 pageRef: null,
-                screen: screen);
+                screen: screen,
+                playlistId: null);
         }
 
         // ── Shared projection helpers (lifted from Overview idiom) ───────
@@ -1370,6 +1414,15 @@ namespace FanaBridge.UI.Display
                         ? DisplayCopy.PageCaption(dest.Badges[0], dest.Name)
                         : dest.Name;
                 }
+                case IdleKind.Playlist:
+                {
+                    var pl = FindPlaylist(config, idle.Playlist);
+                    if (pl == null)
+                        return idle.Playlist ?? DisplayCopy.ABlankDisplay;
+                    return !string.IsNullOrEmpty(pl.Name)
+                        ? pl.Name
+                        : GeneratedPlaylistName(pl, config, catalog);
+                }
                 default:
                     return DisplayCopy.ABlankDisplay;
             }
@@ -1385,6 +1438,8 @@ namespace FanaBridge.UI.Display
                     return "screen:" + idle.Screen.ToString().ToLowerInvariant();
                 case IdleKind.Page:
                     return "page:" + (PageRefKey(idle.Page) ?? string.Empty);
+                case IdleKind.Playlist:
+                    return "playlist:" + (idle.Playlist ?? string.Empty);
                 default:
                     return "screen:blank";
             }
@@ -1736,6 +1791,15 @@ namespace FanaBridge.UI.Display
         {
             if (item == null)
                 return new IdleSpec { Kind = IdleKind.Blank };
+            if (item.IdleKind == IdleKind.Playlist
+                && !string.IsNullOrWhiteSpace(item.PlaylistId))
+            {
+                return new IdleSpec
+                {
+                    Kind = IdleKind.Playlist,
+                    Playlist = item.PlaylistId,
+                };
+            }
             if (item.IdleKind == IdleKind.Page && item.PageRef != null)
             {
                 return new IdleSpec
@@ -1754,6 +1818,104 @@ namespace FanaBridge.UI.Display
                 Kind = IdleKind.Screen,
                 Screen = item.Screen,
             };
+        }
+
+        private static PlaylistEntry FindPlaylist(DisplayConfigV2 config, string id)
+        {
+            if (config?.Playlists == null || string.IsNullOrWhiteSpace(id))
+                return null;
+            for (int i = 0; i < config.Playlists.Count; i++)
+            {
+                var pl = config.Playlists[i];
+                if (pl != null
+                    && string.Equals(pl.Id, id, StringComparison.OrdinalIgnoreCase))
+                    return pl;
+            }
+            return null;
+        }
+
+        private static string GeneratedPlaylistName(
+            PlaylistEntry pl, DisplayConfigV2 config, WheelCatalog catalog)
+        {
+            if (pl?.Steps == null || pl.Steps.Count == 0)
+                return pl?.Id ?? string.Empty;
+            // Short join of step destination names (same spirit as summon name generation).
+            var parts = new List<string>(pl.Steps.Count);
+            for (int i = 0; i < pl.Steps.Count && parts.Count < 3; i++)
+            {
+                var step = pl.Steps[i];
+                if (step?.Destination == null) continue;
+                parts.Add(StepDestinationName(step.Destination, config, catalog));
+            }
+            return parts.Count == 0 ? (pl.Id ?? string.Empty) : string.Join(" → ", parts);
+        }
+
+        /// <summary>
+        /// Read-only step summary with skip / clamp labels (P6 rider b, P2) for the
+        /// picker trailing note. Authored steps are never dropped; degraded/skipped
+        /// steps carry <see cref="DisplayCopy.PlaylistStepSkipped"/>; sub-floor
+        /// durations show the clamped value + degrade-visible marker.
+        /// </summary>
+        private static string PlaylistStepSummary(PlaylistEntry pl, WheelCatalog catalog)
+        {
+            if (pl?.Steps == null || pl.Steps.Count == 0)
+                return null;
+            var parts = new List<string>(pl.Steps.Count);
+            for (int i = 0; i < pl.Steps.Count; i++)
+            {
+                var step = pl.Steps[i];
+                if (step?.Destination == null) continue;
+                string name = StepDestinationName(step.Destination, null, catalog);
+                bool skipped = step.DegradedAtLoad
+                    || step.Destination.DegradedAtLoad
+                    || StepCapabilitySkipped(step.Destination, catalog);
+                if (skipped)
+                {
+                    parts.Add(DisplayCopy.PlaylistStepLine(name, DisplayCopy.PlaylistStepSkipped));
+                }
+                else if (step.DurationMsPresent)
+                {
+                    parts.Add(DisplayCopy.PlaylistStepLine(
+                        name, DisplayCopy.PlaylistStepDurationLabel(step)));
+                }
+                else
+                {
+                    parts.Add(name);
+                }
+            }
+            return parts.Count == 0 ? null : string.Join(" → ", parts);
+        }
+
+        private static bool StepCapabilitySkipped(IdleSpec dest, WheelCatalog catalog)
+        {
+            if (dest == null || catalog?.ScreenCommands == null)
+                return false;
+            if (dest.Kind != IdleKind.Screen)
+                return false;
+            if (dest.Screen == WheelScreenCommand.Unknown || dest.Screen == WheelScreenCommand.Blank)
+                return true;
+            bool? supported = IdleCompile.CapabilityOf(catalog.ScreenCommands, dest.Screen);
+            return supported == false;
+        }
+
+        private static string StepDestinationName(
+            IdleSpec dest, DisplayConfigV2 config, WheelCatalog catalog)
+        {
+            if (dest == null) return string.Empty;
+            switch (dest.Kind)
+            {
+                case IdleKind.Blank:
+                    return DisplayCopy.ABlankDisplay;
+                case IdleKind.Screen:
+                    return ScreenName(dest.Screen);
+                case IdleKind.Page:
+                {
+                    var d = ResolvePageRefDestination(dest.Page, config, catalog, true);
+                    return string.IsNullOrEmpty(d.Name) ? (dest.Page?.Id ?? dest.Page?.CatalogPageId ?? string.Empty) : d.Name;
+                }
+                default:
+                    return dest.KindRaw ?? string.Empty;
+            }
         }
     }
 
@@ -2040,7 +2202,8 @@ namespace FanaBridge.UI.Display
             string capabilityNote,
             IdleKind idleKind,
             PageRef pageRef,
-            WheelScreenCommand screen)
+            WheelScreenCommand screen,
+            string playlistId = null)
         {
             Key = key ?? string.Empty;
             Badge = badge;
@@ -2052,6 +2215,7 @@ namespace FanaBridge.UI.Display
             IdleKind = idleKind;
             PageRef = pageRef;
             Screen = screen;
+            PlaylistId = playlistId;
         }
 
         public string Key { get; }
@@ -2064,5 +2228,7 @@ namespace FanaBridge.UI.Display
         public IdleKind IdleKind { get; }
         public PageRef PageRef { get; }
         public WheelScreenCommand Screen { get; }
+        /// <summary>Playlist id when <see cref="IdleKind"/> is <see cref="IdleKind.Playlist"/>.</summary>
+        public string PlaylistId { get; }
     }
 }

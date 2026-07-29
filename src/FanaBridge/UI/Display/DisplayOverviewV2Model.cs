@@ -219,17 +219,13 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>
-        /// O2: plain IdleSpec rendering (Screen / Blank / Page). Playlist copy path
-        /// is stubbed behind the ratified amendment shape — lights up when task #22 lands.
+        /// O2: IdleSpec rendering (Screen / Blank / Page / Playlist).
         /// </summary>
         public static string IdleDetail(
             IdleSpec idle,
             DisplayConfigV2 config = null,
             WheelCatalog catalog = null)
         {
-            // task #22: when a playlist target ships, branch here and set
-            // showPlaylistBadge + IdleTargetLine(playlistName, summary).
-
             if (idle == null || idle.Kind == IdleKind.Unknown || idle.Kind == IdleKind.Blank)
                 return DisplayCopy.IdleTargetLine(DisplayCopy.ABlankDisplay, null);
 
@@ -245,8 +241,61 @@ namespace FanaBridge.UI.Display
                         : dest.Name;
                     return DisplayCopy.IdleTargetLine(name, null);
                 }
+                case IdleKind.Playlist:
+                {
+                    string playlistName = idle.Playlist;
+                    string summary = null;
+                    if (config?.Playlists != null && !string.IsNullOrWhiteSpace(idle.Playlist))
+                    {
+                        for (int i = 0; i < config.Playlists.Count; i++)
+                        {
+                            var pl = config.Playlists[i];
+                            if (pl == null) continue;
+                            if (!string.Equals(pl.Id, idle.Playlist, StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            playlistName = !string.IsNullOrEmpty(pl.Name) ? pl.Name : pl.Id;
+                            summary = PlaylistSummary(pl);
+                            break;
+                        }
+                    }
+                    return DisplayCopy.IdleTargetLine(playlistName, summary);
+                }
                 default:
                     return DisplayCopy.IdleTargetLine(DisplayCopy.ABlankDisplay, null);
+            }
+        }
+
+        private static string PlaylistSummary(PlaylistEntry pl)
+        {
+            if (pl?.Steps == null || pl.Steps.Count == 0)
+                return null;
+            var parts = new List<string>(pl.Steps.Count);
+            for (int i = 0; i < pl.Steps.Count; i++)
+            {
+                var step = pl.Steps[i];
+                if (step?.Destination == null) continue;
+                string name = StepDestName(step.Destination);
+                if (step.DegradedAtLoad || step.Destination.DegradedAtLoad)
+                    parts.Add(DisplayCopy.PlaylistStepLine(name, DisplayCopy.PlaylistStepSkipped));
+                else if (step.DurationMsPresent)
+                    parts.Add(DisplayCopy.PlaylistStepLine(
+                        name, DisplayCopy.PlaylistStepDurationLabel(step)));
+                else
+                    parts.Add(name);
+            }
+            return parts.Count == 0 ? null : string.Join(" → ", parts);
+        }
+
+        private static string StepDestName(IdleSpec dest)
+        {
+            if (dest == null) return string.Empty;
+            switch (dest.Kind)
+            {
+                case IdleKind.Blank: return DisplayCopy.ABlankDisplay;
+                case IdleKind.Screen: return ScreenName(dest.Screen);
+                case IdleKind.Page:
+                    return dest.Page?.CatalogPageId ?? dest.Page?.Id ?? string.Empty;
+                default: return dest.KindRaw ?? string.Empty;
             }
         }
 

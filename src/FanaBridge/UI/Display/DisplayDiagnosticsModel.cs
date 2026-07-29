@@ -62,7 +62,7 @@ namespace FanaBridge.UI.Display
             var device = BuildDeviceLines(resolution);
             var wheel = BuildWheelScreenLines(resolution);
             var manual = BuildManualLines(resolution);
-            var floor = BuildFloorLines(resolution);
+            var floor = BuildFloorLines(resolution, config);
 
             return new DisplayDiagnosticsModel(
                 hasResolution: true,
@@ -488,7 +488,8 @@ namespace FanaBridge.UI.Display
         // ── Base / idle floor ────────────────────────────────────────────
 
         private static IReadOnlyList<string> BuildFloorLines(
-            DisplayResolutionSnapshotModel resolution)
+            DisplayResolutionSnapshotModel resolution,
+            DisplayConfigV2 config)
         {
             var lines = new List<string>(4);
 
@@ -509,20 +510,22 @@ namespace FanaBridge.UI.Display
                 {
                     lines.Add(DisplayCopy.DiagnosticsFactLine(
                         DisplayCopy.OutsideASession,
-                        RuledDestinationDisplay(
-                            display.DestinationId, DisplayCopy.OutsideASession)));
+                        IdleFloorDisplay(display.DestinationId, config)));
                 }
             }
 
             // Wheel-screen idle floor when released (slice present).
+            // Record carries the resolved floor (active step destination for playlists);
+            // model projection only — no engine record growth (task #22 deliverable 5).
             var wheel = FindWinner(resolution, DestinationIds.WheelScreenSurfaceId);
             if (wheel != null
                 && (string.IsNullOrEmpty(wheel.WinnerCarrierId)
                     || string.Equals(wheel.WinnerCarrierId, DestinationIds.RestIdle, StringComparison.Ordinal)
-                    || string.Equals(wheel.DestinationId, DestinationIds.RestIdle, StringComparison.Ordinal)))
+                    || string.Equals(wheel.DestinationId, DestinationIds.RestIdle, StringComparison.Ordinal)
+                    || (wheel.DestinationId != null
+                        && wheel.DestinationId.StartsWith("screen:", StringComparison.Ordinal))))
             {
-                string dest = RuledDestinationDisplay(
-                    wheel.DestinationId, DisplayCopy.OutsideASession);
+                string dest = IdleFloorDisplay(wheel.DestinationId, config);
                 string line = DisplayCopy.DiagnosticsFactLine(
                     DisplayCopy.DiagnosticsWheelScreenSection, dest);
                 if (!ContainsLine(lines, line))
@@ -550,8 +553,7 @@ namespace FanaBridge.UI.Display
                     {
                         string line = DisplayCopy.DiagnosticsFactLine(
                             DisplayCopy.OutsideASession,
-                            RuledDestinationDisplay(
-                                c.DestinationId, DisplayCopy.OutsideASession));
+                            IdleFloorDisplay(c.DestinationId, config));
                         if (!ContainsLine(lines, line))
                             lines.Add(line);
                     }
@@ -561,6 +563,123 @@ namespace FanaBridge.UI.Display
             return lines.Count == 0
                 ? NoLines
                 : new ReadOnlyCollection<string>(lines);
+        }
+
+        /// <summary>
+        /// Idle/floor value for diagnostics. When rest.idle is a playlist, show the
+        /// playlist name + active step (from the resolved floor destination on the
+        /// record) + skip labels — model projection only.
+        /// </summary>
+        private static string IdleFloorDisplay(string destinationId, DisplayConfigV2 config)
+        {
+            var idle = config?.Priority?.Rest?.Idle;
+            if (idle != null
+                && idle.Kind == IdleKind.Playlist
+                && !string.IsNullOrWhiteSpace(idle.Playlist)
+                && config.Playlists != null)
+            {
+                PlaylistEntry pl = null;
+                for (int i = 0; i < config.Playlists.Count; i++)
+                {
+                    var cand = config.Playlists[i];
+                    if (cand != null
+                        && string.Equals(cand.Id, idle.Playlist, StringComparison.OrdinalIgnoreCase))
+                    {
+                        pl = cand;
+                        break;
+                    }
+                }
+
+                if (pl != null)
+                {
+                    string playlistName = !string.IsNullOrEmpty(pl.Name) ? pl.Name : pl.Id;
+                    string activeName = MatchActiveStepName(pl, destinationId)
+                        ?? RuledDestinationDisplay(destinationId, DisplayCopy.OutsideASession);
+                    string skips = PlaylistSkipSummary(pl);
+                    return DisplayCopy.DiagnosticsPlaylistFloor(playlistName, activeName, skips);
+                }
+            }
+
+            return RuledDestinationDisplay(destinationId, DisplayCopy.OutsideASession);
+        }
+
+        private static string MatchActiveStepName(PlaylistEntry pl, string destinationId)
+        {
+            if (pl?.Steps == null || string.IsNullOrEmpty(destinationId))
+                return null;
+            for (int i = 0; i < pl.Steps.Count; i++)
+            {
+                var step = pl.Steps[i];
+                if (step?.Destination == null || step.DegradedAtLoad)
+                    continue;
+                string stepDest = StepDestinationId(step.Destination);
+                if (stepDest != null
+                    && string.Equals(stepDest, destinationId, StringComparison.Ordinal))
+                    return StepDisplayName(step.Destination);
+            }
+            // Firmware blank / screen destinations from DestinationIds.Screen.
+            if (destinationId.StartsWith("screen:", StringComparison.Ordinal))
+            {
+                string spelling = destinationId.Substring("screen:".Length);
+                return spelling;
+            }
+            return null;
+        }
+
+        private static string StepDestinationId(IdleSpec dest)
+        {
+            if (dest == null) return null;
+            switch (dest.Kind)
+            {
+                case IdleKind.Page:
+                    return DestinationIds.FromPageRef(dest.Page);
+                case IdleKind.Screen:
+                {
+                    string spelling = WheelScreenArbiter.ScreenSpelling(dest.Screen);
+                    return spelling == null ? null : DestinationIds.Screen(spelling);
+                }
+                case IdleKind.Blank:
+                    return DestinationIds.Screen("blank");
+                default:
+                    return null;
+            }
+        }
+
+        private static string StepDisplayName(IdleSpec dest)
+        {
+            if (dest == null) return string.Empty;
+            switch (dest.Kind)
+            {
+                case IdleKind.Blank: return DisplayCopy.ABlankDisplay;
+                case IdleKind.Screen:
+                    switch (dest.Screen)
+                    {
+                        case WheelScreenCommand.Logo: return DisplayCopy.TheWheelsLogo;
+                        case WheelScreenCommand.Blank: return DisplayCopy.ABlankDisplay;
+                        case WheelScreenCommand.White: return DisplayCopy.WhiteScreen;
+                        case WheelScreenCommand.LogoInverted: return DisplayCopy.LogoInvertedScreen;
+                        default: return dest.ScreenRaw ?? string.Empty;
+                    }
+                case IdleKind.Page:
+                    return dest.Page?.CatalogPageId ?? dest.Page?.Id ?? string.Empty;
+                default:
+                    return dest.KindRaw ?? string.Empty;
+            }
+        }
+
+        private static string PlaylistSkipSummary(PlaylistEntry pl)
+        {
+            if (pl?.Steps == null) return null;
+            var skipped = new List<string>();
+            for (int i = 0; i < pl.Steps.Count; i++)
+            {
+                var step = pl.Steps[i];
+                if (step == null) continue;
+                if (step.DegradedAtLoad || (step.Destination != null && step.Destination.DegradedAtLoad))
+                    skipped.Add(StepDisplayName(step.Destination));
+            }
+            if (skipped.Count == 0) return null;
+            return DisplayCopy.PlaylistStepSkipped + ": " + string.Join(", ", skipped);
         }
 
         /// <summary>

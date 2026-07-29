@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Schema2;
 
@@ -42,6 +43,7 @@ namespace FanaBridge.Display.Arbitration
         private readonly DisplayConfigV2 _config;
         private readonly string _deviceKey;
         private readonly IReadOnlyDictionary<ushort, string> _primaryHostByParam;
+        private readonly ScreenCommandsCapability _screenCommands;
         private readonly Action<string> _warn;
         private readonly HashSet<string> _warnedKeys = new HashSet<string>(StringComparer.Ordinal);
 
@@ -54,6 +56,8 @@ namespace FanaBridge.Display.Arbitration
             new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         private readonly Dictionary<string, CycleEntry> _cycles =
             new Dictionary<string, CycleEntry>(StringComparer.Ordinal);
+        private readonly Dictionary<string, PlaylistEntry> _playlists =
+            new Dictionary<string, PlaylistEntry>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Flagged children that are not display contenders — labels + real surface only.
@@ -66,6 +70,13 @@ namespace FanaBridge.Display.Arbitration
         private readonly string _defaultInSessionDestinationId;
         private readonly string _landingDestinationId;
         private readonly IdleSpec _idle;
+
+        /// <summary>
+        /// Playlist program anchor — set on idle ENTRY, cleared on re-entry to session
+        /// (OQ-P1 RESTART). Runtime-only; never persisted.
+        /// </summary>
+        private long? _playlistAnchorMs;
+        private bool _wasIdle;
 
         // ── Runtime (session) state ──────────────────────────────────────
         private readonly HashSet<string> _dismissalLatches =
@@ -107,6 +118,9 @@ namespace FanaBridge.Display.Arbitration
             _deviceKey = options.DeviceKey ?? "";
             _primaryHostByParam = options.PrimaryHostByParam
                 ?? new Dictionary<ushort, string>();
+            // Same capability envelope as WheelScreenArbiter — playlist step filter
+            // must not diverge between planes (shared IdleCompile law).
+            _screenCommands = options.ScreenCommands;
             _warn = options.Warn;
 
             if (_config.Cycles != null)
@@ -115,6 +129,15 @@ namespace FanaBridge.Display.Arbitration
                 {
                     if (c?.Id != null)
                         _cycles[c.Id] = c;
+                }
+            }
+
+            if (_config.Playlists != null)
+            {
+                foreach (var pl in _config.Playlists)
+                {
+                    if (pl?.Id != null && !pl.DegradedAtLoad)
+                        _playlists[pl.Id] = pl;
                 }
             }
 
@@ -143,6 +166,9 @@ namespace FanaBridge.Display.Arbitration
             long now = input.NowMs;
             bool inGame = input.InGame;
             var snapshots = IndexSnapshots(input.CarrierSnapshots);
+
+            // Playlist clock: RESTART on every idle re-entry (OQ-P1).
+            UpdatePlaylistAnchor(inGame, now);
 
             // 1. Game change: manual remembered target RESETS immediately (ruling 7)
             // and stamps dwell so subsequent claims are constrained.
@@ -1302,6 +1328,26 @@ namespace FanaBridge.Display.Arbitration
                 _cycleState.Remove(d);
         }
 
+        /// <summary>
+        /// Playlist program clock (OQ-P1): anchor at idle ENTRY, clear when in-session.
+        /// Fresh idle fire restarts the program from step 0.
+        /// </summary>
+        private void UpdatePlaylistAnchor(bool inGame, long now)
+        {
+            if (inGame)
+            {
+                _wasIdle = false;
+                _playlistAnchorMs = null;
+                return;
+            }
+
+            if (!_wasIdle)
+            {
+                _playlistAnchorMs = now;
+                _wasIdle = true;
+            }
+        }
+
         private void SetSelection(LogicalWinner logical, long now, bool stampDwell)
         {
             _hasSelection = true;
@@ -1360,9 +1406,38 @@ namespace FanaBridge.Display.Arbitration
 
             string effectivePage = cycleMember ?? dest;
 
+            // Idle semantic published on every out-of-session tick (E4-15).
+            // Shared IdleCompile helper (E7) — same reader as WheelScreenArbiter floor.
+            // ALWAYS take PublishedIdleKind / Screen / Page from the compile result so a
+            // playlist idle never leaks IdleKind.Playlist (amendment A1 §7 item 5).
+            // Playlist PAGE steps promote into EffectivePageDestinationId so E5 + director
+            // compose/navigate them (not metadata-only). Ordinary rest.idle page keeps
+            // EffectivePageDestinationId = rest:idle (pre-playlist byte-identical path);
+            // its page lives only on IdlePageDestinationId.
+            IdleCompileResult? compiledIdle = null;
+            if (!inGame)
+            {
+                compiledIdle = IdleCompile.Resolve(
+                    _idle,
+                    screenCommands: _screenCommands,
+                    playlists: _playlists,
+                    nowMs: now,
+                    anchorMs: _playlistAnchorMs);
+                if (_idle != null
+                    && _idle.Kind == Schema2.IdleKind.Playlist
+                    && compiledIdle.Value.PublishedIdleKind == Schema2.IdleKind.Page
+                    && !string.IsNullOrEmpty(compiledIdle.Value.PageDestinationId)
+                    && (string.Equals(dest, DestinationIds.RestIdle, StringComparison.Ordinal)
+                        || DestinationIds.IsRest(dest)))
+                {
+                    effectivePage = compiledIdle.Value.PageDestinationId;
+                }
+            }
+
             // DestinationChanged is computed from the physical page (effective), not
             // seat-level destination identity — so cycle advances request a page change
-            // and same-member cycle↔seat handoffs do not.
+            // and same-member cycle↔seat handoffs do not. Playlist page-step advances
+            // also count (effective page changes while DestinationId stays rest:idle).
             bool destChanged = _prevEmittedEffectivePageId != null
                 && !string.Equals(_prevEmittedEffectivePageId, effectivePage, StringComparison.Ordinal);
 
@@ -1379,26 +1454,15 @@ namespace FanaBridge.Display.Arbitration
                 DwellHeld = dwellHeld,
             };
 
-            // Idle semantic published on every out-of-session tick (E4-15).
-            // Shared IdleCompile helper (E7) — same reader as WheelScreenArbiter floor.
-            // Seat publishes document-level IdleKind (page / blank / screen); park flag
-            // comes from the helper so it cannot diverge from E6's blank compile.
-            if (!inGame)
+            if (compiledIdle.HasValue)
             {
-                var compiled = IdleCompile.Resolve(_idle);
+                var compiled = compiledIdle.Value;
                 intent.ParkOnLegacyForBlank = compiled.ParkOnLegacyForBlank;
-                if (_idle == null || _idle.DegradedAtLoad)
-                {
-                    intent.IdleKind = Schema2.IdleKind.Blank;
-                }
-                else
-                {
-                    intent.IdleKind = _idle.Kind;
-                    if (_idle.Kind == Schema2.IdleKind.Screen)
-                        intent.IdleScreen = _idle.Screen;
-                    else if (_idle.Kind == Schema2.IdleKind.Page)
-                        intent.IdlePageDestinationId = DestinationIds.FromPageRef(_idle.Page);
-                }
+                intent.IdleKind = compiled.PublishedIdleKind;
+                if (compiled.PublishedIdleKind == Schema2.IdleKind.Screen)
+                    intent.IdleScreen = compiled.ScreenCommand;
+                else if (compiled.PublishedIdleKind == Schema2.IdleKind.Page)
+                    intent.IdlePageDestinationId = compiled.PageDestinationId;
             }
 
             _prevEmittedEffectivePageId = effectivePage;

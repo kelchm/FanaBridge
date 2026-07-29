@@ -35,12 +35,21 @@ namespace FanaBridge.Display.Arbitration
 
         private readonly List<RulePlan> _rules = new List<RulePlan>();
         private readonly IdleSpec _idle;
+        private readonly Dictionary<string, PlaylistEntry> _playlists =
+            new Dictionary<string, PlaylistEntry>(StringComparer.OrdinalIgnoreCase);
 
         // ── Latch / keepalive (session) state — accepted-send only ──────
         private bool _latched;
         private WheelScreenCommand _latchedCommand = WheelScreenCommand.Unknown;
         private string _latchedRuleId;
         private long _sentAtMs;
+
+        /// <summary>
+        /// Playlist program anchor — set on idle ENTRY, cleared on re-entry to session
+        /// (OQ-P1 RESTART). Runtime-only; never persisted.
+        /// </summary>
+        private long? _playlistAnchorMs;
+        private bool _wasIdle;
 
         private bool _pendingSend;
         private WheelScreenCommand _pendingCommand = WheelScreenCommand.Unknown;
@@ -60,6 +69,15 @@ namespace FanaBridge.Display.Arbitration
             _warn = options.Warn;
             _idle = _config.Priority?.Rest?.Idle;
 
+            if (_config.Playlists != null)
+            {
+                foreach (var pl in _config.Playlists)
+                {
+                    if (pl?.Id != null && !pl.DegradedAtLoad)
+                        _playlists[pl.Id] = pl;
+                }
+            }
+
             BuildPlans();
         }
 
@@ -74,11 +92,14 @@ namespace FanaBridge.Display.Arbitration
             var snapshots = IndexSnapshots(input.CarrierSnapshots);
             var dismissed = IndexDismissed(input.DismissedCarrierIds);
 
+            // Playlist clock: RESTART on every idle re-entry (OQ-P1).
+            UpdatePlaylistAnchor(inGame, now);
+
             // 1. Apply prior-tick send feedback (declined = no latch; accepted = latch + stamp).
             ApplySendFeedback(input.PreviousSendAccepted);
 
             // 2. Ranked rules over idle floor → desired winner.
-            var winner = SelectWinner(inGame, snapshots, dismissed);
+            var winner = SelectWinner(inGame, snapshots, dismissed, now);
 
             // 3. Release edge: latched screen and plane no longer holds a screen.
             bool surfaceHeld = winner.Kind == WheelScreenOutcomeKind.Screen;
@@ -98,6 +119,10 @@ namespace FanaBridge.Display.Arbitration
             byte? sendPattern = null;
             string sendCarrierId = null;
 
+            // Win-edge fires on command change even when the carrier is unchanged
+            // (E6 law: _latchedCommand != cmd). Playlist step boundaries that keep the
+            // same idle-floor carrier (e.g. logo → blank) therefore re-send correctly;
+            // screen → page releases col01, page → screen reclaims via surfaceHeld edge.
             if (surfaceHeld && winner.Command.HasValue
                 && winner.Command.Value != WheelScreenCommand.Unknown)
             {
@@ -252,7 +277,8 @@ namespace FanaBridge.Display.Arbitration
         private Winner SelectWinner(
             bool inGame,
             Dictionary<string, CarrierTickSnapshot> snapshots,
-            HashSet<string> dismissed)
+            HashSet<string> dismissed,
+            long nowMs)
         {
             // Rules rank by array order over the idle floor.
             foreach (var plan in _rules)
@@ -276,14 +302,16 @@ namespace FanaBridge.Display.Arbitration
             if (inGame)
                 return Winner.Silence();
 
-            return SelectIdleFloor();
+            return SelectIdleFloor(nowMs);
         }
 
-        private Winner SelectIdleFloor()
+        private Winner SelectIdleFloor(long nowMs)
         {
             // Shared IdleCompile helper (E7 / contract §6.2) — same reader as SeatArbiter.
             // Absent or degraded rest.idle = blank floor; Silence is not the default.
-            var compiled = IdleCompile.Resolve(_idle, _screenCommands);
+            // Playlist expands here: active step's compile result, never raw playlist kind.
+            var compiled = IdleCompile.Resolve(
+                _idle, _screenCommands, _playlists, nowMs, _playlistAnchorMs);
             switch (compiled.Kind)
             {
                 case IdleCompileKind.Page:
@@ -308,6 +336,26 @@ namespace FanaBridge.Display.Arbitration
                 default:
                     return Winner.ForScreen(
                         IdleFloorCarrierId, WheelScreenCommand.Blank, capabilityUntested: true);
+            }
+        }
+
+        /// <summary>
+        /// Playlist program clock (OQ-P1): anchor at idle ENTRY, clear when in-session.
+        /// Fresh idle fire restarts the program from step 0.
+        /// </summary>
+        private void UpdatePlaylistAnchor(bool inGame, long now)
+        {
+            if (inGame)
+            {
+                _wasIdle = false;
+                _playlistAnchorMs = null;
+                return;
+            }
+
+            if (!_wasIdle)
+            {
+                _playlistAnchorMs = now;
+                _wasIdle = true;
             }
         }
 

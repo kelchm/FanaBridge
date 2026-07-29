@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
@@ -58,6 +59,7 @@ namespace FanaBridge.Display.Schema2
             var itmCatalogIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var removedItmIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var cycleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var playlistIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var rowIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var summonIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var overrideIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -72,11 +74,13 @@ namespace FanaBridge.Display.Schema2
 
             NormalizeCycles(config, cycleIds, hostedPageIds, itmCatalogIds, catalog, warn);
 
+            NormalizePlaylists(config, playlistIds, hostedPageIds, itmCatalogIds, catalog, warn);
+
             NormalizeFields(config, overrideIds, flaggedHostsNeedingSeat,
                 hostedPageIds, itmCatalogIds, removedItmIds, catalog, warn);
 
             NormalizePriority(config, rowIds, summonIds, hostedPageIds, itmCatalogIds,
-                cycleIds, removedItmIds, catalog, flaggedHostsNeedingSeat, warn);
+                cycleIds, playlistIds, removedItmIds, catalog, flaggedHostsNeedingSeat, warn);
 
             // Second pass: childRef satellites need the finished page/field identity maps.
             ResolveChildRefSatellites(config, warn);
@@ -479,6 +483,7 @@ namespace FanaBridge.Display.Schema2
             HashSet<string> hostedPageIds,
             HashSet<string> itmCatalogIds,
             HashSet<string> cycleIds,
+            HashSet<string> playlistIds,
             HashSet<string> removedItmIds,
             WheelCatalog catalog,
             List<FlaggedHost> flaggedHostsNeedingSeat,
@@ -575,7 +580,8 @@ namespace FanaBridge.Display.Schema2
 
             // Rest block refs — leave Rest null when authored null.
             if (config.Priority.Rest != null)
-                NormalizeRest(config.Priority.Rest, hostedPageIds, itmCatalogIds, catalog, warn);
+                NormalizeRest(config.Priority.Rest, hostedPageIds, itmCatalogIds,
+                    playlistIds, catalog, warn);
         }
 
         private static void NormalizePriorityRow(
@@ -890,6 +896,7 @@ namespace FanaBridge.Display.Schema2
             RestBlock rest,
             HashSet<string> hostedPageIds,
             HashSet<string> itmCatalogIds,
+            HashSet<string> playlistIds,
             WheelCatalog catalog,
             Action<string> warn)
         {
@@ -916,15 +923,24 @@ namespace FanaBridge.Display.Schema2
             // order) — no config member, no validator mark.
 
             if (rest.Idle != null)
-                NormalizeIdle(rest.Idle, hostedPageIds, itmCatalogIds, catalog, warn);
+                NormalizeIdle(rest.Idle, hostedPageIds, itmCatalogIds, playlistIds,
+                    catalog, warn, site: "rest.idle", allowPlaylist: true);
         }
 
+        /// <summary>
+        /// Normalize an idle-shaped destination. <paramref name="allowPlaylist"/> is true
+        /// only for the idle slot itself; playlist steps and any future non-idle carrier
+        /// pass false so a playlist ref is degraded-visible (scope guard).
+        /// </summary>
         private static void NormalizeIdle(
             IdleSpec idle,
             HashSet<string> hostedPageIds,
             HashSet<string> itmCatalogIds,
+            HashSet<string> playlistIds,
             WheelCatalog catalog,
-            Action<string> warn)
+            Action<string> warn,
+            string site,
+            bool allowPlaylist)
         {
             switch (idle.Kind)
             {
@@ -932,20 +948,20 @@ namespace FanaBridge.Display.Schema2
                     if (idle.Page == null)
                     {
                         idle.DegradedAtLoad = true;
-                        warn("rest.idle.page missing — degraded; runtime falls back to blank");
+                        warn(site + ".page missing — degraded; runtime falls back to blank");
                     }
                     else if (idle.Page.Kind == PageRefKind.Cycle)
                     {
                         idle.Page.DegradedAtLoad = true;
                         idle.DegradedAtLoad = true;
-                        warn("rest.idle.page references a cycle — degraded; runtime falls back to blank");
+                        warn(site + ".page references a cycle — degraded; runtime falls back to blank");
                     }
                     else if (!IsResolvablePageMember(idle.Page, hostedPageIds, itmCatalogIds,
                         catalog, allowCycle: false, out string reason))
                     {
                         idle.Page.DegradedAtLoad = true;
                         idle.DegradedAtLoad = true;
-                        warn("rest.idle.page degraded — " + reason
+                        warn(site + ".page degraded — " + reason
                             + "; runtime falls back to blank");
                     }
                     break;
@@ -956,13 +972,13 @@ namespace FanaBridge.Display.Schema2
                     {
                         idle.DegradedAtLoad = true;
                         idle.ScreenIgnored = true;
-                        warn("rest.idle {kind:screen,screen:blank} degraded — use kind blank");
+                        warn(site + " {kind:screen,screen:blank} degraded — use kind blank");
                     }
                     else if (idle.Screen == WheelScreenCommand.Unknown)
                     {
                         idle.DegradedAtLoad = true;
                         idle.ScreenIgnored = true;
-                        warn("rest.idle screen unrecognized '" + idle.ScreenRaw
+                        warn(site + " screen unrecognized '" + idle.ScreenRaw
                             + "' — degraded");
                     }
                     else if (catalog != null)
@@ -970,14 +986,17 @@ namespace FanaBridge.Display.Schema2
                         bool? supported = ScreenCommandSupported(catalog, idle.Screen);
                         if (supported == false)
                         {
+                            // rest.idle screen unsupported → degrade whole idle.
+                            // Playlist step: mark destination degraded; program SKIPS
+                            // the step (P6) rather than degrading the whole playlist.
                             idle.DegradedAtLoad = true;
                             idle.ScreenIgnored = true;
-                            warn("rest.idle screen '" + idle.ScreenRaw
+                            warn(site + " screen '" + idle.ScreenRaw
                                 + "' not supported on this wheel — degraded");
                         }
                         else if (supported == null)
                         {
-                            warn("rest.idle screen '" + idle.ScreenRaw
+                            warn(site + " screen '" + idle.ScreenRaw
                                 + "' capability is untested (null) — not gated");
                         }
                     }
@@ -990,16 +1009,241 @@ namespace FanaBridge.Display.Schema2
                         if (blankOk == false)
                         {
                             idle.ParkOnLegacyForBlank = true;
-                            warn("rest.idle blank on command-less ITM wheel — park-on-Legacy compile policy");
+                            warn(site + " blank on command-less ITM wheel — park-on-Legacy compile policy");
                         }
+                    }
+                    break;
+
+                case IdleKind.Playlist:
+                    if (!allowPlaylist)
+                    {
+                        idle.DegradedAtLoad = true;
+                        warn(site + " playlist ref is legal only on rest.idle — degraded");
+                        break;
+                    }
+                    if (string.IsNullOrWhiteSpace(idle.Playlist))
+                    {
+                        idle.DegradedAtLoad = true;
+                        warn(site + ".playlist missing — degraded; runtime falls back to blank");
+                    }
+                    else if (playlistIds == null || !playlistIds.Contains(idle.Playlist))
+                    {
+                        // Keep the ref (spec §14); degrade idle so runtime falls back to blank.
+                        idle.DegradedAtLoad = true;
+                        warn(site + ".playlist '" + idle.Playlist
+                            + "' unresolvable — degraded; runtime falls back to blank");
+                    }
+                    // All-skipped / missing-program floor: same park policy as blank idle
+                    // on command-less ITM (IdleCompile floor uses this flag).
+                    if (catalog != null && IsItmWheel(catalog))
+                    {
+                        bool? blankOk = catalog.ScreenCommands?.Blank;
+                        if (blankOk == false)
+                            idle.ParkOnLegacyForBlank = true;
                     }
                     break;
 
                 case IdleKind.Unknown:
                     idle.DegradedAtLoad = true;
-                    warn("rest.idle unrecognized kind '" + idle.KindRaw + "' — degraded");
+                    warn(site + " unrecognized kind '" + idle.KindRaw + "' — degraded");
                     break;
             }
+        }
+
+        // ── Playlists ─────────────────────────────────────────────────────
+
+        private static void NormalizePlaylists(
+            DisplayConfigV2 config,
+            HashSet<string> playlistIds,
+            HashSet<string> hostedPageIds,
+            HashSet<string> itmCatalogIds,
+            WheelCatalog catalog,
+            Action<string> warn)
+        {
+            if (config.Playlists == null)
+                return;
+
+            // First-wins identity: seenIds consumes the id (including an invalid first);
+            // playlistIds is the RESOLVABLE set only (rest.idle lookups). Later duplicates
+            // degrade THEMSELVES only — they never remove a prior survivor's id.
+            var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var playlist in config.Playlists)
+            {
+                if (playlist == null)
+                    continue;
+
+                string label = "playlist '" + (playlist.Id ?? playlist.Name ?? "?") + "'";
+                bool isDuplicate = false;
+
+                if (string.IsNullOrWhiteSpace(playlist.Id))
+                {
+                    playlist.DegradedAtLoad = true;
+                    warn(label + " degraded — no id");
+                }
+                else if (IsReservedRuntimeCarrierId(playlist.Id))
+                {
+                    playlist.DegradedAtLoad = true;
+                    warn(label + " degraded — id is a reserved runtime id");
+                    // Invalid first still consumes the id so a later twin cannot win.
+                    seenIds.Add(playlist.Id);
+                }
+                else if (!seenIds.Add(playlist.Id))
+                {
+                    isDuplicate = true;
+                    playlist.DegradedAtLoad = true;
+                    warn("duplicate playlist id '" + playlist.Id + "' — keeping the first");
+                }
+
+                // terminal: unknown coerce to hold at runtime, degrade-visible; raw preserved.
+                if (playlist.Terminal == PlaylistTerminal.Unknown
+                    && !string.IsNullOrWhiteSpace(playlist.TerminalRaw))
+                {
+                    playlist.TerminalCoercedAtLoad = true;
+                    warn(label + " terminal '" + playlist.TerminalRaw
+                        + "' unrecognized — runtime coerces to hold");
+                }
+
+                // Unknown terminal coerces to hold at runtime — treat as hold for duration rules.
+                bool isHold = playlist.Terminal != PlaylistTerminal.Loop;
+
+                // Filter-first duration legality (OQ-P3 / P6): normalize destinations, then
+                // decide held-final among destination-survivors only. A missing-duration
+                // step that becomes final after later steps are skipped is the legal held
+                // terminal — do not degrade it for authored non-final position.
+                var destinationSurvivors = new List<PlaylistStep>();
+                if (playlist.Steps != null)
+                {
+                    int seen = 0;
+                    for (int i = 0; i < playlist.Steps.Count; i++)
+                    {
+                        var step = playlist.Steps[i];
+                        if (step == null)
+                            continue;
+                        string stepLabel = label + " step " + seen;
+                        seen++;
+                        NormalizePlaylistStepDestination(
+                            step, stepLabel, hostedPageIds, itmCatalogIds, catalog, warn);
+                        if (!step.DegradedAtLoad)
+                            destinationSurvivors.Add(step);
+                    }
+                }
+
+                for (int i = 0; i < destinationSurvivors.Count; i++)
+                {
+                    var step = destinationSurvivors[i];
+                    bool isFinal = i == destinationSurvivors.Count - 1;
+                    string stepLabel = label + " step (survivor " + i + ")";
+                    ApplyPlaylistStepDurationRules(step, stepLabel, isFinal, isHold, warn);
+                }
+
+                // Count steps that remain program-usable after destination + duration rules.
+                int resolvable = 0;
+                for (int i = 0; i < destinationSurvivors.Count; i++)
+                {
+                    if (!destinationSurvivors[i].DegradedAtLoad)
+                        resolvable++;
+                }
+
+                // P4: 1-step legal; 0 resolvable steps → degrade playlist whole.
+                // Do NOT remove a first-wins id from seenIds; only withhold it from the
+                // resolvable set (playlistIds). Invalid first still blocks later twins.
+                if (resolvable < 1)
+                {
+                    playlist.DegradedAtLoad = true;
+                    warn(label + " degraded — no resolvable steps");
+                }
+                else if (!isDuplicate
+                    && !playlist.DegradedAtLoad
+                    && !string.IsNullOrWhiteSpace(playlist.Id))
+                {
+                    playlistIds.Add(playlist.Id);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Destination-only normalize for a playlist step (nested playlist, page/screen
+        /// resolve). Duration rules applied separately after survivor filtering.
+        /// </summary>
+        private static void NormalizePlaylistStepDestination(
+            PlaylistStep step,
+            string stepLabel,
+            HashSet<string> hostedPageIds,
+            HashSet<string> itmCatalogIds,
+            WheelCatalog catalog,
+            Action<string> warn)
+        {
+            if (step.Destination == null)
+            {
+                step.DegradedAtLoad = true;
+                warn(stepLabel + " degraded — destination missing");
+                return;
+            }
+
+            // Nested playlist is illegal — step degraded (no nesting).
+            if (step.Destination.Kind == IdleKind.Playlist)
+            {
+                step.DegradedAtLoad = true;
+                step.Destination.DegradedAtLoad = true;
+                warn(stepLabel + " degraded — nested playlist is illegal");
+                return;
+            }
+
+            // Steps are not the idle slot: playlist ref inside destination is also nested.
+            NormalizeIdle(
+                step.Destination, hostedPageIds, itmCatalogIds,
+                playlistIds: null, catalog, warn,
+                site: stepLabel + " destination",
+                allowPlaylist: false);
+
+            if (step.Destination.DegradedAtLoad)
+            {
+                step.DegradedAtLoad = true;
+                // warning already emitted by NormalizeIdle
+            }
+        }
+
+        /// <summary>
+        /// Duration rules (OQ-P3) against the post-filter survivor list: held final under
+        /// hold may omit duration; present value on held final is ignored + visible.
+        /// Under hold, missing duration on a non-final is a RUNTIME skip only (not load
+        /// degrade) so a step that becomes final after capability filtering stays legal.
+        /// Under loop, every step needs a duration — missing degrades at load.
+        /// </summary>
+        private static void ApplyPlaylistStepDurationRules(
+            PlaylistStep step,
+            string stepLabel,
+            bool isFinal,
+            bool isHoldTerminal,
+            Action<string> warn)
+        {
+            if (step.DurationMsPresent)
+            {
+                if (isFinal && isHoldTerminal)
+                {
+                    step.DurationMsIgnored = true;
+                    warn(stepLabel + " durationMs ignored on held final step (terminal hold)");
+                }
+                else if (step.DurationMs < SeatArbiter.MinDwellMs)
+                {
+                    // P2: runtime-only clamp; authored value preserved; degrade-visible note.
+                    // Do NOT rewrite DurationMs.
+                    warn(stepLabel + " durationMs " + step.DurationMs
+                        + " below destination floor " + SeatArbiter.MinDwellMs
+                        + " ms — runtime clamps (document unchanged)");
+                }
+            }
+            else if (!isHoldTerminal)
+            {
+                // Loop: every step must contribute time — absent duration degrades.
+                step.DegradedAtLoad = true;
+                warn(stepLabel + " degraded — durationMs absent (required under terminal loop)");
+            }
+            // Hold + absent duration: leave undegraded. IdleCompile filter-first treats
+            // the surviving final as the legal held terminal; earlier untimeable steps
+            // are skipped at runtime without a load degrade (so capability filter can
+            // still promote them to final).
         }
 
         // ── pageOrder ─────────────────────────────────────────────────────

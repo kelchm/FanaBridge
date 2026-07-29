@@ -329,6 +329,13 @@ namespace FanaBridge.Display.Schema2
         [JsonProperty("page")]
         public PageRef Page { get; set; }
 
+        /// <summary>
+        /// Kind <c>playlist</c>: playlist id string (not a <see cref="PageRef"/> —
+        /// playlists must not become a fourth page-ref kind). Idle-slot only.
+        /// </summary>
+        [JsonProperty("playlist")]
+        public string Playlist { get; set; }
+
         /// <summary>Members this build does not recognize, preserved verbatim for
         /// round-trips.</summary>
         [JsonExtensionData]
@@ -357,6 +364,8 @@ namespace FanaBridge.Display.Schema2
         Screen,
         Blank,
         Page,
+        /// <summary>Idle program reference — id in <see cref="IdleSpec.Playlist"/>.</summary>
+        Playlist,
     }
 
     /// <summary>SpecialCommands vocabulary for wheel-screen rules and idle screen kind.
