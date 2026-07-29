@@ -499,3 +499,6 @@ tmp/
 dist/
 src/FanaBridge/Resources/DeviceLogos/processed/
 scratch/
+
+# Session working notes — never committed (scratch/ convention)
+scratchpad/
