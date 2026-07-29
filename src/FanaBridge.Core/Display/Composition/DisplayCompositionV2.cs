@@ -93,6 +93,7 @@ namespace FanaBridge.Display.Composition
             _seat = new SeatArbiter(_config, new SeatArbiterOptions
             {
                 PrimaryHostByParam = primaryHosts,
+                Catalog = _catalog,
                 // Same envelope as wheel-screen — playlist step selection must not diverge.
                 ScreenCommands = screenCommands,
                 DeviceKey = _deviceKey,
@@ -108,6 +109,7 @@ namespace FanaBridge.Display.Composition
             {
                 Capabilities = capabilities,
                 PrimaryHostByParam = primaryHosts,
+                Catalog = _catalog,
                 DeviceKey = _deviceKey,
                 Warn = _log,
             });
@@ -118,7 +120,7 @@ namespace FanaBridge.Display.Composition
 
             _walk = WalkCompiler.Compile(_config, _catalog);
             _wheelScreenRuleIds = CollectWheelScreenRuleIds(_config);
-            _carriers = BuildCarrierTable(_config);
+            _carriers = BuildCarrierTable(_config, _catalog);
             _pageTable = ItmPageTable.ForDevice(itmDeviceId);
             _conditionPlan = ConditionParamPlanner.Plan(
                 _config, options.HasEncoder, _log);
@@ -568,7 +570,8 @@ namespace FanaBridge.Display.Composition
             return list;
         }
 
-        private static List<CarrierEntry> BuildCarrierTable(DisplayConfigV2 config)
+        private static List<CarrierEntry> BuildCarrierTable(
+            DisplayConfigV2 config, WheelCatalog catalog)
         {
             // Collect then sort by carrier id so evaluation order is never Dictionary-order.
             var byId = new Dictionary<string, CarrierEntry>(StringComparer.Ordinal);
@@ -623,24 +626,20 @@ namespace FanaBridge.Display.Composition
                 }
             }
 
-            // Field overrides — sorted param id for determinism.
-            if (config.Fields != null)
+            // Field overrides — one ladder (fields + sharedFields); sharedFields wins (S1).
+            foreach (var kv in FieldLadderMap.Build(config, catalog))
             {
-                var keys = new List<ushort>(config.Fields.Keys);
-                keys.Sort();
-                for (int i = 0; i < keys.Count; i++)
+                var entry = kv.Value;
+                if (entry?.Overrides == null)
+                    continue;
+                ushort paramId = kv.Key;
+                string owning = paramId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                for (int j = 0; j < entry.Overrides.Count; j++)
                 {
-                    ushort paramId = keys[i];
-                    if (!config.Fields.TryGetValue(paramId, out var entry) || entry?.Overrides == null)
+                    var ov = entry.Overrides[j];
+                    if (ov == null || !ov.EffectivelyEnabled)
                         continue;
-                    string owning = paramId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                    for (int j = 0; j < entry.Overrides.Count; j++)
-                    {
-                        var ov = entry.Overrides[j];
-                        if (ov == null || !ov.EffectivelyEnabled)
-                            continue;
-                        Add(ov.Id, ov.Condition, ov.Lifetime, ov.Runs, owning);
-                    }
+                    Add(ov.Id, ov.Condition, ov.Lifetime, ov.Runs, owning);
                 }
             }
 

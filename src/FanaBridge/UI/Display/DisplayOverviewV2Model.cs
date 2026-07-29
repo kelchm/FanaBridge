@@ -963,6 +963,7 @@ namespace FanaBridge.UI.Display
                 Priority = config.Priority,
                 PageOrder = config.PageOrder,
                 Fields = config.Fields,
+                SharedFields = config.SharedFields,
                 WheelScreen = config.WheelScreen,
                 Settings = config.Settings == null
                     ? new SettingsBlock()

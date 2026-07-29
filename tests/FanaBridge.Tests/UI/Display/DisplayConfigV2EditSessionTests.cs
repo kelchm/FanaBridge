@@ -654,6 +654,10 @@ namespace FanaBridge.Tests.UI.Display
             {
                 Itm = new ItmCatalogSection
                 {
+                    Fields = new List<CatalogFieldDefinition>
+                    {
+                        new CatalogFieldDefinition { Id = "fuel", ParamId = 5, ShortCode = "FUEL" },
+                    },
                     Pages = new List<CatalogPage>
                     {
                         new CatalogPage
@@ -661,9 +665,9 @@ namespace FanaBridge.Tests.UI.Display
                             Id = "lapInfo",
                             Index = 1,
                             Name = "Lap Info",
-                            Fields = new List<CatalogField>
+                            Placements = new List<CatalogFieldPlacement>
                             {
-                                new CatalogField { ParamId = 5, ShortCode = "FUEL" },
+                                new CatalogFieldPlacement { Field = "fuel" },
                             },
                         },
                     },
@@ -997,6 +1001,44 @@ namespace FanaBridge.Tests.UI.Display
             Assert.Empty(session.Document.Fields[505].Overrides);
             // Seat for lapInfo removed.
             Assert.DoesNotContain(session.Document.Priority.Rows, r => r.Id == "seat-1");
+        }
+
+        [Fact]
+        public void RemovePageContent_PageExclusiveSharedField_IsDeleted()
+        {
+            // Exclusivity law spans BOTH collections: a page-exclusive param stored
+            // under sharedFields is still cleared on remove-all for that page.
+            Assert.True(CatalogLoader.TryResolve("pbme", out var catalog, _ => { }));
+            var live = SeedLive();
+            live.SharedFields = new Dictionary<string, FieldEntry>
+            {
+                // lap (505) is exclusive to lapInfo on PBME.
+                ["lap"] = new FieldEntry
+                {
+                    Overrides = new List<FieldOverride>
+                    {
+                        new FieldOverride { Id = "ov-lap-shared-exclusive" },
+                    },
+                },
+                // speed is multi-page — must survive.
+                ["speed"] = new FieldEntry
+                {
+                    Overrides = new List<FieldOverride>
+                    {
+                        new FieldOverride { Id = "ov-speed-shared" },
+                    },
+                },
+            };
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { }, catalog);
+
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.RemovePageContent(
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+                catalog);
+
+            Assert.Empty(session.Document.SharedFields!["lap"].Overrides);
+            Assert.Single(session.Document.SharedFields["speed"].Overrides);
         }
 
         [Fact]

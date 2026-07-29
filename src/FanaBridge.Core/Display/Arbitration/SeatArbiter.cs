@@ -43,6 +43,7 @@ namespace FanaBridge.Display.Arbitration
         private readonly DisplayConfigV2 _config;
         private readonly string _deviceKey;
         private readonly IReadOnlyDictionary<ushort, string> _primaryHostByParam;
+        private readonly WheelCatalog _catalog;
         private readonly ScreenCommandsCapability _screenCommands;
         private readonly Action<string> _warn;
         private readonly HashSet<string> _warnedKeys = new HashSet<string>(StringComparer.Ordinal);
@@ -118,6 +119,7 @@ namespace FanaBridge.Display.Arbitration
             _deviceKey = options.DeviceKey ?? "";
             _primaryHostByParam = options.PrimaryHostByParam
                 ?? new Dictionary<ushort, string>();
+            _catalog = options.Catalog;
             // Same capability envelope as WheelScreenArbiter — playlist step filter
             // must not diverge between planes (shared IdleCompile law).
             _screenCommands = options.ScreenCommands;
@@ -636,66 +638,64 @@ namespace FanaBridge.Display.Arbitration
                 }
             }
 
-            // ITM pages: flagged field overrides whose primaryHost is that page.
-            // Absence of PrimaryHostByParam where flags exist = degrade-visible.
-            if (_config.Fields != null)
+            // ITM pages: flagged field overrides whose primaryHost is that page
+            // (fields + sharedFields one-ladder). Absence of PrimaryHostByParam where
+            // flags exist = degrade-visible.
+            foreach (var kv in FieldLadderMap.Build(_config, _catalog))
             {
-                foreach (var kv in _config.Fields)
+                ushort paramId = kv.Key;
+                var field = kv.Value;
+                if (field?.Overrides == null)
+                    continue;
+                string surface = "field:" + paramId;
+                bool hasHost = _primaryHostByParam.TryGetValue(paramId, out var hostCatalogId)
+                    && !string.IsNullOrEmpty(hostCatalogId);
+                string dest = hasHost ? DestinationIds.Itm(hostCatalogId) : null;
+
+                foreach (var ov in field.Overrides)
                 {
-                    ushort paramId = kv.Key;
-                    var field = kv.Value;
-                    if (field?.Overrides == null)
+                    if (ov == null || string.IsNullOrEmpty(ov.Id))
                         continue;
-                    string surface = "field:" + paramId;
-                    bool hasHost = _primaryHostByParam.TryGetValue(paramId, out var hostCatalogId)
-                        && !string.IsNullOrEmpty(hostCatalogId);
-                    string dest = hasHost ? DestinationIds.Itm(hostCatalogId) : null;
-
-                    foreach (var ov in field.Overrides)
+                    if (ov.DegradedAtLoad)
                     {
-                        if (ov == null || string.IsNullOrEmpty(ov.Id))
-                            continue;
-                        if (ov.DegradedAtLoad)
-                        {
-                            RegisterForeignIfAbsent(ov.Id, surface, dest);
-                            MarkForeignLabel(ov.Id, CarrierRowLabels.KeptAsIs);
-                            continue;
-                        }
-                        if (!ov.Enabled)
-                        {
-                            RegisterForeignIfAbsent(ov.Id, surface, dest);
-                            MarkForeignLabel(ov.Id, CarrierRowLabels.Off);
-                            continue;
-                        }
-                        if (!ov.ActsAsEntrypoint || ov.ActsAsEntrypointIgnored)
-                            continue;
-
-                        if (!hasHost)
-                        {
-                            // Degrade-visible: row with labels, no silent drop; never a
-                            // null-destination contender. Envelope edge = rebuild edge.
-                            RegisterForeignIfAbsent(ov.Id, surface, null);
-                            MarkForeignLabel(
-                                ov.Id,
-                                CarrierRowLabels.KeptAsIs | CarrierRowLabels.CantRunHere);
-                            WarnOnce(
-                                "host-map:" + paramId,
-                                "PrimaryHostByParam missing for flagged field param "
-                                + paramId + " (carrier " + ov.Id + ") — degrade-visible");
-                            // Mark any seat that would have hosted this as degraded membership
-                            // once we know hosts — without host we attach to a synthetic bag.
-                            AddOrphanDegrade(byDest, ov.Id);
-                            continue;
-                        }
-
-                        if (splitChildIds.Contains(ov.Id))
-                        {
-                            RegisterForeignIfAbsent(ov.Id, surface, dest);
-                            continue;
-                        }
-                        AddMember(byDest, dest, ov.Id);
                         RegisterForeignIfAbsent(ov.Id, surface, dest);
+                        MarkForeignLabel(ov.Id, CarrierRowLabels.KeptAsIs);
+                        continue;
                     }
+                    if (!ov.Enabled)
+                    {
+                        RegisterForeignIfAbsent(ov.Id, surface, dest);
+                        MarkForeignLabel(ov.Id, CarrierRowLabels.Off);
+                        continue;
+                    }
+                    if (!ov.ActsAsEntrypoint || ov.ActsAsEntrypointIgnored)
+                        continue;
+
+                    if (!hasHost)
+                    {
+                        // Degrade-visible: row with labels, no silent drop; never a
+                        // null-destination contender. Envelope edge = rebuild edge.
+                        RegisterForeignIfAbsent(ov.Id, surface, null);
+                        MarkForeignLabel(
+                            ov.Id,
+                            CarrierRowLabels.KeptAsIs | CarrierRowLabels.CantRunHere);
+                        WarnOnce(
+                            "host-map:" + paramId,
+                            "PrimaryHostByParam missing for flagged field param "
+                            + paramId + " (carrier " + ov.Id + ") — degrade-visible");
+                        // Mark any seat that would have hosted this as degraded membership
+                        // once we know hosts — without host we attach to a synthetic bag.
+                        AddOrphanDegrade(byDest, ov.Id);
+                        continue;
+                    }
+
+                    if (splitChildIds.Contains(ov.Id))
+                    {
+                        RegisterForeignIfAbsent(ov.Id, surface, dest);
+                        continue;
+                    }
+                    AddMember(byDest, dest, ov.Id);
+                    RegisterForeignIfAbsent(ov.Id, surface, dest);
                 }
             }
 

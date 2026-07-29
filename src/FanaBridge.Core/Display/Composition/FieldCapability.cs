@@ -27,12 +27,13 @@ namespace FanaBridge.Display.Composition
 
         /// <summary>
         /// Whether overrides are allowed on this param (catalog <c>overridable</c>).
-        /// Null = untested; false = Gear/EngineMap lock (§13) — child inert, degrade-visible.
+        /// Null = untested; false = envelope lock (e.g. gear on PBME) — child inert,
+        /// degrade-visible. Capability facts live in catalog DATA, never per-field code law.
         /// </summary>
         public bool? Overridable { get; set; }
 
         /// <summary>
-        /// Catalog page ids that host this param (for OffScreen presence). Empty when
+        /// Catalog page ids that host this param (derived reach from placements). Empty when
         /// unknown — presence then keys only on primary host when supplied.
         /// </summary>
         public IReadOnlyList<string> HostCatalogPageIds { get; set; }
@@ -46,9 +47,10 @@ namespace FanaBridge.Display.Composition
         public string PrimaryHostCatalogPageId { get; set; }
 
         /// <summary>
-        /// Index catalog fields into a param → capability map. Duplicate param appearances
-        /// merge host lists; primaryHost prefers the first true marker; capability
-        /// booleans take the first non-null observation.
+        /// Index catalog placements into a param → capability map. Definitions supply
+        /// capability booleans; placements supply host lists and primaryHost markers.
+        /// Duplicate param appearances merge host lists; primaryHost prefers the first
+        /// true marker; capability booleans take the first non-null observation.
         /// </summary>
         public static IReadOnlyDictionary<ushort, FieldCapability> FromCatalog(WheelCatalog catalog)
         {
@@ -56,47 +58,53 @@ namespace FanaBridge.Display.Composition
             if (catalog?.Itm?.Pages == null)
                 return map;
 
+            var defs = CatalogFields.IndexByLogicalId(catalog);
+
             foreach (var page in catalog.Itm.Pages)
             {
-                if (page?.Fields == null || string.IsNullOrEmpty(page.Id))
+                if (page?.Placements == null || string.IsNullOrEmpty(page.Id))
                     continue;
-                foreach (var field in page.Fields)
+                foreach (var placement in page.Placements)
                 {
-                    if (field == null)
+                    if (placement == null || string.IsNullOrEmpty(placement.Field))
                         continue;
-                    if (!map.TryGetValue(field.ParamId, out var cap))
+                    if (!defs.TryGetValue(placement.Field, out var def) || def == null)
+                        continue;
+
+                    if (!map.TryGetValue(def.ParamId, out var cap))
                     {
                         cap = new FieldCapability
                         {
-                            ParamId = field.ParamId,
+                            ParamId = def.ParamId,
                             HostCatalogPageIds = new List<string>(),
                         };
-                        map[field.ParamId] = cap;
+                        map[def.ParamId] = cap;
                     }
 
                     var hosts = (List<string>)cap.HostCatalogPageIds;
                     if (!hosts.Contains(page.Id))
                         hosts.Add(page.Id);
 
-                    if (field.PrimaryHost == true && string.IsNullOrEmpty(cap.PrimaryHostCatalogPageId))
+                    if (placement.PrimaryHost == true
+                        && string.IsNullOrEmpty(cap.PrimaryHostCatalogPageId))
                         cap.PrimaryHostCatalogPageId = page.Id;
 
-                    if (field.Overridable != null && cap.Overridable == null)
-                        cap.Overridable = field.Overridable;
+                    if (def.Overridable != null && cap.Overridable == null)
+                        cap.Overridable = def.Overridable;
 
-                    if (field.Suffix != null)
+                    if (def.Suffix != null)
                     {
                         if (cap.SuffixSupported == null)
-                            cap.SuffixSupported = field.Suffix.Supported;
+                            cap.SuffixSupported = def.Suffix.Supported;
                         if (cap.SuffixWidth == null)
-                            cap.SuffixWidth = field.Suffix.Width;
+                            cap.SuffixWidth = def.Suffix.Width;
                     }
-                    if (field.Value != null)
+                    if (def.Value != null)
                     {
                         if (cap.ValueNumeric == null)
-                            cap.ValueNumeric = field.Value.Numeric;
+                            cap.ValueNumeric = def.Value.Numeric;
                         if (cap.ValueAscii == null)
-                            cap.ValueAscii = field.Value.Ascii;
+                            cap.ValueAscii = def.Value.Ascii;
                     }
                 }
             }
@@ -141,7 +149,10 @@ namespace FanaBridge.Display.Composition
         Inert,
         /// <summary>Unrecognized <c>writes</c> — cannot paint.</summary>
         UnknownWrites,
-        /// <summary>Catalog <c>overridable: false</c> (Gear / EngineMapping lock).</summary>
+        /// <summary>
+        /// Catalog <c>overridable: false</c> — DATA-driven lock (standing law: never a
+        /// per-field code exclusion).
+        /// </summary>
         ParamLocked,
         /// <summary>
         /// Content kind the field plane cannot render (outside

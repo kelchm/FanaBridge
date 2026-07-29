@@ -573,8 +573,7 @@ namespace FanaBridge.Display.Drivers
         private bool TryEncodeOverride(ushort paramId, byte handle, out ItmValue value)
         {
             value = default;
-            if (FieldFormats.IsOverrideExcluded(paramId))
-                return false;
+            // Standing law: no per-field hardcoded exclusion — envelope DATA decides.
             if (!_fieldMappings.TryGetValue(paramId, out var mapping) || mapping?.Source == null)
                 return false;
             if (_properties == null)

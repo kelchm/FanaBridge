@@ -535,6 +535,7 @@ namespace FanaBridge.UI.Display
                 int rankCount,
                 int contentCount,
                 HashSet<ushort> exclusiveParams,
+                HashSet<string> exclusiveSharedKeys,
                 bool clearHostedLayers)
             {
                 Target = target;
@@ -542,6 +543,8 @@ namespace FanaBridge.UI.Display
                 RankCount = rankCount;
                 ContentCount = contentCount;
                 ExclusiveParams = exclusiveParams ?? new HashSet<ushort>();
+                ExclusiveSharedKeys = exclusiveSharedKeys
+                    ?? new HashSet<string>(StringComparer.Ordinal);
                 ClearHostedLayers = clearHostedLayers;
             }
 
@@ -551,6 +554,11 @@ namespace FanaBridge.UI.Display
             public int ContentCount { get; }
             internal string TargetKey { get; }
             internal HashSet<ushort> ExclusiveParams { get; }
+            /// <summary>
+            /// sharedFields logical ids whose param is page-exclusive (resolved at plan
+            /// time so apply does not need the catalog again).
+            /// </summary>
+            internal HashSet<string> ExclusiveSharedKeys { get; }
             internal bool ClearHostedLayers { get; }
         }
 
@@ -584,22 +592,15 @@ namespace FanaBridge.UI.Display
             }
 
             var exclusive = new HashSet<ushort>();
+            var exclusiveShared = new HashSet<string>(StringComparer.Ordinal);
             int contentCount = 0;
             bool clearHosted = false;
 
             if (target.Kind == PageRefKind.ItmPage)
             {
                 exclusive = ExclusiveParamsOnCatalogPage(catalog, target.CatalogPageId);
-                if (_document?.Fields != null)
-                {
-                    foreach (var kv in _document.Fields)
-                    {
-                        if (!exclusive.Contains(kv.Key))
-                            continue;
-                        if (kv.Value?.Overrides != null)
-                            contentCount += kv.Value.Overrides.Count;
-                    }
-                }
+                exclusiveShared = ExclusiveSharedKeys(_document, exclusive, catalog);
+                contentCount = CountExclusiveOverrides(_document, exclusive, exclusiveShared);
             }
             else if (target.Kind == PageRefKind.HostedPage)
             {
@@ -620,7 +621,7 @@ namespace FanaBridge.UI.Display
             }
 
             plan = new PageContentRemovalPlan(
-                target, key, rankCount, contentCount, exclusive, clearHosted);
+                target, key, rankCount, contentCount, exclusive, exclusiveShared, clearHosted);
             return true;
         }
 
@@ -651,17 +652,34 @@ namespace FanaBridge.UI.Display
                     any = true;
                 }
 
-                if (plan.ExclusiveParams.Count > 0 && doc.Fields != null)
+                if (plan.ExclusiveParams.Count > 0 || plan.ExclusiveSharedKeys.Count > 0)
                 {
-                    foreach (var kv in doc.Fields)
+                    // Exclusivity law over BOTH collections (fields + sharedFields).
+                    if (doc.Fields != null)
                     {
-                        if (!plan.ExclusiveParams.Contains(kv.Key))
-                            continue;
-                        var entry = kv.Value;
-                        if (entry?.Overrides == null || entry.Overrides.Count == 0)
-                            continue;
-                        entry.Overrides.Clear();
-                        any = true;
+                        foreach (var kv in doc.Fields)
+                        {
+                            if (!plan.ExclusiveParams.Contains(kv.Key))
+                                continue;
+                            var entry = kv.Value;
+                            if (entry?.Overrides == null || entry.Overrides.Count == 0)
+                                continue;
+                            entry.Overrides.Clear();
+                            any = true;
+                        }
+                    }
+                    if (doc.SharedFields != null && plan.ExclusiveSharedKeys.Count > 0)
+                    {
+                        foreach (var kv in doc.SharedFields)
+                        {
+                            if (!plan.ExclusiveSharedKeys.Contains(kv.Key))
+                                continue;
+                            var entry = kv.Value;
+                            if (entry?.Overrides == null || entry.Overrides.Count == 0)
+                                continue;
+                            entry.Overrides.Clear();
+                            any = true;
+                        }
                     }
                 }
 
@@ -746,20 +764,69 @@ namespace FanaBridge.UI.Display
 
             if (target.Kind != PageRefKind.ItmPage
                 || string.IsNullOrEmpty(target.CatalogPageId)
-                || FindCatalogPage(catalog, target.CatalogPageId) == null
-                || config.Fields == null)
+                || FindCatalogPage(catalog, target.CatalogPageId) == null)
                 return 0;
 
             var exclusive = ExclusiveParamsOnCatalogPage(catalog, target.CatalogPageId);
+            var sharedKeys = ExclusiveSharedKeys(config, exclusive, catalog);
+            return CountExclusiveOverrides(config, exclusive, sharedKeys);
+        }
+
+        /// <summary>
+        /// Count override ladders on exclusive params across both <c>fields</c> and
+        /// <c>sharedFields</c> (exclusivity law is collection-agnostic).
+        /// </summary>
+        private static int CountExclusiveOverrides(
+            DisplayConfigV2 config,
+            HashSet<ushort> exclusive,
+            HashSet<string> exclusiveSharedKeys)
+        {
+            if (config == null)
+                return 0;
+
             int count = 0;
-            foreach (var kv in config.Fields)
+            if (config.Fields != null && exclusive != null)
             {
-                if (!exclusive.Contains(kv.Key))
-                    continue;
-                if (kv.Value?.Overrides != null)
-                    count += kv.Value.Overrides.Count;
+                foreach (var kv in config.Fields)
+                {
+                    if (!exclusive.Contains(kv.Key))
+                        continue;
+                    if (kv.Value?.Overrides != null)
+                        count += kv.Value.Overrides.Count;
+                }
+            }
+            if (config.SharedFields != null && exclusiveSharedKeys != null)
+            {
+                foreach (var kv in config.SharedFields)
+                {
+                    if (!exclusiveSharedKeys.Contains(kv.Key))
+                        continue;
+                    if (kv.Value?.Overrides != null)
+                        count += kv.Value.Overrides.Count;
+                }
             }
             return count;
+        }
+
+        /// <summary>
+        /// sharedFields logical ids whose catalog param is in the exclusive set.
+        /// </summary>
+        private static HashSet<string> ExclusiveSharedKeys(
+            DisplayConfigV2 config, HashSet<ushort> exclusive, WheelCatalog catalog)
+        {
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            if (config?.SharedFields == null || exclusive == null || exclusive.Count == 0
+                || catalog == null)
+                return keys;
+            foreach (var kv in config.SharedFields)
+            {
+                if (string.IsNullOrEmpty(kv.Key))
+                    continue;
+                var def = CatalogFields.FindDefinition(catalog, kv.Key);
+                if (def != null && exclusive.Contains(def.ParamId))
+                    keys.Add(kv.Key);
+            }
+            return keys;
         }
 
         /// <summary>Resolve a catalog page by id; null when missing (fail-closed).</summary>
@@ -881,21 +948,40 @@ namespace FanaBridge.UI.Display
                 if (!ushort.TryParse(containerId, NumberStyles.Integer, CultureInfo.InvariantCulture,
                         out ushort paramId))
                     return false;
-                if (doc.Fields == null || !doc.Fields.TryGetValue(paramId, out var entry)
-                    || entry?.Overrides == null)
-                    return false;
 
-                for (int i = 0; i < entry.Overrides.Count; i++)
+                // One-ladder lookup (shared first). Session has no catalog on this path —
+                // Fields still resolve; shared-side resolution needs a catalog at the
+                // childRef/validator plane (same helper).
+                if (!FieldLadderMap.TryFindOverride(doc, catalog: null, paramId, memberId, out var ov)
+                    || ov == null)
                 {
-                    var ov = entry.Overrides[i];
-                    if (ov != null
-                        && string.Equals(ov.Id, memberId, StringComparison.OrdinalIgnoreCase))
+                    // Fall back: scan sharedFields by override id (document-global uniqueness)
+                    // so shared ladders remain editable without a catalog on the session.
+                    if (doc.SharedFields != null)
                     {
-                        ov.ActsAsEntrypoint = value;
-                        return true;
+                        foreach (var kv in doc.SharedFields)
+                        {
+                            var entry = kv.Value;
+                            if (entry?.Overrides == null)
+                                continue;
+                            for (int i = 0; i < entry.Overrides.Count; i++)
+                            {
+                                var o = entry.Overrides[i];
+                                if (o != null
+                                    && string.Equals(o.Id, memberId,
+                                        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    o.ActsAsEntrypoint = value;
+                                    return true;
+                                }
+                            }
+                        }
                     }
+                    return false;
                 }
-                return false;
+
+                ov.ActsAsEntrypoint = value;
+                return true;
             }
 
             if (target == ActsAsEntrypointTarget.Layer)
@@ -956,33 +1042,15 @@ namespace FanaBridge.UI.Display
 
         private static HashSet<ushort> ParamsOnCatalogPage(WheelCatalog catalog, string catalogPageId)
         {
-            var set = new HashSet<ushort>();
-            var pages = catalog?.Itm?.Pages;
-            if (pages == null || string.IsNullOrEmpty(catalogPageId))
-                return set;
-            for (int i = 0; i < pages.Count; i++)
-            {
-                var page = pages[i];
-                if (page == null
-                    || !string.Equals(page.Id, catalogPageId, StringComparison.Ordinal))
-                    continue;
-                if (page.Fields == null)
-                    break;
-                for (int f = 0; f < page.Fields.Count; f++)
-                {
-                    if (page.Fields[f] != null)
-                        set.Add(page.Fields[f].ParamId);
-                }
-                break;
-            }
-            return set;
+            var list = CatalogFields.ParamsOnPage(catalog, catalogPageId);
+            return new HashSet<ushort>(list);
         }
 
         /// <summary>
-        /// Catalog placement = REACH, not ownership. A param is exclusive to
-        /// <paramref name="catalogPageId"/> when it appears on that page and on no other
-        /// catalog page. Shared ladders (e.g. pbme params 1/4 on all five ITM pages)
-        /// are excluded.
+        /// Catalog placement = REACH, ownership = exclusivity (e9 REVIEW-RULED LAW).
+        /// A param is exclusive to <paramref name="catalogPageId"/> when it is placed on
+        /// that page and on no other catalog page. Shared ladders (e.g. pbme params 1/4
+        /// on all five ITM pages) are excluded — consume the placement shape.
         /// </summary>
         internal static HashSet<ushort> ExclusiveParamsOnCatalogPage(
             WheelCatalog catalog, string catalogPageId)
@@ -996,17 +1064,22 @@ namespace FanaBridge.UI.Display
             if (pages == null)
                 return exclusive;
 
+            var defs = CatalogFields.IndexByLogicalId(catalog);
             foreach (ushort paramId in onPage)
             {
                 int placements = 0;
                 for (int i = 0; i < pages.Count; i++)
                 {
                     var page = pages[i];
-                    if (page?.Fields == null)
+                    if (page?.Placements == null)
                         continue;
-                    for (int f = 0; f < page.Fields.Count; f++)
+                    for (int f = 0; f < page.Placements.Count; f++)
                     {
-                        if (page.Fields[f] != null && page.Fields[f].ParamId == paramId)
+                        var pl = page.Placements[f];
+                        if (pl == null || string.IsNullOrEmpty(pl.Field))
+                            continue;
+                        if (defs.TryGetValue(pl.Field, out var def)
+                            && def != null && def.ParamId == paramId)
                         {
                             placements++;
                             break;

@@ -21,6 +21,12 @@ namespace FanaBridge.Display.Arbitration
         public IReadOnlyDictionary<ushort, string> PrimaryHostByParam { get; set; }
 
         /// <summary>
+        /// Optional catalog for sharedFields one-ladder resolution (flagged override
+        /// membership). Null = sharedFields entries stay inert.
+        /// </summary>
+        public WheelCatalog Catalog { get; set; }
+
+        /// <summary>
         /// Screen-command capability envelope from the wheel catalog (§14 tri-state).
         /// Shared with <see cref="WheelScreenArbiter"/> so playlist step selection cannot
         /// diverge between planes (IdleCompile shared-resolver law).

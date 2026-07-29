@@ -1191,10 +1191,23 @@ namespace FanaBridge.Tests.Display
             bool? logoSupported = true,
             bool? blankSupported = true)
         {
+            string logicalId = "f" + paramId;
             var cat = new WheelCatalog
             {
                 WheelId = "test",
-                Itm = new ItmCatalogSection(),
+                Itm = new ItmCatalogSection
+                {
+                    Fields = new List<CatalogFieldDefinition>
+                    {
+                        new CatalogFieldDefinition
+                        {
+                            Id = logicalId,
+                            ParamId = paramId,
+                            Suffix = new FieldSuffixCapability { Supported = suffixSupported },
+                            Value = new FieldValueCapability { Ascii = valueAscii, Numeric = true },
+                        },
+                    },
+                },
                 ScreenCommands = new ScreenCommandsCapability
                 {
                     Logo = logoSupported,
@@ -1211,16 +1224,14 @@ namespace FanaBridge.Tests.Display
                 {
                     Id = "page" + i,
                     Index = i,
-                    Fields = new List<CatalogField>
+                    Placements = new List<CatalogFieldPlacement>
                     {
-                        new CatalogField
+                        new CatalogFieldPlacement
                         {
-                            ParamId = paramId,
+                            Field = logicalId,
                             PrimaryHost = primaryHostCount > 0 && i < primaryHostCount
                                 ? true
                                 : (bool?)null,
-                            Suffix = new FieldSuffixCapability { Supported = suffixSupported },
-                            Value = new FieldValueCapability { Ascii = valueAscii, Numeric = true },
                         },
                     },
                 };
@@ -1235,14 +1246,12 @@ namespace FanaBridge.Tests.Display
                 {
                     Id = "page0",
                     Index = 0,
-                    Fields = new List<CatalogField>
+                    Placements = new List<CatalogFieldPlacement>
                     {
-                        new CatalogField
+                        new CatalogFieldPlacement
                         {
-                            ParamId = paramId,
+                            Field = logicalId,
                             PrimaryHost = null,
-                            Suffix = new FieldSuffixCapability { Supported = suffixSupported },
-                            Value = new FieldValueCapability { Ascii = valueAscii, Numeric = true },
                         },
                     },
                 });
@@ -1698,34 +1707,39 @@ namespace FanaBridge.Tests.Display
                 WheelId = "test",
                 Itm = new ItmCatalogSection
                 {
+                    Fields =
+                    {
+                        new CatalogFieldDefinition
+                        {
+                            Id = "f42", ParamId = 42,
+                            Suffix = new FieldSuffixCapability { Supported = true },
+                            Value = new FieldValueCapability { Ascii = true, Numeric = true },
+                        },
+                        new CatalogFieldDefinition
+                        {
+                            Id = "f5", ParamId = 5,
+                            Suffix = new FieldSuffixCapability { Supported = true },
+                            Value = new FieldValueCapability { Ascii = true, Numeric = true },
+                        },
+                    },
                     Pages =
                     {
                         new CatalogPage
                         {
                             Id = "host-42",
                             Index = 0,
-                            Fields =
+                            Placements =
                             {
-                                new CatalogField
-                                {
-                                    ParamId = 42, PrimaryHost = true,
-                                    Suffix = new FieldSuffixCapability { Supported = true },
-                                    Value = new FieldValueCapability { Ascii = true, Numeric = true },
-                                },
+                                new CatalogFieldPlacement { Field = "f42", PrimaryHost = true },
                             },
                         },
                         new CatalogPage
                         {
                             Id = "host-5",
                             Index = 1,
-                            Fields =
+                            Placements =
                             {
-                                new CatalogField
-                                {
-                                    ParamId = 5, PrimaryHost = true,
-                                    Suffix = new FieldSuffixCapability { Supported = true },
-                                    Value = new FieldValueCapability { Ascii = true, Numeric = true },
-                                },
+                                new CatalogFieldPlacement { Field = "f5", PrimaryHost = true },
                             },
                         },
                     },
@@ -1764,20 +1778,24 @@ namespace FanaBridge.Tests.Display
                 WheelId = "test",
                 Itm = new ItmCatalogSection
                 {
+                    Fields =
+                    {
+                        new CatalogFieldDefinition
+                        {
+                            Id = "f9", ParamId = 9,
+                            Suffix = new FieldSuffixCapability { Supported = true },
+                            Value = new FieldValueCapability { Ascii = true, Numeric = true },
+                        },
+                    },
                     Pages =
                     {
                         new CatalogPage
                         {
                             Id = "host-f",
                             Index = 0,
-                            Fields =
+                            Placements =
                             {
-                                new CatalogField
-                                {
-                                    ParamId = 9, PrimaryHost = true,
-                                    Suffix = new FieldSuffixCapability { Supported = true },
-                                    Value = new FieldValueCapability { Ascii = true, Numeric = true },
-                                },
+                                new CatalogFieldPlacement { Field = "f9", PrimaryHost = true },
                             },
                         },
                     },
@@ -2061,8 +2079,8 @@ namespace FanaBridge.Tests.Display
             cat.Itm.LegacyPageIndex = 6;
             cat.Itm.Pages[0].Name = "Page0";
             cat.Itm.Pages[0].Provisional = true;
-            cat.Itm.Pages[0].Fields[0].ShortCode = "SC";
-            cat.Itm.Pages[0].Fields[0].DisplayLabel = "Label";
+            cat.Itm.Fields[0].ShortCode = "SC";
+            cat.Itm.Fields[0].DisplayLabel = "Label";
             cat.ScreenCommands.White = false;
 
             string before = JsonConvert.SerializeObject(cat, Formatting.None);

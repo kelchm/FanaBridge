@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Schema2;
 
@@ -24,6 +25,12 @@ namespace FanaBridge.Display.Composition
         /// catalog capabilities are the source of truth.
         /// </summary>
         public IReadOnlyDictionary<ushort, string> PrimaryHostByParam { get; set; }
+
+        /// <summary>
+        /// Optional catalog for sharedFields logicalId → paramId resolution (one-ladder
+        /// merge). Null = sharedFields entries stay inert (S5).
+        /// </summary>
+        public WheelCatalog Catalog { get; set; }
 
         /// <summary>Device key stamped on the composed-resolution slice.</summary>
         public string DeviceKey { get; set; } = "";

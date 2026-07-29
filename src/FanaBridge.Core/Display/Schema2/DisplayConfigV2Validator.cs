@@ -76,6 +76,12 @@ namespace FanaBridge.Display.Schema2
 
             NormalizePlaylists(config, playlistIds, hostedPageIds, itmCatalogIds, catalog, warn);
 
+            // Shared ladder first (S1 authority): shared override ids register before
+            // page-scoped fields so a same-id child on the inert side degrades as the
+            // duplicate, never the shared one. Both document-order directions hold.
+            NormalizeSharedFields(config, overrideIds, flaggedHostsNeedingSeat,
+                removedItmIds, catalog, warn);
+
             NormalizeFields(config, overrideIds, flaggedHostsNeedingSeat,
                 hostedPageIds, itmCatalogIds, removedItmIds, catalog, warn);
 
@@ -83,7 +89,7 @@ namespace FanaBridge.Display.Schema2
                 cycleIds, playlistIds, removedItmIds, catalog, flaggedHostsNeedingSeat, warn);
 
             // Second pass: childRef satellites need the finished page/field identity maps.
-            ResolveChildRefSatellites(config, warn);
+            ResolveChildRefSatellites(config, catalog, warn);
 
             NormalizePageOrder(config, hostedPageIds, itmCatalogIds, removedItmIds,
                 catalog, warn);
@@ -331,34 +337,168 @@ namespace FanaBridge.Display.Schema2
 
                 ushort paramId = kv.Key;
                 string fieldLabel = "field " + paramId;
+                NormalizeFieldEntry(field, paramId, fieldLabel, overrideIds,
+                    flaggedHostsNeedingSeat, catalog, removedItmIds, warn);
+            }
+        }
 
-                if (field.Base != null)
-                    NormalizeValueSource(field.Base.Source, SourceSite.FieldBase,
-                        fieldLabel + " base", warn, degradeCarrier: null);
+        /// <summary>
+        /// sharedFields[logicalId] — one FieldEntry per logical field. Without a catalog
+        /// every entry is kept, inert, and warned once (S5). Unknown logical ids same
+        /// treatment. Colliding fields[paramId] is the named inert side (S1: shared wins).
+        /// </summary>
+        private static void NormalizeSharedFields(
+            DisplayConfigV2 config,
+            HashSet<string> overrideIds,
+            List<FlaggedHost> flaggedHostsNeedingSeat,
+            HashSet<string> removedItmIds,
+            WheelCatalog catalog,
+            Action<string> warn)
+        {
+            if (config.SharedFields == null)
+                return;
 
-                if (field.Overrides == null)
+            // Track which params sharedFields claims (first shared wins among shared).
+            var sharedParamOwners = new Dictionary<ushort, string>();
+            bool warnedNoCatalog = false;
+
+            foreach (var kv in config.SharedFields)
+            {
+                string logicalId = kv.Key;
+                var entry = kv.Value;
+                if (entry == null)
                     continue;
 
-                foreach (var ov in field.Overrides)
-                {
-                    if (ov == null)
-                        continue;
-                    NormalizeOverride(ov, paramId, overrideIds, catalog, removedItmIds, warn);
+                string label = "sharedField '" + (logicalId ?? "?") + "'";
 
-                    if (ov.ActsAsEntrypoint && !ov.ActsAsEntrypointIgnored && !ov.DegradedAtLoad)
+                if (string.IsNullOrWhiteSpace(logicalId))
+                {
+                    entry.DegradedAtLoad = true;
+                    entry.DegradeReason = "empty logical id";
+                    warn(label + " degraded — empty logical id");
+                    continue;
+                }
+
+                if (catalog == null)
+                {
+                    // S5: no catalog → no logicalId→paramId binding. Kept, inert, warn once.
+                    entry.DegradedAtLoad = true;
+                    entry.DegradeReason = "no catalog — shared field inert";
+                    if (!warnedNoCatalog)
                     {
-                        // Host resolution needs catalog primaryHost; without catalog, skip
-                        // materialization for field overrides (layers still materialize).
-                        string hostCatalogId = ResolvePrimaryHostCatalogId(catalog, paramId);
-                        if (hostCatalogId != null)
+                        warnedNoCatalog = true;
+                        warn("sharedFields present but no catalog — entries kept inert "
+                            + "(never resolved by guess)");
+                    }
+                    continue;
+                }
+
+                var def = CatalogFields.FindDefinition(catalog, logicalId);
+                if (def == null)
+                {
+                    // Unknown logical id — survivors: kept, inert, warn once per id.
+                    entry.DegradedAtLoad = true;
+                    entry.DegradeReason = "unknown logical id '" + logicalId + "'";
+                    warn(label + " degraded — unknown logical id on this wheel (inert)");
+                    continue;
+                }
+
+                ushort paramId = def.ParamId;
+                if (sharedParamOwners.ContainsKey(paramId))
+                {
+                    // Two sharedFields entries bind the same param — first wins.
+                    entry.DegradedAtLoad = true;
+                    entry.DegradeReason = "param " + paramId + " already addressed by shared field '"
+                        + sharedParamOwners[paramId] + "'";
+                    warn(label + " degraded — param " + paramId
+                        + " already addressed by shared field '"
+                        + sharedParamOwners[paramId] + "'");
+                    continue;
+                }
+                sharedParamOwners[paramId] = logicalId;
+
+                NormalizeFieldEntry(entry, paramId, label, overrideIds,
+                    flaggedHostsNeedingSeat, catalog, removedItmIds, warn);
+
+                // S1: sharedFields wins — mark the colliding fields[paramId] as named inert.
+                if (config.Fields != null
+                    && config.Fields.TryGetValue(paramId, out var colliding)
+                    && colliding != null)
+                {
+                    colliding.DegradedAtLoad = true;
+                    colliding.DegradeReason = "addressed by shared field '" + logicalId + "'";
+                    warn("field " + paramId + " degraded — addressed by shared field '"
+                        + logicalId + "' (sharedFields wins; fields entry kept inert)");
+                }
+            }
+
+            // Placement integrity: every placement's logical id should resolve (degraded note).
+            WarnUnresolvedPlacements(catalog, warn);
+        }
+
+        private static void WarnUnresolvedPlacements(WheelCatalog catalog, Action<string> warn)
+        {
+            if (catalog?.Itm?.Pages == null)
+                return;
+            var defs = CatalogFields.IndexByLogicalId(catalog);
+            var warned = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var page in catalog.Itm.Pages)
+            {
+                if (page?.Placements == null)
+                    continue;
+                foreach (var pl in page.Placements)
+                {
+                    if (pl == null || string.IsNullOrEmpty(pl.Field))
+                        continue;
+                    if (defs.ContainsKey(pl.Field))
+                        continue;
+                    if (!warned.Add(pl.Field))
+                        continue;
+                    warn("catalog placement field '" + pl.Field + "' on page '"
+                        + (page.Id ?? "?") + "' does not resolve to a definition");
+                }
+            }
+        }
+
+        private static void NormalizeFieldEntry(
+            FieldEntry field,
+            ushort paramId,
+            string fieldLabel,
+            HashSet<string> overrideIds,
+            List<FlaggedHost> flaggedHostsNeedingSeat,
+            WheelCatalog catalog,
+            HashSet<string> removedItmIds,
+            Action<string> warn)
+        {
+            if (field.Base != null)
+                NormalizeValueSource(field.Base.Source, SourceSite.FieldBase,
+                    fieldLabel + " base", warn, degradeCarrier: null);
+
+            if (field.Overrides == null)
+                return;
+
+            foreach (var ov in field.Overrides)
+            {
+                if (ov == null)
+                    continue;
+                NormalizeOverride(ov, paramId, overrideIds, catalog, removedItmIds, warn);
+
+                // Inert ladders (e.g. fields side after shared collision) still run id
+                // uniqueness above; they must not materialize seats.
+                if (!field.DegradedAtLoad
+                    && ov.ActsAsEntrypoint && !ov.ActsAsEntrypointIgnored && !ov.DegradedAtLoad)
+                {
+                    // Host resolution needs catalog primaryHost; without catalog, skip
+                    // materialization for field overrides (layers still materialize).
+                    string hostCatalogId = ResolvePrimaryHostCatalogId(catalog, paramId);
+                    if (hostCatalogId != null)
+                    {
+                        flaggedHostsNeedingSeat.Add(new FlaggedHost
                         {
-                            flaggedHostsNeedingSeat.Add(new FlaggedHost
-                            {
-                                TargetKey = TargetKeyItm(hostCatalogId),
-                                ItmCatalogPageId = hostCatalogId,
-                                SourceLabel = "override '" + (ov.Id ?? "?") + "' on " + fieldLabel,
-                            });
-                        }
+                            TargetKey = TargetKeyItm(hostCatalogId),
+                            ItmCatalogPageId = hostCatalogId,
+                            SourceLabel = "override '" + (ov.Id ?? "?") + "' on " + fieldLabel,
+                        });
                     }
                 }
             }
@@ -748,8 +888,10 @@ namespace FanaBridge.Display.Schema2
         /// <summary>
         /// Resolves childRef satellites against the document: missing child → degraded;
         /// child exists but unflagged → degraded. Shape already filtered in the first pass.
+        /// Field childRefs use one-ladder lookup (shared first).
         /// </summary>
-        private static void ResolveChildRefSatellites(DisplayConfigV2 config, Action<string> warn)
+        private static void ResolveChildRefSatellites(
+            DisplayConfigV2 config, WheelCatalog catalog, Action<string> warn)
         {
             if (config.Priority?.Rows == null)
                 return;
@@ -789,23 +931,10 @@ namespace FanaBridge.Display.Schema2
                         continue;
                     }
 
-                    FieldOverride ov = null;
-                    if (config.Fields != null
-                        && config.Fields.TryGetValue(paramId, out var entry)
-                        && entry?.Overrides != null)
-                    {
-                        foreach (var o in entry.Overrides)
-                        {
-                            if (o != null && string.Equals(o.Id, cr.OverrideId,
-                                    StringComparison.OrdinalIgnoreCase))
-                            {
-                                ov = o;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (ov == null)
+                    // One-ladder lookup (shared first, page-scoped inert second).
+                    if (!FieldLadderMap.TryFindOverride(
+                            config, catalog, paramId, cr.OverrideId, out var ov)
+                        || ov == null)
                     {
                         row.DegradedAtLoad = true;
                         warn(label + " degraded — override '" + cr.OverrideId
@@ -1892,9 +2021,11 @@ namespace FanaBridge.Display.Schema2
 
         private static void MaybeWarnSubscriptionBudget(DisplayConfigV2 config, Action<string> warn)
         {
-            if (config.Fields == null)
-                return;
-            int n = config.Fields.Count;
+            int n = 0;
+            if (config.Fields != null)
+                n += config.Fields.Count;
+            if (config.SharedFields != null)
+                n += config.SharedFields.Count;
             if (n > SubscriptionBudget)
             {
                 warn("subscription budget: " + n + " field entries exceed firmware cap of "
@@ -1902,35 +2033,26 @@ namespace FanaBridge.Display.Schema2
             }
         }
 
-        private static CatalogField FindCatalogField(WheelCatalog catalog, ushort paramId)
-        {
-            if (catalog?.Itm?.Pages == null)
-                return null;
-            foreach (var page in catalog.Itm.Pages)
-            {
-                if (page?.Fields == null)
-                    continue;
-                foreach (var f in page.Fields)
-                {
-                    if (f != null && f.ParamId == paramId)
-                        return f;
-                }
-            }
-            return null;
-        }
+        private static CatalogFieldDefinition FindCatalogField(
+            WheelCatalog catalog, ushort paramId)
+            => CatalogFields.FindDefinitionByParam(catalog, paramId);
 
         private static int CountPrimaryHosts(WheelCatalog catalog, ushort paramId)
         {
             int n = 0;
             if (catalog?.Itm?.Pages == null)
                 return 0;
+            var defs = CatalogFields.IndexByLogicalId(catalog);
             foreach (var page in catalog.Itm.Pages)
             {
-                if (page?.Fields == null)
+                if (page?.Placements == null)
                     continue;
-                foreach (var f in page.Fields)
+                foreach (var pl in page.Placements)
                 {
-                    if (f != null && f.ParamId == paramId && f.PrimaryHost == true)
+                    if (pl == null || pl.PrimaryHost != true || string.IsNullOrEmpty(pl.Field))
+                        continue;
+                    if (defs.TryGetValue(pl.Field, out var def)
+                        && def != null && def.ParamId == paramId)
                         n++;
                 }
             }
@@ -1941,15 +2063,19 @@ namespace FanaBridge.Display.Schema2
         {
             if (catalog?.Itm?.Pages == null)
                 return null;
+            var defs = CatalogFields.IndexByLogicalId(catalog);
             string found = null;
             int count = 0;
             foreach (var page in catalog.Itm.Pages)
             {
-                if (page?.Fields == null)
+                if (page?.Placements == null)
                     continue;
-                foreach (var f in page.Fields)
+                foreach (var pl in page.Placements)
                 {
-                    if (f != null && f.ParamId == paramId && f.PrimaryHost == true)
+                    if (pl == null || pl.PrimaryHost != true || string.IsNullOrEmpty(pl.Field))
+                        continue;
+                    if (defs.TryGetValue(pl.Field, out var def)
+                        && def != null && def.ParamId == paramId)
                     {
                         found = page.Id;
                         count++;

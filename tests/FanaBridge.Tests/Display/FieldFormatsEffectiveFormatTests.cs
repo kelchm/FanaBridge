@@ -47,10 +47,23 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void SourceOverride_NonFormatParam_ReturnsNull()
+        public void SourceOverride_GearAndSpeed_FamilyDefaults()
         {
-            Assert.Null(FieldFormats.EffectiveFormat(
+            // Gear/speed now have format families (task #23 / design 8c).
+            Assert.Equal(FieldFormats.Whole, FieldFormats.EffectiveFormat(
                 ItmParam.Speed, null, hasSourceOverride: true,
+                showLapTotal: true, showPositionTotal: true));
+            Assert.Equal(FieldFormats.Neutral, FieldFormats.EffectiveFormat(
+                ItmParam.Gear, null, hasSourceOverride: true,
+                showLapTotal: true, showPositionTotal: true));
+        }
+
+        [Fact]
+        public void SourceOverride_StillNoFamily_ReturnsNull()
+        {
+            // A param outside all families still returns null.
+            Assert.Null(FieldFormats.EffectiveFormat(
+                ItmParam.BrakeBias, null, hasSourceOverride: true,
                 showLapTotal: true, showPositionTotal: true));
         }
 
@@ -96,12 +109,21 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void FamilyDefault_GearAndSpeed()
+        {
+            Assert.Equal(FieldFormats.Whole, FieldFormats.EffectiveFormat(
+                ItmParam.Speed, null, false, true, true));
+            Assert.Equal(FieldFormats.Neutral, FieldFormats.EffectiveFormat(
+                ItmParam.Gear, null, false, true, true));
+        }
+
+        [Fact]
         public void NonFormatParam_NoOverride_ReturnsNull()
         {
             Assert.Null(FieldFormats.EffectiveFormat(
-                ItmParam.Speed, null, false, true, true));
+                ItmParam.BrakeBias, null, false, true, true));
             Assert.Null(FieldFormats.EffectiveFormat(
-                ItmParam.Gear, null, false, true, true));
+                ItmParam.TcSetting, null, false, true, true));
         }
     }
 }

@@ -750,6 +750,11 @@ namespace FanaBridge.Tests.UI.Display
             {
                 Itm = new ItmCatalogSection
                 {
+                    Fields = new List<CatalogFieldDefinition>
+                    {
+                        new CatalogFieldDefinition { Id = "fl", ParamId = 10, ShortCode = "FL" },
+                        new CatalogFieldDefinition { Id = "fuel", ParamId = 5, ShortCode = "FUEL" },
+                    },
                     Pages = new List<CatalogPage>
                     {
                         new CatalogPage
@@ -757,9 +762,9 @@ namespace FanaBridge.Tests.UI.Display
                             Id = "tyreTemps",
                             Index = 5,
                             Name = "Tire Temps",
-                            Fields = new List<CatalogField>
+                            Placements = new List<CatalogFieldPlacement>
                             {
-                                new CatalogField { ParamId = 10, ShortCode = "FL" },
+                                new CatalogFieldPlacement { Field = "fl" },
                             },
                         },
                         new CatalogPage
@@ -767,9 +772,9 @@ namespace FanaBridge.Tests.UI.Display
                             Id = "fuelErsDrs",
                             Index = 2,
                             Name = "Fuel / ERS / DRS",
-                            Fields = new List<CatalogField>
+                            Placements = new List<CatalogFieldPlacement>
                             {
-                                new CatalogField { ParamId = 5, ShortCode = "FUEL" },
+                                new CatalogFieldPlacement { Field = "fuel" },
                             },
                         },
                     },

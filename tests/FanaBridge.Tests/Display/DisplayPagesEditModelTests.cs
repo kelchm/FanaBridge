@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Rules;
 using FanaBridge.Protocol;
 using FanaBridge.UI.Display;
@@ -99,15 +100,40 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void SelectParam_EngineMapping_IsLocked_NoPropertyRemap()
+        public void SelectParam_EngineMapping_LockedByEnvelope_NotCode()
         {
+            // Standing law: lock comes from catalog envelope overridable:false (PBME
+            // engineMap), never a per-field code exclusion.
             var model = new DisplayPagesEditModel(null, Device3);
             model.SelectPage(ItmPage.CarSettings);
             model.SelectParam(ItmParam.EngineMapping);
             var insp = model.Inspector();
             Assert.True(insp.IsLocked);
-            Assert.False(insp.ShowResetToDefault);
             Assert.Equal(FieldProvenance.Default, insp.Provenance);
+        }
+
+        [Fact]
+        public void PbmeGear_EnvelopeDriven_LockedAndAnnouncedFormats()
+        {
+            var model = new DisplayPagesEditModel(null, Device3);
+            model.SelectParam(ItmParam.Gear);
+            var insp = model.Inspector();
+            Assert.True(insp.IsLocked);
+            Assert.Equal(2, insp.FormatChoices.Count);
+            Assert.Equal(FieldFormats.Neutral, insp.FormatChoices[0].Id);
+            Assert.Equal(FieldFormats.Blank, insp.FormatChoices[1].Id);
+            // Mutations rejected under envelope lock.
+            Assert.Null(model.SetFormat(ItmParam.Gear, FieldFormats.Blank));
+        }
+
+        [Fact]
+        public void FormatChoices_NoCatalog_FallsBackToFamilyTables()
+        {
+            // Static helper without catalog = format-family tables only.
+            var gear = DisplayPagesEditModel.FormatChoicesFor(ItmParam.Gear, catalog: null);
+            Assert.Equal(2, gear.Count);
+            Assert.Equal(FieldFormats.Neutral, gear[0].Id);
+            Assert.Equal(FieldFormats.Blank, gear[1].Id);
         }
 
         // ── Mapping read/write round-trip ────────────────────────────────
@@ -149,13 +175,28 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void SetSource_Gear_Rejected_ConfigUnchanged()
+        public void SetSource_Gear_RejectedByEnvelopeLock()
         {
+            // Standing law: gear lock is envelope DATA (overridable:false on PBME), not
+            // a code exclusion. Mutations no-op while locked.
             var model = new DisplayPagesEditModel(null, Device3);
-            var cfg = model.SetSource(ItmParam.Gear, PropertyKind.BuiltIn,
-                BuiltInProperties.Gear);
+            var cfg = model.SetSource(ItmParam.Gear, PropertyKind.SimHubProperty,
+                "DataCorePlugin.GameData.Gear");
             Assert.Null(cfg);
             Assert.Null(model.Config);
+        }
+
+        [Fact]
+        public void SetSource_Speed_CustomSource_Accepted()
+        {
+            // Speed is not envelope-locked on PBME — ordinary remap works.
+            var model = new DisplayPagesEditModel(null, Device3);
+            var cfg = model.SetSource(ItmParam.Speed, PropertyKind.SimHubProperty,
+                "DataCorePlugin.GameData.SpeedKph");
+            Assert.NotNull(cfg);
+            Assert.True(cfg.FieldMappings.ContainsKey(ItmParam.Speed));
+            Assert.Equal("DataCorePlugin.GameData.SpeedKph",
+                cfg.FieldMappings[ItmParam.Speed].Source.Name);
         }
 
         [Fact]
@@ -256,7 +297,7 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void FormatChoices_TotalAndTempFamilies()
+        public void FormatChoices_TotalTempGearSpeedFamilies()
         {
             var total = DisplayPagesEditModel.FormatChoicesFor(ItmParam.Fuel);
             Assert.Equal(2, total.Count);
@@ -268,8 +309,16 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(FieldFormats.Unit, temp[0].Id);
             Assert.Equal(FieldFormats.Bare, temp[1].Id);
 
-            Assert.Empty(DisplayPagesEditModel.FormatChoicesFor(ItmParam.Speed));
-            Assert.Empty(DisplayPagesEditModel.FormatChoicesFor(ItmParam.Gear));
+            // Task #23 / design 8c: gear blank-vs-neutral, speed whole/oneDecimal.
+            var gear = DisplayPagesEditModel.FormatChoicesFor(ItmParam.Gear);
+            Assert.Equal(2, gear.Count);
+            Assert.Equal(FieldFormats.Neutral, gear[0].Id);
+            Assert.Equal(FieldFormats.Blank, gear[1].Id);
+
+            var speed = DisplayPagesEditModel.FormatChoicesFor(ItmParam.Speed);
+            Assert.Equal(2, speed.Count);
+            Assert.Equal(FieldFormats.Whole, speed[0].Id);
+            Assert.Equal(FieldFormats.OneDecimal, speed[1].Id);
         }
 
         [Fact]

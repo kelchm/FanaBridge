@@ -667,7 +667,8 @@ namespace FanaBridge.UI.Display
             PriorityRow row, DisplayConfigV2 config, WheelCatalog catalog)
         {
             // Q9 PROVISIONAL: all overrides on the destination page.
-            if (row?.Target == null || config?.Fields == null)
+            if (row?.Target == null
+                || (config?.Fields == null && config?.SharedFields == null))
                 return 0;
 
             if (row.Target.Kind == PageRefKind.HostedPage)
@@ -693,17 +694,22 @@ namespace FanaBridge.UI.Display
                 if (p == null
                     || !string.Equals(p.Id, row.Target.CatalogPageId, StringComparison.Ordinal))
                     continue;
-                if (p.Fields == null) break;
-                for (int f = 0; f < p.Fields.Count; f++)
+                if (p.Placements == null) break;
+                var defs = CatalogFields.IndexByLogicalId(catalog);
+                for (int f = 0; f < p.Placements.Count; f++)
                 {
-                    if (p.Fields[f] != null)
-                        paramsOnPage.Add(p.Fields[f].ParamId);
+                    var pl = p.Placements[f];
+                    if (pl == null || string.IsNullOrEmpty(pl.Field))
+                        continue;
+                    if (defs.TryGetValue(pl.Field, out var def) && def != null)
+                        paramsOnPage.Add(def.ParamId);
                 }
                 break;
             }
 
             int count = 0;
-            foreach (var kv in config.Fields)
+            // One-ladder: fields + sharedFields (shared wins; inert side contributes 0).
+            foreach (var kv in FieldLadderMap.Build(config, catalog))
             {
                 if (!paramsOnPage.Contains(kv.Key))
                     continue;
@@ -790,26 +796,35 @@ namespace FanaBridge.UI.Display
                 return NoChildren;
 
             var fieldLabels = new Dictionary<ushort, string>();
+            var defs = CatalogFields.IndexByLogicalId(catalog);
             for (int i = 0; i < catalog.Itm.Pages.Count; i++)
             {
                 var p = catalog.Itm.Pages[i];
                 if (p == null
                     || !string.Equals(p.Id, row.Target.CatalogPageId, StringComparison.Ordinal))
                     continue;
-                if (p.Fields == null) break;
-                for (int f = 0; f < p.Fields.Count; f++)
+                if (p.Placements == null) break;
+                for (int f = 0; f < p.Placements.Count; f++)
                 {
-                    var cf = p.Fields[f];
-                    if (cf == null) continue;
-                    string label = !string.IsNullOrEmpty(cf.ShortCode)
-                        ? cf.ShortCode
-                        : (cf.FirmwareLabel ?? cf.ParamId.ToString(CultureInfo.InvariantCulture));
-                    fieldLabels[cf.ParamId] = label;
+                    var pl = p.Placements[f];
+                    if (pl == null || string.IsNullOrEmpty(pl.Field))
+                        continue;
+                    if (!defs.TryGetValue(pl.Field, out var def) || def == null)
+                        continue;
+                    string label = !string.IsNullOrEmpty(def.ShortCode)
+                        ? def.ShortCode
+                        : (def.FirmwareLabel ?? def.ParamId.ToString(CultureInfo.InvariantCulture));
+                    // Multi-page reach line for shared fields (design 8c; existing-view touchpoint).
+                    if (CatalogFields.TryGetReach(catalog, def.Id, out int placed, out int total)
+                        && placed > 1)
+                        label = label + " · " + DisplayCopy.ReachLine(placed, total);
+                    fieldLabels[def.ParamId] = label;
                 }
                 break;
             }
 
-            foreach (var kv in config.Fields)
+            // One ladder: fields + sharedFields (shared wins).
+            foreach (var kv in FieldLadderMap.Build(config, catalog))
             {
                 if (!fieldLabels.ContainsKey(kv.Key))
                     continue;

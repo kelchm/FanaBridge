@@ -229,6 +229,25 @@ namespace FanaBridge.Tests.Display
                 Itm = new ItmCatalogSection
                 {
                     LegacyPageIndex = 6,
+                    Fields = new List<CatalogFieldDefinition>
+                    {
+                        new CatalogFieldDefinition
+                        {
+                            Id = "tyreFL",
+                            ParamId = 42,
+                            Overridable = true,
+                            Value = new FieldValueCapability
+                            {
+                                Numeric = false,
+                                Ascii = true,
+                            },
+                            Suffix = new FieldSuffixCapability
+                            {
+                                Supported = true,
+                                Width = 1,
+                            },
+                        },
+                    },
                     Pages = new List<CatalogPage>
                     {
                         new CatalogPage
@@ -236,24 +255,12 @@ namespace FanaBridge.Tests.Display
                             Id = "tyreTemps",
                             Index = 5,
                             Name = "Tyre Temps",
-                            Fields = new List<CatalogField>
+                            Placements = new List<CatalogFieldPlacement>
                             {
-                                new CatalogField
+                                new CatalogFieldPlacement
                                 {
-                                    FieldId = "tyreFL",
-                                    ParamId = 42,
+                                    Field = "tyreFL",
                                     PrimaryHost = true,
-                                    Overridable = true,
-                                    Value = new FieldValueCapability
-                                    {
-                                        Numeric = false,
-                                        Ascii = true,
-                                    },
-                                    Suffix = new FieldSuffixCapability
-                                    {
-                                        Supported = true,
-                                        Width = 1,
-                                    },
                                 },
                             },
                         },

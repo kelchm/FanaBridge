@@ -57,6 +57,15 @@ namespace FanaBridge.Display.Schema2
         public Dictionary<ushort, FieldEntry> Fields { get; set; }
             = new Dictionary<ushort, FieldEntry>();
 
+        /// <summary>
+        /// Shared field content, keyed by stable logical field id (catalog <c>fieldId</c>
+        /// token: speed, gear, …). One config per logical field — gear and speed are
+        /// separate keys. Absent when empty. Reuses <see cref="FieldEntry"/> verbatim.
+        /// Reach is derived from catalog placements (not stored here).
+        /// </summary>
+        [JsonProperty("sharedFields")]
+        public Dictionary<string, FieldEntry> SharedFields { get; set; }
+
         /// <summary>Wheel-screen plane (special-command rules).</summary>
         [JsonProperty("wheelScreen")]
         public WheelScreenPlane WheelScreen { get; set; } = new WheelScreenPlane();

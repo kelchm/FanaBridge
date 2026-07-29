@@ -539,15 +539,9 @@ namespace FanaBridge.Display.Rules
             List<ushort> drop = null;
             foreach (var kv in mappings)
             {
-                // Gear / EngineMapping keep special wire text forms — overrides are
-                // rejected whole (warn+drop). The Pages UI locks those fields too.
-                if (FieldFormats.IsOverrideExcluded(kv.Key))
-                {
-                    warn("field mapping for param " + kv.Key
-                        + " dropped — Gear and EngineMapping cannot be remapped");
-                    (drop ?? (drop = new List<ushort>())).Add(kv.Key);
-                    continue;
-                }
+                // Standing law: no per-field hardcoded exclusion. Envelope DATA (catalog
+                // overridable / region capability) is the sole authority — v1 FieldMappings
+                // has no envelope here, so every param is eligible; format still validated.
 
                 string reason = InvalidMappingReason(kv.Value);
                 if (reason != null)

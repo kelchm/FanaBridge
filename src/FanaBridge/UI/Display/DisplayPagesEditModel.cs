@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Twin;
 using FanaBridge.Protocol;
@@ -56,6 +57,7 @@ namespace FanaBridge.UI.Display
     {
         private readonly byte _itmDeviceId;
         private readonly ItmPageTable _pageTable;
+        private readonly WheelCatalog _catalog;
         private readonly bool _showLapTotal;
         private readonly bool _showPositionTotal;
         private DisplayCustomizationConfig _config;
@@ -73,6 +75,8 @@ namespace FanaBridge.UI.Display
             _showLapTotal = showLapTotal;
             _showPositionTotal = showPositionTotal;
             _pageTable = ItmPageTable.ForDevice(itmDeviceId);
+            // Envelope authority for offered formats + lock (standing law §3a).
+            _catalog = ResolveCatalogForDevice(itmDeviceId);
             // Land on the first non-legacy page when the table has one; else the first
             // entry (a device with only Legacy is theoretical but stay honest).
             _selectedPage = FirstEditablePage();
@@ -164,11 +168,14 @@ namespace FanaBridge.UI.Display
             return map != null && map.ContainsKey(paramId);
         }
 
-        /// <summary>The format choices for a param (empty when the vocabulary has none).
-        /// Labels are UI-facing; ids are the <see cref="FieldFormats"/> keys.</summary>
-        public static IReadOnlyList<Choice> FormatChoicesFor(ushort paramId)
+        /// <summary>The format choices for a param (empty when the envelope offers none).
+        /// Labels are UI-facing; ids are the <see cref="FieldFormats"/> keys.
+        /// When <paramref name="catalog"/> is null, falls back to format-family tables
+        /// only (standing law: envelope DATA when a catalog resolves).</summary>
+        public static IReadOnlyList<Choice> FormatChoicesFor(
+            ushort paramId, WheelCatalog catalog = null)
         {
-            var allowed = FieldFormats.AllowedFor(paramId);
+            var allowed = FieldEnvelope.OfferedFormats(catalog, paramId);
             if (allowed.Count == 0)
                 return Array.Empty<Choice>();
             var list = new Choice[allowed.Count];
@@ -182,7 +189,7 @@ namespace FanaBridge.UI.Display
         /// family default). Null when the param has no format options.</summary>
         public string EffectiveFormatId(ushort paramId)
         {
-            if (FieldFormats.AllowedFor(paramId).Count == 0)
+            if (FieldEnvelope.OfferedFormats(_catalog, paramId).Count == 0)
                 return null;
             string explicitFormat = null;
             bool hasMapping = false;
@@ -194,7 +201,7 @@ namespace FanaBridge.UI.Display
                 // Drop unknown format text the same way the validator would — fall
                 // through to the rest of the chain rather than surfacing junk.
                 if (!string.IsNullOrEmpty(explicitFormat)
-                    && !FieldFormats.IsAllowed(paramId, explicitFormat))
+                    && !FieldEnvelope.IsFormatAllowed(_catalog, paramId, explicitFormat))
                     explicitFormat = null;
             }
             return FieldFormats.EffectiveFormat(
@@ -238,16 +245,16 @@ namespace FanaBridge.UI.Display
 
         // ── Mutations (each returns the NEW document) ────────────────────
 
-        /// <summary>Sets the source for a param (SimHub pick or built-in). Rejects
-        /// Gear/EngineMapping. Creates a FieldMapping when none exists; keeps an
-        /// existing Format when present. When the picked source is the param's
-        /// exact default and there is no non-default format, the mapping is dropped
-        /// (no-op override — registry path, byte-identical by construction). Fresh
-        /// FieldMappings dict; other document members by reference.</summary>
+        /// <summary>Sets the source for a param (SimHub pick or built-in). Creates a
+        /// FieldMapping when none exists; keeps an existing Format when present. When
+        /// the picked source is the param's exact default and there is no non-default
+        /// format, the mapping is dropped (no-op override — registry path, byte-identical
+        /// by construction). Fresh FieldMappings dict; other document members by
+        /// reference. Envelope lock (<c>overridable:false</c>) rejects the write.</summary>
         public DisplayCustomizationConfig SetSource(ushort paramId, PropertyKind kind,
             string name)
         {
-            if (FieldFormats.IsOverrideExcluded(paramId))
+            if (FieldEnvelope.IsLocked(_catalog, paramId))
                 return _config;
             if (string.IsNullOrEmpty(name))
                 return _config;
@@ -280,18 +287,18 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>Sets the format key for a param. Rejects unknown / disallowed
-        /// formats and excluded params. A format-only override still carries the
-        /// built-in default source (validator requires a source body); when the
-        /// format equals the toggle-aware default and the source is still the
-        /// built-in, the mapping is dropped entirely (back to DEFAULT provenance).
-        /// Lap/Position format choices are mirrored to Show*Total by the view — the
-        /// prune anticipates that post-mirror default so a chosen format always
-        /// equals the new toggle default and prunes.</summary>
+        /// formats. A format-only override still carries the built-in default source
+        /// (validator requires a source body); when the format equals the toggle-aware
+        /// default and the source is still the built-in, the mapping is dropped entirely
+        /// (back to DEFAULT provenance). Lap/Position format choices are mirrored to
+        /// Show*Total by the view — the prune anticipates that post-mirror default so a
+        /// chosen format always equals the new toggle default and prunes.
+        /// Envelope lock and offered-format set are DATA-driven.</summary>
         public DisplayCustomizationConfig SetFormat(ushort paramId, string format)
         {
-            if (FieldFormats.IsOverrideExcluded(paramId))
+            if (FieldEnvelope.IsLocked(_catalog, paramId))
                 return _config;
-            if (!FieldFormats.IsAllowed(paramId, format))
+            if (!FieldEnvelope.IsFormatAllowed(_catalog, paramId, format))
                 return _config;
 
             var mappings = CopyMappings();
@@ -333,7 +340,8 @@ namespace FanaBridge.UI.Display
 
         private FieldInspectorModel BuildInspector(ushort paramId)
         {
-            bool locked = FieldFormats.IsOverrideExcluded(paramId);
+            // Standing law: lock + offered formats from catalog envelope DATA.
+            bool locked = FieldEnvelope.IsLocked(_catalog, paramId);
             var provenance = ProvenanceOf(paramId);
             string sourceName;
             PropertyKind sourceKind;
@@ -352,7 +360,7 @@ namespace FanaBridge.UI.Display
                 sourceKind = def?.Kind ?? PropertyKind.BuiltIn;
             }
 
-            var formats = FormatChoicesFor(paramId);
+            var formats = FormatChoicesFor(paramId, _catalog);
             bool hasFormats = formats.Count > 0;
             string formatHint = null;
             if (!hasFormats)
@@ -415,6 +423,21 @@ namespace FanaBridge.UI.Display
             return cfg;
         }
 
+        /// <summary>
+        /// Resolve the shipped catalog whose declared deviceId matches
+        /// <paramref name="itmDeviceId"/>, or null when none (no-catalog fallback).
+        /// </summary>
+        internal static WheelCatalog ResolveCatalogForDevice(byte itmDeviceId)
+        {
+            foreach (var kv in CatalogLoader.LoadShipped())
+            {
+                byte? declared = CatalogLoader.ReadDeclaredDeviceId(kv.Value);
+                if (declared.HasValue && declared.Value == itmDeviceId)
+                    return kv.Value;
+            }
+            return null;
+        }
+
         private ItmPage FirstEditablePage()
         {
             foreach (var info in _pageTable.Pages)
@@ -430,8 +453,7 @@ namespace FanaBridge.UI.Display
             var layout = ItmDisplayLayout.For(page);
             if (!layout.HasSlots)
                 return null;
-            // Prefer the first non-excluded field so the inspector is useful on open.
-            ushort? firstAny = null;
+            // Prefer the first field so the inspector is useful on open.
             foreach (var pos in new[]
             {
                 ItmSlotPosition.LeftTop, ItmSlotPosition.LeftBottom,
@@ -441,14 +463,9 @@ namespace FanaBridge.UI.Display
                 var slot = layout.SlotAt(pos);
                 if (slot == null) continue;
                 foreach (var f in slot.Fields)
-                {
-                    if (firstAny == null)
-                        firstAny = f.ParamId;
-                    if (!FieldFormats.IsOverrideExcluded(f.ParamId))
-                        return f.ParamId;
-                }
+                    return f.ParamId;
             }
-            return firstAny;
+            return null;
         }
 
         private static bool PageCarries(ushort paramId, ItmPage page)
@@ -506,6 +523,10 @@ namespace FanaBridge.UI.Display
                 case FieldFormats.WithTotal: return "With total";
                 case FieldFormats.Bare: return "Value only";
                 case FieldFormats.Unit: return "With unit";
+                case FieldFormats.Neutral: return "Neutral for blank";
+                case FieldFormats.Blank: return "Blank for empty";
+                case FieldFormats.Whole: return "Whole number";
+                case FieldFormats.OneDecimal: return "One decimal";
                 default: return format;
             }
         }

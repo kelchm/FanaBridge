@@ -1236,8 +1236,10 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void FieldMappings_GearAndEngineMapping_Dropped()
+        public void FieldMappings_GearAndEngineMapping_Kept_NoCodeExclusion()
         {
+            // Standing law: no per-field hardcoded exclusion. Gear/EngineMapping
+            // mappings are ordinary FieldMappings; envelope DATA is the v2 authority.
             var config = Load(
                 "{ \"schemaVersion\": 1, \"fieldMappings\": { "
                 + "\"4\": { \"source\": { \"kind\": \"builtIn\", \"name\": \"Gear\" } }, "
@@ -1245,11 +1247,11 @@ namespace FanaBridge.Tests.Display
                 + "\"5\": { \"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" } } "
                 + "} }", out var warnings);
 
-            Assert.Single(config.FieldMappings);
+            Assert.Equal(3, config.FieldMappings.Count);
             Assert.True(config.FieldMappings.ContainsKey(ItmParam.Fuel));
-            Assert.False(config.FieldMappings.ContainsKey(ItmParam.Gear));
-            Assert.False(config.FieldMappings.ContainsKey(ItmParam.EngineMapping));
-            Assert.Equal(2, warnings.Count(w => w.Contains("cannot be remapped")));
+            Assert.True(config.FieldMappings.ContainsKey(ItmParam.Gear));
+            Assert.True(config.FieldMappings.ContainsKey(ItmParam.EngineMapping));
+            Assert.DoesNotContain(warnings, w => w.Contains("cannot be remapped"));
         }
 
         [Theory]
@@ -1262,7 +1264,10 @@ namespace FanaBridge.Tests.Display
         [InlineData("33", "unit", true)]       // OilTemp
         [InlineData("33", "bare", true)]
         [InlineData("33", "withTotal", false)]
-        [InlineData("1", "bare", false)]       // Speed — no format options
+        [InlineData("1", "bare", false)]       // Speed — bare not in speed family
+        [InlineData("1", "whole", true)]       // Speed family (task #23)
+        [InlineData("4", "neutral", true)]     // Gear family (task #23)
+        [InlineData("4", "blank", true)]
         public void FieldMappings_FormatVocabulary_PerFamily(string paramKey, string format, bool kept)
         {
             var config = Load(

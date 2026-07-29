@@ -5,10 +5,14 @@ using FanaBridge.Protocol;
 namespace FanaBridge.Display.Rules
 {
     /// <summary>
-    /// Validated vocabulary for <see cref="FieldMapping.Format"/> — a small per-param
-    /// family of keys the ITM mapper understands. Unknown text is warn-and-dropped at
-    /// load (format only; the mapping itself stays). Gear and EngineMapping cannot be
-    /// remapped at all (special wire text forms); the Pages UI locks those fields.
+    /// Validated vocabulary for field format keys — a small per-param family of keys
+    /// the ITM mapper understands. Unknown text is warn-and-dropped at load (format only;
+    /// the mapping itself stays).
+    /// <para>
+    /// Standing law: capability facts live in catalog/envelope DATA, never as per-field
+    /// code law. There is no hardcoded per-param exclusion list — envelope
+    /// <c>overridable</c> / region capability gates replace any former code lock.
+    /// </para>
     /// </summary>
     public static class FieldFormats
     {
@@ -21,6 +25,18 @@ namespace FanaBridge.Display.Rules
 
         /// <summary>Temperature params: show the unit label (C/F/K) from the frame.</summary>
         public const string Unit = "unit";
+
+        /// <summary>Gear: fold empty/blank input to neutral (kept P10a behavior).</summary>
+        public const string Neutral = "neutral";
+
+        /// <summary>Gear: allow blank display for empty gear input (blank-vs-neutral pair).</summary>
+        public const string Blank = "blank";
+
+        /// <summary>Speed: whole-number display (family default).</summary>
+        public const string Whole = "whole";
+
+        /// <summary>Speed: round resolved scalars to one decimal before the typed encoder.</summary>
+        public const string OneDecimal = "oneDecimal";
 
         /// <summary>Whether <paramref name="paramId"/> is a total-suffix parameter
         /// (Lap, Position, or Fuel).</summary>
@@ -38,10 +54,13 @@ namespace FanaBridge.Display.Rules
             || paramId == ItmParam.TyreRlTemp
             || paramId == ItmParam.TyreRrTemp;
 
-        /// <summary>Whether field-mapping overrides are forbidden for this param
-        /// (Gear and EngineMapping keep special wire text forms).</summary>
-        public static bool IsOverrideExcluded(ushort paramId)
-            => paramId == ItmParam.Gear || paramId == ItmParam.EngineMapping;
+        /// <summary>Whether <paramref name="paramId"/> is the gear param.</summary>
+        public static bool IsGearParam(ushort paramId)
+            => paramId == ItmParam.Gear;
+
+        /// <summary>Whether <paramref name="paramId"/> is the speed param.</summary>
+        public static bool IsSpeedParam(ushort paramId)
+            => paramId == ItmParam.Speed;
 
         /// <summary>
         /// The formats allowed for <paramref name="paramId"/>, or an empty list when
@@ -53,6 +72,8 @@ namespace FanaBridge.Display.Rules
         {
             if (IsTotalParam(paramId)) return TotalFormats;
             if (IsTempParam(paramId)) return TempFormats;
+            if (IsGearParam(paramId)) return GearFormats;
+            if (IsSpeedParam(paramId)) return SpeedFormats;
             return Array.Empty<string>();
         }
 
@@ -100,6 +121,10 @@ namespace FanaBridge.Display.Rules
             {
                 if (IsTotalParam(paramId) || IsTempParam(paramId))
                     return Bare;
+                if (IsGearParam(paramId))
+                    return Neutral;
+                if (IsSpeedParam(paramId))
+                    return Whole;
                 return null;
             }
 
@@ -112,6 +137,10 @@ namespace FanaBridge.Display.Rules
                 return WithTotal;
             if (IsTempParam(paramId))
                 return Unit;
+            if (IsGearParam(paramId))
+                return Neutral;
+            if (IsSpeedParam(paramId))
+                return Whole;
             return null;
         }
 
@@ -120,5 +149,13 @@ namespace FanaBridge.Display.Rules
 
         private static readonly IReadOnlyList<string> TempFormats =
             Array.AsReadOnly(new[] { Unit, Bare });
+
+        /// <summary>Gear blank-vs-neutral family (design round 8c).</summary>
+        private static readonly IReadOnlyList<string> GearFormats =
+            Array.AsReadOnly(new[] { Neutral, Blank });
+
+        /// <summary>Speed format family (design round 8c equivalents).</summary>
+        private static readonly IReadOnlyList<string> SpeedFormats =
+            Array.AsReadOnly(new[] { Whole, OneDecimal });
     }
 }

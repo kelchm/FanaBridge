@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -8,6 +9,11 @@ namespace FanaBridge.Display.Catalog
     /// Per-wheel catalog document (shipped data, not user config): ITM pages/fields,
     /// segment capability, screen commands, and announced-format seeds. Tolerant shape —
     /// extension data everywhere, tri-state capability booleans as nullable bool.
+    /// <para>
+    /// catalogVersion 2: field definitions live once under <see cref="ItmCatalogSection.Fields"/>;
+    /// pages carry <see cref="CatalogPage.Placements"/> that reference logical field ids.
+    /// Reach is derived from placements — never a stored recurring flag.
+    /// </para>
     /// </summary>
     public class WheelCatalog
     {
@@ -42,12 +48,23 @@ namespace FanaBridge.Display.Catalog
         public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 
-    /// <summary>ITM half of a wheel catalog: legacy index, pages, transition timings.</summary>
+    /// <summary>
+    /// ITM half of a wheel catalog: legacy index, field definitions, page placements,
+    /// transition timings.
+    /// </summary>
     public class ItmCatalogSection
     {
         /// <summary>On-wire index of the Legacy page (6 on PBME, 5 on Bentley).</summary>
         [JsonProperty("legacyPageIndex")]
         public int? LegacyPageIndex { get; set; }
+
+        /// <summary>
+        /// Field definitions keyed by stable logical id (<see cref="CatalogFieldDefinition.Id"/>).
+        /// One entry per logical field on this wheel — identity, param binding, labels,
+        /// capability envelope. Page-specific layout lives in placements.
+        /// </summary>
+        [JsonProperty("fields")]
+        public List<CatalogFieldDefinition> Fields { get; set; } = new List<CatalogFieldDefinition>();
 
         [JsonProperty("pages")]
         public List<CatalogPage> Pages { get; set; } = new List<CatalogPage>();
@@ -78,8 +95,13 @@ namespace FanaBridge.Display.Catalog
         [JsonProperty("provisional")]
         public bool? Provisional { get; set; }
 
-        [JsonProperty("fields")]
-        public List<CatalogField> Fields { get; set; } = new List<CatalogField>();
+        /// <summary>
+        /// Placements on this page in firmware param order. Each references a logical field
+        /// id defined in <see cref="ItmCatalogSection.Fields"/>.
+        /// </summary>
+        [JsonProperty("placements")]
+        public List<CatalogFieldPlacement> Placements { get; set; }
+            = new List<CatalogFieldPlacement>();
 
         /// <summary>Members this build does not recognize, preserved verbatim for
         /// round-trips.</summary>
@@ -87,11 +109,15 @@ namespace FanaBridge.Display.Catalog
         public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 
-    /// <summary>One field on a catalog page.</summary>
-    public class CatalogField
+    /// <summary>
+    /// One logical field definition for a wheel: identity, param binding, labels, and
+    /// capability envelope. Not page-specific — placements carry region / primaryHost.
+    /// </summary>
+    public class CatalogFieldDefinition
     {
-        [JsonProperty("fieldId")]
-        public string FieldId { get; set; }
+        /// <summary>Stable logical field id (camelCase token: speed, gear, lap, …).</summary>
+        [JsonProperty("id")]
+        public string Id { get; set; }
 
         /// <summary>Firmware param id (protocol constant).</summary>
         [JsonProperty("paramId")]
@@ -106,14 +132,10 @@ namespace FanaBridge.Display.Catalog
         [JsonProperty("firmwareLabel")]
         public string FirmwareLabel { get; set; }
 
-        [JsonProperty("region")]
-        public FieldRegion Region { get; set; }
-
-        /// <summary>Designated bring-up host for this param on this wheel. Exactly one
-        /// per param per wheel is required; zero/multiple → flag degraded-visible.</summary>
-        [JsonProperty("primaryHost")]
-        public bool? PrimaryHost { get; set; }
-
+        /// <summary>
+        /// Definition-level copy hint only — reach is derived from placements, never from
+        /// this flag.
+        /// </summary>
         [JsonProperty("header")]
         public bool? Header { get; set; }
 
@@ -128,6 +150,30 @@ namespace FanaBridge.Display.Catalog
 
         [JsonProperty("provisional")]
         public bool? Provisional { get; set; }
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips.</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
+    }
+
+    /// <summary>
+    /// One (page × field) placement: logical field reference, region, and page-specific
+    /// markers (<c>primaryHost</c>).
+    /// </summary>
+    public class CatalogFieldPlacement
+    {
+        /// <summary>Logical field id — resolves against <see cref="ItmCatalogSection.Fields"/>.</summary>
+        [JsonProperty("field")]
+        public string Field { get; set; }
+
+        [JsonProperty("region")]
+        public FieldRegion Region { get; set; }
+
+        /// <summary>Designated bring-up host for this param on this wheel. Exactly one
+        /// per param per wheel is required; zero/multiple → flag degraded-visible.</summary>
+        [JsonProperty("primaryHost")]
+        public bool? PrimaryHost { get; set; }
 
         /// <summary>Members this build does not recognize, preserved verbatim for
         /// round-trips.</summary>
@@ -272,5 +318,182 @@ namespace FanaBridge.Display.Catalog
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+    }
+
+    /// <summary>
+    /// Catalog navigation helpers: definition lookup, placement walk, and pure reach
+    /// derivation (placements → host page list). No dual-shape reader — catalogVersion 2 only.
+    /// </summary>
+    public static class CatalogFields
+    {
+        /// <summary>
+        /// Build a logical-id → definition index for <paramref name="catalog"/>.
+        /// First definition wins on duplicate ids.
+        /// </summary>
+        public static IReadOnlyDictionary<string, CatalogFieldDefinition> IndexByLogicalId(
+            WheelCatalog catalog)
+        {
+            var map = new Dictionary<string, CatalogFieldDefinition>(StringComparer.Ordinal);
+            var fields = catalog?.Itm?.Fields;
+            if (fields == null)
+                return map;
+            for (int i = 0; i < fields.Count; i++)
+            {
+                var d = fields[i];
+                if (d == null || string.IsNullOrEmpty(d.Id))
+                    continue;
+                if (!map.ContainsKey(d.Id))
+                    map[d.Id] = d;
+            }
+            return map;
+        }
+
+        /// <summary>
+        /// Build a paramId → definition index. First definition wins on duplicate params.
+        /// </summary>
+        public static IReadOnlyDictionary<ushort, CatalogFieldDefinition> IndexByParamId(
+            WheelCatalog catalog)
+        {
+            var map = new Dictionary<ushort, CatalogFieldDefinition>();
+            var fields = catalog?.Itm?.Fields;
+            if (fields == null)
+                return map;
+            for (int i = 0; i < fields.Count; i++)
+            {
+                var d = fields[i];
+                if (d == null)
+                    continue;
+                if (!map.ContainsKey(d.ParamId))
+                    map[d.ParamId] = d;
+            }
+            return map;
+        }
+
+        /// <summary>Resolve a logical field id to its definition, or null.</summary>
+        public static CatalogFieldDefinition FindDefinition(WheelCatalog catalog, string logicalId)
+        {
+            if (catalog?.Itm?.Fields == null || string.IsNullOrEmpty(logicalId))
+                return null;
+            for (int i = 0; i < catalog.Itm.Fields.Count; i++)
+            {
+                var d = catalog.Itm.Fields[i];
+                if (d != null && string.Equals(d.Id, logicalId, StringComparison.Ordinal))
+                    return d;
+            }
+            return null;
+        }
+
+        /// <summary>Resolve a param id to its definition, or null.</summary>
+        public static CatalogFieldDefinition FindDefinitionByParam(
+            WheelCatalog catalog, ushort paramId)
+        {
+            if (catalog?.Itm?.Fields == null)
+                return null;
+            for (int i = 0; i < catalog.Itm.Fields.Count; i++)
+            {
+                var d = catalog.Itm.Fields[i];
+                if (d != null && d.ParamId == paramId)
+                    return d;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Param ids placed on a catalog page, in placement order (firmware param order).
+        /// Unresolvable logical ids are skipped.
+        /// </summary>
+        public static List<ushort> ParamsOnPage(WheelCatalog catalog, string catalogPageId)
+        {
+            var list = new List<ushort>();
+            var pages = catalog?.Itm?.Pages;
+            if (pages == null || string.IsNullOrEmpty(catalogPageId))
+                return list;
+            var defs = IndexByLogicalId(catalog);
+            for (int i = 0; i < pages.Count; i++)
+            {
+                var page = pages[i];
+                if (page == null
+                    || !string.Equals(page.Id, catalogPageId, StringComparison.Ordinal))
+                    continue;
+                if (page.Placements == null)
+                    break;
+                for (int p = 0; p < page.Placements.Count; p++)
+                {
+                    var pl = page.Placements[p];
+                    if (pl == null || string.IsNullOrEmpty(pl.Field))
+                        continue;
+                    if (defs.TryGetValue(pl.Field, out var def) && def != null)
+                        list.Add(def.ParamId);
+                }
+                break;
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// Reach derivation: catalog page ids that place <paramref name="logicalId"/>.
+        /// Pure derivation from placements — nothing in the user document declares reach.
+        /// </summary>
+        public static IReadOnlyList<string> HostPageIds(WheelCatalog catalog, string logicalId)
+        {
+            var hosts = new List<string>();
+            if (catalog?.Itm?.Pages == null || string.IsNullOrEmpty(logicalId))
+                return hosts;
+            for (int i = 0; i < catalog.Itm.Pages.Count; i++)
+            {
+                var page = catalog.Itm.Pages[i];
+                if (page?.Placements == null || string.IsNullOrEmpty(page.Id))
+                    continue;
+                for (int p = 0; p < page.Placements.Count; p++)
+                {
+                    var pl = page.Placements[p];
+                    if (pl != null
+                        && string.Equals(pl.Field, logicalId, StringComparison.Ordinal))
+                    {
+                        if (!hosts.Contains(page.Id))
+                            hosts.Add(page.Id);
+                        break;
+                    }
+                }
+            }
+            return hosts;
+        }
+
+        /// <summary>
+        /// Reach counts for UI copy: placed host pages vs total ITM pages on the wheel.
+        /// Returns false when the logical id has no placements (or catalog is empty).
+        /// </summary>
+        public static bool TryGetReach(
+            WheelCatalog catalog, string logicalId, out int placed, out int total)
+        {
+            placed = 0;
+            total = catalog?.Itm?.Pages?.Count ?? 0;
+            if (string.IsNullOrEmpty(logicalId) || total == 0)
+                return false;
+            var hosts = HostPageIds(catalog, logicalId);
+            placed = hosts.Count;
+            return placed > 0;
+        }
+
+        /// <summary>
+        /// Reach counts by param id (via definition table). False when the param is
+        /// not defined / not placed.
+        /// </summary>
+        public static bool TryGetReachByParam(
+            WheelCatalog catalog, ushort paramId, out int placed, out int total)
+        {
+            placed = 0;
+            total = catalog?.Itm?.Pages?.Count ?? 0;
+            var def = FindDefinitionByParam(catalog, paramId);
+            if (def == null || string.IsNullOrEmpty(def.Id))
+                return false;
+            return TryGetReach(catalog, def.Id, out placed, out total);
+        }
+
+        /// <summary>
+        /// Logical id bound to <paramref name="paramId"/> in this catalog, or null.
+        /// </summary>
+        public static string LogicalIdForParam(WheelCatalog catalog, ushort paramId)
+            => FindDefinitionByParam(catalog, paramId)?.Id;
     }
 }

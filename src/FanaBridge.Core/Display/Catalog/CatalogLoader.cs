@@ -36,25 +36,47 @@ namespace FanaBridge.Display.Catalog
             => JsonConvert.SerializeObject(table, Settings);
 
         /// <summary>
+        /// Supported <see cref="WheelCatalog.CatalogVersion"/>. Only version 2 is
+        /// accepted (catalogVersion 1 → 2 was atomic; no dual-shape reader).
+        /// </summary>
+        public const int SupportedCatalogVersion = 2;
+
+        /// <summary>
         /// Parses a wheel catalog. Null/blank → empty document silently; parse failure →
-        /// empty document with a warning. Never throws.
+        /// empty document with a warning. catalogVersion must be
+        /// <see cref="SupportedCatalogVersion"/> (2); anything else → warn + empty
+        /// (fail-closed data). Never throws.
         /// </summary>
         public static WheelCatalog LoadWheelCatalog(string json, Action<string> log)
         {
+            if (string.IsNullOrWhiteSpace(json))
+                return new WheelCatalog();
+
             WheelCatalog catalog = null;
-            if (!string.IsNullOrWhiteSpace(json))
+            try
             {
-                try
-                {
-                    catalog = JsonConvert.DeserializeObject<WheelCatalog>(json, Settings);
-                }
-                catch (Exception ex)
-                {
-                    SafeLog(log,
-                        "Catalog: could not parse wheel catalog — using empty (" + ex.Message + ")");
-                }
+                catalog = JsonConvert.DeserializeObject<WheelCatalog>(json, Settings);
             }
-            return catalog ?? new WheelCatalog();
+            catch (Exception ex)
+            {
+                SafeLog(log,
+                    "Catalog: could not parse wheel catalog — using empty (" + ex.Message + ")");
+                return new WheelCatalog();
+            }
+
+            if (catalog == null)
+                return new WheelCatalog();
+
+            if (catalog.CatalogVersion != SupportedCatalogVersion)
+            {
+                SafeLog(log,
+                    "Catalog: catalogVersion " + catalog.CatalogVersion
+                    + " not supported (expected " + SupportedCatalogVersion
+                    + ") — using empty (fail-closed)");
+                return new WheelCatalog();
+            }
+
+            return catalog;
         }
 
         /// <summary>

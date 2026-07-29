@@ -6,8 +6,9 @@ using Newtonsoft.Json.Linq;
 namespace FanaBridge.Display.Schema2
 {
     /// <summary>
-    /// Per-param field content: a resting base plus an ordered override ladder.
-    /// Bound by param id (not page) so a child follows its param across host pages.
+    /// Per-param / per-logical-id field content: a resting base plus an ordered override
+    /// ladder. Bound by param id under <c>fields</c>, or by logical field id under
+    /// <c>sharedFields</c> — one ladder either way after resolution.
     /// </summary>
     public class FieldEntry
     {
@@ -23,6 +24,25 @@ namespace FanaBridge.Display.Schema2
         /// round-trips.</summary>
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
+
+        /// <summary>
+        /// Set when this ladder is unusable on this build (e.g. addressed by a winning
+        /// <c>sharedFields</c> entry, or an unresolvable logical id). Runtime-only;
+        /// document preserved verbatim.
+        /// </summary>
+        [JsonIgnore]
+        public bool DegradedAtLoad { get; internal set; }
+
+        /// <summary>
+        /// Human-readable reason when <see cref="DegradedAtLoad"/> — names the winner for
+        /// sharedFields collisions ("addressed by shared field 'speed'").
+        /// </summary>
+        [JsonIgnore]
+        public string DegradeReason { get; internal set; }
+
+        /// <summary>Whether this ladder may contribute: not load-degraded.</summary>
+        [JsonIgnore]
+        public bool EffectivelyEnabled => !DegradedAtLoad;
     }
 
     /// <summary>Field resting state: source, format, optional base suffix.</summary>

@@ -74,14 +74,11 @@ namespace FanaBridge.Display.Composition
                 }
             }
 
-            if (_config.Fields != null)
-            {
-                foreach (var kv in _config.Fields.OrderBy(k => k.Key))
-                {
-                    if (kv.Value != null)
-                        _fields.Add(new KeyValuePair<ushort, FieldEntry>(kv.Key, kv.Value));
-                }
-            }
+            // One ladder either way: sharedFields (logical id → param via catalog) merged
+            // with param-keyed fields; sharedFields wins on collision (S1). FrameComposer
+            // then indexes the map once and iterates it per tick — no second resolver.
+            foreach (var kv in FieldLadderMap.Build(_config, options.Catalog, _warn))
+                _fields.Add(kv);
         }
 
         /// <summary>Surface key for a hosted page's layer ladder (shared spelling).</summary>
@@ -732,7 +729,7 @@ namespace FanaBridge.Display.Composition
             if (ov.Writes == FieldWrites.Unknown)
                 return FieldDegradeReason.UnknownWrites;
 
-            // Catalog lock (Gear / EngineMapping) — activity-independent.
+            // Catalog lock (overridable:false in envelope DATA) — activity-independent.
             if (cap != null && cap.Overridable == false)
                 return FieldDegradeReason.ParamLocked;
 

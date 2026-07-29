@@ -100,8 +100,9 @@ namespace FanaBridge.Display.Arbitration
                 }
             }
 
-            // Fields dictionary — iterate by sorted key for determinism (JSON object order
-            // is not a reliable contract; param id numeric order is).
+            // Fields + sharedFields one-ladder — sorted key for determinism. Without a
+            // catalog, sharedFields stay inert (no param binding) and contribute nothing
+            // here; callers that have a catalog should prefer FieldLadderMap.Build.
             if (doc.Fields != null)
             {
                 var keys = new List<ushort>(doc.Fields.Keys);
@@ -109,6 +110,23 @@ namespace FanaBridge.Display.Arbitration
                 foreach (ushort key in keys)
                 {
                     if (!doc.Fields.TryGetValue(key, out var entry) || entry?.Overrides == null)
+                        continue;
+                    if (entry.DegradedAtLoad)
+                        continue;
+                    foreach (var ov in entry.Overrides)
+                        AddFromCondition(ov?.Condition);
+                }
+            }
+
+            // Shared field overrides still contribute condition params when resolvable
+            // is not required for itmField collection from conditions themselves —
+            // walk them by document order so condition sources are never missed.
+            if (doc.SharedFields != null)
+            {
+                foreach (var kv in doc.SharedFields)
+                {
+                    var entry = kv.Value;
+                    if (entry?.Overrides == null || entry.DegradedAtLoad)
                         continue;
                     foreach (var ov in entry.Overrides)
                         AddFromCondition(ov?.Condition);
