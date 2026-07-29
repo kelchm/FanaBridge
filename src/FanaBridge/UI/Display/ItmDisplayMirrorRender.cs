@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using FanaBridge.Adapters;
 using FanaBridge.Display.Drivers;
@@ -95,8 +96,7 @@ namespace FanaBridge.UI.Display
     /// <summary>
     /// Maps a <see cref="DisplayValuesSnapshot"/> into the mirror control's render model
     /// — every rendering decision that is not literally WPF lives here, so it is
-    /// unit-testable with no UI thread (the same pattern as
-    /// <see cref="DisplayOverviewRender"/>). Pure functions of their inputs.
+    /// unit-testable with no UI thread. Pure functions of their inputs.
     /// </summary>
     internal static class ItmDisplayMirrorRender
     {
@@ -239,7 +239,7 @@ namespace FanaBridge.UI.Display
         /// <summary>
         /// The small state caption shown in the LIVE card's header while the panel is
         /// not live — null while synced on a known page (the panel speaks for itself,
-        /// like the hardware). Wordings match <see cref="DisplayOverviewRender.CurrentPageCaption"/>.
+        /// like the hardware).
         /// </summary>
         public static string StateCaption(DisplayValuesSnapshot snapshot)
         {
@@ -265,8 +265,7 @@ namespace FanaBridge.UI.Display
 
         /// <summary>
         /// The "Page N · Name" caption under the mirror: from the values snapshot's page
-        /// when one is known, else the pre-mirror status-line path
-        /// (<see cref="DisplayOverviewRender.CurrentPageCaption"/>) so the caption keeps
+        /// when one is known, else the lifecycle status line so the caption keeps
         /// working when no values snapshot exists.
         /// </summary>
         public static string PageCaption(DisplayValuesSnapshot values, string itmStatus,
@@ -278,7 +277,35 @@ namespace FanaBridge.UI.Display
                     return values.PageName;   // uncataloged page — no name to append
                 return "Page " + values.WirePage + " · " + values.PageName;
             }
-            return DisplayOverviewRender.CurrentPageCaption(itmStatus, itmDeviceId);
+            return PageCaptionFromStatus(itmStatus, itmDeviceId);
+        }
+
+        private static string PageCaptionFromStatus(string itmStatus, byte itmDeviceId)
+        {
+            if (itmStatus == null || itmStatus == "Disabled")
+                return "ITM off";
+            if (itmStatus == "Idle")
+                return "ITM idle";
+            if (itmStatus == "BringUp")
+                return "Bringing up…";
+            if (itmStatus.StartsWith("Recovering", StringComparison.Ordinal))
+                return "Recovering…";
+
+            const string synced = "Synced — page ";
+            if (!itmStatus.StartsWith(synced, StringComparison.Ordinal))
+                return itmStatus;
+
+            int end = itmStatus.IndexOf(',', synced.Length);
+            string token = end < 0
+                ? itmStatus.Substring(synced.Length)
+                : itmStatus.Substring(synced.Length, end - synced.Length);
+            if (!byte.TryParse(token, out byte wire))
+                return "Synced";
+
+            var table = ItmPageTable.ForDevice(itmDeviceId);
+            return table.TryGetPage(wire, out _)
+                ? "Page " + wire + " · " + table.NameAtWire(wire)
+                : "Page " + wire;
         }
     }
 }

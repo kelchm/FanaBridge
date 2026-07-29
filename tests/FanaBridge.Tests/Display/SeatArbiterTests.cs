@@ -20,11 +20,10 @@ namespace FanaBridge.Tests.Display
 
         private static CarrierTickSnapshot Snap(
             string id, bool active, bool fired = false, bool fresh = false,
-            bool eligible = true, int? remaining = null,
-            bool legacySupersededV9 = false)
+            bool eligible = true, int? remaining = null)
             => new CarrierTickSnapshot(
                 id, conditionSatisfied: active, active, fresh, fired,
-                legacySupersededV9, eligible, expiresAtMs: 0, remaining);
+                eligible, expiresAtMs: 0, remaining);
 
         private static SeatArbiterTickInput In(
             long now, params CarrierTickSnapshot[] snaps)
@@ -351,27 +350,25 @@ namespace FanaBridge.Tests.Display
         // ── Supersede retirement (deliberate change) ─────────────────────
 
         [Fact]
-        public void SupersedeRetirement_DisplacedUntilDismissed_Resumes()
+        public void DisplacedUntilDismissed_Resumes()
         {
-            // Deliberate-change vs v9: untilDismissed outranked then reclaims — RESUMES.
-            // SA-007 adversarial: LegacySupersededV9=true must NOT kill the claim.
             var arb = new SeatArbiter(MinimalLadder(
                 (PriorityRowKind.Seat, "s-hi", "hosted", "p-b", new[] { "e-hi" }, null),
                 (PriorityRowKind.Seat, "s-fuel", "hosted", "p-c", new[] { "e-fuel" }, null)));
 
-            var r = arb.Tick(In(0, Snap("e-fuel", true, legacySupersededV9: true)));
+            var r = arb.Tick(In(0, Snap("e-fuel", true)));
             Assert.Equal("e-fuel", r.Intent.WinnerCarrierId);
 
             r = arb.Tick(In(SeatArbiter.MinDwellMs,
                 Snap("e-hi", true),
-                Snap("e-fuel", true, legacySupersededV9: true)));
+                Snap("e-fuel", true)));
             Assert.Equal("e-hi", r.Intent.WinnerCarrierId);
             var fuelStatus = r.Resolution.CarrierStatuses.First(s => s.CarrierId == "e-fuel");
             Assert.Equal(CarrierPresence.Outranked, fuelStatus.Presence);
             Assert.Equal(CarrierRowLabels.None, fuelStatus.RowLabels & CarrierRowLabels.Dismissed);
 
             r = arb.Tick(In(SeatArbiter.MinDwellMs * 2,
-                Snap("e-fuel", true, legacySupersededV9: true)));
+                Snap("e-fuel", true)));
             Assert.Equal("e-fuel", r.Intent.WinnerCarrierId);
             Assert.Equal(DestinationIds.Hosted("p-c"), r.Intent.DestinationId);
         }

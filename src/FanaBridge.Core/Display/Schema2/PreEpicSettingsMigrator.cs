@@ -10,7 +10,7 @@ namespace FanaBridge.Display.Schema2
 {
     /// <summary>
     /// Spec §9b — the ONE shipped migration: pre-epic display settings → a native v2
-    /// document. Bake-on-sight, marker-stamped, idempotent. Zero v1-type dependency:
+    /// document. Bake-on-sight, marker-stamped, idempotent, and schema-independent:
     /// reads pre-epic scalars only and writes v2 POCOs. Mode-content oracle =
     /// <c>LegacyModeMigrationTests</c> (hosted base + overlay layer + trigger semantics).
     /// </summary>

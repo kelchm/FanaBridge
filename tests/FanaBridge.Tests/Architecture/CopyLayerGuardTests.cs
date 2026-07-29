@@ -13,9 +13,7 @@ namespace FanaBridge.Tests.Architecture
     /// <summary>
     /// Architecture guard for the v2 Display copy layer (<c>DisplayCopy.cs</c>).
     /// (a) banned-vocabulary scan — "global", "rest", "waved off" must not appear as
-    ///     user copy in any v2-view file under <c>src/FanaBridge/UI/Display</c>;
-    ///     FailMode=true from day one (surface is new). v1 views are excluded via an
-    ///     explicit list that E9-exit deletes.
+    ///     user copy in any v2-view file under <c>src/FanaBridge/UI/Display</c>.
     /// (b) ruled-term presence — every NAMING PASS / shared-field ruled term appears
     ///     in DisplayCopy.
     /// (c) centralized-copy law (symbol centralization) —
@@ -70,23 +68,6 @@ namespace FanaBridge.Tests.Architecture
         private static readonly string DisplayUiRootRelative =
             "src/FanaBridge/UI/Display";
 
-        // v1 view / edit-model files still in tree this round — E9-exit deletes them.
-        // Banned-vocabulary scan skips these so the guard can enforce v2 views only.
-        // v1 XAML counterparts are on the exclude list too (Text/Content/ToolTip scan).
-        private static readonly string[] V1ViewExcludeFileNames =
-        {
-            "DisplayPagesView.xaml",
-            "DisplayPagesView.xaml.cs",
-            "DisplayPagesEditModel.cs",
-            "DisplayTriggersView.xaml",
-            "DisplayTriggersView.xaml.cs",
-            "DisplayTriggersEditModel.cs",
-            "DisplayVirtualPagesView.xaml",
-            "DisplayVirtualPagesView.xaml.cs",
-            "DisplayVirtualPagesEditModel.cs",
-            "TriggerRuleSet.cs",
-        };
-
         // Banned as user copy (DECISIONS §7e + field-filter ruling).
         private static readonly string[] BannedVocabulary =
         {
@@ -139,10 +120,8 @@ namespace FanaBridge.Tests.Architecture
             var root = Absolute(DisplayUiRootRelative);
             Assert.True(Directory.Exists(root), "Display UI root missing at " + DisplayUiRootRelative);
 
-            var csFiles = Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories)
-                .Where(f => !IsExcludedV1View(f));
-            var xamlFiles = Directory.GetFiles(root, "*.xaml", SearchOption.AllDirectories)
-                .Where(f => !IsExcludedV1View(f));
+            var csFiles = Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories);
+            var xamlFiles = Directory.GetFiles(root, "*.xaml", SearchOption.AllDirectories);
             var files = csFiles.Concat(xamlFiles)
                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -215,10 +194,8 @@ namespace FanaBridge.Tests.Architecture
 
             var root = Absolute(DisplayUiRootRelative);
             var csFiles = Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories)
-                .Where(f => !IsExcludedV1View(f)
-                    && !f.EndsWith("DisplayCopy.cs", StringComparison.OrdinalIgnoreCase));
-            var xamlFiles = Directory.GetFiles(root, "*.xaml", SearchOption.AllDirectories)
-                .Where(f => !IsExcludedV1View(f));
+                .Where(f => !f.EndsWith("DisplayCopy.cs", StringComparison.OrdinalIgnoreCase));
+            var xamlFiles = Directory.GetFiles(root, "*.xaml", SearchOption.AllDirectories);
             var files = csFiles.Concat(xamlFiles)
                 .Where(IsV2ViewSurface)
                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
@@ -287,8 +264,7 @@ namespace FanaBridge.Tests.Architecture
         private static bool IsV2ViewSurface(string absolutePath)
         {
             string name = Path.GetFileName(absolutePath);
-            // V2 views + diagnostics (new surface). Shared/ still hosts v1 table chrome
-            // until E9-exit — exclude it so the law targets v2 prose only.
+            // V2 views + diagnostics.
             if (name.IndexOf("V2", StringComparison.OrdinalIgnoreCase) >= 0)
                 return true;
             if (name.StartsWith("DisplayDiagnostics", StringComparison.OrdinalIgnoreCase))
@@ -421,17 +397,6 @@ namespace FanaBridge.Tests.Architecture
                     list.Add(m.Value);
             }
             return list;
-        }
-
-        private static bool IsExcludedV1View(string absolutePath)
-        {
-            string name = Path.GetFileName(absolutePath);
-            for (int i = 0; i < V1ViewExcludeFileNames.Length; i++)
-            {
-                if (string.Equals(name, V1ViewExcludeFileNames[i], StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            return false;
         }
 
         /// <summary>

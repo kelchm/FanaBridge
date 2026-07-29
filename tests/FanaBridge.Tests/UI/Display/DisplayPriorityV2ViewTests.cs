@@ -47,8 +47,6 @@ namespace FanaBridge.Tests.UI.Display
             public DisplaySettings DisplaySettings { get; } = new DisplaySettings();
             public DisplayType DisplayType => DisplayType.Itm;
             public byte ItmDeviceId => 3;
-            public DisplayCustomizationConfig GetDisplayConfig() => null!;
-            public void ApplyDisplayConfig(DisplayCustomizationConfig config) { }
             public DisplayConfigV2 GetDisplayConfigV2() => Live;
             public void ApplyDisplayConfigV2(DisplayConfigV2 config)
             {
@@ -67,7 +65,6 @@ namespace FanaBridge.Tests.UI.Display
             }
 
             public DisplayPanelSnapshot Snapshot => null!;
-            public void NotifySettingsChanged() { }
         }
 
         private sealed class EmptyPropertyCatalog : IDisplayPropertyCatalog

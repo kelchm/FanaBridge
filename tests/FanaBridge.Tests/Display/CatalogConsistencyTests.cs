@@ -169,7 +169,7 @@ namespace FanaBridge.Tests.Display
         }
 
         /// <summary>
-        /// catalogVersion gate: only version 2 is accepted. v1 / missing / zero →
+        /// catalogVersion gate: only version 2 is accepted. Older / missing / zero →
         /// warn + empty (fail-closed data). No dual-shape reader.
         /// </summary>
         [Theory]

@@ -1317,38 +1317,35 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Describe_RoundTripsThroughTheDisplayTabCaption()
+        public void Describe_RoundTripsThroughTheDisplayMirrorCaption()
         {
-            // The Display tab's current-page card parses Describe()'s literal wording
-            // (FanaBridge.UI.DisplayOverviewRender.CurrentPageCaption). This drives the
-            // REAL producer through that parser, state by state, so a rewording here
-            // can't silently degrade the card to echoing a raw log line — if this test
-            // fails after a Describe() change, update the parser with the new wording.
+            // The v2 mirror caption parses Describe()'s literal wording. Drive the real
+            // producer through that fallback parser state by state.
             var c = Make(out var t, out var clock);
-            Assert.Equal("ITM idle", DisplayOverviewRender.CurrentPageCaption(c.Describe(), 3));
+            Assert.Equal("ITM idle", ItmDisplayMirrorRender.PageCaption(null, c.Describe(), 3));
 
             c.SetUserEnabled(false);                    // → Disabled
             Assert.Equal(ItmLifecycleState.Disabled, c.State);
-            Assert.Equal("ITM off", DisplayOverviewRender.CurrentPageCaption(c.Describe(), 3));
+            Assert.Equal("ITM off", ItmDisplayMirrorRender.PageCaption(null, c.Describe(), 3));
 
             c.SetUserEnabled(true);                     // re-arms the cold bring-up
             t.SendReturns = false;                      // stall it so BringUp is observable
             c.Tick(true);
             Assert.Equal(ItmLifecycleState.BringUp, c.State);
-            Assert.Equal("Bringing up…", DisplayOverviewRender.CurrentPageCaption(c.Describe(), 3));
+            Assert.Equal("Bringing up…", ItmDisplayMirrorRender.PageCaption(null, c.Describe(), 3));
 
             t.SendReturns = true;
             c.Tick(true);                               // bring-up drains → AwaitPush
             c.OnPush(PushFor(c.DefaultPage));
             Tick(c, clock, c.AccumulateWindowMs);       // push confirmed → Synced
             Assert.Equal(ItmLifecycleState.Synced, c.State);
-            Assert.Equal("Page 1 · Lap Info", DisplayOverviewRender.CurrentPageCaption(c.Describe(), 3));
+            Assert.Equal("Page 1 · Lap Info", ItmDisplayMirrorRender.PageCaption(null, c.Describe(), 3));
 
             c.RequestPage(3);                           // a switch whose push never comes
             Tick(c, clock, c.SwitchQuietMs + c.PageSetSpacingMs);
             Tick(c, clock, c.PushDeadlineMs + 1);       // deadline missed → Recovery
             Assert.Equal(ItmLifecycleState.Recovery, c.State);
-            Assert.Equal("Recovering…", DisplayOverviewRender.CurrentPageCaption(c.Describe(), 3));
+            Assert.Equal("Recovering…", ItmDisplayMirrorRender.PageCaption(null, c.Describe(), 3));
         }
 
         // ── Regressions (review findings) ────────────────────────────────

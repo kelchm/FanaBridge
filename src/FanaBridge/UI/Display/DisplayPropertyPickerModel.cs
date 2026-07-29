@@ -184,8 +184,7 @@ namespace FanaBridge.UI.Display
         public const string BuiltInGroup = "FanaBridge";
 
         /// <summary>The curated Control Mapper roles group, pinned second — each role maps to
-        /// its live property (<see cref="DisplayTriggersEditModel.MappedControlPropertyName"/>),
-        /// so picking one authors a mapped-control trigger.</summary>
+        /// its live <c>InputStatus.ControlMapperPlugin.*</c> property.</summary>
         public const string MappedGroup = "Mapped controls";
 
         /// <summary>Group for a property name with no dotted namespace.</summary>
@@ -397,7 +396,7 @@ namespace FanaBridge.UI.Display
 
             // Mapped controls second: each role's live property, matched on the role name so
             // the filter reads naturally ("shift" finds Up Shift). A picked mapped property is
-            // reshaped to the mapped-control defaults by DisplayTriggersEditModel.
+            // represented by its live Control Mapper property name.
             List<PickerRow> mapped = null;
             foreach (var role in _mappedRoles)
                 if (!hasFilter || Match(role, filter))
@@ -545,7 +544,7 @@ namespace FanaBridge.UI.Display
 
         private PickerRow MappedRow(string role, string filter, bool hasFilter)
         {
-            string propertyName = DisplayTriggersEditModel.MappedControlPropertyName(role);
+            string propertyName = "InputStatus.ControlMapperPlugin." + role;
             int matchStart = -1;
             int matchLength = 0;
             if (hasFilter)

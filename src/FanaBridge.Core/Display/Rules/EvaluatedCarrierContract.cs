@@ -9,8 +9,7 @@ namespace FanaBridge.Display.Rules
     public static class CarrierDefaults
     {
         /// <summary>
-        /// Default ForDuration window (5000 ms). This is the v2 home for the constant;
-        /// the scaffolding HoldSpec copy is deleted at E8b.
+        /// Default ForDuration window (5000 ms).
         /// </summary>
         public const int DefaultDurationMs = 5000;
     }
@@ -27,7 +26,6 @@ namespace FanaBridge.Display.Rules
             bool active,
             bool freshFire,
             bool firedThisTick,
-            bool legacySupersededV9,
             bool eligible,
             long expiresAtMs,
             int? remainingMs)
@@ -37,7 +35,6 @@ namespace FanaBridge.Display.Rules
             Active = active;
             FreshFire = freshFire;
             FiredThisTick = firedThisTick;
-            LegacySupersededV9 = legacySupersededV9;
             Eligible = eligible;
             ExpiresAtMs = expiresAtMs;
             RemainingMs = remainingMs;
@@ -55,8 +52,7 @@ namespace FanaBridge.Display.Rules
         /// <summary>
         /// Fresh-fire identity (v2): true when this tick's Fire created a new claim —
         /// the carrier had no live activation immediately before Fire. Window restarts
-        /// while already active are NOT fresh. (v9 compat: also true when Superseded
-        /// was set before Fire — see contract §3.)
+        /// while already active are NOT fresh.
         /// </summary>
         public bool FreshFire { get; }
 
@@ -67,13 +63,6 @@ namespace FanaBridge.Display.Rules
         /// evaluator activation).
         /// </summary>
         public bool FiredThisTick { get; }
-
-        /// <summary>
-        /// v9-path supersede latch reading only. Always false under pure v2 evaluation.
-        /// Renamed from Superseded so diagnostics never imply a v2 dismissal latch.
-        /// Dropped from the semantic contract for v2; retained for E8 dual-path transition.
-        /// </summary>
-        public bool LegacySupersededV9 { get; }
 
         /// <summary>Eligibility after runs/InGame gating this tick.</summary>
         public bool Eligible { get; }
@@ -95,7 +84,6 @@ namespace FanaBridge.Display.Rules
                 runtime.Active,
                 runtime.FreshFireThisTick,
                 runtime.FiredThisTick,
-                runtime.Superseded,
                 runtime.EligibleNow,
                 runtime.ExpiresAt,
                 CarrierEvaluator.RemainingMs(spec, runtime, nowMs));
@@ -103,7 +91,6 @@ namespace FanaBridge.Display.Rules
 
     /// <summary>
     /// D10 status vocabulary for v2 composed-resolution diagnostics.
-    /// Distinct from v9 <see cref="RuleStatus"/> (kept for the engine path only).
     /// </summary>
     public enum CarrierPresence
     {
@@ -176,7 +163,6 @@ namespace FanaBridge.Display.Rules
 
     /// <summary>
     /// Per-carrier v2 status for the composed-resolution record (D10 vocabulary).
-    /// <see cref="RuleStatus"/> remains the v1-UI status enum until E9-exit.
     /// </summary>
     public readonly struct CarrierResolutionStatus
     {

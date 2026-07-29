@@ -168,14 +168,14 @@ namespace FanaBridge.Display.Composition
         public ConditionParamPlan ConditionPlan { get; }
 
         /// <summary>
-        /// Segment sink — identical shape to DisplayRuleStack. Null = resolve only.
+        /// Segment sink. Null = resolve only.
         /// Returns false when a send was attempted and declined.
         /// </summary>
         public Func<byte, byte, byte, bool> TryWriteLegacySegments { get; set; }
 
         /// <summary>
         /// Special-screen sink: pattern byte → accepted. Null sink is NOT accepted
-        /// (v9 parity — special latch stays open and retries).
+        /// (the special latch stays open and retries).
         /// </summary>
         public Func<byte, bool> TryShowSpecialScreen { get; set; }
 
@@ -440,18 +440,17 @@ namespace FanaBridge.Display.Composition
             return list;
         }
 
-        // ── Director intent (v9 ToDirectorIntent shape reference) ─────────
+        // ── Director intent ───────────────────────────────────────────────
 
         /// <summary>
         /// Maps seat + wheel-screen outcomes onto <see cref="DirectorIntent"/> using the
-        /// same kind split as <c>DisplayRuleStack.ToDirectorIntent</c> (Page /
-        /// SegmentScreen / Special). Shape reference only — does not call the v9 helper.
+        /// Page / SegmentScreen / Special split.
         /// </summary>
         internal static DirectorIntent ToDirectorIntent(
             SeatDisplayIntent seat,
             WheelScreenArbiterTickResult ws)
         {
-            // Special holds col01 — director must not page-navigate (v9 Special path).
+            // Special holds col01 — director must not page-navigate.
             if (ws != null
                 && ws.SurfaceHeld
                 && ws.Intent != null

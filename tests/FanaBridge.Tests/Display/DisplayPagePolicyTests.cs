@@ -256,24 +256,6 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void NoConfig_TheSettingOwnsTheLifecyclePagePolicy()
-        {
-            // v1 empty document (no ITM destinations): built-in page policy + game-start revert.
-            var s = StartSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = new JObject(),
-            });
-            var running = Data(NewStatus());
-            s.Frame(running);
-            s.Frame(running);
-
-            var lifecycle = s.Instance.ItmDisplayForTest!.Lifecycle;
-            Assert.Equal(DisplaySettings.DefaultItmDefaultPage, lifecycle.DefaultPage);
-            Assert.True(lifecycle.GameStartPageRevert);    // built-in revert stays on
-        }
-
-        [Fact]
         public void PreEpicBake_RestFloorOwnsLifecyclePagePolicy()
         {
             // §9b: no document keys → bake v2 with rest = default itm page; composition
@@ -312,36 +294,6 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void ConfigRemoval_ReturnsPolicyToTheSetting_AndSwitchesLive()
-        {
-            var running = Data(NewStatus());
-            // Synced on the config base (Tyre Temps, wire 5).
-            var s = SyncedSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["display"] = ConfigWithBase("tyreTemps"),
-            }, TyrePush, running);
-            Assert.Equal(ItmLifecycleState.Synced, s.Instance.ItmDisplayForTest!.Lifecycle.State);
-            int before = PageSets(s.Transport.Sent).Count;
-
-            // Mode Off drops composition page policy → built-in setting owns the page.
-            s.Instance.SetSettings(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["display"] = V2ModeOff(),
-            }, isDefault: false);
-            s.Frame(running);            // teardown observed on the frame path
-            s.Frame(running);            // policy edge reaches the driver
-            RunSwitchWindow(s, running);
-
-            var lifecycle = s.Instance.ItmDisplayForTest!.Lifecycle;
-            Assert.Equal(DisplaySettings.DefaultItmDefaultPage, lifecycle.DefaultPage);
-            Assert.True(lifecycle.GameStartPageRevert);
-            var after = PageSets(s.Transport.Sent).Skip(before).ToList();
-            Assert.Contains(DisplaySettings.DefaultItmDefaultPage, after);
-        }
-
-        [Fact]
         public void BasePageChange_WithinALiveComposition_SwitchesLive()
         {
             var running = Data(NewStatus());
@@ -368,38 +320,6 @@ namespace FanaBridge.Tests.Display
             Assert.False(lifecycle.GameStartPageRevert);
             var after = PageSets(s.Transport.Sent).Skip(before).ToList();
             Assert.Contains(WireFor(ItmPage.FuelErsDrs), after);
-        }
-
-        [Fact]
-        public void DefaultPageSettingChange_NoStack_SwitchesLive()
-        {
-            // v1 empty document keeps built-in policy so a live itmDefaultPage change
-            // still drives the lifecycle (no §9b rest-floor takeover).
-            var running = Data(NewStatus());
-            var s = SyncedSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = new JObject(),
-            }, LapInfoPush, running);
-            Assert.Equal(ItmLifecycleState.Synced, s.Instance.ItmDisplayForTest!.Lifecycle.State);
-            int before = PageSets(s.Transport.Sent).Count;
-
-            // The user picks a new default page in settings: with no ITM stack content
-            // the driver edge-detects the change and requests the page live.
-            s.Instance.SetSettings(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["itmDefaultPage"] = 5,
-                ["displayCustomization"] = new JObject(),
-            }, isDefault: false);
-            s.Frame(running);
-            RunSwitchWindow(s, running);
-
-            var lifecycle = s.Instance.ItmDisplayForTest!.Lifecycle;
-            Assert.Equal(5, lifecycle.DefaultPage);
-            Assert.True(lifecycle.GameStartPageRevert);
-            var after = PageSets(s.Transport.Sent).Skip(before).ToList();
-            Assert.Contains((byte)5, after);
         }
 
         [Fact]
@@ -443,7 +363,6 @@ namespace FanaBridge.Tests.Display
             Assert.Null(s.Instance.CompositionForTest);
             // The dead stack's published rule rows go with it — the Display tab must
             // not keep rendering a customization that no longer exists.
-            Assert.Null(s.Instance.DisplayRuleSnapshot);
 
             s.Frame(running);   // the restored policy reaches the lifecycle
             Assert.Equal(DisplaySettings.DefaultItmDefaultPage, driver.Lifecycle.DefaultPage);

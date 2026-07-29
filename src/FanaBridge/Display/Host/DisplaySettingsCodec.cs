@@ -28,10 +28,8 @@ namespace FanaBridge.Display.Host
                     displayControl = DisplaySettings.ControlLegacy;
             }
 
-            // Scalar whitelist: every display settings key this build reads/writes is listed
-            // below (and mirrored in Write / WriteDefaults). Add any new key here — a key
-            // present only on the JObject (near-miss precedent: legacyModeMigrated) is
-            // invisible to the codec until it is.
+            // The pre-epic scalar reads remain the one-shot v2 bake source. Retired mode
+            // values are intentionally read-only: once consumed, this build never emits them.
             return new DisplaySettings
             {
                 DisplayControl = displayControl,
@@ -40,8 +38,6 @@ namespace FanaBridge.Display.Host
                 ItmShowLapTotal = (bool?)source["itmShowLapTotal"] ?? DisplaySettings.DefaultShowLapTotal,
                 ItmShowPositionTotal = (bool?)source["itmShowPositionTotal"] ?? DisplaySettings.DefaultShowPositionTotal,
                 ItmDefaultPage = (byte?)source["itmDefaultPage"] ?? DisplaySettings.DefaultItmDefaultPage,
-                // Absent key = false so fresh / pre-9a blobs still run the mode→world step.
-                LegacyModeMigrated = (bool?)source["legacyModeMigrated"] ?? false,
             };
         }
 
@@ -52,23 +48,14 @@ namespace FanaBridge.Display.Host
             if (settings == null)
                 throw new ArgumentNullException(nameof(settings));
 
-            string displayControl = CanonicalControl(settings.DisplayControl)
-                ?? DisplaySettings.ControlItm;
-            bool itmEnabled = displayControl == DisplaySettings.ControlItm;
-
-            settings.DisplayControl = displayControl;
-            settings.ItmEnabled = itmEnabled;
-
-            // Scalar whitelist (must stay in lockstep with Read): every new settings key
-            // must be added here too.
-            destination["displayMode"] = settings.DisplayMode;
-            destination["displayControl"] = displayControl;
-            destination["itmEnabled"] = itmEnabled;
+            // Persist only live settings. The control/mode/mirror values are pre-epic
+            // migration inputs; a post-bake write removes them.
+            destination.Remove("displayMode");
+            destination.Remove("displayControl");
+            destination.Remove("itmEnabled");
             destination["itmShowLapTotal"] = settings.ItmShowLapTotal;
             destination["itmShowPositionTotal"] = settings.ItmShowPositionTotal;
             destination["itmDefaultPage"] = settings.ItmDefaultPage;
-            // Always emit so a save after migration cannot re-synthesize on next load.
-            destination["legacyModeMigrated"] = settings.LegacyModeMigrated;
         }
 
         public static void WriteDefaults(JObject destination, bool itmCapable)
@@ -76,24 +63,12 @@ namespace FanaBridge.Display.Host
             if (destination == null)
                 throw new ArgumentNullException(nameof(destination));
 
-            destination["displayMode"] = DisplaySettings.DefaultMode;
-            // Only bake displayControl when the device is ITM-capable (Itm is the fixed
-            // point of the migration matrix for default itmEnabled/mode). Non-ITM defaults
-            // leave the key absent so resolve-on-read can still promote to Itm if caps later
-            // become ITM-capable — writing Legacy here would permanently freeze the control
-            // (stored values are honored even when caps change).
-            if (itmCapable)
-                destination["displayControl"] = DisplaySettings.ControlItm;
-            else
-                destination.Remove("displayControl");
-            // Preserve the old default byte for downgrade safety. Basic wheels have always
-            // persisted true here; the value is capability-gated dead weight in old builds.
-            destination["itmEnabled"] = DisplaySettings.DefaultItmEnabled;
+            destination.Remove("displayMode");
+            destination.Remove("displayControl");
+            destination.Remove("itmEnabled");
             destination["itmShowLapTotal"] = DisplaySettings.DefaultShowLapTotal;
             destination["itmShowPositionTotal"] = DisplaySettings.DefaultShowPositionTotal;
             destination["itmDefaultPage"] = DisplaySettings.DefaultItmDefaultPage;
-            // Omit: absent = false so LoadDefaultSettings still migrates the default Gear.
-            destination.Remove("legacyModeMigrated");
         }
 
         private static string CanonicalControl(string value)

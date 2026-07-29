@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using FanaBridge.Display.Rules;
+using FanaBridge.Display.Schema2;
 using FanaBridge.Protocol;
 
 namespace FanaBridge.Display.Legacy
@@ -9,7 +9,7 @@ namespace FanaBridge.Display.Legacy
     /// already-rendered content string (from <see cref="LegacyValueFormatter"/>) plus an
     /// effect and <c>nowMs</c>, and produces the 3-byte segment frame for that instant.
     /// Scroll steps every <see cref="ScrollStepMs"/>; blink toggles every
-    /// <see cref="BlinkHalfPeriodMs"/>. <see cref="LegacyEffect.Flash"/> is treated as
+    /// <see cref="BlinkHalfPeriodMs"/>. <see cref="ContentEffect.Flash"/> is treated as
     /// Blink (the validator coerces it at load; this is the defensive runtime path).
     /// </summary>
     public static class LegacyEffectClock
@@ -32,19 +32,19 @@ namespace FanaBridge.Display.Legacy
         /// Applies <paramref name="effect"/> to <paramref name="renderedText"/> at
         /// <paramref name="nowMs"/> and returns a 3-byte segment frame.
         /// </summary>
-        public static byte[] Apply(string renderedText, LegacyEffect effect, long nowMs)
+        public static byte[] Apply(string renderedText, ContentEffect effect, long nowMs)
         {
             switch (effect)
             {
-                case LegacyEffect.Scroll:
+                case ContentEffect.Scroll:
                     return ScrollFrame(renderedText, nowMs);
 
-                case LegacyEffect.Blink:
-                case LegacyEffect.Flash:
+                case ContentEffect.Blink:
+                case ContentEffect.Flash:
                     return BlinkFrame(renderedText, nowMs);
 
-                case LegacyEffect.None:
-                case LegacyEffect.Unknown:
+                case ContentEffect.None:
+                case ContentEffect.Unknown:
                 default:
                     return LegacyValueFormatter.Render(renderedText);
             }

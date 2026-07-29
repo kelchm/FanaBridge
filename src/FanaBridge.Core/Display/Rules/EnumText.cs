@@ -8,11 +8,9 @@ namespace FanaBridge.Display.Rules
     /// accessors that parse on read, rather than typed enums with a converter, for one
     /// load-bearing reason: a value written by a future version must survive a load/save
     /// round-trip through this build byte-for-byte. Parsing into a typed enum at
-    /// deserialization time would discard the original text — degrading the rule
-    /// permanently instead of only for the builds that don't know the value.
-    /// Unrecognized text parses to the enum's <c>Unknown</c> member (or null for nullable
-    /// reads); <see cref="DisplayConfigValidator"/> turns that into a per-rule
-    /// degradation with a warning, never a throw.
+    /// deserialization time would discard the original text. Unrecognized text parses
+    /// to the enum's <c>Unknown</c> member (or null for nullable reads), allowing callers
+    /// to degrade with a warning rather than throw.
     /// </summary>
     internal static class EnumText
     {

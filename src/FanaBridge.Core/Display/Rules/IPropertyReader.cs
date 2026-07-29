@@ -1,7 +1,7 @@
 namespace FanaBridge.Display.Rules
 {
     /// <summary>
-    /// Resolves <see cref="PropertySpec"/>s to live values for the rule engine. This is the
+    /// Resolves <see cref="PropertySpec"/>s to live values for the v2 evaluator. This is the
     /// engine's only window onto game data, and it keeps Core adapter-agnostic: the plugin
     /// layer implements it against its data sources (typed telemetry for built-ins, name
     /// lookup for user-picked properties); tests implement it with a dictionary.

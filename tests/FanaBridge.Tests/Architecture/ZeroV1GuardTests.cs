@@ -9,21 +9,15 @@ using Xunit.Abstractions;
 namespace FanaBridge.Tests.Architecture
 {
     /// <summary>
-    /// Zero-v1 guard (engine-replan-v2.md §E8b / DOD-007). Two tiers:
-    /// <list type="bullet">
-    /// <item><b>DELETED-NOW</b> — engine/schema burn identifiers; FailMode=true (must be
-    /// absent from src after E8b).</item>
-    /// <item><b>UI-EXIT</b> — types the v1 views still reference until E9-exit; report-only
-    /// (FailMode=false) until that gate.</item>
-    /// </list>
+    /// Zero-v1 guard (engine-replan-v2.md §E8b / DOD-007). Every retirement-manifest
+    /// identifier, filename, and JSON literal is fail-closed.
     /// </summary>
     public class ZeroV1GuardTests
     {
         // DELETED-NOW tier: engine/schema burn-down — must be empty after E8b.
         private const bool FailModeDeletedNow = true;
 
-        // UI-EXIT tier: report-only until E9-exit.
-        private const bool FailModeUiExit = false;
+        private const bool FailModeUiExit = true;
 
         /// <summary>
         /// Engine/schema identifiers deleted at E8b. FailModeDeletedNow requires ABSENCE.
@@ -42,8 +36,7 @@ namespace FanaBridge.Tests.Architecture
         };
 
         /// <summary>
-        /// UI-coupled retirement-manifest identifiers retained until E9-exit.
-        /// RuleStatus + DisplayRuleSnapshot stay with the v1 Overview/Triggers surface.
+        /// UI-exit retirement-manifest identifiers.
         /// </summary>
         private static readonly string[] UiExitIdentifiers =
         {
@@ -85,7 +78,7 @@ namespace FanaBridge.Tests.Architecture
             "id",
         };
 
-        // v1-exclusive JSON literals — UI-EXIT / serializer-coupled until E9-exit.
+        // Retired JSON literals.
         private static readonly string[] GlobalJsonLiterals =
         {
             "segmentDisplay",
@@ -96,14 +89,8 @@ namespace FanaBridge.Tests.Architecture
             "inRotation",
         };
 
-        private static readonly string[] RuleMemberJsonLiterals = { "show", "when", "hold" };
-
-        private static readonly HashSet<string> RuleMemberParseFiles =
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "src/FanaBridge.Core/Display/Rules/DisplayConfigSerializer.cs",
-                "src/FanaBridge.Core/Display/Rules/DisplayRule.cs",
-            };
+        // Rule-member JSON-literal tier complete: its parse targets died with the v1
+        // serializer; the identifier + filename tiers already ban their resurrection.
 
         private readonly ITestOutputHelper _output;
 
@@ -136,7 +123,7 @@ namespace FanaBridge.Tests.Architecture
         }
 
         [Fact]
-        public void UiExit_IdentifierScan_ReportOnlyUntilE9()
+        public void UiExit_IdentifierScan_MustBeEmpty()
         {
             var hits = ScanIdentifiers(UiExitIdentifiers);
             Report("UI-EXIT identifier", hits, FailModeUiExit);
@@ -150,7 +137,7 @@ namespace FanaBridge.Tests.Architecture
         }
 
         [Fact]
-        public void JsonLiteralScan_ReportOnlyUntilE9()
+        public void JsonLiteralScan_MustBeEmpty()
         {
             var hits = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
             foreach (var file in EnumerateSourceFiles())
@@ -159,12 +146,6 @@ namespace FanaBridge.Tests.Architecture
                 var text = File.ReadAllText(file);
                 foreach (var lit in GlobalJsonLiterals)
                     CollectStringLiteralHits(text, lit, rel, hits);
-
-                if (RuleMemberParseFiles.Contains(rel))
-                {
-                    foreach (var lit in RuleMemberJsonLiterals)
-                        CollectStringLiteralHits(text, lit, rel, hits);
-                }
             }
 
             Report("UI-EXIT JSON-literal", hits, FailModeUiExit);

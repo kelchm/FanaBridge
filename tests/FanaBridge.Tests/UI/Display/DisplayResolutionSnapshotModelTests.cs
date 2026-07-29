@@ -354,7 +354,7 @@ namespace FanaBridge.Tests.UI.Display
             var snaps = new List<CarrierTickSnapshot>
             {
                 new CarrierTickSnapshot(
-                    "c1", true, true, false, true, false, true, 9000, 400),
+                    "c1", true, true, false, true, true, 9000, 400),
             };
             var record = new ComposedResolutionRecord(
                 tickMs: 10,

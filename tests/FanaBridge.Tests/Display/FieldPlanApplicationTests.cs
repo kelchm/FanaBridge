@@ -72,7 +72,7 @@ namespace FanaBridge.Tests.Display
         private static CarrierTickSnapshot Snap(string id, bool active)
             => new CarrierTickSnapshot(
                 id, conditionSatisfied: active, active, freshFire: false,
-                firedThisTick: false, legacySupersededV9: false, eligible: true,
+                firedThisTick: false, eligible: true,
                 expiresAtMs: 0, remainingMs: null);
 
         private static DisplayConfigV2 Normalize(DisplayConfigV2 doc)

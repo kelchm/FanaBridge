@@ -1,6 +1,7 @@
 using System;
+using FanaBridge.Display;
 using FanaBridge.Display.Legacy;
-using FanaBridge.Display.Rules;
+using FanaBridge.Display.Schema2;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using Xunit;
@@ -46,7 +47,7 @@ namespace FanaBridge.Tests.Protocol
             }, frame);
 
             // Scroll is inert when folded count ≤ 3.
-            var scrolled = LegacyEffectClock.Apply("A.b.c.", LegacyEffect.Scroll, nowMs: 10_000);
+            var scrolled = LegacyEffectClock.Apply("A.b.c.", ContentEffect.Scroll, nowMs: 10_000);
             Assert.Equal(frame, scrolled);
         }
 
@@ -87,7 +88,7 @@ namespace FanaBridge.Tests.Protocol
             for (int step = 0; step < expected.Length; step++)
             {
                 long nowMs = (long)step * LegacyEffectClock.ScrollStepMs;
-                var frame = LegacyEffectClock.Apply("A.b.c.d", LegacyEffect.Scroll, nowMs);
+                var frame = LegacyEffectClock.Apply("A.b.c.d", ContentEffect.Scroll, nowMs);
                 Assert.Equal(
                     new byte[] { expected[step].Item1, expected[step].Item2, expected[step].Item3 },
                     frame);
@@ -95,8 +96,8 @@ namespace FanaBridge.Tests.Protocol
 
             // Wrap: step 7 ≡ step 0
             Assert.Equal(
-                LegacyEffectClock.Apply("A.b.c.d", LegacyEffect.Scroll, 0),
-                LegacyEffectClock.Apply("A.b.c.d", LegacyEffect.Scroll,
+                LegacyEffectClock.Apply("A.b.c.d", ContentEffect.Scroll, 0),
+                LegacyEffectClock.Apply("A.b.c.d", ContentEffect.Scroll,
                     (long)expected.Length * LegacyEffectClock.ScrollStepMs));
         }
 
@@ -160,10 +161,10 @@ namespace FanaBridge.Tests.Protocol
 
             Assert.Equal(
                 new byte[] { d1, d2, d3 },
-                LegacyEffectClock.Apply("1.2.3.4", LegacyEffect.Scroll, 0));
+                LegacyEffectClock.Apply("1.2.3.4", ContentEffect.Scroll, 0));
             Assert.Equal(
                 new byte[] { d2, d3, d4 },
-                LegacyEffectClock.Apply("1.2.3.4", LegacyEffect.Scroll,
+                LegacyEffectClock.Apply("1.2.3.4", ContentEffect.Scroll,
                     LegacyEffectClock.ScrollStepMs));
         }
 
@@ -197,12 +198,12 @@ namespace FanaBridge.Tests.Protocol
         {
             // Raw "A.b.c." is 6 chars; folded is 3 → must fit (scroll inert).
             Assert.Equal(3, SevenSegment.EncodeWithDots("A.b.c.").Count);
-            Assert.True(LegacyScreen.IsRenderableText("A.b.c."));
+            Assert.True(SegmentText.IsRenderableText("A.b.c."));
 
             // Raw "A.b.c.d" is 7 chars; folded is 4 → scroll.
             Assert.Equal(4, SevenSegment.EncodeWithDots("A.b.c.d").Count);
-            Assert.False(LegacyScreen.IsRenderableText("A.b.c.d"));
-            Assert.True(LegacyScreen.IsRenderableMessage("A.b.c.d"));
+            Assert.False(SegmentText.IsRenderableText("A.b.c.d"));
+            Assert.True(SegmentText.IsRenderableMessage("A.b.c.d"));
         }
 
         [Fact]

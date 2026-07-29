@@ -292,7 +292,7 @@ namespace FanaBridge.Tests.Display
             var life = new Lifetime { Kind = LifetimeKind.WhileTrue };
             var spec = CarrierSpec.FromV2("c", SourceOnly(BuiltInProperties.Fuel), life, RunsWhen.Always);
             Assert.Equal(CarrierTriggerFamily.Level, spec.Trigger.Family);
-            Assert.Equal(ConditionKind.Unknown, spec.Trigger.LevelKind);
+            Assert.Equal(ConditionOperator.Unknown, spec.Trigger.LevelKind);
 
             var rt = new CarrierRuntime();
             var props = new FakeProps();
@@ -381,7 +381,6 @@ namespace FanaBridge.Tests.Display
             Assert.False(rt.Active);
             Assert.False(rt.HasPrev);
             Assert.False(rt.Satisfied);
-            Assert.False(rt.Superseded);
 
             // Re-entry: first sample never fires
             props.Set(BuiltInProperties.BrakeBias, 52);
@@ -638,7 +637,6 @@ namespace FanaBridge.Tests.Display
             Assert.True(snap.Active);
             Assert.True(snap.FreshFire);
             Assert.True(snap.FiredThisTick);
-            Assert.False(snap.LegacySupersededV9);
             Assert.Equal(1050, snap.ExpiresAtMs);
             Assert.Equal(1000, snap.RemainingMs);
             Assert.True(snap.Eligible);

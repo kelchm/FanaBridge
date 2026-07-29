@@ -61,80 +61,44 @@ namespace FanaBridge.Tests.Display.Host
             Assert.True(JToken.DeepEquals(original, source));
         }
 
-        [Theory]
-        [InlineData("itm", DisplaySettings.ControlItm, true)]
-        [InlineData("LEGACY", DisplaySettings.ControlLegacy, false)]
-        [InlineData("off", DisplaySettings.ControlOff, false)]
-        public void ReadWriteRead_IsFixedPoint_AndWriteCanonicalizesMirror(
-            string storedControl, string canonicalControl, bool mirroredEnabled)
-        {
-            var document = new JObject
-            {
-                ["displayControl"] = storedControl,
-                ["displayMode"] = "GearAndSpeed",
-                ["itmEnabled"] = !mirroredEnabled,
-                ["itmShowLapTotal"] = false,
-                ["itmShowPositionTotal"] = true,
-                ["itmDefaultPage"] = 4,
-                ["unrelated"] = 42,
-            };
-
-            var first = DisplaySettingsCodec.Read(document, itmCapable: false);
-            DisplaySettingsCodec.Write(document, first);
-            var firstWrite = (JObject)document.DeepClone();
-            var second = DisplaySettingsCodec.Read(document, itmCapable: true);
-            DisplaySettingsCodec.Write(document, second);
-
-            Assert.Equal(canonicalControl, (string?)document["displayControl"]);
-            Assert.Equal(mirroredEnabled, (bool)document["itmEnabled"]!);
-            Assert.Equal(mirroredEnabled, second.ItmEnabled);
-            Assert.Equal("GearAndSpeed", second.DisplayMode);
-            Assert.False(second.ItmShowLapTotal);
-            Assert.True(second.ItmShowPositionTotal);
-            Assert.Equal((byte)4, second.ItmDefaultPage);
-            Assert.Equal(42, (int)document["unrelated"]!);
-            Assert.True(JToken.DeepEquals(firstWrite, document));
-        }
-
-        [Theory]
-        [InlineData(DisplaySettings.ControlItm, true)]
-        [InlineData(DisplaySettings.ControlLegacy, false)]
-        [InlineData(DisplaySettings.ControlOff, false)]
-        public void Write_EmitsDowngradeMirror(string control, bool expectedEnabled)
+        [Fact]
+        public void Write_EmitsOnlyLiveSettings()
         {
             var settings = new DisplaySettings
             {
-                DisplayControl = control,
-                ItmEnabled = !expectedEnabled,
+                DisplayControl = DisplaySettings.ControlLegacy,
+                DisplayMode = "Speed",
+                ItmEnabled = false,
             };
-            var document = new JObject();
+            var document = new JObject
+            {
+                ["displayControl"] = "Itm",
+                ["displayMode"] = "Gear",
+                ["itmEnabled"] = true,
+            };
 
             DisplaySettingsCodec.Write(document, settings);
 
-            Assert.Equal(expectedEnabled, settings.ItmEnabled);
-            Assert.Equal(expectedEnabled, (bool)document["itmEnabled"]!);
-            Assert.NotNull(document["displayMode"]);
-            Assert.NotNull(document["displayControl"]);
+            Assert.Null(document["displayMode"]);
+            Assert.Null(document["displayControl"]);
+            Assert.Null(document["itmEnabled"]);
             Assert.NotNull(document["itmShowLapTotal"]);
             Assert.NotNull(document["itmShowPositionTotal"]);
             Assert.NotNull(document["itmDefaultPage"]);
         }
 
         [Theory]
-        [InlineData(true, DisplaySettings.ControlItm)]
-        [InlineData(false, null)]
-        public void WriteDefaults_SelectsControl_ButPreservesOldItmEnabledDefault(
-            bool itmCapable, string? expectedControl)
+        [InlineData(true)]
+        [InlineData(false)]
+        public void WriteDefaults_EmitsOnlyLiveSettings(bool itmCapable)
         {
             var document = new JObject();
 
             DisplaySettingsCodec.WriteDefaults(document, itmCapable);
 
-            Assert.Equal(DisplaySettings.DefaultMode, (string?)document["displayMode"]);
-            // Non-ITM defaults leave displayControl absent so a later ITM-capable Read can
-            // still migrate to Itm (baking Legacy would permanently freeze stored control).
-            Assert.Equal(expectedControl, (string?)document["displayControl"]);
-            Assert.True((bool)document["itmEnabled"]!);
+            Assert.Null(document["displayMode"]);
+            Assert.Null(document["displayControl"]);
+            Assert.Null(document["itmEnabled"]);
             Assert.Equal(DisplaySettings.DefaultShowLapTotal, (bool)document["itmShowLapTotal"]!);
             Assert.Equal(DisplaySettings.DefaultShowPositionTotal,
                 (bool)document["itmShowPositionTotal"]!);
@@ -215,45 +179,6 @@ namespace FanaBridge.Tests.Display.Host
 
             Assert.Equal(itmActive, settings.ItmActive);
             Assert.Equal(legacyPageActive, settings.LegacyPageActive);
-        }
-
-        [Fact]
-        public void ReadWrite_RoundTripsLegacyModeMigrated_AndWriteAlwaysEmits()
-        {
-            var source = new JObject
-            {
-                ["displayMode"] = "Speed",
-                ["legacyModeMigrated"] = true,
-            };
-            var original = (JObject)source.DeepClone();
-
-            var settings = DisplaySettingsCodec.Read(source, itmCapable: true);
-            Assert.True(settings.LegacyModeMigrated);
-            Assert.True(JToken.DeepEquals(original, source)); // resolve-on-read: no rewrite
-
-            var dest = new JObject();
-            DisplaySettingsCodec.Write(dest, settings);
-            Assert.True((bool)dest["legacyModeMigrated"]!);
-
-            // Write always emits even when false.
-            settings.LegacyModeMigrated = false;
-            DisplaySettingsCodec.Write(dest, settings);
-            Assert.False((bool)dest["legacyModeMigrated"]!);
-        }
-
-        [Fact]
-        public void Read_AbsentLegacyModeMigrated_DefaultsFalse()
-        {
-            var settings = DisplaySettingsCodec.Read(new JObject(), itmCapable: false);
-            Assert.False(settings.LegacyModeMigrated);
-        }
-
-        [Fact]
-        public void WriteDefaults_OmitsLegacyModeMigrated()
-        {
-            var document = new JObject();
-            DisplaySettingsCodec.WriteDefaults(document, itmCapable: true);
-            Assert.Null(document["legacyModeMigrated"]);
         }
 
         private static string ExpectedControl(string? storedControl, bool itmEnabled,

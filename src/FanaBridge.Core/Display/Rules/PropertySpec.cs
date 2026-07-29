@@ -12,15 +12,13 @@ namespace FanaBridge.Display.Rules
     public enum PropertyKind
     {
         /// <summary>Lenient-load fallback for a kind this build does not recognize.
-        /// A rule or field mapping with an unknown source kind is disabled/dropped at load.</summary>
+        /// A v2 condition or field override with an unknown source kind is ignored.</summary>
         Unknown = 0,
         /// <summary>A name from the Core-owned closed set (<see cref="BuiltInProperties"/>) —
         /// the typed telemetry fields the built-in field mapper reads.</summary>
         BuiltIn,
         /// <summary>A SimHub property name, resolved by name each frame (user-picked).</summary>
         SimHubProperty,
-        /// <summary>A FanaBridge action name — the mapped-control trigger path.</summary>
-        FanaBridgeAction,
         /// <summary>
         /// An ITM field param id (v2 field-linked conditions). Name is the param id, or
         /// the owning field's param id after FromV2 bakes the <c>self</c> sentinel.
@@ -34,7 +32,7 @@ namespace FanaBridge.Display.Rules
     }
 
     /// <summary>
-    /// Names a value a rule condition or field mapping reads. This is the seam that keeps
+    /// Names a value a v2 condition or field override reads. This is the seam that keeps
     /// the config model SimHub-free: Core only carries the (kind, name) pair; the adapter
     /// above resolves it — typed telemetry fast-path for built-ins, name lookup for
     /// SimHub properties, action matching for triggers.
@@ -44,8 +42,7 @@ namespace FanaBridge.Display.Rules
         private string _kindRaw;
         private PropertyKind? _kind;
 
-        /// <summary>Serialized form of <see cref="Kind"/>, preserved verbatim (see
-        /// <see cref="RuleCondition.KindRaw"/>).</summary>
+        /// <summary>Serialized form of <see cref="Kind"/>, preserved verbatim.</summary>
         [JsonProperty("kind")]
         public string KindRaw
         {
@@ -63,7 +60,7 @@ namespace FanaBridge.Display.Rules
         }
 
         /// <summary>The name within the kind's namespace: a <see cref="BuiltInProperties"/>
-        /// constant, a SimHub property name, or a FanaBridge action name.</summary>
+        /// constant, a SimHub property name, an ITM field id, or a script name.</summary>
         [JsonProperty("name")]
         public string Name { get; set; }
 

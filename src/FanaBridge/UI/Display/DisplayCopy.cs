@@ -94,6 +94,15 @@ namespace FanaBridge.UI.Display
         /// <summary>Diagnostics: outside runs/session scope this tick.</summary>
         public const string OutOfSessionScope = "out of session scope";
 
+        // ── No-document / first-connection state ─────────────────────────
+
+        public const string BakePendingTitle = "Display setup pending";
+
+        public const string BakePendingBody =
+            "The display sets itself up on first connection.";
+
+        public const string BakePendingDisconnected = "The wheel is disconnected.";
+
         // ── Modes ────────────────────────────────────────────────────────
 
         /// <summary>ITM-wheel mode segment: full ITM world.</summary>
@@ -1458,7 +1467,7 @@ namespace FanaBridge.UI.Display
 
         /// <summary>Picker footer provenance.</summary>
         public const string PlaylistsWrittenBySetups =
-            "Playlists are written by setups — there is no playlist editor in v1.";
+            "Playlists are written by setups — there is no playlist editor.";
 
         // ── Entrypoint form (5f) ─────────────────────────────────────────
 

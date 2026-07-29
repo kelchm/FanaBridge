@@ -123,7 +123,7 @@ namespace FanaBridge.Display.Schema2
         Script,
     }
 
-    /// <summary>Level operators only (v1 ConditionKind level spellings, carried verbatim).
+    /// <summary>Level operators.
     /// Edge kinds relocated to <see cref="LifetimeKind.OnChange"/>.</summary>
     public enum ConditionOperator
     {
@@ -284,7 +284,7 @@ namespace FanaBridge.Display.Schema2
         internal void CoerceKind(LifetimeKind kind) => _kind = kind;
     }
 
-    /// <summary>Lifetime kind spellings (model vocabulary; v1 whileActive → whileTrue).</summary>
+    /// <summary>Lifetime kind spellings.</summary>
     public enum LifetimeKind
     {
         /// <summary>Lenient-load fallback — raw text preserved.</summary>
@@ -295,7 +295,7 @@ namespace FanaBridge.Display.Schema2
         OnChange,
     }
 
-    /// <summary>onChange direction (v1 increases/decreases relocated).</summary>
+    /// <summary>onChange direction.</summary>
     public enum ChangeDirection
     {
         /// <summary>Lenient-load fallback — raw text preserved.</summary>
@@ -314,7 +314,7 @@ namespace FanaBridge.Display.Schema2
     }
 
     /// <summary>Eligibility: while telemetry flows, only while it doesn't, or always.
-    /// Spelling <c>runs</c> on the wire (v1 carried).</summary>
+    /// Spelling <c>runs</c> on the wire.</summary>
     public enum RunsWhen
     {
         /// <summary>Lenient-load fallback — raw text preserved.</summary>

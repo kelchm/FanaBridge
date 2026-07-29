@@ -173,7 +173,6 @@ namespace FanaBridge.Tests.UI.Display.Shared
 
             Assert.Equal(PropertyDisplayKind.BuiltIn, PropertyGrammar.KindFor(PropertyKind.BuiltIn));
             Assert.Equal(PropertyDisplayKind.SimHubProperty, PropertyGrammar.KindFor(PropertyKind.SimHubProperty));
-            Assert.Equal(PropertyDisplayKind.SimHubProperty, PropertyGrammar.KindFor(PropertyKind.FanaBridgeAction));
         }
 
         // ── Match-span highlight (v9 phase 5a) ────────────────────────────

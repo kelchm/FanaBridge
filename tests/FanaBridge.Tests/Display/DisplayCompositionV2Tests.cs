@@ -461,7 +461,7 @@ namespace FanaBridge.Tests.Display
         /// already ran before composition on frame N).
         /// Adjudication ruling (e8-seam-adjudication design review correction #2):
         /// "field plans apply at tick END, effective next frame (lag-1 by design)" —
-        /// v9-equal altitude (v1 FieldMappings also only take effect at the next Update).
+        /// Plans take effect at the next Update.
         /// </summary>
         [Fact]
         public void Lag1Law_FieldPlanChangeOnTickN_AppliedAtEnd_VisibleToMapperFromNPlus1()
@@ -593,11 +593,11 @@ namespace FanaBridge.Tests.Display
         // ════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// DirectorIntent for an ITM-page seat winner matches the v9 ToDirectorIntent
-        /// shape: Kind=Page, Page set, ScreenId null, SourceRuleId = winning carrier.
+        /// DirectorIntent for an ITM-page seat winner has Kind=Page, Page set,
+        /// ScreenId null, and SourceRuleId equal to the winning carrier.
         /// </summary>
         [Fact]
-        public void DirectorHandoff_ItmPageWinner_MatchesV9ToDirectorIntentShape()
+        public void DirectorHandoff_ItmPageWinner_UsesPageIntentShape()
         {
             var doc = MinimalDoc(
                 summonId: "r-tyre",
@@ -695,8 +695,7 @@ namespace FanaBridge.Tests.Display
             var r = h.Tick();
             Assert.True(r.RevertedThisTick);
 
-            // Intent handed to director this tick is still the seat's Page(TyreTemps)
-            // — same values v9 ToDirectorIntent would produce for a Page rule intent.
+            // Intent handed to director this tick is still the seat's Page(TyreTemps).
             var intent = h.Composition.LastDirectorIntent;
             Assert.Equal(DirectorIntentKind.Page, intent.Kind);
             Assert.Equal(ItmPage.TyreTemps, intent.Page);

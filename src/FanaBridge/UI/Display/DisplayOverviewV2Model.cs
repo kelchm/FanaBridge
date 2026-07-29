@@ -16,8 +16,7 @@ namespace FanaBridge.UI.Display
     /// Pure Overview (v2) projection — no WPF. Rebuilds every region from a v2 document
     /// + resolution snapshot + values. Structure follows digest §2; navigation affordances
     /// only where §4 pins them (rows are inert). O1 provisional defaults carry design-backlog
-    /// comments. O9: Settings.Mode is authoritative; DisplayControl write-through is an
-    /// E9-exit concern owned by the view host, not this model.
+    /// comments. O9: Settings.Mode is authoritative.
     /// </summary>
     public sealed class DisplayOverviewV2Model
     {
@@ -164,8 +163,7 @@ namespace FanaBridge.UI.Display
 
         /// <summary>
         /// Apply a mode change to a document clone. Caller publishes via
-        /// <c>TryApplyDisplayConfigV2</c> (expected = the projected document). Does not write DisplayControl (view host does
-        /// write-through while the v1 tab lives — E9-exit).
+        /// <c>TryApplyDisplayConfigV2</c> (expected = the projected document).
         /// </summary>
         public static DisplayConfigV2 WithMode(DisplayConfigV2 config, SettingsMode mode)
         {
@@ -189,33 +187,6 @@ namespace FanaBridge.UI.Display
                 next.Settings = new SettingsBlock();
             next.Settings.RejectUncommandedChanges = reject;
             return next;
-        }
-
-        /// <summary>
-        /// Map SettingsMode → DisplaySettings.DisplayControl for write-through while
-        /// the pre-epic tab lives. // E9-exit: this mapping dies with the codec trim.
-        /// </summary>
-        public static string DisplayControlForMode(SettingsMode mode)
-        {
-            switch (mode)
-            {
-                case SettingsMode.LegacyOnly:
-                    return DisplaySettings.ControlLegacy;
-                case SettingsMode.Off:
-                    return DisplaySettings.ControlOff;
-                default:
-                    return DisplaySettings.ControlItm;
-            }
-        }
-
-        /// <summary>Map DisplayControl → SettingsMode (for seeding / parity checks).</summary>
-        public static SettingsMode ModeForDisplayControl(string control)
-        {
-            if (string.Equals(control, DisplaySettings.ControlLegacy, StringComparison.OrdinalIgnoreCase))
-                return SettingsMode.LegacyOnly;
-            if (string.Equals(control, DisplaySettings.ControlOff, StringComparison.OrdinalIgnoreCase))
-                return SettingsMode.Off;
-            return SettingsMode.On;
         }
 
         /// <summary>

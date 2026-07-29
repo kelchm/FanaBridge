@@ -205,7 +205,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Bake_FreshDefaults_SynthesizeGear_NotSilence()
         {
-            // Superseded v9 Gear synthesis equivalent for fresh/default mode.
+            // Fresh/default mode synthesizes a Gear page.
             var doc = PreEpicSettingsMigrator.Bake(
                 DisplaySettings.ControlItm,
                 DisplaySettings.DefaultItmDefaultPage,

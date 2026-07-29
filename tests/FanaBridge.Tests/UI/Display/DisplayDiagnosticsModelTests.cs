@@ -584,7 +584,6 @@ namespace FanaBridge.Tests.UI.Display
                     active: true,
                     freshFire: true,
                     firedThisTick: true,
-                    legacySupersededV9: false,
                     eligible: true,
                     expiresAtMs: 5000,
                     remainingMs: 1500),

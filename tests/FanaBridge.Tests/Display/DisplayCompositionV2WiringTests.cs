@@ -8,7 +8,6 @@ using FanaBridge.Display.Composition;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Runtime;
-using FanaBridge.Display.Rules;
 using FanaBridge.Display.Schema2;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
@@ -219,14 +218,6 @@ namespace FanaBridge.Tests.Display
 }");
         }
 
-        private static JObject V1RuleDocument() =>
-            JObject.Parse(
-                "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
-                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
-                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
-                + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" }, "
-                + "\"hold\": { \"kind\": \"forDuration\", \"durationMs\": 5000 } } ] } }");
-
         // ── RISK-4: col01 ownership ───────────────────────────────────────
 
         /// <summary>
@@ -407,120 +398,9 @@ namespace FanaBridge.Tests.Display
 
             var snap = ((IDisplayPanelHost)s.Instance).Snapshot;
             Assert.NotNull(snap);
-            Assert.Null(snap!.Rules);
             Assert.NotNull(snap.ComposedResolution);
             Assert.Same(s.Instance.DisplayRuntimeForTest.ComposedResolution, snap.ComposedResolution);
         }
 
-        [Fact]
-        public void Snapshot_V1KeyOnly_NoEngine_ComposedNull()
-        {
-            // E8b: a v1-only key builds no runtime engine (no bake, no composition).
-            var s = StartSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = V1RuleDocument(),
-            });
-
-            s.Frame(Data(NewStatus()));
-            s.Frame(Data(NewStatus()));
-
-            Assert.Null(s.Instance.CompositionForTest);
-
-            var snap = ((IDisplayPanelHost)s.Instance).Snapshot;
-            // No v2 composition → no composed-resolution part; rules part also null
-            // (v9 stack deleted).
-            if (snap != null)
-            {
-                Assert.Null(snap.ComposedResolution);
-                Assert.Null(snap.Rules);
-            }
-        }
-
-        // ── Lifecycle: v1 → v2 reload ─────────────────────────────────────
-
-        [Fact]
-        public void Reload_V1ToV2_BuildsComposition()
-        {
-            var s = StartSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = V1RuleDocument(),
-            });
-
-            s.Frame(Data(NewStatus()));
-            s.Frame(Data(NewStatus()));
-
-            Assert.Null(s.Instance.CompositionForTest);
-
-            // Swap to v2 document (persistence key wins path).
-            s.Instance.SetSettings(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["display"] = V2WithItmRest("on"),
-            }, isDefault: false);
-
-            s.Frame(Data(NewStatus()));
-            s.Frame(Data(NewStatus()));
-
-            Assert.NotNull(s.Instance.CompositionForTest);
-
-            var snap = ((IDisplayPanelHost)s.Instance).Snapshot;
-            Assert.NotNull(snap);
-            Assert.Null(snap!.Rules);
-            Assert.NotNull(snap.ComposedResolution);
-        }
-
-        // ── Persistence key ───────────────────────────────────────────────
-
-        [Fact]
-        public void Persistence_DisplayKey_WinsUnconditionally_OverV1()
-        {
-            var inst = new FanatecWheelDeviceInstance(new DeviceConfig
-            {
-                Profile = WheelProfileStore.FindByWheelType("PSWBMW"),
-                Capabilities = new WheelCapabilities(
-                    WheelProfileStore.FindByWheelType("PSWBMW")!),
-            });
-            inst.PluginResolver = () => null;
-
-            // Both keys present — v2 wins the engine; v1 bag rides inert (not loaded).
-            inst.SetSettings(new JObject
-            {
-                ["wheelType"] = "PSWBMW",
-                ["display"] = V2LegacyOnly(),
-                ["displayCustomization"] = V1RuleDocument(),
-            }, isDefault: false);
-
-            Assert.NotNull(inst.DisplayRuntimeForTest.CurrentConfigV2);
-            Assert.Null(inst.DisplayRuntimeForTest.CurrentConfig);
-
-            var saved = inst.GetSettings(false, false) as JObject;
-            Assert.NotNull(saved);
-            Assert.NotNull(saved!["display"]);
-            Assert.NotNull(saved["displayCustomization"]); // inert passthrough, no engine
-        }
-
-        [Fact]
-        public void Persistence_V1KeyOnly_NoEngineNoBake()
-        {
-            // E8b: v1-only key routes nowhere — no composition, no pre-epic bake.
-            var inst = new FanatecWheelDeviceInstance(new DeviceConfig
-            {
-                Profile = WheelProfileStore.FindByWheelType("PSWBMW"),
-                Capabilities = new WheelCapabilities(
-                    WheelProfileStore.FindByWheelType("PSWBMW")!),
-            });
-            inst.PluginResolver = () => null;
-
-            inst.SetSettings(new JObject
-            {
-                ["wheelType"] = "PSWBMW",
-                ["displayCustomization"] = V1RuleDocument(),
-            }, isDefault: false);
-
-            Assert.Null(inst.DisplayRuntimeForTest.CurrentConfigV2);
-            Assert.Null(inst.DisplayRuntimeForTest.CurrentConfig);
-        }
     }
 }

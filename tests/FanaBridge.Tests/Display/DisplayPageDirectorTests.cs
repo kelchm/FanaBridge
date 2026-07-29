@@ -392,30 +392,30 @@ namespace FanaBridge.Tests.Display
         // ── Legacy-screen intents ────────────────────────────────────────
 
         [Fact]
-        public void LegacyScreenIntent_RequestsLegacyPage_AndReportsScreenId()
+        public void SegmentScreenIntent_RequestsSegmentPage_AndReportsScreenId()
         {
             var h = Harness.Create();
             h.SyncBaseline();
 
             var r = h.Tick(Screen("PIT"));
             Assert.Equal((byte?)6, r.RequestedWirePage);
-            Assert.Equal("PIT", r.LegacyScreenId);
+            Assert.Equal("PIT", r.SegmentScreenId);
 
             h.Control.Land(6);
             r = h.Tick(Screen("PIT"));
             Assert.Null(r.Manual);                 // landing on the requested page
             Assert.Null(r.RequestedWirePage);
-            Assert.Equal("PIT", r.LegacyScreenId);   // reported every tick the intent holds
+            Assert.Equal("PIT", r.SegmentScreenId);   // reported every tick the intent holds
             Assert.Equal(new byte[] { 6 }, h.Control.Requests);
         }
 
         [Fact]
-        public void PageIntent_CarriesNoLegacyScreenId()
+        public void PageIntent_CarriesNoSegmentScreenId()
         {
             var h = Harness.Create();
             h.SyncBaseline();
             var r = h.Tick(Page(ItmPage.TyreTemps, "r1"));
-            Assert.Null(r.LegacyScreenId);
+            Assert.Null(r.SegmentScreenId);
         }
 
         // ── Catalog-driven wire mapping (Bentley table) ──────────────────
@@ -437,7 +437,7 @@ namespace FanaBridge.Tests.Display
             h.SyncBaseline();
             var r = h.Tick(Screen("PIT"));
             Assert.Equal((byte?)5, r.RequestedWirePage);
-            Assert.Equal("PIT", r.LegacyScreenId);
+            Assert.Equal("PIT", r.SegmentScreenId);
         }
 
         [Fact]

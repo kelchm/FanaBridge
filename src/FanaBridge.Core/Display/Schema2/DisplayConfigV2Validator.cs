@@ -10,8 +10,8 @@ namespace FanaBridge.Display.Schema2
 {
     /// <summary>
     /// Load-time validation and normalization for <see cref="DisplayConfigV2"/>
-    /// (spec-schema-v2 §14). Contract mirrors <see cref="DisplayConfigValidator"/>:
-    /// warn-and-degrade, never throw, never drop data, never rewrite persisted members.
+    /// (spec-schema-v2 §14): warn-and-degrade, never throw, never drop data, and never
+    /// rewrite persisted members.
     /// All coercions and clamps are runtime-only (<c>DegradedAtLoad</c> / <c>Coerce*</c> /
     /// effective accessors); a load→save round-trip is byte-identical for any document.
     ///
@@ -1921,7 +1921,7 @@ namespace FanaBridge.Display.Schema2
         /// family (covers E6 floor id <c>rest:idle</c> and E4 rest destination spellings).
         /// Authored wheel rules, pages, summons, seats, layers, and overrides that claim
         /// these ids degrade at load so the §6.1 one-row-per-(CarrierId,SurfaceId) law
-        /// cannot collide with a floor row. (FA2: former v1-migration reserved
+        /// cannot collide with a floor row. (FA2: migration-reserved
         /// hosted-page prefix is gone — only these E6-round runtime families remain.)
         /// </summary>
         internal static bool IsReservedRuntimeCarrierId(string id)

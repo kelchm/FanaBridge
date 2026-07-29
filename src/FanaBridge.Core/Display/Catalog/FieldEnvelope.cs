@@ -13,8 +13,7 @@ namespace FanaBridge.Display.Catalog
     /// and definition <c>overridable:false</c> supplies the lock. Without a catalog:
     /// fall back to the <see cref="FieldFormats"/> family tables only (no lock).
     /// </para>
-    /// Shared by the v1 Pages authoring surface while it lives (E9-exit) and any
-    /// later consumer that needs the same envelope facts.
+    /// Shared by every authoring and runtime consumer that needs the same envelope facts.
     /// </summary>
     public static class FieldEnvelope
     {

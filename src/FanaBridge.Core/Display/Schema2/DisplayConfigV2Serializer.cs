@@ -4,8 +4,7 @@ using Newtonsoft.Json;
 namespace FanaBridge.Display.Schema2
 {
     /// <summary>
-    /// JSON persistence for <see cref="DisplayConfigV2"/>, mirroring the v1
-    /// <c>DisplayConfigSerializer</c> contract: camelCase property and enum names via
+    /// JSON persistence for <see cref="DisplayConfigV2"/>: camelCase property and enum names via
     /// raw-string storage, null/default suppression, and lenient loading — unknown members
     /// are preserved via <see cref="DisplayConfigV2.ExtensionData"/> (and the same bag on
     /// every schema-closure type), unknown enum values degrade only at runtime (raw text
@@ -150,7 +149,7 @@ namespace FanaBridge.Display.Schema2
             }
         }
 
-        // Same shape as v1: no enum converter — enum-valued fields are raw strings
+        // No enum converter — enum-valued fields are raw strings
         // (EnumText), so converting at parse time would re-introduce round-trip data loss
         // for values only a future version knows.
         private static readonly JsonSerializerSettings Settings = new JsonSerializerSettings

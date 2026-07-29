@@ -13,7 +13,7 @@ namespace FanaBridge.Tests.Display
             string id, bool active, bool fresh = false, bool fired = false)
             => new CarrierTickSnapshot(
                 id, conditionSatisfied: active, active, fresh, fired,
-                legacySupersededV9: false, eligible: true, expiresAtMs: 0, remainingMs: null);
+                eligible: true, expiresAtMs: 0, remainingMs: null);
 
         private static readonly string[] WsRules = { "ws-a", "ws-b", "ws-c" };
 

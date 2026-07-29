@@ -27,7 +27,7 @@ namespace FanaBridge.Tests.Display
             bool eligible = true, int? remaining = null)
             => new CarrierTickSnapshot(
                 id, conditionSatisfied: active, active, fresh, fired,
-                legacySupersededV9: false, eligible, expiresAtMs: 0, remaining);
+                eligible, expiresAtMs: 0, remaining);
 
         private static DisplayConfigV2 Normalize(DisplayConfigV2 doc)
             => DisplayConfigV2Validator.Normalize(doc, _ => { });

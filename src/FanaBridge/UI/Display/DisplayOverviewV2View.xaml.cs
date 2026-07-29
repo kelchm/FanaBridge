@@ -30,8 +30,7 @@ namespace FanaBridge.UI.Display
         private DisplayOverviewV2Model _model;
 
         // E9 later-phase: N1 destination (v2 Pages & Fields) is not built yet — spoke
-        // stays disabled with a DisplayCopy tooltip. Do NOT route to the v1 editors
-        // (wrong document). N2 Priority is LIVE (phase 3a).
+        // stays disabled with a DisplayCopy tooltip. N2 Priority is LIVE (phase 3a).
         /// <summary>N1: Pages &amp; Fields › (later phase — disabled).</summary>
         public event EventHandler PagesAndFieldsRequested;
 
@@ -269,20 +268,6 @@ namespace FanaBridge.UI.Display
 
             _config = _host.GetDisplayConfigV2() ?? next;
             ClearConflict();
-
-            // E9-exit: write-through to DisplayControl while the v1 tab lives.
-            // Dies at E9-exit with the codec trim.
-            var settings = _host.DisplaySettings;
-            if (settings != null)
-            {
-                string control = DisplayOverviewV2Model.DisplayControlForMode(mode);
-                if (!DisplayModeHeaderModel.IsSameControl(settings.DisplayControl, control))
-                {
-                    settings.DisplayControl = control;
-                    settings.ItmEnabled = control == DisplaySettings.ControlItm;
-                    _host.NotifySettingsChanged();
-                }
-            }
 
             ConfigApplied?.Invoke(this, EventArgs.Empty);
             Poll(force: true);

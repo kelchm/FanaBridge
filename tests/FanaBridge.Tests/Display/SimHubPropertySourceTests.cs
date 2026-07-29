@@ -255,10 +255,10 @@ namespace FanaBridge.Tests.Display
             var source = new SimHubPropertySource(rawLookup: name => { lookups++; return 42.0; });
             source.BeginFrame(null, Data(FullStatus()));
 
-            Assert.True(source.TryGetNumber(Named("Some.Prop"), out double v1));
+            Assert.True(source.TryGetNumber(Named("Some.Prop"), out double firstValue));
             Assert.True(source.TryGetNumber(Named("Some.Prop"), out double v2));
             Assert.True(source.TryGetBool(Named("Some.Prop"), out _));
-            Assert.Equal(42.0, v1);
+            Assert.Equal(42.0, firstValue);
             Assert.Equal(42.0, v2);
             Assert.Equal(1, lookups);   // one lookup serves the whole frame
 
@@ -405,16 +405,6 @@ namespace FanaBridge.Tests.Display
 
             Assert.Single(log, m => m.Contains("Bad.Prop"));
             Assert.Single(log, m => m.Contains("Other.Prop"));
-        }
-
-        [Fact]
-        public void ActionSpecs_AreNeverReadable()
-        {
-            var source = new SimHubPropertySource(rawLookup: _ => 1.0);
-            source.BeginFrame(null, Data(FullStatus()));
-            var action = new PropertySpec { Kind = PropertyKind.FanaBridgeAction, Name = "Fire" };
-            Assert.False(source.TryGetNumber(action, out _));
-            Assert.False(source.TryGetBool(action, out _));
         }
 
         [Fact]

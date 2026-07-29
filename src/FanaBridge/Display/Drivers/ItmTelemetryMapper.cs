@@ -16,8 +16,8 @@ namespace FanaBridge.Display.Drivers
     /// shows it, so a single flat <c>paramId → encoder</c> registry serves every device.
     ///
     /// Constructed once per display device by <see cref="ItmDisplayDriver"/>; the built-in
-    /// encoder registry is the instance's default layer. Optional per-device
-    /// <see cref="FieldMapping"/> overrides (source + format) sit on top: a resolved scalar
+    /// encoder registry is the instance's default layer. Optional v2 field plans
+    /// (source + format) sit on top: a resolved scalar
     /// still flows through the same typed encoder path (clamps, rounding, wire type). The
     /// wire-side vocabulary — the page catalog and subscription-report parsing — lives in
     /// <see cref="ItmTelemetry"/> (Protocol, no SimHub).
@@ -55,18 +55,18 @@ namespace FanaBridge.Display.Drivers
         private readonly Dictionary<ushort, Func<StatusDataBase, double>> _naturalScalars;
 
         // Scalar encoder path: same clamps/rounding/wire type as the built-in registry,
-        // fed a double from a FieldMapping override (or from a resolved built-in). Gear and
+        // fed a double from a v2 field-plan override (or from a resolved built-in). Gear and
         // EngineMapping have no entry — they are override-excluded and keep special forms.
         private readonly Dictionary<ushort, Func<double, byte, ItmValue>> _scalarEncoders;
 
         // Per-device field overrides (validated snapshot). Empty when none; never null after
         // Configure / ConfigureFromPlans. Read on the DataUpdate thread only.
-        private IReadOnlyDictionary<ushort, FieldMapping> _fieldMappings =
-            EmptyMappings;
+        private IReadOnlyDictionary<ushort, ConfiguredField> _configuredFields =
+            EmptyConfiguredFields;
 
-        // v2 plan layer (pre-E8 seam). Empty when the v1 Configure path is active.
+        // v2 plan layer.
         // SuffixOwner / AlignedSuffixText / EffectVisible live here; value source+format
-        // are also projected into _fieldMappings so the encode path stays single.
+        // are also projected into _configuredFields so the encode path stays single.
         private IReadOnlyDictionary<ushort, FieldRegionPlan> _fieldPlans =
             EmptyPlans;
 
@@ -75,8 +75,8 @@ namespace FanaBridge.Display.Drivers
         // job and must run before the driver's Update that reads here.
         private IPropertyReader _properties;
 
-        private static readonly IReadOnlyDictionary<ushort, FieldMapping> EmptyMappings =
-            new Dictionary<ushort, FieldMapping>();
+        private static readonly IReadOnlyDictionary<ushort, ConfiguredField> EmptyConfiguredFields =
+            new Dictionary<ushort, ConfiguredField>();
 
         private static readonly IReadOnlyDictionary<ushort, FieldRegionPlan> EmptyPlans =
             new Dictionary<ushort, FieldRegionPlan>();
@@ -102,21 +102,6 @@ namespace FanaBridge.Display.Drivers
         }
 
         /// <summary>
-        /// Installs the device's validated field mappings and the shared property reader.
-        /// Call from the runtime on every frame that may encode (or on config swap); a null
-        /// mappings dict or null reader clears the override layer. Gear/EngineMapping are
-        /// already stripped by the validator. Clears any v2 plan layer.
-        /// </summary>
-        public void Configure(
-            IReadOnlyDictionary<ushort, FieldMapping> fieldMappings,
-            IPropertyReader properties)
-        {
-            _fieldMappings = fieldMappings ?? EmptyMappings;
-            _fieldPlans = EmptyPlans;
-            _properties = properties;
-        }
-
-        /// <summary>
         /// v2 plan → mapper application seam (pre-E8). Installs per-field value source +
         /// format, <see cref="SuffixOwner"/> tri-state (with bare-format coercion when the
         /// plan paints the suffix), <see cref="FieldRegionPlan.AlignedSuffixText"/>, and
@@ -131,13 +116,13 @@ namespace FanaBridge.Display.Drivers
             _properties = properties;
             if (plans == null || plans.Count == 0)
             {
-                _fieldMappings = EmptyMappings;
+                _configuredFields = EmptyConfiguredFields;
                 _fieldPlans = EmptyPlans;
                 return;
             }
 
             var planMap = new Dictionary<ushort, FieldRegionPlan>();
-            var mappings = new Dictionary<ushort, FieldMapping>();
+            var configuredFields = new Dictionary<ushort, ConfiguredField>();
             for (int i = 0; i < plans.Count; i++)
             {
                 var plan = plans[i];
@@ -149,12 +134,14 @@ namespace FanaBridge.Display.Drivers
                 ResolvePropertySuffix(plan, properties);
                 planMap[plan.ParamId] = plan;
 
-                var mapping = MappingFromPlan(plan);
-                if (mapping != null)
-                    mappings[plan.ParamId] = mapping;
+                var configured = ConfiguredFieldFromPlan(plan);
+                if (configured != null)
+                    configuredFields[plan.ParamId] = configured;
             }
             _fieldPlans = planMap;
-            _fieldMappings = mappings.Count > 0 ? mappings : EmptyMappings;
+            _configuredFields = configuredFields.Count > 0
+                ? configuredFields
+                : EmptyConfiguredFields;
         }
 
         /// <summary>
@@ -233,11 +220,11 @@ namespace FanaBridge.Display.Drivers
         }
 
         /// <summary>
-        /// Projects a field plan into a v1-shaped <see cref="FieldMapping"/> for the shared
-        /// encode + format path. Suffix-owner Override/Blank coerces format to bare so the
+        /// Projects a field plan into the shared encode + format path. Suffix-owner
+        /// Override/Blank coerces format to bare so the
         /// single mapper suffix path cannot re-fill the region (FrameComposerTypes rule).
         /// </summary>
-        private static FieldMapping MappingFromPlan(FieldRegionPlan plan)
+        private static ConfiguredField ConfiguredFieldFromPlan(FieldRegionPlan plan)
         {
             string format = plan.ValueFormat;
             // Bare-format coercion: plan paints the suffix → mapper must not emit
@@ -255,7 +242,13 @@ namespace FanaBridge.Display.Drivers
             if (source == null && string.IsNullOrEmpty(format))
                 return null;
 
-            return new FieldMapping { Source = source, Format = format };
+            return new ConfiguredField { Source = source, Format = format };
+        }
+
+        private sealed class ConfiguredField
+        {
+            public PropertySpec Source { get; set; }
+            public string Format { get; set; }
         }
 
         private static PropertySpec ToPropertySpec(ValueSource source)
@@ -614,7 +607,7 @@ namespace FanaBridge.Display.Drivers
         /// </summary>
         internal string EffectiveFormat(ushort paramId)
         {
-            bool hasOverride = _fieldMappings.TryGetValue(paramId, out var mapping);
+            bool hasOverride = _configuredFields.TryGetValue(paramId, out var mapping);
             return FieldFormats.EffectiveFormat(
                 paramId,
                 hasOverride ? mapping?.Format : null,
@@ -641,7 +634,7 @@ namespace FanaBridge.Display.Drivers
         /// hardware/capture-verified against the official software. Other parameters encode
         /// the same regardless.
         ///
-        /// When a <see cref="FieldMapping"/> is configured, resolves the override source
+        /// When a v2 field plan is configured, resolves the override source
         /// through the shared <see cref="IPropertyReader"/> and feeds the scalar through the
         /// param's typed encoder path. Resolution failure falls back to the built-in default
         /// for that frame (never a stale overridden value). Gear/EngineMapping are never
@@ -679,7 +672,7 @@ namespace FanaBridge.Display.Drivers
         {
             value = default;
             // Standing law: no per-field hardcoded exclusion — envelope DATA decides.
-            if (!_fieldMappings.TryGetValue(paramId, out var mapping) || mapping?.Source == null)
+            if (!_configuredFields.TryGetValue(paramId, out var mapping) || mapping?.Source == null)
                 return false;
             if (_properties == null)
                 return false;

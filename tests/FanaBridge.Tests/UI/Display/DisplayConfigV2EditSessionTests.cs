@@ -30,8 +30,6 @@ namespace FanaBridge.Tests.UI.Display
             public DisplayType DisplayType => DisplayType.Itm;
             public byte ItmDeviceId => 3;
             public string WheelCode { get; set; } = "pbme";
-            public DisplayCustomizationConfig GetDisplayConfig() => null!;
-            public void ApplyDisplayConfig(DisplayCustomizationConfig config) { }
             public DisplayConfigV2 GetDisplayConfigV2() => Live;
             public void ApplyDisplayConfigV2(DisplayConfigV2 config)
             {
@@ -52,7 +50,6 @@ namespace FanaBridge.Tests.UI.Display
             }
 
             public DisplayPanelSnapshot Snapshot => null!;
-            public void NotifySettingsChanged() { }
         }
 
         // ── Fixtures ─────────────────────────────────────────────────────
@@ -296,15 +293,12 @@ namespace FanaBridge.Tests.UI.Display
             public DisplayType DisplayType => DisplayType.Itm;
             public byte ItmDeviceId => 3;
             public string WheelCode => "pbme";
-            public DisplayCustomizationConfig GetDisplayConfig() => null!;
-            public void ApplyDisplayConfig(DisplayCustomizationConfig config) { }
             public DisplayConfigV2 GetDisplayConfigV2() => _runtime.CurrentConfigV2;
             public void ApplyDisplayConfigV2(DisplayConfigV2 config)
                 => _runtime.ApplyDisplayConfigV2(config);
             public bool TryApplyDisplayConfigV2(DisplayConfigV2 expected, DisplayConfigV2 config)
                 => _runtime.TryApplyDisplayConfigV2(expected, config);
             public DisplayPanelSnapshot Snapshot => null!;
-            public void NotifySettingsChanged() { }
         }
 
         // ── Mutation shapes ──────────────────────────────────────────────

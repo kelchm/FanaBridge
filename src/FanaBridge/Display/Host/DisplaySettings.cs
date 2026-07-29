@@ -50,13 +50,6 @@ namespace FanaBridge.Display.Host
         /// </summary>
         public bool LegacyPageActive => DisplayControl != ControlOff;
 
-        /// <summary>
-        /// True once the frozen <see cref="DisplayMode"/> has been migrated into the
-        /// legacy world (or baked without synthesis when a world already existed / mode
-        /// was None). Default false so absent storage keys remigrate on load.
-        /// </summary>
-        public bool LegacyModeMigrated { get; set; }
-
         // Some games don't report a usable total laps or field size, producing misleading
         // "/0" or "/2" suffixes. These let the user turn the totals off per total.
 

@@ -12,7 +12,7 @@ namespace FanaBridge.Tests.Display
     {
         private static CarrierTickSnapshot Snap(string id, bool active = true)
             => new CarrierTickSnapshot(
-                id, active, active, false, false, false, true, 0, null);
+                id, active, active, false, false, true, 0, null);
 
         private static ComposedResolutionRecord SeatSlice()
             => new ComposedResolutionRecord(

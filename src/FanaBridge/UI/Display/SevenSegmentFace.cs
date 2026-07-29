@@ -9,8 +9,7 @@ namespace FanaBridge.UI.Display
     /// <summary>
     /// Shared 3-character seven-segment face: green (#35E06A) segments on black, three
     /// positions plus the decimal-point bit. Geometry is the generalized gear-glyph
-    /// builder (<see cref="SegmentPoints"/> is position-agnostic). Consumers: Virtual
-    /// pages LIVE preview, legacy Overview mirror, Page-6 delegation mini face.
+    /// builder (<see cref="SegmentPoints"/> is position-agnostic).
     /// </summary>
     internal sealed class SevenSegmentFace : UserControl
     {

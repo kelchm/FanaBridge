@@ -32,7 +32,7 @@ namespace FanaBridge.Tests.Display
             bool eligible = true, int? remaining = null)
             => new CarrierTickSnapshot(
                 id, conditionSatisfied: active, active, fresh, fired,
-                legacySupersededV9: false, eligible, expiresAtMs: 0, remaining);
+                eligible, expiresAtMs: 0, remaining);
 
         private static SegmentContentContext Ctx(
             double? speed = null, string? gear = null, double? rpm = null,
@@ -1070,9 +1070,9 @@ namespace FanaBridge.Tests.Display
                 (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
                 Triple(off.SegmentFrame));
 
-            var directOn = LegacyEffectClock.Apply("PIT", LegacyEffect.Blink, 0);
+            var directOn = LegacyEffectClock.Apply("PIT", ContentEffect.Blink, 0);
             var directOff = LegacyEffectClock.Apply(
-                "PIT", LegacyEffect.Blink, LegacyEffectClock.BlinkHalfPeriodMs);
+                "PIT", ContentEffect.Blink, LegacyEffectClock.BlinkHalfPeriodMs);
             Assert.Equal(directOn, on.SegmentFrame);
             Assert.Equal(directOff, off.SegmentFrame);
         }
@@ -1096,9 +1096,9 @@ namespace FanaBridge.Tests.Display
                 LegacyEffectClock.ScrollStepMs,
                 "p-a", DestinationIds.Hosted("p-a"), Ctx()));
 
-            var d0 = LegacyEffectClock.Apply("HELLO", LegacyEffect.Scroll, 0);
+            var d0 = LegacyEffectClock.Apply("HELLO", ContentEffect.Scroll, 0);
             var d1 = LegacyEffectClock.Apply(
-                "HELLO", LegacyEffect.Scroll, LegacyEffectClock.ScrollStepMs);
+                "HELLO", ContentEffect.Scroll, LegacyEffectClock.ScrollStepMs);
             Assert.Equal(d0, t0.SegmentFrame);
             Assert.Equal(d1, t1.SegmentFrame);
             Assert.NotEqual(t0.SegmentFrame, t1.SegmentFrame);

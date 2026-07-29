@@ -8,7 +8,7 @@ namespace FanaBridge.Display.Schema2
     /// <summary>
     /// One entry in <see cref="DisplayConfigV2.Pages"/>: an ITM catalog page (user state
     /// about a firmware page) or a hosted page (segment display / on-Legacy). Flat and
-    /// kind-discriminated like v1 rule targets.
+    /// kind-discriminated for deterministic load behavior.
     /// </summary>
     public class PageEntry
     {
@@ -144,7 +144,7 @@ namespace FanaBridge.Display.Schema2
     }
 
     /// <summary>
-    /// Decomposed content kinds carried from v1 <c>LegacyContentKind</c>: text / speed /
+    /// Decomposed content kinds: text / speed /
     /// gear / gearBrackets / rpm / position / fuel / message / property.
     /// </summary>
     public class ContentObject
@@ -186,7 +186,7 @@ namespace FanaBridge.Display.Schema2
         [JsonExtensionData]
         public IDictionary<string, JToken> ExtensionData { get; set; }
 
-        /// <summary>When true, render the v1 no-data convention (property source unusable)
+        /// <summary>When true, render the no-data convention (property source unusable)
         /// or treat over-length text via <see cref="EffectiveText"/>. Runtime-only.</summary>
         [JsonIgnore]
         public bool DegradedAtLoad { get; internal set; }
@@ -197,7 +197,7 @@ namespace FanaBridge.Display.Schema2
         public string EffectiveText { get; internal set; }
     }
 
-    /// <summary>Content-kind roster (v1 contentKind spellings, camelCase).</summary>
+    /// <summary>Content-kind roster (camelCase document spellings).</summary>
     public enum ContentKind
     {
         /// <summary>Lenient-load fallback — raw text preserved.</summary>
@@ -213,7 +213,7 @@ namespace FanaBridge.Display.Schema2
         Property,
     }
 
-    /// <summary>Presentation effect roster (v1 effect spellings). <see cref="Flash"/>
+    /// <summary>Presentation effect roster. <see cref="Flash"/>
     /// parses for survival; runtime coercion is out of scope for this phase.</summary>
     public enum ContentEffect
     {

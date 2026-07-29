@@ -21,7 +21,7 @@ namespace FanaBridge.Display.Schema2
         [JsonProperty("schemaVersion", Order = -2)]
         public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
-        /// <summary>Profile hook, carried from v1 — unused until profiles ship.</summary>
+        /// <summary>Profile hook, unused until profiles ship.</summary>
         [JsonProperty("profileId")]
         public string ProfileId { get; set; }
 
@@ -36,7 +36,7 @@ namespace FanaBridge.Display.Schema2
         /// <summary>
         /// Idle programs (ordered destination · duration steps). Absent (<c>null</c>) ≡
         /// no playlists (not emitted); explicit empty list is rare but legal. Idle-slot
-        /// only in v1 (amendment A1 / spec §16).
+        /// outside the shipped document (amendment A1 / spec §16).
         /// </summary>
         [JsonProperty("playlists")]
         public List<PlaylistEntry> Playlists { get; set; }

@@ -36,7 +36,7 @@ namespace FanaBridge.Display.Schema2
         public string Id { get; set; }
 
         /// <summary>Optional user label; null = generated sentence (same as summons).
-        /// Carried from v1 special-rule names during migration.</summary>
+        /// Stable document spelling for the firmware command.</summary>
         [JsonProperty("name")]
         public string Name { get; set; }
 

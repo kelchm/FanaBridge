@@ -104,23 +104,6 @@ namespace FanaBridge.Tests.UI.Display
             Assert.False(runtime.CurrentConfigV2.Settings.RejectUncommandedChanges);
         }
 
-        [Theory]
-        [InlineData(SettingsMode.On, "Itm")]
-        [InlineData(SettingsMode.LegacyOnly, "Legacy")]
-        [InlineData(SettingsMode.Off, "Off")]
-        public void DisplayControlForMode_WriteThroughMap(SettingsMode mode, string control)
-        {
-            // E9-exit: this mapping dies with the codec trim.
-            Assert.Equal(control, DisplayOverviewV2Model.DisplayControlForMode(mode));
-        }
-
-        [Theory]
-        [InlineData("Itm", SettingsMode.On)]
-        [InlineData("Legacy", SettingsMode.LegacyOnly)]
-        [InlineData("Off", SettingsMode.Off)]
-        public void ModeForDisplayControl_InverseMap(string control, SettingsMode mode)
-            => Assert.Equal(mode, DisplayOverviewV2Model.ModeForDisplayControl(control));
-
         [Fact]
         public void Project_ModeRoundTrip_ReflectsDocumentSettingsMode()
         {

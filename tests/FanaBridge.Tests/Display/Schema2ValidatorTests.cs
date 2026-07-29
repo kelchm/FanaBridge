@@ -11,7 +11,7 @@ namespace FanaBridge.Tests.Display
 {
     /// <summary>
     /// Keeper laws (no scaffolding split): pure v2 validator §14 pins. All tests here
-    /// survive E8b. Phase E1b: every §14 rule, plus preservation / idempotence / never-throws.
+    /// Every §14 rule, plus preservation / idempotence / never-throws.
     /// </summary>
     public class Schema2ValidatorTests
     {

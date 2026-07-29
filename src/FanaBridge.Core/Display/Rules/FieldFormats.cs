@@ -98,8 +98,8 @@ namespace FanaBridge.Display.Rules
         /// </summary>
         /// <param name="paramId">ITM parameter id.</param>
         /// <param name="explicitFormat">Mapping's Format when set; null/empty otherwise.</param>
-        /// <param name="hasSourceOverride">True when a FieldMapping entry is present
-        /// (source and/or format override) — empty format then defaults bare for
+        /// <param name="hasSourceOverride">True when a source or format override is present
+        /// — empty format then defaults bare for
         /// total/temp params.</param>
         /// <param name="showLapTotal">Settings toggle; false with no explicit format
         /// acts as <see cref="Bare"/> for Lap.</param>

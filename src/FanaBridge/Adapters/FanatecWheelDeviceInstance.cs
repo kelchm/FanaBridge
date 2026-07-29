@@ -92,8 +92,6 @@ namespace FanaBridge.Adapters
         // (real wheel match / live override — never registration-fallback caps).
         // A written v2 document (marked or not) is user-owned; the migrator never touches it.
         private bool _pendingPreEpicBake;
-        // One-shot log when SetSettings sees a v1 displayCustomization key (E8b: no engine).
-        private bool _loggedIgnoredV1Key;
         // One-shot guard for the legacy col01 drive: this instance-side drive used to sit
         // inside the runtime's ITM try/catch (sharing its _itmErrorLogged latch) and must
         // keep the same contract now that it runs on the instance — a firmware/transport
@@ -140,8 +138,6 @@ namespace FanaBridge.Adapters
 
         /// <summary>Test seam: forwards to the runtime's rule-part of the display
         /// envelope, or null while no customization is active.</summary>
-        internal DisplayRuleSnapshot DisplayRuleSnapshot => _displayRuntime.RuleSnapshot;
-
         /// <summary>Test seam: forwards to the runtime's values-part of the display
         /// envelope (what the ITM display is showing), or null while not driving ITM.</summary>
         internal DisplayValuesSnapshot DisplayValuesSnapshot => _displayRuntime.ValuesSnapshot;
@@ -165,7 +161,7 @@ namespace FanaBridge.Adapters
         internal Func<long> ItmClockForTest;
 
         /// <summary>
-        /// Test seam: after the pre-epic bake has confirmed absence (no v1 / no v2),
+        /// Test seam: after the pre-epic bake has confirmed document absence,
         /// before compute + CAS-publish — lets a session apply win null→document so
         /// the bake publish path must discard.
         /// </summary>
@@ -335,7 +331,6 @@ namespace FanaBridge.Adapters
             // §9b: no document keys — leave pending until first live-resolved DataUpdate.
             // Never bake from registration / pre-connection caps.
             _pendingPreEpicBake = true;
-            _displayRuntime.ClearConfig();
             _displayRuntime.ClearConfigV2();
 
             if (_ledModule != null)
@@ -407,7 +402,7 @@ namespace FanaBridge.Adapters
                 }
             }
 
-            // Custom settings (display mode, wheel/module identity)
+            // Custom settings (live display settings and wheel/module identity)
             if (_customSettings != null)
             {
                 foreach (var prop in _customSettings.Properties())
@@ -416,24 +411,12 @@ namespace FanaBridge.Adapters
                 }
             }
 
-            // Display customization: serialize the CURRENT snapshot (not the raw
-            // payload) — the EnumText model keeps values a future version wrote
-            // intact through the load/save round-trip. v2 key "display" wins.
-            // A live v1 runtime snapshot still re-serializes here (UI path via
-            // ApplyDisplayConfig). An inert raw v1 bag already copied from
-            // _customSettings above rides through unchanged until E9-exit.
+            // Persist the current v2 document snapshot.
             var displayConfigV2 = _displayRuntime.CurrentConfigV2;
             if (displayConfigV2 != null)
             {
                 result["display"] =
                     JObject.Parse(DisplayConfigV2Serializer.Save(displayConfigV2));
-            }
-            else
-            {
-                var displayConfig = _displayRuntime.CurrentConfig;
-                if (displayConfig != null)
-                    result["displayCustomization"] =
-                        JObject.Parse(DisplayConfigSerializer.Save(displayConfig));
             }
 
             return result;
@@ -449,12 +432,7 @@ namespace FanaBridge.Adapters
             // Extract custom settings
             _customSettings = new JObject();
             foreach (var key in new[] { "wheelType", "moduleType", "displayMode", "displayControl", "itmEnabled",
-                                        "itmShowLapTotal", "itmShowPositionTotal", "itmDefaultPage",
-                                        "legacyModeMigrated",
-                                        // E8b: inert raw passthrough until E9-exit — no reader,
-                                        // no engine (cleared below). Disposal of the bag is
-                                        // ruled then; saves must never destroy the stored key.
-                                        "displayCustomization" })
+                                        "itmShowLapTotal", "itmShowPositionTotal", "itmDefaultPage" })
             {
                 if (obj[key] != null)
                     _customSettings[key] = obj[key].DeepClone();
@@ -489,20 +467,15 @@ namespace FanaBridge.Adapters
             // Track open migration so DataUpdate can re-Read when live caps flip.
             _migratedItmCapable = _customSettings["displayControl"] == null ? itmCapable : (bool?)null;
 
-            // Display customization document (whitelisted nested keys; absent = none).
-            // OQ-3 / E8b: the v2 key "display" is the sole runtime document. §9b: when
-            // NEITHER key exists, leave pending for the first live-resolved DataUpdate
-            // bake. A v1-only "displayCustomization" key routes NOWHERE — no engine, no
-            // bake (must not trigger the pre-epic migrator), log once; the raw JToken
-            // already rides in _customSettings above (inert until E9-exit). Released
-            // AFTER the plain _displaySettings write above, paired with the runtime's
-            // acquire-before-settings read order.
+            // The v2 key is the sole runtime document. Its absence arms §9b bake;
+            // every unrelated or unknown settings member is ignored.
             Action<string> warn = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
             var displayV2 = obj["display"];
-            var displayCustomization = obj["displayCustomization"];
             if (displayV2 != null)
             {
                 _pendingPreEpicBake = false;
+                DropPreEpicModeKeys();
+                _migratedItmCapable = null;
                 // Resolve catalog for Normalize capability rules (OQ-2: WheelCode).
                 WheelCatalog catalog;
                 CatalogLoader.TryResolve(_config.WheelCode, out catalog, warn,
@@ -510,34 +483,13 @@ namespace FanaBridge.Adapters
                 var parsedV2 = DisplayConfigV2Serializer.Load(displayV2.ToString(), warn);
                 parsedV2 = DisplayConfigV2Validator.Normalize(parsedV2, warn, catalog);
                 _displayRuntime.SetConfigV2(parsedV2);
-                _displayRuntime.ClearConfig(); // v2 owns this device; drop any v1 snapshot
-            }
-            else if (displayCustomization == null)
-            {
-                // §9b: no document keys → pending until first live-resolved DataUpdate.
-                _pendingPreEpicBake = true;
-                _displayRuntime.ClearConfig();
-                _displayRuntime.ClearConfigV2();
             }
             else
             {
-                // E8b: v1 key present = no engine, no bake. v2 key or nothing at runtime.
-                _pendingPreEpicBake = false;
-                _displayRuntime.ClearConfig();
+                // §9b: no v2 document → pending until first live-resolved DataUpdate.
+                _pendingPreEpicBake = true;
                 _displayRuntime.ClearConfigV2();
-                if (!_loggedIgnoredV1Key)
-                {
-                    _loggedIgnoredV1Key = true;
-                    SimHub.Logging.Current.Info(
-                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                        "]: ignoring displayCustomization (v1) — no runtime engine; " +
-                        "use the v2 display key or clear both keys for pre-epic bake");
-                }
             }
-            // Bake the marker into the settings bag so GetSettings persists it (without
-            // this, a save would re-run synthesis after the user emptied the world).
-            _customSettings["legacyModeMigrated"] = _displaySettings.LegacyModeMigrated;
-
             _legacyDriver?.UpdateSettings(_displaySettings);
         }
 
@@ -665,7 +617,7 @@ namespace FanaBridge.Adapters
                 // segment sink is live for this frame's resolve (single-writer: the stack
                 // never constructs a driver). Off / display-test leave the sink unbound
                 // so P3 gates stay ahead of rule writes.
-                if (_displaySettings.LegacyPageActive && !displayTest)
+                if (LegacySurfaceActive(_displayRuntime.CurrentConfigV2) && !displayTest)
                 {
                     EnsureLegacyDriver(plugin);
                     BindLegacySegmentSink();
@@ -723,16 +675,11 @@ namespace FanaBridge.Adapters
             }
             else if (displayType != DisplayType.None)
             {
-                // Basic / non-ITM 7-seg path: same LegacyPageActive + blank-once gate as the
-                // ITM branch so DisplayControl=Off is honored regardless of caps / rebind
-                // history (Off must blank col01, not keep painting gear/speed). Always tick
-                // the legacy-rules runtime on LegacyPageActive frames so an emptied world
-                // still drops the stack and republishes a cleared snapshot (mirror of the
-                // ITM branch's per-frame UpdateDisplayRules cleanup); col01 ownership then
-                // follows the frame-latched config, not a fresh volatile re-read.
+                // Basic / non-ITM 7-seg path: the same Settings.Mode + blank-once gate as
+                // the ITM branch. Always tick composition while the surface is active.
                 try
                 {
-                    if (_displaySettings.LegacyPageActive && !displayTest)
+                    if (LegacySurfaceActive(_displayRuntime.CurrentConfigV2) && !displayTest)
                     {
                         EnsureLegacyDriver(plugin, logCreate: true);
                         BindLegacySegmentSink();
@@ -776,21 +723,14 @@ namespace FanaBridge.Adapters
 
         // ── Legacy col01 arbitration (single writer: LegacyDisplayDriver) ─
 
-        /// <summary>
-        /// True when the composition path owns col01. A live v2 document always owns
-        /// col01 (RISK-4 — no dual writer). Uses frame-latched
-        /// <see cref="DeviceDisplayRuntime.FrameConfigV2"/> (the acquire Tick /
-        /// TickLegacyRules already made) — never re-reads the volatiles. Without a live
-        /// v2 document the mode-based <see cref="LegacyDisplayDriver.Update"/> fallback runs.
-        /// </summary>
-        private bool UseLegacyRulePath
-            => DeviceDisplayRuntime.IsLiveCompositionV2(_displayRuntime.FrameConfigV2);
+        private static bool LegacySurfaceActive(DisplayConfigV2 config)
+            => config?.Settings != null && config.Settings.Mode != SettingsMode.Off;
 
         private void EnsureLegacyDriver(FanatecPlugin plugin, bool logCreate = false)
         {
             if (_legacyDriver != null || plugin?.Display == null)
                 return;
-            if (!_displaySettings.LegacyPageActive)
+            if (!LegacySurfaceActive(_displayRuntime.CurrentConfigV2))
                 return;
             _legacyDriver = new LegacyDisplayDriver(plugin.Display, _displaySettings);
             if (_legacyReclaimPending)
@@ -808,7 +748,7 @@ namespace FanaBridge.Adapters
 
         private void BindLegacySegmentSink()
         {
-            // Caller already gated LegacyPageActive + !displayTest; only bind a live driver.
+            // Caller already gated Settings.Mode + !displayTest; only bind a live driver.
             if (_legacyDriver != null)
             {
                 var driver = _legacyDriver;
@@ -831,15 +771,13 @@ namespace FanaBridge.Adapters
 
         /// <summary>
         /// Shared col01 drive for the ITM and basic branches. P3 gates
-        /// (<see cref="DisplaySettings.LegacyPageActive"/>, blank-once) stay ahead of
-        /// content. When the rule path is active the stack owns every frame — idle
-        /// included — through the sink (in-game gates content per kind, never the
-        /// wire); the mode-based Update runs only on the flag-off classic path.
+        /// (Settings.Mode, blank-once) stay ahead of content. The composition path owns
+        /// every frame — idle included — through the sink.
         /// </summary>
         private void DriveLegacyCol01(FanatecPlugin plugin, GameData data,
             bool displayTest, bool logCreate)
         {
-            if (_displaySettings.LegacyPageActive)
+            if (LegacySurfaceActive(_displayRuntime.FrameConfigV2))
             {
                 if (_legacyDriver == null)
                 {
@@ -862,21 +800,8 @@ namespace FanaBridge.Adapters
 
                 if (!displayTest)
                 {
-                    if (UseLegacyRulePath)
-                    {
-                        // Composition resolved this frame — idle included — and wrote
-                        // through the sink. Nothing to drive here.
-                    }
-                    else if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
-                    {
-                        // No live v2 composition: classic mode driver from displayMode.
-                        _legacyDriver.Update(data);
-                    }
-                    else if (_legacyDriver.NeedsExitBlank)
-                    {
-                        // Mode None: blank once if the page still holds session content.
-                        _legacyDriver.Clear();
-                    }
+                    // Composition resolved this frame — idle included — and wrote
+                    // through the sink. Nothing else drives the display.
                 }
                 _legacyBlanked = false;
             }
@@ -889,24 +814,10 @@ namespace FanaBridge.Adapters
             }
         }
 
-        // ── Display customization (rules) ────────────────────────────────
-
-        /// <summary>
-        /// Publishes a UI-built customization document — the Display tab's ONLY write path
-        /// into the config, forwarded to the display runtime (which normalizes through the
-        /// settings load path and publishes; the frame path rebuilds the rule stack, and
-        /// SimHub persists via <see cref="GetSettings"/> on its own schedule). Tests call
-        /// this on the instance and the IDisplayPanelHost member routes here.
-        /// </summary>
-        internal void ApplyDisplayConfig(DisplayCustomizationConfig config)
-            => _displayRuntime.ApplyDisplayConfig(config);
-
         // ── IDisplayPanelHost (the Display tab's typed window into this instance) ──
         // Explicit implementation: nothing here belongs on the class's public surface
         // — the panel receives the interface from GetSettingsControls and the members
         // simply expose the same state/paths the frame code already maintains.
-
-        DisplaySettings IDisplayPanelHost.DisplaySettings => _displaySettings;
 
         string IDisplayPanelHost.WheelCode => _config?.WheelCode;
 
@@ -955,17 +866,12 @@ namespace FanaBridge.Adapters
             if (caps == null || caps.Display == DisplayType.None)
                 return; // genuinely unresolvable — defer
 
-            // v1 document owns this device this round — never bake over it.
-            if (_displayRuntime.CurrentConfig != null)
-            {
-                _pendingPreEpicBake = false;
-                return;
-            }
-
             // Any existing v2 (marked bake or authored) is USER-OWNED — never touch it.
             // Deleting the whole v2 section re-establishes the bake trigger via SetSettings.
             if (_displayRuntime.CurrentConfigV2 != null)
             {
+                DropPreEpicModeKeys();
+                _migratedItmCapable = null;
                 _pendingPreEpicBake = false;
                 return;
             }
@@ -988,11 +894,19 @@ namespace FanaBridge.Adapters
             baked = DisplayConfigV2Validator.Normalize(baked, warn, catalog);
             // CAS into absence only — a concurrent session apply that won null→user
             // document loses the bake silently. Never touch a marked/authored document.
-            if (_displayRuntime.TrySetConfigV2IfAbsent(baked))
-                _displayRuntime.ClearConfig();
+            _displayRuntime.TrySetConfigV2IfAbsent(baked);
+            DropPreEpicModeKeys();
+            _migratedItmCapable = null;
             // Pending clears on CAS win or on existing-document detection (including a
             // lost race: a document appeared since the absence check).
             _pendingPreEpicBake = false;
+        }
+
+        private void DropPreEpicModeKeys()
+        {
+            _customSettings?.Remove("displayMode");
+            _customSettings?.Remove("displayControl");
+            _customSettings?.Remove("itmEnabled");
         }
 
         // Whether this device should surface a Display tab. Reads the RESOLVED caps
@@ -1006,12 +920,6 @@ namespace FanaBridge.Adapters
 
         byte IDisplayPanelHost.ItmDeviceId => ResolvedDisplayCaps.ItmDeviceId;
 
-        DisplayCustomizationConfig IDisplayPanelHost.GetDisplayConfig() => _displayRuntime.CurrentConfig;
-
-        void IDisplayPanelHost.ApplyDisplayConfig(DisplayCustomizationConfig config)
-            => ApplyDisplayConfig(config);
-
-        // O13: additive v2 surface — v1 members untouched until E9-exit.
         DisplayConfigV2 IDisplayPanelHost.GetDisplayConfigV2() => _displayRuntime.CurrentConfigV2;
 
         void IDisplayPanelHost.ApplyDisplayConfigV2(DisplayConfigV2 config)
@@ -1025,8 +933,8 @@ namespace FanaBridge.Adapters
             _displayRuntime.ApplyDisplayConfigV2(config, catalog);
             // Deleting the document deliberately re-establishes the S9b bake
             // trigger (reviewed law) — re-arm so the next live frame can bake;
-            // TryCompletePreEpicBake itself still refuses when any document or
-            // v1 bag exists, so re-arming is safe on every null apply.
+            // TryCompletePreEpicBake still refuses when a document exists, so
+            // re-arming is safe on every null apply.
             if (config == null)
                 _pendingPreEpicBake = true;
         }
@@ -1044,17 +952,6 @@ namespace FanaBridge.Adapters
         }
 
         DisplayPanelSnapshot IDisplayPanelHost.Snapshot => _displayRuntime.Snapshot;
-
-        void IDisplayPanelHost.NotifySettingsChanged()
-        {
-            // Sync the panel-edited DisplaySettings back to the JObject SimHub
-            // persists — the same flow the old Screen panel's callback rode.
-            DisplaySettingsCodec.Write(_customSettings, _displaySettings);
-            // Write bakes displayControl — migration is closed until the next load.
-            _migratedItmCapable = null;
-            _legacyDriver?.UpdateSettings(_displaySettings);
-            // ITM driver reads _displaySettings live each frame.
-        }
 
         // ── IDisplayPropertyCatalog / IMappedRoleCatalog (on-demand editor catalogs) ──
         // Narrow contracts the Triggers editor pulls when a picker/dropdown opens — never

@@ -9,9 +9,9 @@ namespace FanaBridge.Display.Rules
     /// <summary>One director tick's output, consumed by the device's frame loop.</summary>
     public struct DirectorTickResult
     {
-        public DirectorTickResult(ManualNavigation? manual, string legacyScreenId,
+        public DirectorTickResult(ManualNavigation? manual, string segmentScreenId,
             byte? requestedWirePage)
-            : this(manual, legacyScreenId, requestedWirePage,
+            : this(manual, segmentScreenId, requestedWirePage,
                 CurrentPageKnowledge.Unknown,
                 adopted: false, reverted: false, adoptWarned: false)
         {
@@ -19,7 +19,7 @@ namespace FanaBridge.Display.Rules
 
         public DirectorTickResult(
             ManualNavigation? manual,
-            string legacyScreenId,
+            string segmentScreenId,
             byte? requestedWirePage,
             CurrentPageKnowledge pageKnowledge,
             bool adopted,
@@ -27,7 +27,7 @@ namespace FanaBridge.Display.Rules
             bool adoptWarned)
         {
             Manual = manual;
-            LegacyScreenId = legacyScreenId;
+            SegmentScreenId = segmentScreenId;
             RequestedWirePage = requestedWirePage;
             PageKnowledge = pageKnowledge;
             AdoptedThisTick = adopted;
@@ -41,11 +41,11 @@ namespace FanaBridge.Display.Rules
         /// on the reaction.</summary>
         public ManualNavigation? Manual { get; }
 
-        /// <summary>The legacy screen the current intent wants shown (set every tick the
-        /// intent targets one and this display has a legacy page). The director gets the
-        /// display onto the legacy page; the 3-char text write itself is a later phase —
+        /// <summary>The segment screen the current intent wants shown (set every tick the
+        /// intent targets one and this display has a segment page). The director gets the
+        /// display onto that page; the 3-char text write itself is a later phase —
         /// until then callers may log it.</summary>
-        public string LegacyScreenId { get; }
+        public string SegmentScreenId { get; }
 
         /// <summary>The wire page passed to <see cref="IItmPageControl.RequestPage"/> this
         /// tick, or null when nothing was requested (diagnostics and tests).</summary>
@@ -125,8 +125,8 @@ namespace FanaBridge.Display.Rules
     ///   cataloged uncommanded landings adopt; out-of-catalog wire landings stay
     ///   Manual=null with one immediate intent re-assert and warn-once (v9 pinned).
     ///   The v2 <c>AdoptedUnknownPage</c> shape is composition-side only (E8); the director
-    ///   flag-off path deliberately keeps Manual=null for unknown wire pages until E8b
-    ///   re-signs that semantic — do not emit ManualNavigation(null) on this path.
+    ///   flag-off path deliberately keeps Manual=null for unknown wire pages — do not
+    ///   emit ManualNavigation(null) on this path.
     /// </summary>
     public class DisplayPageDirector
     {
@@ -337,7 +337,7 @@ namespace FanaBridge.Display.Rules
 
             // Resolve the intent to a desired wire page (0 = nothing to request).
             // Special commands write col01 directly — the director does not page-navigate.
-            string legacyScreenId = null;
+            string segmentScreenId = null;
             byte desired = 0;
             if (intent.Kind == DirectorIntentKind.Special)
             {
@@ -348,7 +348,7 @@ namespace FanaBridge.Display.Rules
                 if (_pages.LegacyWire != 0)
                 {
                     desired = _pages.LegacyWire;
-                    legacyScreenId = intent.ScreenId;
+                    segmentScreenId = intent.ScreenId;
                 }
                 else if (!_warnedNoLegacyPage)
                 {
@@ -400,7 +400,7 @@ namespace FanaBridge.Display.Rules
 
             var knowledge = BuildPageKnowledge(state, current);
             return new DirectorTickResult(
-                manual, legacyScreenId, requested, knowledge,
+                manual, segmentScreenId, requested, knowledge,
                 adopted, reverted, adoptWarned);
         }
 

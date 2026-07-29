@@ -22,7 +22,7 @@ namespace FanaBridge.Display.Rules
         Derived,
     }
 
-    /// <summary>Edge direction (v1 Changes/Increases/Decreases; v2 onChange direction).</summary>
+    /// <summary>Edge direction for v2 onChange lifetimes.</summary>
     public enum CarrierEdgeDirection
     {
         Any,
@@ -43,9 +43,7 @@ namespace FanaBridge.Display.Rules
     }
 
     /// <summary>
-    /// Abstract condition vocabulary — what a carrier tests each tick. Carrier-shaped:
-    /// both v1 <see cref="RuleCondition"/> and v2 <see cref="Condition"/>
-    /// + <see cref="Lifetime"/> adapt onto this.
+    /// Carrier-shaped condition vocabulary: what a v2 condition tests each tick.
     /// </summary>
     public sealed class CarrierTrigger
     {
@@ -54,8 +52,8 @@ namespace FanaBridge.Display.Rules
         /// <summary>Property/action source for property reads and event matching.</summary>
         public PropertySpec Source { get; set; }
 
-        /// <summary>Level family only: v1 <see cref="ConditionKind"/> level spelling.</summary>
-        public ConditionKind LevelKind { get; set; }
+        /// <summary>Level family only.</summary>
+        public ConditionOperator LevelKind { get; set; }
 
         public double? Value { get; set; }
         public double? Hysteresis { get; set; }
@@ -82,7 +80,7 @@ namespace FanaBridge.Display.Rules
     public sealed class CarrierSpec
     {
         public CarrierSpec(string id, CarrierTrigger trigger, CarrierLifetime lifetime,
-            RuleEligibility eligibility)
+            RunsWhen eligibility)
         {
             Id = id ?? "";
             Trigger = trigger ?? throw new ArgumentNullException(nameof(trigger));
@@ -93,7 +91,7 @@ namespace FanaBridge.Display.Rules
         public string Id { get; }
         public CarrierTrigger Trigger { get; }
         public CarrierLifetime Lifetime { get; }
-        public RuleEligibility Eligibility { get; private set; }
+        public RunsWhen Eligibility { get; }
 
         /// <summary>
         /// Adapt a v2 <see cref="Condition"/> + <see cref="Lifetime"/> onto the same
@@ -183,7 +181,7 @@ namespace FanaBridge.Display.Rules
                 MapPostFireLifetime(life, lifeKind, lifetime);
             }
 
-            // whileTrue is level-only; edge/event coerce to forDuration (v1 law).
+            // whileTrue is level-only; edge/event coerce to forDuration.
             CoerceNonLevelWhileTrue(trigger, life);
 
             return new CarrierSpec(id, trigger, life, MapRuns(runs));
@@ -194,7 +192,7 @@ namespace FanaBridge.Display.Rules
         /// <see cref="CarrierTickInput"/>.</summary>
         public static CarrierSpec Derived(string id, CarrierLifetimeKind lifetimeKind,
             int durationMs = CarrierDefaults.DefaultDurationMs,
-            RuleEligibility eligibility = RuleEligibility.Always)
+            RunsWhen eligibility = RunsWhen.Always)
         {
             var trigger = new CarrierTrigger { Family = CarrierTriggerFamily.Derived };
             var life = new CarrierLifetime { Kind = lifetimeKind, DurationMs = durationMs };
@@ -244,7 +242,7 @@ namespace FanaBridge.Display.Rules
         }
 
         /// <summary>whileTrue is a level-only lifetime; edge/event carriers coerce to
-        /// forDuration (mirrors v1 DisplayConfigValidator non-level/WhileActive law).</summary>
+        /// forDuration.</summary>
         private static void CoerceNonLevelWhileTrue(CarrierTrigger trigger, CarrierLifetime life)
         {
             if (life.Kind != CarrierLifetimeKind.WhileTrue)
@@ -269,32 +267,19 @@ namespace FanaBridge.Display.Rules
             }
         }
 
-        private static ConditionKind MapOperator(ConditionOperator? op)
-        {
-            if (op == null)
-                return ConditionKind.Unknown;
-            switch (op.Value)
-            {
-                case ConditionOperator.LessThan: return ConditionKind.LessThan;
-                case ConditionOperator.LessOrEqual: return ConditionKind.LessOrEqual;
-                case ConditionOperator.GreaterThan: return ConditionKind.GreaterThan;
-                case ConditionOperator.GreaterOrEqual: return ConditionKind.GreaterOrEqual;
-                case ConditionOperator.Equals: return ConditionKind.Equals;
-                case ConditionOperator.NotEquals: return ConditionKind.NotEquals;
-                case ConditionOperator.IsTrue: return ConditionKind.IsTrue;
-                case ConditionOperator.IsFalse: return ConditionKind.IsFalse;
-                default: return ConditionKind.Unknown;
-            }
-        }
+        private static ConditionOperator MapOperator(ConditionOperator? op)
+            => op ?? ConditionOperator.Unknown;
 
-        private static RuleEligibility MapRuns(RunsWhen runs)
+        private static RunsWhen MapRuns(RunsWhen runs)
         {
             switch (runs)
             {
-                case RunsWhen.Always: return RuleEligibility.Always;
-                case RunsWhen.Idle: return RuleEligibility.Idle;
-                case RunsWhen.InGame: return RuleEligibility.InGame;
-                default: return RuleEligibility.InGame;
+                case RunsWhen.Always:
+                case RunsWhen.Idle:
+                case RunsWhen.InGame:
+                    return runs;
+                default:
+                    return RunsWhen.InGame;
             }
         }
     }
@@ -347,9 +332,7 @@ namespace FanaBridge.Display.Rules
 
     /// <summary>
     /// Mutable per-carrier runtime state between ticks. Evaluator-owned fields use
-    /// internal setters (compiler-enforced ownership). Policy uses
-    /// <see cref="MarkSuperseded"/> / <see cref="ClearActivation"/> (v9 path only for
-    /// supersede; v2 never writes Active/Superseded — see contract §4).
+    /// internal setters (compiler-enforced ownership).
     /// </summary>
     public sealed class CarrierRuntime
     {
@@ -358,16 +341,9 @@ namespace FanaBridge.Display.Rules
         public bool HasPrev { get; internal set; }
         public double Prev { get; internal set; }
 
-        // Activation / hold clock (evaluator-owned; v9 policy may ClearActivation).
+        // Activation / hold clock (evaluator-owned).
         public bool Active { get; internal set; }
         public long ExpiresAt { get; internal set; }
-
-        /// <summary>
-        /// v9-path selection latch (displaced UntilDismissed). Cleared on Fire and on
-        /// ineligible wipe. v2 SeatArbiter must NOT use this — destination-scoped latches
-        /// replace it. Prefer <see cref="MarkSuperseded"/> over writing the setter.
-        /// </summary>
-        public bool Superseded { get; internal set; }
 
         public bool EligibleNow { get; internal set; }
         public bool WarnedMissing { get; internal set; }
@@ -381,20 +357,11 @@ namespace FanaBridge.Display.Rules
 
         /// <summary>
         /// Derived convenience: true when this tick's Fire created a new claim
-        /// (<c>!Active || Superseded</c> before Fire). Window restarts while already
+        /// (<c>!Active</c> before Fire). Window restarts while already
         /// active are NOT fresh.
         /// </summary>
         public bool FreshFireThisTick { get; internal set; }
 
-        /// <summary>v9 selection policy: mark a displaced UntilDismissed activation.</summary>
-        public void MarkSuperseded() => Superseded = true;
-
-        /// <summary>v9 selection / manual-nav: drop the live activation (and clear supersede).</summary>
-        public void ClearActivation()
-        {
-            Active = false;
-            Superseded = false;
-        }
     }
 
     /// <summary>One tick's external inputs for carrier evaluation.</summary>
@@ -430,11 +397,11 @@ namespace FanaBridge.Display.Rules
     /// <summary>
     /// Pure carrier evaluator: condition evaluation, hysteresis, hold clocks, eligibility
     /// gating, and fire/lifetime semantics. No selection, dwell, activity ring, or
-    /// dismissal policy — those stay with the arbiter / v9 engine.
+    /// dismissal policy — those stay with the arbiter.
     ///
     /// Structural choice: one type rather than ConditionEvaluator + HoldClock. Fire and
     /// lifetime are one state machine (rising edge starts a ForDuration window; WhileTrue
-    /// tracks satisfied; Superseded interacts with Fire's fresh flag). Splitting the clock
+    /// tracks satisfied). Splitting the clock
     /// would force awkward shared mutability without a cleaner seam.
     /// </summary>
     public static class CarrierEvaluator
@@ -452,16 +419,14 @@ namespace FanaBridge.Display.Rules
             runtime.FreshFireThisTick = false;
             runtime.FiredThisTick = false;
 
-            runtime.EligibleNow = spec.Eligibility == RuleEligibility.Always
-                || (spec.Eligibility == RuleEligibility.InGame ? input.InGame : !input.InGame);
+            runtime.EligibleNow = spec.Eligibility == RunsWhen.Always
+                || (spec.Eligibility == RunsWhen.InGame ? input.InGame : !input.InGame);
             if (!runtime.EligibleNow)
             {
                 // Ineligible clears everything: the activation, the level latch, and the
                 // edge prev-value — re-entering eligibility starts from a clean slate
-                // (an "edge" spanning a game restart is not a real change). v9-parity wipe
-                // (shipped behaviour; D19 planes still evaluate — entry is reset, not paused).
+                // (an "edge" spanning a game restart is not a real change).
                 runtime.Active = false;
-                runtime.Superseded = false;
                 runtime.Satisfied = false;
                 runtime.HasPrev = false;
                 return false;
@@ -498,10 +463,10 @@ namespace FanaBridge.Display.Rules
             bool wasSatisfied = runtime.Satisfied;
             bool satisfied = false;
 
-            if (c.LevelKind == ConditionKind.IsTrue || c.LevelKind == ConditionKind.IsFalse)
+            if (c.LevelKind == ConditionOperator.IsTrue || c.LevelKind == ConditionOperator.IsFalse)
             {
                 if (TryReadBool(c.Source, runtime, input, warnMissing, out bool b))
-                    satisfied = c.LevelKind == ConditionKind.IsTrue ? b : !b;
+                    satisfied = c.LevelKind == ConditionOperator.IsTrue ? b : !b;
                 // Missing property → not satisfied (rule stays armed / releases).
             }
             else if (TryReadNumber(c.Source, runtime, input, warnMissing, out double x))
@@ -634,15 +599,14 @@ namespace FanaBridge.Display.Rules
             }
         }
 
-        // A fire creates an activation, or restarts a ForDuration window / re-enters a
-        // superseded activation. FiredThisTick is set on EVERY Fire (policy-neutral).
+        // A fire creates an activation or restarts a ForDuration window.
+        // FiredThisTick is set on EVERY Fire (policy-neutral).
         // Only a genuinely new claim is a fresh fire — window restarts while already
         // active would drown the activity feed.
         private static void Fire(CarrierSpec spec, CarrierRuntime runtime, long now)
         {
-            bool fresh = !runtime.Active || runtime.Superseded;
+            bool fresh = !runtime.Active;
             runtime.Active = true;
-            runtime.Superseded = false;
             runtime.FiredThisTick = true;
             if (spec.Lifetime.Kind == CarrierLifetimeKind.ForDuration)
                 runtime.ExpiresAt = now + spec.Lifetime.DurationMs;
@@ -650,31 +614,31 @@ namespace FanaBridge.Display.Rules
                 runtime.FreshFireThisTick = true;
         }
 
-        internal static bool SatisfiedNow(ConditionKind kind, double x, double v)
+        internal static bool SatisfiedNow(ConditionOperator kind, double x, double v)
         {
             switch (kind)
             {
-                case ConditionKind.LessThan: return x < v;
-                case ConditionKind.LessOrEqual: return x <= v;
-                case ConditionKind.GreaterThan: return x > v;
-                case ConditionKind.GreaterOrEqual: return x >= v;
-                case ConditionKind.Equals: return Math.Abs(x - v) <= Epsilon;
-                case ConditionKind.NotEquals: return Math.Abs(x - v) > Epsilon;
+                case ConditionOperator.LessThan: return x < v;
+                case ConditionOperator.LessOrEqual: return x <= v;
+                case ConditionOperator.GreaterThan: return x > v;
+                case ConditionOperator.GreaterOrEqual: return x >= v;
+                case ConditionOperator.Equals: return Math.Abs(x - v) <= Epsilon;
+                case ConditionOperator.NotEquals: return Math.Abs(x - v) > Epsilon;
                 default: return false;
             }
         }
 
-        internal static bool StillHolds(ConditionKind kind, double x, double v, double h)
+        internal static bool StillHolds(ConditionOperator kind, double x, double v, double h)
         {
             switch (kind)
             {
-                case ConditionKind.LessThan: return x < v + h;
-                case ConditionKind.LessOrEqual: return x <= v + h;
-                case ConditionKind.GreaterThan: return x > v - h;
-                case ConditionKind.GreaterOrEqual: return x >= v - h;
-                case ConditionKind.Equals: return Math.Abs(x - v) <= Epsilon + h;
+                case ConditionOperator.LessThan: return x < v + h;
+                case ConditionOperator.LessOrEqual: return x <= v + h;
+                case ConditionOperator.GreaterThan: return x > v - h;
+                case ConditionOperator.GreaterOrEqual: return x >= v - h;
+                case ConditionOperator.Equals: return Math.Abs(x - v) <= Epsilon + h;
                 // NotEquals has no releasing direction past "equal" — hysteresis is inert.
-                case ConditionKind.NotEquals: return Math.Abs(x - v) > Epsilon;
+                case ConditionOperator.NotEquals: return Math.Abs(x - v) > Epsilon;
                 default: return false;
             }
         }

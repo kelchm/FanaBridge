@@ -7,7 +7,7 @@ namespace FanaBridge.Display.Schema2
 {
     /// <summary>
     /// Ordered idle program (spec §16 / amendment A1): destination · duration steps with
-    /// <c>terminal: hold|loop</c>. Idle-slot only in v1; authored by setups or hand JSON.
+    /// <c>terminal: hold|loop</c>. Authored by setups or hand JSON.
     /// </summary>
     public class PlaylistEntry
     {

@@ -3,8 +3,7 @@ namespace FanaBridge.Display.Rules
     /// <summary>
     /// Firmware OLED screen selector (col01 subcmd 0x50). Wire spellings are short
     /// camelCase tokens owned here — not the enum member names — so the document
-    /// stays compact and stable. Unknown text survives round-trip via
-    /// <see cref="RuleTarget.CommandRaw"/>.
+    /// stays compact and stable.
     /// </summary>
     public enum SpecialCommand
     {

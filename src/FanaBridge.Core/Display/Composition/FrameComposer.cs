@@ -296,8 +296,7 @@ namespace FanaBridge.Display.Composition
                 text = FormatContent(winContent, content, out formatDegraded, page.Id);
                 if (text != null)
                 {
-                    var legacyEffect = ToLegacyEffect(winEffect);
-                    frame = LegacyEffectClock.Apply(text, legacyEffect, nowMs);
+                    frame = LegacyEffectClock.Apply(text, winEffect, nowMs);
                 }
             }
             else
@@ -807,9 +806,8 @@ namespace FanaBridge.Display.Composition
         // ═════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Format content the same way <c>DisplayRuleStack.FormatScreen</c> does, using
-        /// <see cref="LegacyValueFormatter"/> for the integer+D3 path (single-evaluator
-        /// mandate). Format absent = exactly the v9 integer render.
+        /// Format segment content using <see cref="LegacyValueFormatter"/> for the
+        /// integer+D3 path. Format absent uses the integer render.
         /// <para>
         /// <c>content.format</c> = <see cref="SegmentFormatOneDecimal"/> is consumed for
         /// numeric segment kinds (speed, rpm, position, fuel, property) — one decimal place,
@@ -1010,10 +1008,9 @@ namespace FanaBridge.Display.Composition
 
         /// <summary>
         /// Apply effect via <see cref="LegacyEffectClock"/> at <paramref name="nowMs"/>.
-        /// Exposed for parity fixtures that drive the v9 path side-by-side.
         /// </summary>
         public static byte[] ApplyEffect(string renderedText, ContentEffect effect, long nowMs)
-            => LegacyEffectClock.Apply(renderedText, ToLegacyEffect(effect), nowMs);
+            => LegacyEffectClock.Apply(renderedText, effect, nowMs);
 
         // ═════════════════════════════════════════════════════════════════
         // Helpers
@@ -1231,17 +1228,6 @@ namespace FanaBridge.Display.Composition
             }
         }
 
-        private static LegacyEffect ToLegacyEffect(ContentEffect effect)
-        {
-            switch (effect)
-            {
-                case ContentEffect.Scroll: return LegacyEffect.Scroll;
-                case ContentEffect.Blink: return LegacyEffect.Blink;
-                case ContentEffect.Flash: return LegacyEffect.Flash;
-                case ContentEffect.None: return LegacyEffect.None;
-                default: return LegacyEffect.Unknown;
-            }
-        }
 
         private static PropertySpec ToPropertySpec(ValueSource source)
         {

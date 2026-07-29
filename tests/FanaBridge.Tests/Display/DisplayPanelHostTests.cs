@@ -7,7 +7,7 @@ using FanaBridge.Adapters;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;
-using FanaBridge.Display.Rules;
+using FanaBridge.Display.Schema2;
 using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
@@ -180,14 +180,6 @@ namespace FanaBridge.Tests.Display
         private static byte[] LapInfoPush => HexToBytes(
             "ff0501" + "0300010034" + "0301040012" + "0382f90132" + "0383f50132" + "0304fd012a" + "0305fe012a");
 
-        private static JObject RuleDocument() =>
-            JObject.Parse(
-                "{ \"schemaVersion\": 1, \"itm\": { \"rules\": [ "
-                + "{ \"id\": \"r1\", \"when\": { \"kind\": \"greaterThan\", "
-                + "\"source\": { \"kind\": \"builtIn\", \"name\": \"Fuel\" }, \"value\": 10 }, "
-                + "\"show\": { \"kind\": \"page\", \"page\": \"fuelErsDrs\" }, "
-                + "\"hold\": { \"kind\": \"forDuration\", \"durationMs\": 5000 } } ] } }");
-
         // Runs a session to push-confirmed sync on page 1 (Lap Info).
         private static Session SyncedSession(JObject settings, GameData running)
         {
@@ -207,8 +199,8 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Envelope_PublishesStatusAndValues_WithoutAnyRuleConfig()
         {
-            // §9b: no document keys bake a v2 document (rest floor); composition owns
-            // the engine (Rules null, ComposedResolution set). Status + values publish.
+            // §9b: no document key bakes a v2 document (rest floor); composition owns
+            // the engine and publishes resolution, status, and values.
             var running = Data(NewStatus());
             var s = SyncedSession(new JObject { ["wheelType"] = "CSSWFORMV3" }, running);
 
@@ -216,7 +208,6 @@ namespace FanaBridge.Tests.Display
             Assert.NotNull(envelope);
             Assert.NotNull(envelope!.ItmStatus);
             Assert.NotNull(envelope.Values);
-            Assert.Null(envelope.Rules);             // v2 composition, not v1 rules
             Assert.NotNull(envelope.ComposedResolution);
             Assert.True(s.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
 
@@ -227,7 +218,7 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void Envelope_CarriesComposedResolution_WhileV2IsActive()
         {
-            // E8b: rules envelope part is always null; v2 publishes ComposedResolution.
+            // The v2 engine publishes ComposedResolution.
             var running = Data(NewStatus());
             var s = SyncedSession(new JObject
             {
@@ -236,28 +227,7 @@ namespace FanaBridge.Tests.Display
 
             var envelope = s.Host.Snapshot;
             Assert.NotNull(envelope);
-            Assert.Null(envelope!.Rules);
             Assert.NotNull(envelope.ComposedResolution);
-        }
-
-        [Fact]
-        public void Envelope_IsNotRecomposed_WhileNoPartChanges()
-        {
-            // v1 empty document: rule/values/status parts stabilize so the envelope
-            // identity can be reused on idle frames (v2 composition rebuilds its
-            // resolution record each tick — identity reuse is a v1-path pin).
-            var running = Data(NewStatus());
-            var s = SyncedSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = new JObject(),
-            }, running);
-
-            var first = s.Host.Snapshot;
-            Assert.NotNull(first);
-            s.Frame(running);                        // nothing edges: same values, same
-            s.Frame(running);                        // state, same status
-            Assert.Same(first, s.Host.Snapshot);     // zero-allocation idle frames
         }
 
         [Fact]
@@ -278,11 +248,8 @@ namespace FanaBridge.Tests.Display
         public void Disconnect_ClearsTheEnvelope()
         {
             var running = Data(NewStatus());
-            var s = SyncedSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = RuleDocument(),
-            }, running);
+            var s = SyncedSession(
+                new JObject { ["wheelType"] = "CSSWFORMV3" }, running);
             Assert.NotNull(s.Host.Snapshot);
 
             s.Transport.Connected = false;           // base gone → Scanning
@@ -315,7 +282,6 @@ namespace FanaBridge.Tests.Display
             Assert.NotNull(after);
             Assert.NotSame(before, after);
             Assert.NotNull(after!.ItmStatus);        // every part REPLACED, not dropped:
-            Assert.Null(after.Rules);                // E8b: no v9 rules part
             Assert.NotNull(after.ComposedResolution);
             Assert.NotNull(after.Values);            // for a part that silently vanished
             Assert.NotSame(before!.Values, after.Values);
@@ -337,7 +303,6 @@ namespace FanaBridge.Tests.Display
             }, running);
             var before = s.Host.Snapshot;
             Assert.NotNull(before);
-            Assert.Null(before!.Rules); // E8b: no v9 rules envelope
             Assert.NotNull(before.Values!.Page);     // synced — the old driver shows a page
             Assert.NotNull(s.Instance.CompositionForTest);
 
@@ -361,7 +326,6 @@ namespace FanaBridge.Tests.Display
             // page (from this frame's bring-up PageSet) with placeholders — not the old
             // driver's synced values.
             Assert.True(after.Values!.ShowingPlaceholders);
-            Assert.Null(after.Rules);
             Assert.NotNull(s.Instance.CompositionForTest);
         }
 
@@ -369,16 +333,12 @@ namespace FanaBridge.Tests.Display
         public void DisplayTypeSwitchAwayFromItm_ClearsTheEnvelope()
         {
             var running = Data(NewStatus());
-            var s = SyncedSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = RuleDocument(),
-            }, running);
+            var s = SyncedSession(
+                new JObject { ["wheelType"] = "CSSWFORMV3" }, running);
             Assert.NotNull(s.Host.Snapshot);
 
             // A profile override retargets the device to a basic display: the ITM
-            // driver (status + values) goes. A migrated legacy world may keep a Rules
-            // part via the basic-path stack (TickLegacyRules).
+            // driver (status + values) goes.
             var basic = WheelProfileStore.FindByWheelType("PSWBMW");
             Assert.NotNull(basic);
             s.Wheelbase.ProfileOverrideResolver = _ => basic!.Id;
@@ -388,7 +348,6 @@ namespace FanaBridge.Tests.Display
             Assert.Null(s.Instance.ItmStatusDescription);
             Assert.Null(s.Instance.ItmDisplayForTest);
             var envelope = s.Host.Snapshot;
-            // ITM parts cleared; Rules may remain for the legacy world on basic.
             if (envelope != null)
             {
                 Assert.Null(envelope.ItmStatus);
@@ -422,7 +381,6 @@ namespace FanaBridge.Tests.Display
             var envelope = s.Host.Snapshot;
             Assert.NotNull(envelope);
             Assert.Null(envelope!.ComposedResolution);
-            Assert.Null(envelope.Rules);
             Assert.NotNull(envelope.ItmStatus);
             Assert.NotNull(envelope.Values);
         }
@@ -437,7 +395,7 @@ namespace FanaBridge.Tests.Display
             }, running);
             Assert.True(s.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
 
-            // DisplayControl Legacy releases ITM page policy (ItmActive false).
+            // The pre-epic control bakes Settings.Mode=LegacyOnly and releases policy.
             s.Instance.SetSettings(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
@@ -448,7 +406,8 @@ namespace FanaBridge.Tests.Display
 
             var envelope = s.Host.Snapshot;
             Assert.NotNull(envelope);                // the driver still reports status
-            Assert.False(((IDisplayPanelHost)s.Instance).DisplaySettings.ItmActive);
+            Assert.Equal(SettingsMode.LegacyOnly,
+                s.Instance.DisplayRuntimeForTest.CurrentConfigV2!.Settings.Mode);
             Assert.False(s.Instance.ItmDisplayForTest!.HasExternalPagePolicy);
         }
 
@@ -493,8 +452,6 @@ namespace FanaBridge.Tests.Display
             }, WheelWire("PSWBMW"), "PSWBMW");
 
             Assert.Equal(DisplayType.Basic, s.Host.DisplayType);
-            Assert.False(s.Host.DisplaySettings.LegacyPageActive);
-
             s.Frame(GearRunning("3"));
             s.Frame(GearRunning("4"));
             s.Frame(GearRunning("5"));
@@ -542,9 +499,6 @@ namespace FanaBridge.Tests.Display
                 ["itmEnabled"] = true,
             }, WheelWire("PSWBMW"), "PSWBMW");
 
-            Assert.Equal(DisplaySettings.ControlLegacy, s.Host.DisplaySettings.DisplayControl);
-            Assert.False(s.Host.DisplaySettings.ItmActive);
-
             var itm = WheelProfileStore.FindByWheelType("CSSWFORMV3");
             Assert.NotNull(itm);
             s.Wheelbase.ProfileOverrideResolver = _ => itm!.Id;
@@ -552,42 +506,10 @@ namespace FanaBridge.Tests.Display
             s.Frame(GearRunning("2"));
 
             Assert.Equal(DisplayType.Itm, s.Host.DisplayType);
-            Assert.Equal(DisplaySettings.ControlItm, s.Host.DisplaySettings.DisplayControl);
-            Assert.True(s.Host.DisplaySettings.ItmActive);
-            // Resolve-on-read: still not rewritten until the next Write.
+            Assert.Equal(SettingsMode.On,
+                s.Instance.DisplayRuntimeForTest.CurrentConfigV2!.Settings.Mode);
+            // Resolve-on-read never rewrites the pre-epic source.
             Assert.Null(((JObject)s.Instance.GetSettings(false, false))["displayControl"]);
-        }
-
-        // ── Interface round-trip ──────────────────────────────────────────
-
-        [Fact]
-        public void Host_TypedMembers_RoundTrip()
-        {
-            // E8b: SetSettings with a v1 key stores nothing; UI ApplyDisplayConfig still
-            // populates GetDisplayConfig for the v1 views until E9-exit.
-            var s = StartSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = new JObject(),
-            });
-            var host = s.Host;
-
-            Assert.Equal(DisplayType.Itm, host.DisplayType);
-            Assert.Equal(3, host.ItmDeviceId);       // CSSWFORMV3 = display device 3
-            Assert.NotNull(host.DisplaySettings);
-
-            Assert.Null(host.GetDisplayConfig());
-            host.ApplyDisplayConfig(DisplayConfigSerializer.Load(
-                RuleDocument().ToString(), _ => { }));
-            Assert.NotNull(host.GetDisplayConfig());
-            Assert.NotEmpty(host.GetDisplayConfig()!.Itm.Rules);
-            Assert.NotNull(((JObject)s.Instance.GetSettings(false, false))["displayCustomization"]);
-
-            // Settings path: the panel mutates DisplaySettings and notifies; the
-            // instance syncs the change into its persisted settings.
-            host.DisplaySettings.ItmDefaultPage = 5;
-            host.NotifySettingsChanged();
-            Assert.Equal((byte?)5, (byte?)((JObject)s.Instance.GetSettings(false, false))["itmDefaultPage"]);
         }
 
         [Fact]

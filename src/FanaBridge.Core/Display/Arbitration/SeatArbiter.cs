@@ -19,10 +19,10 @@ namespace FanaBridge.Display.Arbitration
     ///   (D8 letter / open mid-window raw-carrier path left unasserted).
     /// - D9 same-destination handoff never repaints (bypasses dwell entirely).
     /// - Cycle free-runs; RESUME keeps cursor (Cycle_FreeRun_ResumeKeepsCursor).
-    /// - Supersede retired: displaced untilDismissed RESUMES.
+    /// - Displaced untilDismissed carriers resume.
     /// - Manual target RESETS on GameChanged (ruling 7) — immediate, dwell-stamped.
     /// - Dwell 500/250; first selection does not start the dwell clock; manual bypasses.
-    /// - Activation is evaluator-owned: this class never writes Active/Superseded.
+    /// - Activation is evaluator-owned: this class never writes Active.
     /// - returnToRestAfterMs = X ms since last press (no pause/restart on interruption).
     /// - Cross-surface: suppress-the-summon-only; expose DismissedCarrierIds for E5.
     /// </summary>
