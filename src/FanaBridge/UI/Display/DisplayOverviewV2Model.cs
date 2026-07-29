@@ -375,9 +375,8 @@ namespace FanaBridge.UI.Display
             bool provisionalCantRun = legacyOnly
                 && pageRef != null
                 && pageRef.Kind == PageRefKind.ItmPage;
-            bool isWinner = !provisionalCantRun && (
-                string.Equals(winnerId, SeatArbiter.RestCarrierId, StringComparison.Ordinal)
-                || string.Equals(winnerDest, DestinationIds.RestInSession, StringComparison.Ordinal));
+            bool isWinner = !provisionalCantRun
+                && DestinationIds.IsInSessionFloorWinner(winnerId, winnerDest);
 
             return new OverviewPriorityRowModel(
                 rankText: DisplayCopy.PriorityBaseRank,

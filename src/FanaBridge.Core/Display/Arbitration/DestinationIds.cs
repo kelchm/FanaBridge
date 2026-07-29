@@ -50,6 +50,18 @@ namespace FanaBridge.Display.Arbitration
         public static bool IsRest(string destinationId)
             => destinationId == RestInSession || destinationId == RestIdle;
 
+        /// <summary>
+        /// True when the published display winner is the in-session rest floor (the
+        /// Base row). The single rest carrier fronts BOTH floors — idle resolves to
+        /// <see cref="RestIdle"/>, in-session to the configured page (or
+        /// <see cref="RestInSession"/>) — so a carrier-only test would light the Base
+        /// row at idle too. One spelling for every floor projection.
+        /// </summary>
+        public static bool IsInSessionFloorWinner(string winnerCarrierId, string winnerDestinationId)
+            => !string.Equals(winnerDestinationId, RestIdle, StringComparison.Ordinal)
+               && (string.Equals(winnerCarrierId, SeatArbiter.RestCarrierId, StringComparison.Ordinal)
+                   || string.Equals(winnerDestinationId, RestInSession, StringComparison.Ordinal));
+
         // ── Surface keys (shared by E4/E5 merge — one spelling, one normalize) ─
 
         /// <summary>Surface key for a hosted page's layer ladder: <c>page:{id}</c>.</summary>

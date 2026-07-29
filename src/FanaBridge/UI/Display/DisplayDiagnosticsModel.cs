@@ -579,20 +579,20 @@ namespace FanaBridge.UI.Display
             var display = FindWinner(resolution, SeatArbiter.DisplaySurfaceId);
             if (display != null)
             {
-                if (string.Equals(display.WinnerCarrierId, SeatArbiter.RestCarrierId, StringComparison.Ordinal)
-                    || string.Equals(display.DestinationId, DestinationIds.RestInSession, StringComparison.Ordinal))
-                {
-                    lines.Add(DisplayCopy.DiagnosticsFactLine(
-                        DisplayCopy.BasePage,
-                        RuledDestinationDisplay(
-                            display.DestinationId, DisplayCopy.WhenNothingAboveIsLive)));
-                }
-                else if (string.Equals(display.DestinationId, DestinationIds.RestIdle, StringComparison.Ordinal)
+                if (string.Equals(display.DestinationId, DestinationIds.RestIdle, StringComparison.Ordinal)
                     || string.Equals(display.WinnerCarrierId, DestinationIds.RestIdle, StringComparison.Ordinal))
                 {
                     lines.Add(DisplayCopy.DiagnosticsFactLine(
                         DisplayCopy.OutsideASession,
                         IdleFloorDisplay(display.DestinationId, config)));
+                }
+                else if (DestinationIds.IsInSessionFloorWinner(
+                    display.WinnerCarrierId, display.DestinationId))
+                {
+                    lines.Add(DisplayCopy.DiagnosticsFactLine(
+                        DisplayCopy.BasePage,
+                        RuledDestinationDisplay(
+                            display.DestinationId, DisplayCopy.WhenNothingAboveIsLive)));
                 }
             }
 

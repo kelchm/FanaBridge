@@ -92,6 +92,43 @@ namespace FanaBridge.Tests.UI.Display
         }
 
         [Fact]
+        public void IdleFloorWinner_LightsIdleRowOnly_NotBaseRow()
+        {
+            // The rest carrier fronts both floors; at idle only the idle row wins.
+            var doc = DocWithSeat("tyreTemps", "s1");
+            var resolution = ResolutionWithWinner(
+                SeatArbiter.RestCarrierId, DestinationIds.RestIdle);
+            var model = DisplayPriorityV2Model.Project(
+                doc, resolution, null, DisplayType.Itm);
+
+            Assert.Equal(
+                PriorityRowState.Winner,
+                model.Rows.Single(r => r.IsIdleRow).State);
+            Assert.Equal(
+                PriorityRowState.Pinned,
+                model.Rows.Single(r => r.IsBaseRow).State);
+        }
+
+        [Fact]
+        public void InSessionFloorWinner_LightsBaseRowOnly_NotIdleRow()
+        {
+            // In-session rest resolves to the configured page destination, but the
+            // carrier stays "rest" — the base row must still win, idle must not.
+            var doc = DocWithSeat("tyreTemps", "s1");
+            var resolution = ResolutionWithWinner(
+                SeatArbiter.RestCarrierId, "itm:lapInfo");
+            var model = DisplayPriorityV2Model.Project(
+                doc, resolution, null, DisplayType.Itm);
+
+            Assert.Equal(
+                PriorityRowState.Winner,
+                model.Rows.Single(r => r.IsBaseRow).State);
+            Assert.Equal(
+                PriorityRowState.Pinned,
+                model.Rows.Single(r => r.IsIdleRow).State);
+        }
+
+        [Fact]
         public void LegacyOnly_DimsItmRows_WithCantRunHere()
         {
             var doc = DocWithSeat("tyreTemps", "s1");
