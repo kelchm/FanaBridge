@@ -13,9 +13,9 @@ namespace FanaBridge.Display.Schema2
     public class PriorityLadder
     {
         /// <summary>
-        /// Storage-only ranked rows as authored (seat / satellite / manual). Array order
-        /// is rank. Never rewritten by load-time validation — restored manuals and
-        /// materialized home seats live only on the runtime projection
+        /// Stored ranked rows (seat / satellite / manual). Array order is rank.
+        /// Normalize preserves authored survivors and restores a missing standing manual
+        /// row here; derived materialized home seats live only on the runtime projection
         /// (<see cref="EffectiveRows"/>).
         /// </summary>
         [JsonProperty("rows")]
@@ -32,7 +32,7 @@ namespace FanaBridge.Display.Schema2
 
         /// <summary>
         /// Runtime projection built by <see cref="DisplayConfigV2Validator.Normalize"/>:
-        /// document rows (with degrade marks) plus any restored manual row and
+        /// document rows (with degrade marks, including a restored standing manual) plus
         /// materialized home seats. Never serialized. Prefer
         /// <see cref="EffectiveRows"/> for consumers.
         /// </summary>
@@ -134,9 +134,8 @@ namespace FanaBridge.Display.Schema2
         [JsonIgnore]
         public bool DegradedAtLoad { get; internal set; }
 
-        /// <summary>True when this row was synthesized into
-        /// <see cref="PriorityLadder.EffectiveRows"/> (restored manual or materialized
-        /// home seat) and is not present in the authored document.</summary>
+        /// <summary>True when this row was synthesized at load (a restored manual in
+        /// normalized rows, or a runtime-only materialized home seat).</summary>
         [JsonIgnore]
         public bool MaterializedAtLoad { get; internal set; }
 

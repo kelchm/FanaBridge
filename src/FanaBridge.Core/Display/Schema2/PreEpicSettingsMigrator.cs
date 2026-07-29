@@ -65,6 +65,15 @@ namespace FanaBridge.Display.Schema2
             doc.Settings = doc.Settings ?? new SettingsBlock();
             doc.Settings.Mode = MapControlToMode(displayControl);
 
+            // §5 standing fixture: Manual is the ranked entrypoint immediately above
+            // the fixed rest floor. A bake authors the row itself so serialize/clone
+            // seams never temporarily lose the manual seat.
+            if (doc.Priority == null)
+                doc.Priority = new PriorityLadder();
+            if (doc.Priority.Rows == null)
+                doc.Priority.Rows = new List<PriorityRow>();
+            doc.Priority.Rows.Add(new PriorityRow { Kind = PriorityRowKind.Manual });
+
             // §9b mode content: re-express frozen displayMode as hosted page(s).
             // Oracle = LegacyModeMigrationTests (kinds, names, overlay/trigger shape).
             PageEntry baseHosted = TrySynthesizeModeContent(doc, displayMode);

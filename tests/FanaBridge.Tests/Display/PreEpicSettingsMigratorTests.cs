@@ -30,6 +30,22 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void Bake_AuthorsStandingManualRow_AboveRest()
+        {
+            var doc = PreEpicSettingsMigrator.Bake(
+                DisplaySettings.ControlItm, DisplaySettings.DefaultItmDefaultPage);
+
+            var manual = Assert.Single(doc.Priority.Rows);
+            Assert.Equal(PriorityRowKind.Manual, manual.Kind);
+            Assert.Null(manual.ReturnToRestAfterMs);
+
+            string saved = DisplayConfigV2Serializer.Save(doc);
+            var reloaded = DisplayConfigV2Serializer.Load(saved, _ => { });
+            Assert.Single(reloaded.Priority.Rows,
+                row => row.Kind == PriorityRowKind.Manual);
+        }
+
+        [Fact]
         public void Apply_ExistingV2_NeverOverwritten()
         {
             var authored = new DisplayConfigV2();
@@ -338,7 +354,8 @@ namespace FanaBridge.Tests.Display
             Assert.Empty(doc.Cycles);
             Assert.Empty(doc.Fields);
             Assert.Empty(doc.WheelScreen.Rules);
-            Assert.Empty(doc.Priority.Rows);
+            Assert.Single(doc.Priority.Rows,
+                row => row.Kind == PriorityRowKind.Manual);
         }
 
         [Fact]

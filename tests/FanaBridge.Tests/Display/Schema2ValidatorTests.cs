@@ -171,11 +171,11 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Law_DocumentNeverRewritten_ExplicitNullPriorityMembers_Preserved()
+        public void Law_StandingManualRepair_RewritesRowsOnly_WhenPriorityExists()
         {
             // Serializer NullValueHandling.Ignore treats JSON null as absent on load,
-            // so exercise true null members the way a programmatic/authoring path can:
-            // Normalize must not fill them in.
+            // so exercise true null members the way a programmatic/authoring path can.
+            // Priority/rest nulls stay null; rows are the standing repair exception.
             var cases = new[]
             {
                 new DisplayConfigV2 { SchemaVersion = 2, Priority = null },
@@ -198,7 +198,6 @@ namespace FanaBridge.Tests.Display
 
             foreach (var raw in cases)
             {
-                string baseline = Save(raw);
                 // Clone via JSON so Norm does not share the baseline instance.
                 var clone = DeserializeOnly(Save(raw));
                 // Re-apply the intentional nulls DeserializeOnly may have restored via
@@ -214,22 +213,21 @@ namespace FanaBridge.Tests.Display
                 }
 
                 Norm(clone);
-                AssertUtf8Equal(baseline, Save(clone));
 
                 if (raw.Priority == null)
                     Assert.Null(clone.Priority);
                 else
                 {
                     Assert.NotNull(clone.Priority);
-                    if (raw.Priority.Rows == null)
-                        Assert.Null(clone.Priority.Rows);
+                    Assert.Single(clone.Priority.Rows,
+                        row => row.Kind == PriorityRowKind.Manual);
                     if (raw.Priority.Rest == null)
                         Assert.Null(clone.Priority.Rest);
                 }
             }
 
-            // JSON documents that write explicit nulls: save(load) == save(deserialize-only)
-            // under the shared serializer settings (null ≡ absent on both paths).
+            // JSON priority null remains absent; every concrete priority object gets the
+            // standing row regardless of whether rows was absent/null/empty.
             string[] jsons =
             {
                 @"{""schemaVersion"":2,""priority"":null}",
@@ -238,7 +236,13 @@ namespace FanaBridge.Tests.Display
                 @"{""schemaVersion"":2,""priority"":{""rows"":null,""rest"":null}}",
             };
             foreach (var json in jsons)
-                AssertUtf8Equal(Save(DeserializeOnly(json)), Save(Load(json)));
+            {
+                var loaded = Load(json);
+                if (loaded.Priority == null)
+                    continue;
+                Assert.Single(loaded.Priority.Rows,
+                    row => row.Kind == PriorityRowKind.Manual);
+            }
         }
 
         // ── Identity & cardinality ────────────────────────────────────────
@@ -408,7 +412,7 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Cardinality_MissingManual_RestoredAboveRest_RuntimeOnly()
+        public void Cardinality_MissingManual_RestoredIntoNormalizedSurvivorsAboveRest_Once()
         {
             var cfg = DocWithHosted();
             cfg.Priority.Rows.Add(new PriorityRow
@@ -416,14 +420,22 @@ namespace FanaBridge.Tests.Display
                 Kind = PriorityRowKind.Seat, Id = "s1", Target = Hosted("p-a"),
             });
             // No manual in document.
-            Norm(cfg);
-            Assert.DoesNotContain(cfg.Priority.Rows, r => r.Kind == PriorityRowKind.Manual);
+            var warnings = new List<string>();
+            Norm(cfg, warnings);
+            Assert.Single(cfg.Priority.Rows, r => r.Kind == PriorityRowKind.Manual);
             var manuals = cfg.Priority.EffectiveRows.Where(r => r.Kind == PriorityRowKind.Manual).ToList();
             Assert.Single(manuals);
             Assert.True(manuals[0].MaterializedAtLoad);
             // Restored is last in runtime (above rest floor, bottom of rows).
             Assert.Equal(PriorityRowKind.Manual,
                 cfg.Priority.EffectiveRows[cfg.Priority.EffectiveRows.Count - 1].Kind);
+
+            // Re-normalizing the same survivor document neither duplicates the row nor
+            // repeats the repair warning (the live edit/apply path normalizes twice).
+            Norm(cfg, warnings);
+            Assert.Single(cfg.Priority.Rows, r => r.Kind == PriorityRowKind.Manual);
+            Assert.Single(warnings,
+                warning => warning.Contains("missing manual row"));
         }
 
         [Fact]
@@ -1749,7 +1761,8 @@ namespace FanaBridge.Tests.Display
             });
             // No manual in document.
             Norm(cfg);
-            Assert.Empty(cfg.Priority.Rows);
+            Assert.Single(cfg.Priority.Rows,
+                row => row.Kind == PriorityRowKind.Manual);
             var rt = cfg.Priority.EffectiveRows;
             Assert.Equal(2, rt.Count);
             Assert.True(rt[0].MaterializedAtLoad);

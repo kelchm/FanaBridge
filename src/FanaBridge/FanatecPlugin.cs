@@ -458,6 +458,11 @@ namespace FanaBridge
 
         public void Init(PluginManager pluginManager)
         {
+            // Device-side mapped-state and Control Mapper readers resolve the current
+            // manager through this reusable plugin instance. SimHub replaces the manager
+            // on in-process restarts, so publish every generation before registrations.
+            PluginManager = pluginManager;
+
             SimHub.Logging.Current.Info(_coreInitialized
                 ? "FanaBridge: Init starting (plugin manager restart — reusing hardware core)"
                 : "FanaBridge: Init starting");
@@ -675,6 +680,9 @@ namespace FanaBridge
             // at application exit or when the plugin leaves the active set.
             SimHub.Logging.Current.Info("FanaBridge: End (plugin manager stopping; hardware core stays up)");
 
+            if (ReferenceEquals(PluginManager, pluginManager))
+                PluginManager = null;
+
             // The Control Mapper provider registration stays put: Control Mapper's
             // plugin is IReusable too, so both sides survive the manager restart
             // and unregistering here would only churn CM's controller list (and
@@ -710,6 +718,7 @@ namespace FanaBridge
             // observe a null Instance — not a core mid-disposal.
             if (ReferenceEquals(Instance, this))
                 Instance = null;
+            PluginManager = null;
 
             try { _controlMapperBridge?.Unregister(); }
             catch (Exception ex) { SimHub.Logging.Current.Debug("FanaBridge: CM unregister on finalize: " + ex.Message); }

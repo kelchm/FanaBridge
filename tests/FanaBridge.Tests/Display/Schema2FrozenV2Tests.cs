@@ -331,7 +331,11 @@ namespace FanaBridge.Tests.Display
   ""pages"": [],
   ""cycles"": [],
   ""priority"": {
-    ""rows"": [],
+    ""rows"": [
+      {
+        ""kind"": ""manual""
+      }
+    ],
     ""rest"": {
       ""idle"": {
         ""kind"": ""blank""
@@ -350,7 +354,11 @@ namespace FanaBridge.Tests.Display
   ""pages"": [],
   ""cycles"": [],
   ""priority"": {
-    ""rows"": [],
+    ""rows"": [
+      {
+        ""kind"": ""manual""
+      }
+    ],
     ""rest"": {
       ""idle"": {
         ""kind"": ""page"",

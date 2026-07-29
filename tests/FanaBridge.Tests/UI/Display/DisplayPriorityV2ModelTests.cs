@@ -10,6 +10,7 @@ using FanaBridge.Display.Rules;
 using FanaBridge.Display.Schema2;
 using FanaBridge.Profiles;
 using FanaBridge.UI.Display;
+using Newtonsoft.Json;
 using SimHub.Plugins;
 using SimHubInputMapping = SimHub.Plugins.InputMapping;
 using Xunit;
@@ -21,6 +22,11 @@ namespace FanaBridge.Tests.UI.Display
     /// </summary>
     public class DisplayPriorityV2ModelTests
     {
+        private sealed class LivePluginManagerSurface
+        {
+            public PluginManagerSettings Settings { get; set; } = null!;
+        }
+
         // ── Header / wheel metric ────────────────────────────────────────
 
         [Fact]
@@ -399,6 +405,30 @@ namespace FanaBridge.Tests.UI.Display
                 InputActionMappingReader.Read(settings), out next, out prev);
             Assert.False(next);
             Assert.True(prev);
+        }
+
+        [Fact]
+        public void InputActionMappingReader_ReadsRound5PersistedStoreShape()
+        {
+            // Exact relevant shape written by SimHub at 11:18:11 during the live
+            // F12 mapping creation (extra members must not affect target projection).
+            var settings = JsonConvert.DeserializeObject<PluginManagerSettings>(@"
+{
+  ""InputActionMapping"": [
+    {
+      ""Target"": ""FanatecPlugin.DisplayNextPage"",
+      ""PressType"": 1,
+      ""GameRestriction"": { ""SupportedGames"": [] },
+      ""Trigger"": ""KeyboardReaderPlugin.F12""
+    }
+  ]
+}")!;
+
+            var surface = new LivePluginManagerSurface { Settings = settings };
+            var targets = InputActionMappingReader.Read(surface);
+            Assert.Equal(
+                new[] { "FanatecPlugin.DisplayNextPage" },
+                targets);
         }
 
         // ── Aggregate (Q7/P4) ────────────────────────────────────────────

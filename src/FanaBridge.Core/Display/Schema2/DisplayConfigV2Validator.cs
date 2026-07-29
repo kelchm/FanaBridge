@@ -11,9 +11,11 @@ namespace FanaBridge.Display.Schema2
     /// <summary>
     /// Load-time validation and normalization for <see cref="DisplayConfigV2"/>
     /// (spec-schema-v2 §14): warn-and-degrade, never throw, never drop data, and never
-    /// rewrite persisted members.
+    /// rewrite persisted members, except for the required standing manual row: when it
+    /// is absent, Normalize restores it into the survivor document above the rest floor.
     /// All coercions and clamps are runtime-only (<c>DegradedAtLoad</c> / <c>Coerce*</c> /
-    /// effective accessors); a load→save round-trip is byte-identical for any document.
+    /// effective accessors); apart from the standing-row repair, load→save is
+    /// byte-identical.
     ///
     /// Optional <see cref="WheelCatalog"/> enables the capability matrix; when absent,
     /// capability rules are skipped entirely.
@@ -629,8 +631,9 @@ namespace FanaBridge.Display.Schema2
             List<FlaggedHost> flaggedHostsNeedingSeat,
             Action<string> warn)
         {
-            // Never assign serialized Priority / Rows / Rest — authored nulls stay null
-            // and save as they loaded. Runtime projection lives on JsonIgnore members.
+            // Priority / Rest authored nulls stay null. Rows normally preserve authored
+            // survivors; the standing exception is a missing Manual row, which must be
+            // added to the normalized document so clones/composition retain its seat.
             if (config.Priority == null)
                 return;
 
@@ -672,7 +675,8 @@ namespace FanaBridge.Display.Schema2
                 ValidateSplitOrigins(storedRows, warn);
             }
 
-            // Manual restoration FIRST (runtime view only).
+            // Manual restoration FIRST. Unlike derived home-seat materialization, this
+            // required standing survivor belongs to the normalized document.
             if (firstManual == null)
             {
                 firstManual = new PriorityRow
@@ -680,8 +684,11 @@ namespace FanaBridge.Display.Schema2
                     Kind = PriorityRowKind.Manual,
                     MaterializedAtLoad = true,
                 };
+                if (config.Priority.Rows == null)
+                    config.Priority.Rows = new List<PriorityRow>();
+                config.Priority.Rows.Add(firstManual);
                 runtime.Add(firstManual);
-                warn("missing manual row — restored above rest (runtime view only)");
+                warn("missing manual row — restored above rest");
             }
 
             int manualIndex = runtime.IndexOf(firstManual);

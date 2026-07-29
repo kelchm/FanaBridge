@@ -711,7 +711,7 @@ namespace FanaBridge.Tests.UI.Display
         }
 
         [Fact]
-        public void SetReturnToRestAfterMs_MaterializesManualWhenMissing()
+        public void SetReturnToRestAfterMs_UsesManualRestoredByNormalize()
         {
             var live = SeedLive();
             live.Priority.Rows.RemoveAll(r => r.Kind == PriorityRowKind.Manual);
@@ -719,7 +719,7 @@ namespace FanaBridge.Tests.UI.Display
                 DisplayConfigV2Serializer.Clone(live), _ => { });
 
             var session = DisplayConfigV2EditSession.Open(live);
-            Assert.DoesNotContain(session.Document.Priority.Rows,
+            Assert.Single(session.Document.Priority.Rows,
                 r => r.Kind == PriorityRowKind.Manual);
 
             session.SetReturnToRestAfterMs(5000);

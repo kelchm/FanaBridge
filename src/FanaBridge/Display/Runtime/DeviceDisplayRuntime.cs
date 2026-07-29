@@ -84,6 +84,10 @@ namespace FanaBridge.Display.Runtime
         private string _compositionCatalogKey;
         private WheelCatalog _compositionCatalog;
         private string _compositionBuiltCatalogKey;
+        // Capability-null diagnostics describe a device/catalog identity, not a
+        // composition tenure. Keep their latch across config/mode rebuilds.
+        private readonly HashSet<string> _capabilityInfoLogged =
+            new HashSet<string>(StringComparer.Ordinal);
         // Page-control identity for rebuild: true when bound to the live ITM driver.
         private bool _compositionBoundToDriver;
         private ItmDisplayDriver _compositionBoundDriver;
@@ -793,7 +797,7 @@ namespace FanaBridge.Display.Runtime
 
             if (needRebuild)
             {
-                Action<string> log = msg => SimHub.Logging.Current.Info("FanaBridge: " + msg);
+                Action<string> log = LogCompositionDiagnostic;
                 IItmPageControl pageControl = wantDriver
                     ? (IItmPageControl)new ItmLifecyclePageControl(_itmDisplay.Lifecycle)
                     : NoOpPageControl.Instance;
@@ -888,6 +892,23 @@ namespace FanaBridge.Display.Runtime
                 Manual = manual,
                 Content = content,
             });
+        }
+
+        private void LogCompositionDiagnostic(string message)
+        {
+            if (message == null)
+                return;
+
+            if (message.IndexOf(
+                    "capability is untested (null)",
+                    StringComparison.Ordinal) >= 0)
+            {
+                string key = (_compositionCatalogKey ?? "") + "\0" + message;
+                if (!_capabilityInfoLogged.Add(key))
+                    return;
+            }
+
+            _log("FanaBridge: " + message);
         }
 
         private bool TryTakeManualStep(out int direction)

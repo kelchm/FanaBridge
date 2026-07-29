@@ -46,7 +46,7 @@ namespace FanaBridge.Tests.Display
     }
   ],
   ""priority"": {
-    ""rows"": [ { ""kind"": ""manual"" } ],
+    ""rows"": [],
     ""rest"": {
       ""inSessionPage"": { ""kind"": ""hostedPage"", ""id"": ""p-a"" },
       ""idle"": { ""kind"": ""blank"" }
@@ -114,7 +114,7 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void ActionSteps_AreDeliveredThroughRuntime_OnNextTick_BothDirections()
+        public void MissingManualDocument_ActionFire_NextTick_DirectorCommandsWalkPage()
         {
             var runtime = Runtime(WalkDocument());
             var fires = new Dictionary<string, Action>();
@@ -136,6 +136,7 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(
                 DestinationIds.Hosted("p-b"),
                 runtime.Composition.LastSeatResult.Intent.EffectivePageDestinationId);
+            Assert.Equal("p-b", runtime.Composition.LastDirectorIntent.ScreenId);
 
             fires[DisplayPageActionHub.PreviousActionName]();
             runtime.TickLegacyRules(null, data, new DisplaySettings());
@@ -143,6 +144,22 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(
                 DestinationIds.Hosted("p-a"),
                 runtime.Composition.LastSeatResult.Intent.EffectivePageDestinationId);
+            Assert.Equal("p-a", runtime.Composition.LastDirectorIntent.ScreenId);
+        }
+
+        [Fact]
+        public void UntestedIdleCapability_LogsOncePerDeviceIdentityAcrossRebuilds()
+        {
+            var logs = new List<string>();
+            var runtime = Runtime(WalkDocument(), logs.Add);
+            var data = Live();
+
+            runtime.TickLegacyRules(null, data, new DisplaySettings());
+            runtime.SetConfigV2(WalkDocument());
+            runtime.TickLegacyRules(null, data, new DisplaySettings());
+
+            Assert.Single(logs, line =>
+                line.Contains("rest.idle blank capability is untested (null)"));
         }
 
         [Fact]
