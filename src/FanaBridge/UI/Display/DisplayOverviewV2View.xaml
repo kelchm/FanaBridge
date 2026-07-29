@@ -332,9 +332,16 @@
                                         </DockPanel>
                                     </Border>
                                 </Grid>
-                                <TextBlock FontSize="12.5" Margin="0,0,0,10">
+                                <TextBlock FontSize="12.5" Margin="0,0,0,6">
                                     <Hyperlink x:Name="linkControlMapper" Style="{StaticResource Link}"
                                                Click="ControlMapper_Click" />
+                                </TextBlock>
+                                <!-- NEW affordance (RE-SEQUENCE ruling): Diagnostics is a
+                                     sanctioned product feature, not a design-board spoke.
+                                     Replaces the cancelled bench-kit trace file. -->
+                                <TextBlock FontSize="12.5" Margin="0,0,0,10">
+                                    <Hyperlink x:Name="linkDiagnostics" Style="{StaticResource Link}"
+                                               Click="Diagnostics_Click" />
                                 </TextBlock>
                                 <Rectangle Height="1" Fill="#3A3A3C" Margin="0,0,0,10" />
                                 <StackPanel x:Name="panelConsequenceLines" />

@@ -71,6 +71,15 @@ namespace FanaBridge.UI.Display
             showLegacyLive = ShowLegacyOverview(displayType, displayControl);
         }
 
+        /// <summary>
+        /// Diagnostics is open and the v2 document is gone: leave Diagnostics and restore
+        /// the v1 Overview surface. Same restore law as Overview — never stay stuck on a
+        /// blank diagnostics gate (poll early-return would otherwise fire with every
+        /// surface collapsed).
+        /// </summary>
+        public static bool LeaveDiagnosticsAfterV2Removed(bool onDiagnostics, bool v2DocumentLive)
+            => onDiagnostics && !v2DocumentLive;
+
         /// <summary>True when Virtual pages is reachable: not Off. ITM wheels reach it
         /// via the Page-6 card / footer link; basic wheels via the Overview link.</summary>
         public static bool CanOpenVirtualPages(string displayControl)

@@ -38,7 +38,7 @@ namespace FanaBridge.UI.Display
     /// </summary>
     public partial class DisplayTabPanel : UserControl
     {
-        private enum TabView { Overview, Triggers, Pages, Legacy }
+        private enum TabView { Overview, Triggers, Pages, Legacy, Diagnostics }
 
         private IDisplayPanelHost _host;
         private IDisplayPropertyCatalog _propertyCatalog;
@@ -156,6 +156,7 @@ namespace FanaBridge.UI.Display
                 { TabView.Triggers, viewTriggers },
                 { TabView.Pages,    viewPages },
                 { TabView.Legacy,   viewLegacy },
+                { TabView.Diagnostics, viewDiagnostics },
             };
 
             // The Triggers editor is its own control now — bind it to the same host, catalogs,
@@ -200,14 +201,20 @@ namespace FanaBridge.UI.Display
             //   // E9 later-phase: N1 → v2 Pages & Fields
             //   // E9 later-phase: N2 → v2 Priority
             // N3: SimHub Control mapper via PluginManager.ShowPluginUI<ControlMapperPlugin>.
+            // Diagnostics: NEW affordance (RE-SEQUENCE ruling) — not a board spoke.
             viewOverviewV2.Bind(_host);
             viewOverviewV2.ControlMapperRequested += (s, e) => OpenControlMapper();
+            viewOverviewV2.DiagnosticsRequested += (s, e) => NavigateTo(TabView.Diagnostics);
             viewOverviewV2.ConfigApplied += (s, e) =>
             {
                 // Mode write-through may have mutated DisplaySettings — refresh v1 chrome.
                 _settings = _host.DisplaySettings ?? _settings;
                 UpdateModeState();
             };
+
+            // E9 minimal diagnostics — same host, read-only; ‹ back to Overview.
+            viewDiagnostics.Bind(_host);
+            viewDiagnostics.BackRequested += (s, e) => NavigateTo(TabView.Overview);
 
             // DISPLAY MODE segments — tri-state ITM / Legacy / Off, driven by
             // DisplaySettings.DisplayControl. Off's selected fill is amber; the others
@@ -482,6 +489,10 @@ namespace FanaBridge.UI.Display
             if (view == TabView.Legacy && _host != null)
                 viewLegacy.Enter();
 
+            // E9 diagnostics: force a fresh projection on entry (read-only).
+            if (view == TabView.Diagnostics && _host != null)
+                viewDiagnostics.Poll(force: true);
+
             // The DISPLAY MODE header belongs to the hub — it shows on Overview (ITM) and
             // whenever control is Off, never inside an editor unless Off keeps it up.
             RefreshModeHeader();
@@ -628,14 +639,27 @@ namespace FanaBridge.UI.Display
             // panel is collapsed. A no-op in steady state (two compares).
             SyncResolvedCaps();
 
+            // Doc removed while Diagnostics open: navigate back + restore v1 BEFORE the
+            // live early-return. diagnosticsV2 is false when the doc is gone, and every
+            // other surface is still collapsed under the v2 gate — without this the poll
+            // returns and the panel stays blank.
+            bool v2Live = _host?.GetDisplayConfigV2() != null;
+            if (DisplayShellRouting.LeaveDiagnosticsAfterV2Removed(
+                    _currentView == TabView.Diagnostics, v2Live))
+            {
+                NavigateTo(TabView.Overview);
+                RestoreV1OverviewSurface();
+            }
+
             bool itmLive = panelItmLive.Visibility == Visibility.Visible;
             bool legacyLive = panelLegacyLive.Visibility == Visibility.Visible;
             bool overviewV2 = viewOverviewV2.Visibility == Visibility.Visible
                 && _currentView == TabView.Overview;
+            bool diagnosticsV2 = _currentView == TabView.Diagnostics && v2Live;
             bool editorActive = _currentView == TabView.Triggers
                 || _currentView == TabView.Pages
                 || _currentView == TabView.Legacy;
-            if (!itmLive && !legacyLive && !editorActive && !overviewV2)
+            if (!itmLive && !legacyLive && !editorActive && !overviewV2 && !diagnosticsV2)
                 return;
 
             // ONE volatile read — the envelope; the parts gate their own re-renders
@@ -657,6 +681,9 @@ namespace FanaBridge.UI.Display
             // E9 v2 Overview: re-project when values / composed resolution / status change.
             if (overviewV2 && (force || valuesChanged || composedChanged || statusChanged))
                 viewOverviewV2.Poll(force: force);
+            // E9 diagnostics: same poll gate as Overview (composed resolution is the source).
+            if (diagnosticsV2 && (force || composedChanged || statusChanged || valuesChanged))
+                viewDiagnostics.Poll(force: force);
             // Re-evaluate v2 surface if the document appeared/disappeared mid-session.
             if (force || composedChanged || snapshotChanged)
                 ApplyOverviewDocumentSurface();

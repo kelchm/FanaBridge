@@ -91,6 +91,27 @@ namespace FanaBridge.Tests.UI
             Assert.True(itm || legacy || off, "v2 removed must not leave a blank Overview");
         }
 
+        [Theory]
+        [InlineData(true, false, true)]
+        [InlineData(true, true, false)]
+        [InlineData(false, false, false)]
+        [InlineData(false, true, false)]
+        public void LeaveDiagnosticsAfterV2Removed_WhenDiagnosticsOpenAndDocGone(
+            bool onDiagnostics, bool v2Live, bool expectLeave)
+        {
+            // v2 removed while Diagnostics visible → leave + restore v1 (never stuck/blank).
+            Assert.Equal(
+                expectLeave,
+                DisplayShellRouting.LeaveDiagnosticsAfterV2Removed(onDiagnostics, v2Live));
+            if (expectLeave)
+            {
+                DisplayShellRouting.V1OverviewSurfaceAfterV2Removed(
+                    DisplayType.Itm, DisplaySettings.ControlItm,
+                    out bool itm, out bool legacy, out bool off);
+                Assert.True(itm || legacy || off, "restore law must yield a non-blank v1 surface");
+            }
+        }
+
         [Fact]
         public void VirtualPagesLinkLabel_DiffersByWheel()
         {

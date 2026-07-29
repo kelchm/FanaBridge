@@ -226,6 +226,16 @@ namespace FanaBridge.UI.Display
         /// <summary>Controls-card link out to SimHub Control mapper.</summary>
         public const string OpenControlMapperSpoke = "Open Control mapper ›";
 
+        /// <summary>
+        /// NEW affordance (RE-SEQUENCE ruling): Controls-card link to the minimal
+        /// diagnostics panel. Not on the design board — sanctioned as a product
+        /// feature that replaces the cancelled bench-kit trace file.
+        /// </summary>
+        public const string DiagnosticsSpoke = "Diagnostics ›";
+
+        /// <summary>View name for the Diagnostics spoke (no chevron).</summary>
+        public const string Diagnostics = "Diagnostics";
+
         /// <summary>View name for the Pages &amp; Fields spoke (no chevron).</summary>
         public const string PagesAndFields = "Pages & Fields";
 
@@ -351,6 +361,130 @@ namespace FanaBridge.UI.Display
         /// </summary>
         public const string ModeOffEmptyState =
             "Display is off — FanaBridge is not driving this wheel.";
+
+        // ── Diagnostics panel (minimal product feature; no board) ────────
+
+        /// <summary>Section label: per-tick ladder participants.</summary>
+        public const string DiagnosticsLadderSection = "LADDER";
+
+        /// <summary>Section label: device-level block from the composed record.</summary>
+        public const string DiagnosticsDeviceSection = "DEVICE";
+
+        /// <summary>Section label: concurrent wheel-screen plane.</summary>
+        public const string DiagnosticsWheelScreenSection = "WHEEL SCREEN";
+
+        /// <summary>Section label: standing manual row bookkeeping.</summary>
+        public const string DiagnosticsManualSection = "MANUAL";
+
+        /// <summary>Section label: base / idle floor lines.</summary>
+        public const string DiagnosticsFloorSection = "FLOOR";
+
+        /// <summary>Empty-state when no composed resolution is published this tick.</summary>
+        public const string DiagnosticsEmptyState =
+            "No resolution this tick — waiting for a live composed record.";
+
+        /// <summary>Device-block row: device / wheel key from the record.</summary>
+        public const string DiagnosticsDeviceKey = "Device key";
+
+        /// <summary>Device-block row: current-page knowledge state.</summary>
+        public const string DiagnosticsPageKnowledge = "Page knowledge";
+
+        /// <summary>Page knowledge: no baseline yet.</summary>
+        public const string DiagnosticsPageUnknown = "unknown";
+
+        /// <summary>Page knowledge: synced on an uncataloged parameter set.</summary>
+        public const string DiagnosticsPageUncataloged = "known · uncataloged";
+
+        /// <summary>Device-block row: director reject edge this tick.</summary>
+        public const string DiagnosticsRevertedThisTick = "Reverted this tick";
+
+        /// <summary>Device-block row: director adopt-with-warning edge this tick.</summary>
+        public const string DiagnosticsAdoptWarnedThisTick = "Adopt warned this tick";
+
+        /// <summary>Device-block: no device block on this record slice.</summary>
+        public const string DiagnosticsNoDeviceBlock = "No device block on this record";
+
+        /// <summary>Wheel-screen plane: surface is held (a screen owns it).</summary>
+        public const string DiagnosticsHeld = "held";
+
+        /// <summary>Wheel-screen plane: surface is released (idle floor).</summary>
+        public const string DiagnosticsReleased = "released";
+
+        /// <summary>Wheel-screen plane: owner row label.</summary>
+        public const string DiagnosticsOwner = "Owner";
+
+        /// <summary>Wheel-screen plane: held/released row label.</summary>
+        public const string DiagnosticsHoldState = "Hold";
+
+        /// <summary>Wheel-screen plane: dismissal latch row label.</summary>
+        public const string DiagnosticsDismissalLatch = "Dismissal latch";
+
+        /// <summary>Dismissal latch: at least one carrier is latched out.</summary>
+        public const string DiagnosticsLatchActive = "active";
+
+        /// <summary>Dismissal latch: none latched this tick.</summary>
+        public const string DiagnosticsLatchClear = "clear";
+
+        /// <summary>Manual section: no remembered target yet.</summary>
+        public const string DiagnosticsManualNothingPaged = "nothing paged to yet";
+
+        /// <summary>Manual section: owns-display fact key.</summary>
+        public const string DiagnosticsOwnsDisplay = "Owns display";
+
+        /// <summary>Manual section: ms since last press fact key.</summary>
+        public const string DiagnosticsSinceLastPress = "Since last press";
+
+        /// <summary>Manual section: returned-to-base fact value.</summary>
+        public const string DiagnosticsReturnedToBase = "returned";
+
+        /// <summary>Boolean yes for diagnostics facts.</summary>
+        public const string DiagnosticsYes = "yes";
+
+        /// <summary>Boolean no for diagnostics facts.</summary>
+        public const string DiagnosticsNo = "no";
+
+        /// <summary>Timing detail: ms since event.</summary>
+        public static string DiagnosticsMs(long ms)
+        {
+            return string.Format(CultureInfo.InvariantCulture, "{0} ms", ms);
+        }
+
+        /// <summary>Timing detail: remaining hold window.</summary>
+        public static string DiagnosticsRemainingMs(int remainingMs)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} ms remaining",
+                remainingMs);
+        }
+
+        /// <summary>Page knowledge with a known wire page.</summary>
+        public static string DiagnosticsPageKnown(byte wirePage, string catalogName)
+        {
+            if (string.IsNullOrEmpty(catalogName))
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "known · wire {0}",
+                    wirePage);
+            }
+
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "known · wire {0} · {1}",
+                wirePage,
+                catalogName);
+        }
+
+        /// <summary>Key · value line for a diagnostics fact row.</summary>
+        public static string DiagnosticsFactLine(string key, string value)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} · {1}",
+                key ?? string.Empty,
+                value ?? string.Empty);
+        }
 
         // ── Condition operator phrases (finite grammar; O8) ──────────────
 

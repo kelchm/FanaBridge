@@ -300,6 +300,10 @@
 
                 <!-- Virtual pages editor (legacy 3-char screen library). -->
                 <ui:DisplayVirtualPagesView x:Name="viewLegacy" Visibility="Collapsed" />
+
+                <!-- E9 minimal diagnostics (RE-SEQUENCE product feature; no board).
+                     Same v2-document gate as Overview; read-only; ‹ back to Overview. -->
+                <ui:DisplayDiagnosticsView x:Name="viewDiagnostics" Visibility="Collapsed" />
             </Grid>
 
         </StackPanel>

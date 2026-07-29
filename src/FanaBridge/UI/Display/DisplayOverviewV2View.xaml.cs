@@ -43,6 +43,12 @@ namespace FanaBridge.UI.Display
         /// <summary>N3: Open Control mapper › (out of FanaBridge into SimHub).</summary>
         public event EventHandler ControlMapperRequested;
 
+        /// <summary>
+        /// NEW affordance (RE-SEQUENCE ruling): Diagnostics › — product feature, not
+        /// a board spoke. Replaces the cancelled bench-kit trace file.
+        /// </summary>
+        public event EventHandler DiagnosticsRequested;
+
         /// <summary>Raised after a committed settings edit (mode / reject).</summary>
         public event EventHandler ConfigApplied;
 
@@ -141,6 +147,8 @@ namespace FanaBridge.UI.Display
             txtNextReadOnly.Text = DisplayCopy.ReadOnly;
             txtPrevReadOnly.Text = DisplayCopy.ReadOnly;
             SetHyperlinkText(linkControlMapper, DisplayCopy.OpenControlMapperSpoke);
+            // NEW affordance (RE-SEQUENCE): Diagnostics link — not a board spoke.
+            SetHyperlinkText(linkDiagnostics, DisplayCopy.DiagnosticsSpoke);
         }
 
         private static void SetHyperlinkText(Hyperlink link, string text)
@@ -295,5 +303,8 @@ namespace FanaBridge.UI.Display
 
         private void ControlMapper_Click(object sender, RoutedEventArgs e)
             => ControlMapperRequested?.Invoke(this, EventArgs.Empty);
+
+        private void Diagnostics_Click(object sender, RoutedEventArgs e)
+            => DiagnosticsRequested?.Invoke(this, EventArgs.Empty);
     }
 }

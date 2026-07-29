@@ -1,0 +1,159 @@
+<UserControl x:Class="FanaBridge.UI.Display.DisplayDiagnosticsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/FanaBridge;component/UI/Display/Shared/DisplayStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!--
+      Minimal diagnostics panel (RE-SEQUENCE product feature; no design board).
+      Thin table over DisplayDiagnosticsModel — reskin later by restyling only.
+      All user copy applied from DisplayCopy in code-behind.
+    -->
+    <DockPanel LastChildFill="True">
+
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal">
+                <Button Style="{StaticResource GhostBack}" Click="Back_Click">
+                    <TextBlock Style="{StaticResource GhostBackGlyph}" />
+                </Button>
+                <TextBlock x:Name="txtTitle" Style="{StaticResource EditorTitle}" />
+            </StackPanel>
+        </Grid>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+
+                <!-- Empty state (never blank) -->
+                <TextBlock x:Name="txtEmptyState" FontSize="13" Foreground="#8F8F8F"
+                           TextWrapping="Wrap" Margin="0,12,0,0" Visibility="Collapsed" />
+
+                <StackPanel x:Name="panelContent">
+
+                    <!-- Ladder table -->
+                    <StackPanel x:Name="sectionLadder">
+                        <TextBlock x:Name="txtLadderSection" FontSize="9.5" FontFamily="Consolas"
+                                   Foreground="#8F8F8F" Margin="0,0,0,6" />
+                        <ItemsControl x:Name="listLadderRows">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#2A2A2C" Padding="8,9" Margin="0,0,0,2">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="160" />
+                                                <ColumnDefinition Width="100" />
+                                                <ColumnDefinition Width="120" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="140" />
+                                                <ColumnDefinition Width="110" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding Label}"
+                                                       FontSize="12.5" FontWeight="SemiBold"
+                                                       Foreground="#FFFFFF"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="{Binding PresenceCopy}"
+                                                       FontSize="11.5" Foreground="#8F8F8F"
+                                                       VerticalAlignment="Center" Margin="8,0,0,0" />
+                                            <TextBlock Grid.Column="2" Text="{Binding RowLabelsCopy}"
+                                                       FontSize="11" FontWeight="SemiBold"
+                                                       Foreground="#B0B0B0"
+                                                       VerticalAlignment="Center" Margin="8,0,0,0"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="3" Text="{Binding ConditionSentence}"
+                                                       FontSize="12" Foreground="#9FB4C4"
+                                                       VerticalAlignment="Center" Margin="8,0,0,0"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="4" Text="{Binding DestinationId}"
+                                                       FontFamily="Consolas" FontSize="11"
+                                                       Foreground="#A0A0A0"
+                                                       VerticalAlignment="Center" Margin="8,0,0,0"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="5" Text="{Binding TimingDetail}"
+                                                       FontSize="11" Foreground="#7A7A7A"
+                                                       HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center" Margin="8,0,0,0" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- Device block -->
+                    <StackPanel x:Name="sectionDevice" Margin="0,16,0,0">
+                        <TextBlock x:Name="txtDeviceSection" FontSize="9.5" FontFamily="Consolas"
+                                   Foreground="#8F8F8F" Margin="0,0,0,6" />
+                        <Border Background="#232325" BorderBrush="#3A3A3C" BorderThickness="1"
+                                CornerRadius="4" Padding="14,12">
+                            <ItemsControl x:Name="listDeviceLines">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="12.5"
+                                                   Foreground="#EAEAEA" Margin="0,0,0,4" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- Wheel-screen plane -->
+                    <StackPanel x:Name="sectionWheelScreen" Margin="0,16,0,0">
+                        <TextBlock x:Name="txtWheelScreenSection" FontSize="9.5" FontFamily="Consolas"
+                                   Foreground="#8F8F8F" Margin="0,0,0,6" />
+                        <Border Background="#232325" BorderBrush="#3A3A3C" BorderThickness="1"
+                                CornerRadius="4" Padding="14,12">
+                            <ItemsControl x:Name="listWheelScreenLines">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="12.5"
+                                                   Foreground="#EAEAEA" Margin="0,0,0,4" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- Manual -->
+                    <StackPanel x:Name="sectionManual" Margin="0,16,0,0">
+                        <TextBlock x:Name="txtManualSection" FontSize="9.5" FontFamily="Consolas"
+                                   Foreground="#8F8F8F" Margin="0,0,0,6" />
+                        <Border Background="#232325" BorderBrush="#3A3A3C" BorderThickness="1"
+                                CornerRadius="4" Padding="14,12">
+                            <ItemsControl x:Name="listManualLines">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="12.5"
+                                                   Foreground="#EAEAEA" Margin="0,0,0,4" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- Base / idle floor -->
+                    <StackPanel x:Name="sectionFloor" Margin="0,16,0,12">
+                        <TextBlock x:Name="txtFloorSection" FontSize="9.5" FontFamily="Consolas"
+                                   Foreground="#8F8F8F" Margin="0,0,0,6" />
+                        <Border Background="#232325" BorderBrush="#3A3A3C" BorderThickness="1"
+                                CornerRadius="4" Padding="14,12">
+                            <ItemsControl x:Name="listFloorLines">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="12.5"
+                                                   Foreground="#EAEAEA" Margin="0,0,0,4" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Border>
+                    </StackPanel>
+
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>
