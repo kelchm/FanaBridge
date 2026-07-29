@@ -1402,6 +1402,9 @@ namespace FanaBridge.UI.Display
         /// <summary>Q6 / 8b: whole-row click tooltip on a layer sub-row.</summary>
         public const string OpenThisLayersForm = "Open this layer's form";
 
+        /// <summary>Priority: whole-row click tooltip on an entrypoint sub-row.</summary>
+        public const string OpenThisEntrypointsForm = "Edit this entrypoint";
+
         // ── Base-row menu (UNBOARDED — owner ruling #2) ───────────────────
 
         /// <summary>
@@ -1822,6 +1825,12 @@ namespace FanaBridge.UI.Display
         /// <summary>5p strip note in rotation-editing mode.</summary>
         public const string RotationStripNote =
             "Selection and order share the strip: the filled button is the page you are editing, the numeral is where the paddles find it, and a page past the divider has no step at all.";
+
+        /// <summary>Priority row overflow: move one rank up the ladder.</summary>
+        public const string MoveUpTheLadder = "Move up";
+
+        /// <summary>Priority row overflow: move one rank down the ladder.</summary>
+        public const string MoveDownTheLadder = "Move down";
 
         /// <summary>5p right-click: move earlier (affordance only).</summary>
         public const string MoveEarlier = "Move earlier";

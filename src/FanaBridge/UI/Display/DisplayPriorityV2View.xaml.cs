@@ -125,6 +125,22 @@ namespace FanaBridge.UI.Display
             if (_host == null)
                 return;
 
+            // A grip drag captures the mouse on a per-rebuild element; rebuilding
+            // mid-drag would tear it out of the tree and kill the drop. Nothing the
+            // poll paints can change under a held button anyway.
+            if (_dragRow != null)
+                return;
+
+            // Same law for typing: a non-forced repaint must never yank the manual
+            // seconds box / an open form control out from under the user.
+            if (!force
+                && (popupEntrypoint.IsOpen
+                    || popupPicker.IsOpen
+                    || InlineEditGuard.IsEditingWithin(this)))
+            {
+                return;
+            }
+
             var envelope = _host.Snapshot;
             var config = _host.GetDisplayConfigV2();
             var resolution = ProjectResolution(envelope);
@@ -355,17 +371,20 @@ namespace FanaBridge.UI.Display
             }
 
             var stack = new StackPanel();
-            stack.Children.Add(BuildHeaderGrid(row, model));
+            var header = BuildHeaderGrid(row, model);
+            stack.Children.Add(header);
 
             if (row.HasExpansionBody || (row.IsExpanded && row.IsManual))
                 stack.Children.Add(BuildExpansionBody(row, model));
 
             outer.Child = stack;
 
-            // Q4: whole-row click toggles expansion (seats + manual).
+            // Q4: header click toggles expansion (seats + manual). Header only —
+            // clicks inside the expansion body must never collapse the row.
             if (!row.IsPinned || row.IsManual)
             {
-                outer.MouseLeftButtonUp += (s, e) =>
+                header.Background = Brushes.Transparent;
+                header.MouseLeftButtonUp += (s, e) =>
                 {
                     if (_dragging) return;
                     if (e.OriginalSource is Button || e.OriginalSource is CheckBox
@@ -431,6 +450,14 @@ namespace FanaBridge.UI.Display
                     _dragRow = null;
                     _dragging = false;
                     e.Handled = true;
+                };
+                // Capture can be torn away (window switch, tree change) without a
+                // mouse-up — never leave a drag latched, it would swallow row clicks
+                // and freeze the poll.
+                grip.LostMouseCapture += (s, e) =>
+                {
+                    _dragRow = null;
+                    _dragging = false;
                 };
             }
             Grid.SetColumn(grip, 0);
@@ -664,7 +691,10 @@ namespace FanaBridge.UI.Display
                     DisplayCopy.EntrypointsSection,
                     DisplayCopy.EntrypointsSectionHint(row.RankNumber)));
                 for (int i = 0; i < row.Entrypoints.Count; i++)
-                    body.Children.Add(ChildRowVisual(row.Entrypoints[i], wideStatus: true));
+                {
+                    body.Children.Add(ChildRowVisual(
+                        row.Entrypoints[i], wideStatus: true, entrypointOwner: row));
+                }
 
                 var addEp = new Button
                 {
@@ -950,7 +980,8 @@ namespace FanaBridge.UI.Display
             PriorityChildRowModel child,
             bool wideStatus = false,
             bool overrideLayout = false,
-            bool layerLayout = false)
+            bool layerLayout = false,
+            PriorityRowModel entrypointOwner = null)
         {
             var border = new Border
             {
@@ -1061,6 +1092,19 @@ namespace FanaBridge.UI.Display
                 grid.Children.Add(Cell(child.StatusCopy, 1, right: true));
             }
 
+            // Entrypoint rows open their own 5f form — the row is the edit
+            // affordance (Add and the overflow menu only create new ones).
+            if (entrypointOwner != null && !string.IsNullOrEmpty(child.Id))
+            {
+                border.Cursor = Cursors.Hand;
+                border.ToolTip = DisplayCopy.OpenThisEntrypointsForm;
+                border.MouseLeftButtonUp += (s, e) =>
+                {
+                    OpenEntrypointForm(entrypointOwner, child.Id, isNew: false);
+                    e.Handled = true;
+                };
+            }
+
             border.Child = grid;
             return border;
         }
@@ -1124,6 +1168,41 @@ namespace FanaBridge.UI.Display
                 menu.IsOpen = true;
                 return;
             }
+
+            // Reorder fallback that survives any rebuild — each click is a complete
+            // gesture through the same tested core the drag path uses.
+            int rankedIdx = -1;
+            int rankedCount = 0;
+            if (_model != null)
+            {
+                for (int i = 0; i < _model.Rows.Count; i++)
+                {
+                    var r = _model.Rows[i];
+                    if (r == null || r.IsPinned)
+                        continue;
+                    if (string.Equals(r.RowId, row.RowId, StringComparison.Ordinal))
+                        rankedIdx = rankedCount;
+                    rankedCount++;
+                }
+            }
+            string moveRowId = row.RowId;
+            var moveUp = new MenuItem
+            {
+                Header = DisplayCopy.MoveUpTheLadder,
+                IsEnabled = rankedIdx > 0,
+            };
+            int upTarget = rankedIdx - 1;
+            moveUp.Click += (s, e) => ReorderCore(moveRowId, upTarget);
+            menu.Items.Add(moveUp);
+            var moveDown = new MenuItem
+            {
+                Header = DisplayCopy.MoveDownTheLadder,
+                IsEnabled = rankedIdx >= 0 && rankedIdx < rankedCount - 1,
+            };
+            int downTarget = rankedIdx + 1;
+            moveDown.Click += (s, e) => ReorderCore(moveRowId, downTarget);
+            menu.Items.Add(moveDown);
+            menu.Items.Add(new Separator());
 
             // Q6 / N1: overflow fields item follows the same destination-live rule as
             // section links and layer rows — never a dead handler while undestined.
@@ -2163,10 +2242,30 @@ namespace FanaBridge.UI.Display
 
         private void TryDropReorder(PriorityRowModel source, Point posInList)
         {
-            // Dispatch layer covered by the runtime UI verification pass (E9 exit).
-            // Approximate: map Y to ranked index by row height ~40.
             if (source == null) return;
-            ReorderCore(source.RowId, (int)(posInList.Y / 40));
+
+            // Nearest ranked row by vertical midpoint of the actual visuals —
+            // expanded rows and pinned rows make any fixed-height mapping wrong.
+            int best = -1;
+            double bestDist = double.MaxValue;
+            int rankedIndex = 0;
+            for (int i = 0; i < listRows.Items.Count; i++)
+            {
+                var fe = listRows.Items[i] as FrameworkElement;
+                if (!(fe?.Tag is PriorityRowModel row) || row.IsPinned)
+                    continue;
+                double mid = fe.TranslatePoint(new Point(0, 0), listRows).Y
+                    + fe.ActualHeight / 2;
+                double dist = Math.Abs(posInList.Y - mid);
+                if (dist < bestDist)
+                {
+                    bestDist = dist;
+                    best = rankedIndex;
+                }
+                rankedIndex++;
+            }
+            if (best >= 0)
+                ReorderCore(source.RowId, best);
         }
 
         /// <summary>

@@ -129,7 +129,9 @@ namespace FanaBridge.UI.Display
                 : new SolidColorBrush(Color.FromRgb(0x5A, 0x5A, 0x5C));
 
             txtSetupLabel.Text = model.SetupColumnLabel;
-            txtSetupSearch.Text = string.Empty;
+            // Never clobber live typing — reset only while the box is unfocused.
+            if (!txtSetupSearch.IsKeyboardFocused)
+                txtSetupSearch.Text = string.Empty;
             txtSetupSearch.ToolTip = model.SetupSearchPlaceholder;
             ToolTipService.SetShowOnDisabled(txtSetupSearch, true);
             txtSetupSearch.IsEnabled = model.SetupPorchEnabled;

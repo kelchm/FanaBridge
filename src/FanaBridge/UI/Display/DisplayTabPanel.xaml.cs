@@ -247,9 +247,13 @@ namespace FanaBridge.UI.Display
             var composed = envelope?.ComposedResolution;
             string status = envelope?.ItmStatus;
             var displayType = _host.DisplayType;
+            // The engine allocates a fresh composed record every tick, so a reference
+            // gate would fire on all of them and the child views would rebuild (and
+            // steal focus) 10×/s. Content comparison — ignoring the tick stamp —
+            // passes only real arbitration changes through.
             bool changed = force
                 || !ReferenceEquals(values, _lastValues)
-                || !ReferenceEquals(composed, _lastComposed)
+                || !SameComposedContent(composed, _lastComposed)
                 || !ReferenceEquals(config, _lastConfig)
                 || _lastDisplayType != displayType
                 || !string.Equals(status, _lastStatus, StringComparison.Ordinal);
@@ -285,6 +289,68 @@ namespace FanaBridge.UI.Display
         internal void PollForTest(bool force = true)
         {
             Poll(force);
+        }
+
+        /// <summary>
+        /// Content equality for the poll gate. <see cref="ComposedResolutionRecord.TickMs"/>
+        /// is deliberately ignored — it advances every tick and the UI only uses it as an
+        /// existence check; everything the views actually render is compared.
+        /// </summary>
+        internal static bool SameComposedContent(
+            ComposedResolutionRecord a, ComposedResolutionRecord b)
+        {
+            if (ReferenceEquals(a, b))
+                return true;
+            if (a == null || b == null)
+                return false;
+
+            return string.Equals(a.DeviceKey, b.DeviceKey, StringComparison.Ordinal)
+                && a.HasDeviceBlock == b.HasDeviceBlock
+                && a.PageKnowledge.Equals(b.PageKnowledge)
+                && a.RevertedThisTick == b.RevertedThisTick
+                && a.AdoptWarnedThisTick == b.AdoptWarnedThisTick
+                && a.ItmDeviceId == b.ItmDeviceId
+                && a.SurfaceHeld == b.SurfaceHeld
+                && a.ReleaseEdge == b.ReleaseEdge
+                && a.HasCapabilityEnvelope == b.HasCapabilityEnvelope
+                && ReferenceEquals(a.CapabilityEnvelope, b.CapabilityEnvelope)
+                && SameItems(a.SurfaceWinners, b.SurfaceWinners)
+                && SameItems(a.CarrierStatuses, b.CarrierStatuses)
+                && SameItems(a.CarrierSnapshots, b.CarrierSnapshots)
+                && SameStrings(a.DismissedCarrierIds, b.DismissedCarrierIds);
+        }
+
+        private static bool SameItems<T>(IReadOnlyList<T> a, IReadOnlyList<T> b)
+            where T : struct
+        {
+            if (ReferenceEquals(a, b))
+                return true;
+            int countA = a?.Count ?? 0;
+            int countB = b?.Count ?? 0;
+            if (countA != countB)
+                return false;
+            for (int i = 0; i < countA; i++)
+            {
+                if (!a[i].Equals(b[i]))
+                    return false;
+            }
+            return true;
+        }
+
+        private static bool SameStrings(IReadOnlyList<string> a, IReadOnlyList<string> b)
+        {
+            if (ReferenceEquals(a, b))
+                return true;
+            int countA = a?.Count ?? 0;
+            int countB = b?.Count ?? 0;
+            if (countA != countB)
+                return false;
+            for (int i = 0; i < countA; i++)
+            {
+                if (!string.Equals(a[i], b[i], StringComparison.Ordinal))
+                    return false;
+            }
+            return true;
         }
     }
 }

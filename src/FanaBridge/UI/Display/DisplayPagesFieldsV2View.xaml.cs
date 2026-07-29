@@ -91,6 +91,13 @@ namespace FanaBridge.UI.Display
         {
             InitializeComponent();
             ApplyStaticCopy();
+            // Card layout derives from the pane width. Polls no longer re-measure
+            // (structure-gated), so window resizes must re-lay out themselves.
+            dockFieldRegion.SizeChanged += (s, e) =>
+            {
+                if (_model != null && e.WidthChanged)
+                    RebuildFieldCollection(_model);
+            };
         }
 
         internal void Bind(
@@ -114,6 +121,17 @@ namespace FanaBridge.UI.Display
         {
             if (_host == null)
                 return;
+
+            // A non-forced repaint must never yank the control the user is typing
+            // in (the rebuild would also commit half-typed text via LostFocus).
+            // Forced polls come from the user's own committed edit, so they pass.
+            if (!force
+                && (popupOverride.IsOpen
+                    || popupRotation.IsOpen
+                    || InlineEditGuard.IsEditingWithin(this)))
+            {
+                return;
+            }
 
             var envelope = _host.Snapshot;
             var live = _host.GetDisplayConfigV2();
@@ -794,10 +812,124 @@ namespace FanaBridge.UI.Display
                 barFilterState.Visibility = Visibility.Collapsed;
             }
 
+            // Rebuilds tear down every child (buttons mid-click, the focused suffix
+            // box) — gate them on what they actually draw, not on poll cadence.
+            string sig = BuildStructureSignature(model);
+            if (string.Equals(sig, _lastStructureSignature, StringComparison.Ordinal))
+                return;
+            _lastStructureSignature = sig;
+
             RebuildPageStrip(model);
             RebuildPreviewHits(model);
             RebuildEntrypoints(model);
             RebuildFieldCollection(model);
+        }
+
+        private string _lastStructureSignature;
+
+        /// <summary>
+        /// Serializes every model fact the four Rebuild* methods render (plus the
+        /// pane width the card layout derives from). Unit separator between fields;
+        /// any drawn fact missing here would go stale — extend when a rebuild grows.
+        /// </summary>
+        private string BuildStructureSignature(DisplayPagesFieldsV2Model model)
+        {
+            const char S = '\x1F';
+            var sb = new System.Text.StringBuilder(1024);
+            sb.Append(model.ShowContent ? '1' : '0').Append(S)
+                .Append(model.LegacyOnly ? '1' : '0').Append(S)
+                .Append(model.IsFiltered ? '1' : '0').Append(S)
+                .Append(_focusClearAnnouncement).Append(S)
+                .Append((int)(dockFieldRegion?.ActualWidth ?? 0)).Append(S);
+
+            var pages = model.PageButtons;
+            for (int i = 0; i < pages.Count; i++)
+            {
+                var p = pages[i];
+                if (p == null) continue;
+                sb.Append(p.Key).Append(S).Append(p.Name).Append(S)
+                    .Append(p.Badge).Append(S)
+                    .Append(p.IsItm ? '1' : '0')
+                    .Append(p.IsSelected ? '1' : '0')
+                    .Append(p.IsDimmed ? '1' : '0').Append(S);
+            }
+            sb.Append('#');
+
+            var hits = model.PreviewHits;
+            for (int i = 0; i < hits.Count; i++)
+            {
+                var h = hits[i];
+                if (h == null) continue;
+                sb.Append(h.ParamId).Append(S).Append(h.Row).Append(S)
+                    .Append(h.Column).Append(S).Append(h.DisplayName).Append(S)
+                    .Append(h.IsPicked ? '1' : '0').Append(S);
+            }
+            sb.Append('#');
+
+            var eps = model.Entrypoints;
+            for (int i = 0; i < eps.Count; i++)
+            {
+                var ep = eps[i];
+                if (ep == null) continue;
+                sb.Append(ep.Rank).Append(S).Append(ep.Detail).Append(S)
+                    .Append(ep.StatusCopy).Append(S)
+                    .Append(ep.IsWinner ? '1' : '0').Append(S);
+            }
+            sb.Append('#');
+
+            var groups = model.ScopeGroups;
+            for (int g = 0; g < groups.Count; g++)
+            {
+                var group = groups[g];
+                if (group == null) continue;
+                sb.Append(group.Header).Append(S);
+                AppendSectionsSignature(sb, group.Sections, S);
+            }
+            sb.Append('#');
+            AppendSectionsSignature(sb, model.FlatSections, S);
+            return sb.ToString();
+        }
+
+        private static void AppendSectionsSignature(
+            System.Text.StringBuilder sb,
+            IReadOnlyList<PagesFieldsFieldSectionModel> sections,
+            char s)
+        {
+            for (int i = 0; i < sections.Count; i++)
+            {
+                var sec = sections[i];
+                if (sec == null) continue;
+                sb.Append(sec.ParamId).Append(s).Append(sec.DisplayName).Append(s)
+                    .Append(sec.CapabilityHint).Append(s).Append(sec.ReachLine).Append(s)
+                    .Append(sec.IsProvisional ? '1' : '0')
+                    .Append(sec.IsLocked ? '1' : '0')
+                    .Append(sec.IsInertCollision ? '1' : '0').Append(s)
+                    .Append(sec.InertReason).Append(s);
+                var formats = sec.OfferedFormats;
+                for (int f = 0; f < formats.Count; f++)
+                    sb.Append(formats[f]).Append(s);
+                var bas = sec.BaseBlock;
+                if (bas != null)
+                {
+                    sb.Append(bas.SourceName).Append(s)
+                        .Append((int)bas.SourceKind).Append(s)
+                        .Append(bas.Format).Append(s)
+                        .Append(bas.BaseSuffix).Append(s);
+                }
+                var ovs = sec.Overrides;
+                for (int o = 0; o < ovs.Count; o++)
+                {
+                    var ov = ovs[o];
+                    if (ov == null) continue;
+                    sb.Append(ov.OverrideId).Append(s).Append(ov.Rank).Append(s)
+                        .Append(ov.WritesChip).Append(s).Append(ov.ContentChip).Append(s)
+                        .Append(ov.ConditionSentence).Append(s)
+                        .Append(ov.ActsAsEntrypoint ? '1' : '0')
+                        .Append(ov.Enabled ? '1' : '0')
+                        .Append(ov.Degraded ? '1' : '0').Append(s);
+                }
+                sb.Append(';');
+            }
         }
 
         private void RebuildPageStrip(DisplayPagesFieldsV2Model model)
@@ -1026,6 +1158,9 @@ namespace FanaBridge.UI.Display
 
         private void RebuildFieldCollection(DisplayPagesFieldsV2Model model)
         {
+            // Clearing collapses the ScrollViewer extent; keep the reading position.
+            double keepOffset = scrollFieldCollection?.VerticalOffset ?? 0;
+
             panelFieldCollection.Children.Clear();
 
             if (model.ScopeGroups.Count > 0)
@@ -1049,6 +1184,9 @@ namespace FanaBridge.UI.Display
                 // Flat collection (no catalog).
                 panelFieldCollection.Children.Add(BuildSectionGrid(model.FlatSections, model));
             }
+
+            if (keepOffset > 0)
+                scrollFieldCollection.ScrollToVerticalOffset(keepOffset);
         }
 
         private UIElement BuildSectionGrid(
@@ -1485,7 +1623,13 @@ namespace FanaBridge.UI.Display
                 suffixBox.LostKeyboardFocus += (s, e) =>
                 {
                     if (_suppressEvents) return;
-                    basSuffix = suffixBox.Text ?? string.Empty;
+                    string text = suffixBox.Text ?? string.Empty;
+                    // Teardown-driven focus loss must never write; only a real
+                    // user edit commits.
+                    if (!suffixBox.IsLoaded
+                        || string.Equals(text, basSuffix, StringComparison.Ordinal))
+                        return;
+                    basSuffix = text;
                     CommitFieldBase(basParam, sourceKind, basSource, basFormat, basSuffix);
                 };
                 suffixBox.KeyDown += (s, e) =>
