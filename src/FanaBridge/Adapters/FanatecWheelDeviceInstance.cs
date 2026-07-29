@@ -164,6 +164,13 @@ namespace FanaBridge.Adapters
         // assignment is honored.
         internal Func<long> ItmClockForTest;
 
+        /// <summary>
+        /// Test seam: after the pre-epic bake has confirmed absence (no v1 / no v2),
+        /// before compute + CAS-publish — lets a session apply win null→document so
+        /// the bake publish path must discard.
+        /// </summary>
+        internal Action AfterPreEpicBakeAbsenceCheckForTest;
+
         public FanatecWheelDeviceInstance(DeviceConfig config)
         {
             _config = config;
@@ -961,6 +968,8 @@ namespace FanaBridge.Adapters
                 return;
             }
 
+            AfterPreEpicBakeAbsenceCheckForTest?.Invoke();
+
             bool itmCapable = caps.Display == DisplayType.Itm;
             byte itmDeviceId = caps.ItmDeviceId;
 
@@ -975,8 +984,12 @@ namespace FanaBridge.Adapters
                 itmCapable,
                 warn);
             baked = DisplayConfigV2Validator.Normalize(baked, warn, catalog);
-            _displayRuntime.SetConfigV2(baked);
-            _displayRuntime.ClearConfig();
+            // CAS into absence only — a concurrent session apply that won null→user
+            // document loses the bake silently. Never touch a marked/authored document.
+            if (_displayRuntime.TrySetConfigV2IfAbsent(baked))
+                _displayRuntime.ClearConfig();
+            // Pending clears on CAS win or on existing-document detection (including a
+            // lost race: a document appeared since the absence check).
             _pendingPreEpicBake = false;
         }
 
@@ -1008,6 +1021,24 @@ namespace FanaBridge.Adapters
                 msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg),
                 itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
             _displayRuntime.ApplyDisplayConfigV2(config, catalog);
+            // Deleting the document deliberately re-establishes the S9b bake
+            // trigger (reviewed law) — re-arm so the next live frame can bake;
+            // TryCompletePreEpicBake itself still refuses when any document or
+            // v1 bag exists, so re-arming is safe on every null apply.
+            if (config == null)
+                _pendingPreEpicBake = true;
+        }
+
+        bool IDisplayPanelHost.TryApplyDisplayConfigV2(
+            DisplayConfigV2 expected, DisplayConfigV2 config)
+        {
+            WheelCatalog catalog = null;
+            CatalogLoader.TryResolve(
+                _config.WheelCode,
+                out catalog,
+                msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg),
+                itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
+            return _displayRuntime.TryApplyDisplayConfigV2(expected, config, catalog);
         }
 
         DisplayPanelSnapshot IDisplayPanelHost.Snapshot => _displayRuntime.Snapshot;

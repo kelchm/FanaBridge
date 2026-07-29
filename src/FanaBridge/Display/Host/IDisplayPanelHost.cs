@@ -58,6 +58,14 @@ namespace FanaBridge.Display.Host
         /// </summary>
         void ApplyDisplayConfigV2(DisplayConfigV2 config);
 
+        /// <summary>
+        /// Compare-and-swap publish: normalizes <paramref name="config"/> and publishes
+        /// only when the live document is still <paramref name="expected"/>. Returns
+        /// false when another writer published between the caller's capture and this
+        /// attempt (conflict — do not overwrite). True when the publish landed.
+        /// </summary>
+        bool TryApplyDisplayConfigV2(DisplayConfigV2 expected, DisplayConfigV2 config);
+
         /// <summary>The latest display envelope (ITM status line, rule snapshot,
         /// values snapshot), or null while this device has nothing to show — poll it,
         /// never touch live engine state. Reference equality is the "anything new?"

@@ -13,6 +13,7 @@ using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
+using FanaBridge.UI.Display;
 using GameReaderCommon;
 using log4net;
 using log4net.Appender;
@@ -259,6 +260,25 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void PreEpicBake_DocumentDeleted_ReArmsAndRebakesNextLiveFrame()
+        {
+            // Deleting the v2 document deliberately re-establishes the §9b bake
+            // trigger (reviewed law) — the null apply re-arms pending so the next
+            // live frame bakes again without a settings reload.
+            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            s.Frame(Data(NewStatus()));
+            Assert.NotNull(s.Instance.DisplayRuntimeForTest.CurrentConfigV2);
+
+            ((IDisplayPanelHost)s.Instance).ApplyDisplayConfigV2(null);
+            Assert.Null(s.Instance.DisplayRuntimeForTest.CurrentConfigV2);
+
+            s.Frame(Data(NewStatus()));
+            var rebaked = s.Instance.DisplayRuntimeForTest.CurrentConfigV2;
+            Assert.NotNull(rebaked);
+            Assert.True(PreEpicSettingsMigrator.HasMarker(rebaked));
+        }
+
+        [Fact]
         public void PreEpicBake_RegistrationItm_LiveBasic_BakesBasicContent()
         {
             // Registration profile is ITM (CSSWFORMV3) but live resolve is Basic via
@@ -384,6 +404,49 @@ namespace FanaBridge.Tests.Display
             Assert.Equal("authored-keep", (string)doc!["profileId"]);
             Assert.Equal("off", (string)doc["settings"]!["mode"]);
             // Authored docs are not re-stamped with the bake marker.
+            Assert.Null(doc[PreEpicSettingsMigrator.MarkerKey]);
+        }
+
+        [Fact]
+        public void PreEpicBake_SessionApplyBetweenCheckAndPublish_UserDocumentSurvives()
+        {
+            // S9b bake check/write race: a session that CASes null→user document
+            // between the bake's absence check and its publish must win; bake
+            // discards silently (no overwrite, no marker-without-document).
+            var s = StartSession(new JObject { ["wheelType"] = "CSSWFORMV3" });
+            Assert.Null(s.Instance.DisplayRuntimeForTest.CurrentConfigV2);
+            Assert.True(s.Instance.HasLiveResolvedDisplayCaps);
+
+            DisplayConfigV2ApplyResult applyResult = null!;
+            s.Instance.AfterPreEpicBakeAbsenceCheckForTest = () =>
+            {
+                var host = (IDisplayPanelHost)s.Instance;
+                Assert.Null(host.GetDisplayConfigV2());
+                var session = DisplayConfigV2EditSession.Open(host.GetDisplayConfigV2());
+                session.Document.ProfileId = "session-race-keep";
+                applyResult = session.TryApply(host);
+            };
+
+            s.Frame(Data(NewStatus()));
+
+            Assert.True(applyResult.Succeeded);
+            var live = s.Instance.DisplayRuntimeForTest.CurrentConfigV2;
+            Assert.NotNull(live);
+            Assert.Equal("session-race-keep", live!.ProfileId);
+            Assert.False(PreEpicSettingsMigrator.HasMarker(live));
+
+            // Second frame: pending cleared on lost bake race — no later overwrite.
+            s.Frame(Data(NewStatus()));
+            Assert.Same(live, s.Instance.DisplayRuntimeForTest.CurrentConfigV2);
+            Assert.Equal("session-race-keep",
+                s.Instance.DisplayRuntimeForTest.CurrentConfigV2!.ProfileId);
+            Assert.False(PreEpicSettingsMigrator.HasMarker(
+                s.Instance.DisplayRuntimeForTest.CurrentConfigV2));
+
+            var saved = (JObject)s.Instance.GetSettings(false, false);
+            var doc = saved["display"] as JObject;
+            Assert.NotNull(doc);
+            Assert.Equal("session-race-keep", (string)doc!["profileId"]);
             Assert.Null(doc[PreEpicSettingsMigrator.MarkerKey]);
         }
 

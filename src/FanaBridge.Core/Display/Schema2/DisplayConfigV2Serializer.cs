@@ -21,6 +21,98 @@ namespace FanaBridge.Display.Schema2
             => JsonConvert.SerializeObject(config, Settings);
 
         /// <summary>
+        /// Structural deep clone via save → deserialize. Does <b>not</b> run
+        /// <see cref="DisplayConfigV2Validator.Normalize"/> — the UI edit session uses this
+        /// so mutations produce a fresh document identity while unknown members and key
+        /// order survive verbatim. Null source yields a fresh default document.
+        /// <para>
+        /// Fails closed: serialization/deserialization failure throws
+        /// <see cref="InvalidOperationException"/> — never returns a silent default
+        /// document that could be mutated and published in place of the source.
+        /// </para>
+        /// </summary>
+        public static DisplayConfigV2 Clone(DisplayConfigV2 config)
+        {
+            if (config == null)
+                return new DisplayConfigV2();
+
+            var hook = CloneHookForTest;
+            if (hook != null)
+            {
+                CloneHookForTest = null;
+                var hooked = hook(config);
+                if (hooked == null)
+                {
+                    throw new InvalidOperationException(
+                        "DisplayConfigV2Serializer.Clone: deserialize returned null");
+                }
+                return hooked;
+            }
+
+            try
+            {
+                var clone = JsonConvert.DeserializeObject<DisplayConfigV2>(
+                    Save(config), Settings);
+                if (clone == null)
+                {
+                    throw new InvalidOperationException(
+                        "DisplayConfigV2Serializer.Clone: deserialize returned null");
+                }
+                return clone;
+            }
+            catch (InvalidOperationException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    "DisplayConfigV2Serializer.Clone failed — refusing empty default document",
+                    ex);
+            }
+        }
+
+        /// <summary>
+        /// Structural deep clone of a schema subtree (summon / ChildRef / IdleSpec / …).
+        /// Fails closed like <see cref="Clone"/> — never returns a silent default.
+        /// Null source yields null.
+        /// </summary>
+        public static T CloneNode<T>(T node) where T : class
+        {
+            if (node == null)
+                return null;
+            try
+            {
+                var clone = JsonConvert.DeserializeObject<T>(
+                    JsonConvert.SerializeObject(node, Settings), Settings);
+                if (clone == null)
+                {
+                    throw new InvalidOperationException(
+                        "DisplayConfigV2Serializer.CloneNode: deserialize returned null for "
+                        + typeof(T).Name);
+                }
+                return clone;
+            }
+            catch (InvalidOperationException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    "DisplayConfigV2Serializer.CloneNode failed for " + typeof(T).Name
+                    + " — refusing empty default",
+                    ex);
+            }
+        }
+
+        /// <summary>
+        /// Test seam: one-shot override for <see cref="Clone"/>. Invoked once then cleared.
+        /// Used to simulate clone corruption without inventing unserializable graphs.
+        /// </summary>
+        internal static Func<DisplayConfigV2, DisplayConfigV2> CloneHookForTest { get; set; }
+
+        /// <summary>
         /// Parses and normalizes a document. Null/blank input yields a fresh default config
         /// silently; anything else that fails to parse yields the same default with a
         /// warning to <paramref name="log"/>. Never throws. Always runs

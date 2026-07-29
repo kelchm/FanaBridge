@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using FanaBridge;
 using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Catalog;
@@ -200,6 +201,20 @@ namespace FanaBridge.Display.Runtime
         /// <summary>Publishes a normalized v2 document (volatile release).</summary>
         internal void SetConfigV2(DisplayConfigV2 normalized) => _configV2 = normalized;
 
+        /// <summary>
+        /// Publishes a pre-normalized v2 document only into absence: CAS with
+        /// expected <c>null</c> on the same <c>_configV2</c> slot as
+        /// <see cref="TryApplyDisplayConfigV2"/>. Returns false when a document
+        /// appeared since the caller last observed absence (caller discards).
+        /// </summary>
+        internal bool TrySetConfigV2IfAbsent(DisplayConfigV2 normalized)
+        {
+#pragma warning disable CS0420 // volatile field by ref — Interlocked supplies its own barriers
+            var prior = Interlocked.CompareExchange(ref _configV2, normalized, null);
+#pragma warning restore CS0420
+            return prior == null;
+        }
+
         /// <summary>Drops the v2 document (no <c>display</c> key / cleared).</summary>
         internal void ClearConfigV2() => _configV2 = null;
 
@@ -220,6 +235,38 @@ namespace FanaBridge.Display.Runtime
             var loaded = DisplayConfigV2Serializer.Load(
                 DisplayConfigV2Serializer.Save(config), warn);
             _configV2 = DisplayConfigV2Validator.Normalize(loaded, warn, catalog);
+        }
+
+        /// <summary>
+        /// Compare-and-swap form of <see cref="ApplyDisplayConfigV2"/>: normalize
+        /// <paramref name="config"/> then publish only when the live document is still
+        /// <paramref name="expected"/>. Uses <see cref="Interlocked.CompareExchange{T}"/>
+        /// against the same <c>_configV2</c> slot that <see cref="SetConfigV2"/> /
+        /// <see cref="ClearConfigV2"/> / <see cref="ApplyDisplayConfigV2"/> write — no
+        /// separate lock. Returns false on a lost race (caller surfaces conflict).
+        /// </summary>
+        internal bool TryApplyDisplayConfigV2(
+            DisplayConfigV2 expected, DisplayConfigV2 config, WheelCatalog catalog = null)
+        {
+            DisplayConfigV2 next;
+            if (config == null)
+            {
+                next = null;
+            }
+            else
+            {
+                Action<string> warn = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
+                var loaded = DisplayConfigV2Serializer.Load(
+                    DisplayConfigV2Serializer.Save(config), warn);
+                next = DisplayConfigV2Validator.Normalize(loaded, warn, catalog);
+            }
+
+            // Atomic publish: succeeds only if _configV2 is still the expected identity.
+            // Concurrent SetSettings / bake / ApplyDisplayConfigV2 plain-writes lose the CAS.
+#pragma warning disable CS0420 // volatile field by ref — Interlocked supplies its own barriers
+            var prior = Interlocked.CompareExchange(ref _configV2, next, expected);
+#pragma warning restore CS0420
+            return ReferenceEquals(prior, expected);
         }
 
         /// <summary>Test seam: invoked at the end of <see cref="Tick"/> /

@@ -428,6 +428,27 @@ namespace FanaBridge.UI.Display
         /// <summary>Manual section: no remembered target yet.</summary>
         public const string DiagnosticsManualNothingPaged = "nothing paged to yet";
 
+        // ── Edit-session concurrency (Q14 write seam) ────────────────────
+
+        /// <summary>
+        /// Surfaced when <c>DisplayConfigV2EditSession.TryApply</c> finds the live host
+        /// document is no longer the identity captured at open (another writer published
+        /// while the session was open). Carried on
+        /// <c>DisplayConfigV2ApplyResult.Message</c>; views show this ruled string and do
+        /// not invent their own conflict copy. VIEW consumption lands with the Priority
+        /// round.
+        /// </summary>
+        public const string ConfigEditConflict =
+            "This document changed while you were editing. Your changes were not applied.";
+
+        /// <summary>
+        /// Surfaced when a session clone fails closed (serializer refuse) so a validation
+        /// probe never pretends a silent default document was clean. Not a publish path —
+        /// notes only.
+        /// </summary>
+        public const string ConfigEditCloneFailed =
+            "Could not clone the working document for validation.";
+
         /// <summary>Manual section: owns-display fact key.</summary>
         public const string DiagnosticsOwnsDisplay = "Owns display";
 
