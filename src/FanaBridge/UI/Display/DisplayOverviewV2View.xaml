@@ -283,18 +283,22 @@
                                            TextWrapping="Wrap" Margin="0,8,0,0" MaxWidth="460" />
                                 <Rectangle Height="1" Fill="#3A3A3C" Margin="0,12" />
                                 <!-- RejectChangesGroup -->
-                                <StackPanel Orientation="Horizontal">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
                                     <CheckBox x:Name="chkReject" VerticalAlignment="Top"
                                               Margin="0,2,10,0"
                                               Checked="Reject_Changed" Unchecked="Reject_Changed" />
-                                    <StackPanel>
+                                    <StackPanel Grid.Column="1">
                                         <TextBlock x:Name="txtRejectLabel" FontSize="12.5"
                                                    Foreground="#EAEAEA" TextWrapping="Wrap" />
                                         <TextBlock x:Name="txtRejectExplainer" FontSize="11.5"
                                                    Foreground="#8F8F8F" TextWrapping="Wrap"
                                                    Margin="0,4,0,0" LineHeight="17" />
                                     </StackPanel>
-                                </StackPanel>
+                                </Grid>
                             </StackPanel>
                         </Border>
                     </StackPanel>

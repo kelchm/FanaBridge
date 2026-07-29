@@ -321,13 +321,15 @@ namespace FanaBridge.Tests.Display
             public ComposedResolutionRecord Tick(
                 bool inGame = true,
                 bool gameChanged = false,
-                string? gameId = null)
+                string? gameId = null,
+                SeatManualInput? manual = null)
             {
                 return Composition.Tick(new DisplayCompositionV2TickInput
                 {
                     InGame = inGame,
                     GameChanged = gameChanged,
                     GameId = gameId,
+                    Manual = manual,
                     Content = new SegmentContentContext
                     {
                         InGame = inGame,
@@ -449,6 +451,43 @@ namespace FanaBridge.Tests.Display
             h.Tick();
             Assert.False(h.Composition.LastSeatManualInput.HasValue);
             Assert.False(h.Composition.LastSeatPressThisTick);
+        }
+
+        [Fact]
+        public void AdoptEdge_CollidingHostPress_IsDeferredToFollowingTick()
+        {
+            var doc = MinimalDoc(
+                inSession: new PageRef
+                {
+                    Kind = PageRefKind.ItmPage,
+                    CatalogPageId = "lapInfo",
+                });
+            var h = Harness.Create(doc, itmDeviceId: 3);
+
+            h.Control.Land(1);
+            h.Tick();
+            h.Advance();
+            h.Tick();
+            h.Advance();
+
+            // Tick N creates the director adopt edge for N+1.
+            h.Control.Land(5);
+            h.Tick();
+            h.Advance();
+
+            // The host press collides with that pending edge. Adopt wins N+1; host
+            // StepWalk must remain pending for N+2.
+            h.Tick(manual: SeatManualInput.StepWalk(+1));
+            Assert.Equal(
+                DestinationIds.Itm("tyreTemps"),
+                h.Composition.LastSeatManualInput!.Value.AdoptedDestinationId);
+            Assert.Null(h.Composition.LastSeatManualInput.Value.WalkStep);
+
+            h.Advance();
+            h.Tick();
+            Assert.Equal(+1, h.Composition.LastSeatManualInput!.Value.WalkStep);
+            Assert.Null(h.Composition.LastSeatManualInput.Value.AdoptedDestinationId);
+            Assert.True(h.Composition.LastSeatPressThisTick);
         }
 
         // ════════════════════════════════════════════════════════════════

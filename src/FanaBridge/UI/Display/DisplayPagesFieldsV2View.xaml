@@ -4,6 +4,7 @@
              xmlns:ui="clr-namespace:FanaBridge.UI.Display"
              xmlns:shared="clr-namespace:FanaBridge.UI.Display.Shared"
              PreviewKeyDown="Root_PreviewKeyDown"
+             SizeChanged="Root_SizeChanged"
              Focusable="True">
     <UserControl.Resources>
         <ResourceDictionary>
@@ -205,7 +206,8 @@
         <!-- 5g Override form modal -->
         <Popup x:Name="popupOverride" AllowsTransparency="True" StaysOpen="True"
                Placement="Center" PopupAnimation="Fade">
-            <Border Background="#252525" BorderBrush="#545456" BorderThickness="1"
+            <Border x:Name="chromeOverrideModal"
+                    Background="#252525" BorderBrush="#545456" BorderThickness="1"
                     Width="560" Padding="0" MaxHeight="640">
                 <DockPanel>
                     <Border DockPanel.Dock="Top" Background="#2B2B2D" Padding="14,10">
@@ -251,7 +253,10 @@
                             </StackPanel>
                         </DockPanel>
                     </Border>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14,12">
+                    <ScrollViewer x:Name="scrollOverrideBody"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Padding="14,12">
                         <StackPanel>
                             <TextBlock x:Name="txtWhatItWrites" FontSize="9.5" FontFamily="Consolas"
                                        Foreground="#7C7C7E" Margin="0,0,0,6" />
@@ -326,8 +331,9 @@
         <!-- 5p Rotation dialog (D17: dialog primary) -->
         <Popup x:Name="popupRotation" AllowsTransparency="True" StaysOpen="True"
                Placement="Center" PopupAnimation="Fade">
-            <Border Background="#252525" BorderBrush="#545456" BorderThickness="1"
-                    Width="420" Padding="0">
+            <Border x:Name="chromeRotationModal"
+                    Background="#252525" BorderBrush="#545456" BorderThickness="1"
+                    Width="420" Padding="0" MaxHeight="640">
                 <DockPanel>
                     <Border DockPanel.Dock="Top" Background="#2B2B2D" Padding="14,10">
                         <DockPanel>
@@ -352,7 +358,10 @@
                                     Click="RotationSave_Click" />
                         </StackPanel>
                     </Border>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14,12" MaxHeight="420">
+                    <ScrollViewer x:Name="scrollRotationBody"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Padding="14,12">
                         <StackPanel>
                             <TextBlock x:Name="txtInRotation" FontSize="9.5" FontFamily="Consolas"
                                        Foreground="#7C7C7E" Margin="0,0,0,6" />

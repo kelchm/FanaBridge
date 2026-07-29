@@ -54,7 +54,9 @@ namespace FanaBridge.UI.Display
             // O1 PROVISIONAL (design-backlog): Legacy Only → ITM rows dimmed + CAN'T RUN HERE.
             bool legacyOnly = mode == SettingsMode.LegacyOnly;
 
-            string surfaceWord = isItm ? DisplayCopy.ItmDisplay : DisplayCopy.SegmentDisplay;
+            string surfaceWord = isItm && !legacyOnly
+                ? DisplayCopy.ItmDisplay
+                : DisplayCopy.SegmentDisplay;
             string situation = resolution.InGame ? DisplayCopy.InGame : DisplayCopy.SituationIdle;
 
             string mirrorCaption = BuildMirrorCaption(values, config, catalog, resolution);
@@ -303,8 +305,8 @@ namespace FanaBridge.UI.Display
                     allCarriers, winnerId, legacyOnly, nextMapped, prevMapped, resolution.Manual));
             }
 
-            list.Add(ProjectBaseRow(config, catalog, winnerId, winnerDest));
-            list.Add(ProjectIdleRow(config, catalog, winnerDest));
+            list.Add(ProjectBaseRow(config, catalog, winnerId, winnerDest, legacyOnly));
+            list.Add(ProjectIdleRow(config, catalog, winnerDest, legacyOnly));
 
             return new ReadOnlyCollection<OverviewPriorityRowModel>(list);
         }
@@ -365,20 +367,26 @@ namespace FanaBridge.UI.Display
             DisplayConfigV2 config,
             WheelCatalog catalog,
             string winnerId,
-            string winnerDest)
+            string winnerDest,
+            bool legacyOnly)
         {
             var pageRef = config?.Priority?.Rest?.InSessionPage;
             var dest = ResolvePageRefDestination(pageRef, config, catalog);
-            bool isWinner =
+            bool provisionalCantRun = legacyOnly
+                && pageRef != null
+                && pageRef.Kind == PageRefKind.ItmPage;
+            bool isWinner = !provisionalCantRun && (
                 string.Equals(winnerId, SeatArbiter.RestCarrierId, StringComparison.Ordinal)
-                || string.Equals(winnerDest, DestinationIds.RestInSession, StringComparison.Ordinal);
+                || string.Equals(winnerDest, DestinationIds.RestInSession, StringComparison.Ordinal));
 
             return new OverviewPriorityRowModel(
                 rankText: DisplayCopy.PriorityBaseRank,
                 destination: dest,
                 detail: DisplayCopy.WhenNothingAboveIsLive,
-                statusCopy: DisplayCopy.StatusDash,
-                state: isWinner ? OverviewRowState.Winner : OverviewRowState.Pinned,
+                statusCopy: provisionalCantRun ? DisplayCopy.CantRunHere : DisplayCopy.StatusDash,
+                state: provisionalCantRun
+                    ? OverviewRowState.Off
+                    : (isWinner ? OverviewRowState.Winner : OverviewRowState.Pinned),
                 carrierId: SeatArbiter.RestCarrierId,
                 isPinned: true);
         }
@@ -386,7 +394,8 @@ namespace FanaBridge.UI.Display
         private static OverviewPriorityRowModel ProjectIdleRow(
             DisplayConfigV2 config,
             WheelCatalog catalog,
-            string winnerDest)
+            string winnerDest,
+            bool legacyOnly)
         {
             var idle = config?.Priority?.Rest?.Idle;
             // Destination cell: bare "Outside a session" label (no badge) — digest §2.
@@ -398,14 +407,20 @@ namespace FanaBridge.UI.Display
                 showPlaylistBadge: false);
 
             string detail = IdleDetail(idle, config, catalog);
-            bool isWinner = string.Equals(winnerDest, DestinationIds.RestIdle, StringComparison.Ordinal);
+            bool provisionalCantRun = legacyOnly
+                && idle?.Kind == IdleKind.Page
+                && idle.Page?.Kind == PageRefKind.ItmPage;
+            bool isWinner = !provisionalCantRun
+                && string.Equals(winnerDest, DestinationIds.RestIdle, StringComparison.Ordinal);
 
             return new OverviewPriorityRowModel(
                 rankText: string.Empty,
                 destination: dest,
                 detail: detail,
-                statusCopy: DisplayCopy.StatusDash,
-                state: isWinner ? OverviewRowState.Winner : OverviewRowState.Pinned,
+                statusCopy: provisionalCantRun ? DisplayCopy.CantRunHere : DisplayCopy.StatusDash,
+                state: provisionalCantRun
+                    ? OverviewRowState.Off
+                    : (isWinner ? OverviewRowState.Winner : OverviewRowState.Pinned),
                 carrierId: DestinationIds.RestIdle,
                 isPinned: true);
         }

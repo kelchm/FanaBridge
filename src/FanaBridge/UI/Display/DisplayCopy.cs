@@ -329,7 +329,7 @@ namespace FanaBridge.UI.Display
         /// <summary>Surface word for an ITM-capable wheel.</summary>
         public const string ItmDisplay = "ITM display";
 
-        /// <summary>Surface word for a segment-only wheel.</summary>
+        /// <summary>Surface word while the segment display is the active surface.</summary>
         public const string SegmentDisplay = "Segment display";
 
         /// <summary>Header divider between surface word and situation pill.</summary>
@@ -1176,13 +1176,14 @@ namespace FanaBridge.UI.Display
 
         // ── Priority ladder framing (5b / 5j) ────────────────────────────
 
-        /// <summary>"PRIORITY · {N} ENTRIES" — N = ranked rows only (pinned excluded).</summary>
+        /// <summary>"PRIORITY · {N} ENTRY/ENTRIES" — N = ranked rows only (pinned excluded).</summary>
         public static string LadderHeaderCount(int rankedRows)
         {
             return string.Format(
                 CultureInfo.InvariantCulture,
-                "PRIORITY · {0} ENTRIES",
-                rankedRows);
+                "PRIORITY · {0} {1}",
+                rankedRows,
+                rankedRows == 1 ? "ENTRY" : "ENTRIES");
         }
 
         /// <summary>5b ladder subtitle (full form).</summary>
@@ -1449,6 +1450,10 @@ namespace FanaBridge.UI.Display
         /// Picker group: playlists (task #22 lights this; structure via DisplayCopy only).
         /// </summary>
         public const string PlaylistsGroup = "PLAYLISTS";
+
+        /// <summary>Visible row for an honest empty PLAYLISTS picker group.</summary>
+        public const string NoPlaylistsYet =
+            "No playlists exist yet. Setups add them to this profile.";
 
         /// <summary>Trailing note on the page that is also the Base page.</summary>
         public const string AlsoTheBasePage = "also the Base page";
@@ -1862,6 +1867,9 @@ namespace FanaBridge.UI.Display
         /// <summary>5h setup search placeholder.</summary>
         public const string SearchSetups = "Search setups";
 
+        /// <summary>5h ruled inert setup-porch body.</summary>
+        public const string NoSetupsAvailable = "No setups are available yet.";
+
         /// <summary>5h filter pill: All.</summary>
         public const string FilterAll = "All";
 
@@ -1913,6 +1921,14 @@ namespace FanaBridge.UI.Display
 
         /// <summary>5h create-page: pick ITM page (reuses 5n shell).</summary>
         public const string ChooseItmPage = "Choose an ITM page…";
+
+        /// <summary>5h picker empty state when every catalog page is already present.</summary>
+        public const string EveryCatalogPageAlreadyOnWheel =
+            "Every catalog page is already on the wheel.";
+
+        /// <summary>5h picker empty state when this wheel has no ITM catalog pages.</summary>
+        public const string NoCatalogPagesAvailable =
+            "No catalog pages are available for this wheel.";
 
         /// <summary>5h setup porch empty list note — manifest family does not exist.</summary>
         // SpokeArrivingLater("Setups") — D20 / Q12 honesty for the inert setup column.

@@ -1,7 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.ExceptionServices;
 using System.Threading;
+using System.Windows.Controls;
+using DependencyObject = System.Windows.DependencyObject;
+using FontWeights = System.Windows.FontWeights;
+using LogicalTreeHelper = System.Windows.LogicalTreeHelper;
+using Size = System.Windows.Size;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
@@ -46,6 +52,7 @@ namespace FanaBridge.Tests.UI.Display
             public DisplayType DisplayType => DisplayType.Itm;
             public byte ItmDeviceId => 3;
             public string WheelCode { get; set; } = "pbme";
+            public string ModuleCode { get; set; } = null!;
             public DisplayConfigV2 GetDisplayConfigV2() => Live;
             public void ApplyDisplayConfigV2(DisplayConfigV2 config)
             {
@@ -450,6 +457,49 @@ namespace FanaBridge.Tests.UI.Display
                 Assert.Equal("10", satellite.ChildRef.Field);
                 Assert.Equal("ov-ep", satellite.ChildRef.OverrideId);
             });
+        }
+
+        [Fact]
+        public void FieldCard_AddOverrideButtons_ReserveTheWholeRuledLabel()
+        {
+            OnSta(() =>
+            {
+                var view = new DisplayPagesFieldsV2View();
+                view.Bind(new FakeHost { Live = MinimalDoc() }, catalog: TinyCatalog());
+
+                var buttons = Descendants(view.panelFieldCollection)
+                    .OfType<Button>()
+                    .Where(b => Equals(b.Content, DisplayCopy.AddAnOverride))
+                    .ToList();
+                Assert.NotEmpty(buttons);
+
+                var label = new TextBlock
+                {
+                    Text = DisplayCopy.AddAnOverride,
+                    FontSize = 11.5,
+                    FontWeight = FontWeights.SemiBold,
+                };
+                label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                double ruledLabelWidth = label.DesiredSize.Width + 16;
+
+                Assert.All(buttons, button =>
+                    Assert.True(
+                        button.MinWidth >= ruledLabelWidth,
+                        $"button {button.MinWidth} < label {ruledLabelWidth}"));
+            });
+        }
+
+        private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+        {
+            if (root == null)
+                yield break;
+
+            foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+            {
+                yield return child;
+                foreach (var nested in Descendants(child))
+                    yield return nested;
+            }
         }
 
         // ── Fixtures ─────────────────────────────────────────────────────

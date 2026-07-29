@@ -15,14 +15,16 @@ namespace FanaBridge.Tests.UI.Display
     public class DisplayAddPageV2ModelTests
     {
         [Fact]
-        public void SetupPorch_IsInert_WithSpokeArrivingLater()
+        public void SetupPorch_IsInert_WithRuledBody_AndSpokeTooltip()
         {
             var model = DisplayAddPageV2Model.Project(
                 MinimalDoc(), EmptyConnected(), DisplayType.Itm);
 
             Assert.False(model.SetupPorchEnabled);
-            Assert.Equal(DisplayCopy.SpokeArrivingLater("Setups"), model.SetupPorchNote);
-            Assert.Contains("later build", model.SetupPorchNote);
+            Assert.Equal(DisplayCopy.NoSetupsAvailable, model.SetupPorchNote);
+            Assert.False(string.IsNullOrWhiteSpace(model.SetupPorchNote));
+            Assert.Equal(DisplayCopy.SpokeArrivingLater("Setups"), model.SetupPorchTooltip);
+            Assert.Contains("later build", model.SetupPorchTooltip);
         }
 
         [Fact]
@@ -85,6 +87,31 @@ namespace FanaBridge.Tests.UI.Display
 
             var choice = Assert.Single(model.ItmChoices);
             Assert.Equal("removed", choice.CatalogPageId);
+            Assert.Null(model.ItmPickerEmptyState);
+        }
+
+        [Fact]
+        public void ItmChoices_WhenNothingRemoved_ExplainAllPagesAlreadyPresent()
+        {
+            var catalog = new WheelCatalog
+            {
+                Itm = new ItmCatalogSection
+                {
+                    Pages = new List<CatalogPage>
+                    {
+                        new CatalogPage { Id = "lapInfo", Name = "Lap info" },
+                        new CatalogPage { Id = "tyreTemps", Name = "Tyre temps" },
+                    },
+                },
+            };
+
+            var model = DisplayAddPageV2Model.Project(
+                MinimalDoc(), EmptyConnected(), DisplayType.Itm, catalog);
+
+            Assert.Empty(model.ItmChoices);
+            Assert.Equal(
+                DisplayCopy.EveryCatalogPageAlreadyOnWheel,
+                model.ItmPickerEmptyState);
         }
 
         private static DisplayConfigV2 MinimalDoc()

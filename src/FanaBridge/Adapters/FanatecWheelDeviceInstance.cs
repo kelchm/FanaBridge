@@ -58,6 +58,12 @@ namespace FanaBridge.Adapters
         // Display manager — null when the wheel has no display.
         private LegacyDisplayDriver _legacyDriver;
         private DisplaySettings _displaySettings = new DisplaySettings();
+        // SimHub can enumerate settings controls on every tab navigation. Keep the
+        // expensive view trees device-scoped so a navigation does not blank the pane.
+        private System.Windows.Controls.Control _displayPanel;
+        private System.Windows.Controls.Control _tuningPanel;
+        private bool _displayPanelCreated;
+        private bool _tuningPanelCreated;
 
         // Late accessor over _displaySettings, handed to the runtime's per-frame Tick so the
         // settings read happens INSIDE the runtime AFTER its volatile _displayConfig acquire
@@ -151,6 +157,17 @@ namespace FanaBridge.Adapters
         /// <summary>Test/R2b seam: the display runtime this device shell delegates the
         /// ITM session to.</summary>
         internal DeviceDisplayRuntime DisplayRuntimeForTest => _displayRuntime;
+
+        /// <summary>
+        /// Plugin action fan-out target. The handler can run off-thread; connection and
+        /// live-v2 gates happen before the runtime's bounded thread-safe enqueue.
+        /// </summary>
+        internal bool EnqueueDisplayPageStep(int direction)
+        {
+            if (GetDeviceState() != DeviceState.Connected)
+                return false;
+            return _displayRuntime.EnqueueManualStep(direction);
+        }
 
         // Test seam: injected clock for the ITM driver, so wiring tests (notably the
         // byte-parity gate) run fully deterministic scripted sessions instead of pacing
@@ -300,6 +317,10 @@ namespace FanaBridge.Adapters
             // invalidated so the UI can never read a disposed generation's parts (issue #37;
             // the twin is dropped WITHOUT a detach — the old tap is already gone).
             _displayRuntime.OnGenerationRebind();
+            _displayPanel = null;
+            _tuningPanel = null;
+            _displayPanelCreated = false;
+            _tuningPanelCreated = false;
             _legacyBlanked = false;
             // The col01 driver is dropped/rebuilt against the new generation below — re-arm
             // its one-shot failure latch too, matching the runtime's _itmErrorLogged reset.
@@ -478,8 +499,10 @@ namespace FanaBridge.Adapters
                 _migratedItmCapable = null;
                 // Resolve catalog for Normalize capability rules (OQ-2: WheelCode).
                 WheelCatalog catalog;
-                CatalogLoader.TryResolve(_config.WheelCode, out catalog, warn,
-                    itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
+                CatalogLoader.TryResolve(
+                    _config.WheelCode, out catalog, warn,
+                    itmDeviceId: ResolvedDisplayCaps.ItmDeviceId,
+                    moduleCode: _config.ModuleCode);
                 var parsedV2 = DisplayConfigV2Serializer.Load(displayV2.ToString(), warn);
                 parsedV2 = DisplayConfigV2Validator.Normalize(parsedV2, warn, catalog);
                 _displayRuntime.SetConfigV2(parsedV2);
@@ -820,6 +843,7 @@ namespace FanaBridge.Adapters
         // simply expose the same state/paths the frame code already maintains.
 
         string IDisplayPanelHost.WheelCode => _config?.WheelCode;
+        string IDisplayPanelHost.ModuleCode => _config?.ModuleCode;
 
         // The Display tab picks its ITM-vs-basic layout and which page table to populate
         // from DisplayType/ItmDeviceId, so both must report the caps the RUNTIME actually
@@ -883,7 +907,9 @@ namespace FanaBridge.Adapters
 
             Action<string> warn = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
             WheelCatalog catalog;
-            CatalogLoader.TryResolve(_config.WheelCode, out catalog, warn, itmDeviceId: itmDeviceId);
+            CatalogLoader.TryResolve(
+                _config.WheelCode, out catalog, warn,
+                itmDeviceId: itmDeviceId, moduleCode: _config.ModuleCode);
             var baked = PreEpicSettingsMigrator.Bake(
                 _displaySettings.DisplayControl,
                 _displaySettings.ItmDefaultPage,
@@ -929,7 +955,8 @@ namespace FanaBridge.Adapters
                 _config.WheelCode,
                 out catalog,
                 msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg),
-                itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
+                itmDeviceId: ResolvedDisplayCaps.ItmDeviceId,
+                moduleCode: _config.ModuleCode);
             _displayRuntime.ApplyDisplayConfigV2(config, catalog);
             // Deleting the document deliberately re-establishes the S9b bake
             // trigger (reviewed law) — re-arm so the next live frame can bake;
@@ -947,7 +974,8 @@ namespace FanaBridge.Adapters
                 _config.WheelCode,
                 out catalog,
                 msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg),
-                itmDeviceId: ResolvedDisplayCaps.ItmDeviceId);
+                itmDeviceId: ResolvedDisplayCaps.ItmDeviceId,
+                moduleCode: _config.ModuleCode);
             return _displayRuntime.TryApplyDisplayConfigV2(expected, config, catalog);
         }
 
@@ -1033,6 +1061,24 @@ namespace FanaBridge.Adapters
             }
         }
 
+        IReadOnlyList<string> IMappedRoleCatalog.GetInputActionTargets()
+        {
+            // Plugin actions are not Control Mapper roles. SimHub exposes the live
+            // settings object backing PluginsData/PluginManagerSettings.json.
+            try
+            {
+                var pm = PluginResolver()?.PluginManager;
+                return InputActionMappingReader.Read(pm);
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Debug(
+                    "FanaBridge: input-action mapping read failed: "
+                    + ex.GetBaseException().Message);
+                return Array.Empty<string>();
+            }
+        }
+
         public override void End()
         {
             SimHub.Logging.Current.Info(
@@ -1079,8 +1125,14 @@ namespace FanaBridge.Adapters
             // the panel's host — the IDisplayPanelHost members above are its window.
             if (panels != null && ShouldOfferDisplayTab)
             {
+                if (!_displayPanelCreated)
+                {
+                    _displayPanel = panels.CreateDisplayPanel(
+                        this, this, this, PluginResolver()?.PickerStore);
+                    _displayPanelCreated = true;
+                }
                 yield return new DeviceSettingControl(
-                    panels.CreateDisplayPanel(this, this, this, PluginResolver()?.PickerStore),
+                    _displayPanel,
                     1,
                     "Display",
                     DeviceSettingControlKind.None,
@@ -1090,8 +1142,13 @@ namespace FanaBridge.Adapters
             // Tuning settings tab (only for wheels with encoders)
             if (panels != null && _config.Capabilities.HasEncoders)
             {
+                if (!_tuningPanelCreated)
+                {
+                    _tuningPanel = panels.CreateTuningPanel(_customSettings);
+                    _tuningPanelCreated = true;
+                }
                 yield return new DeviceSettingControl(
-                    panels.CreateTuningPanel(_customSettings),
+                    _tuningPanel,
                     2,
                     "Tuning",
                     DeviceSettingControlKind.None,

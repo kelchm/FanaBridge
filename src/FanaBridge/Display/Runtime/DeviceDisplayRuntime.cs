@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using FanaBridge;
 using FanaBridge.Display.Arbitration;
@@ -78,7 +80,7 @@ namespace FanaBridge.Display.Runtime
         private DisplayCompositionV2 _compositionV2;
         private ComposedResolutionRecord _composedResolution;
         // Rebuild identity for the catalog envelope (TryResolve returns fresh instances;
-        // key by wheel code + device id, not reference).
+        // key by module + wheel code + device id, not reference).
         private string _compositionCatalogKey;
         private WheelCatalog _compositionCatalog;
         private string _compositionBuiltCatalogKey;
@@ -92,6 +94,18 @@ namespace FanaBridge.Display.Runtime
         private string _lastGameId;
         // O12: last in-game flag published on the UI envelope.
         private bool _lastInGame;
+
+        // SimHub action handlers run off-thread. A composition tick drains the bounded
+        // queue into one net StepWalk; old backlog is discarded so a burst can never be
+        // replayed tick-by-tick against the ITM driver's deliberate page pacing.
+        internal const int MaxPendingManualSteps = 64;
+        internal const long MaxManualStepAgeMs = 1000;
+        private readonly ConcurrentQueue<QueuedManualStep> _pendingManualSteps =
+            new ConcurrentQueue<QueuedManualStep>();
+        private int _pendingManualStepCount;
+        private int _manualStepOverflowWarned;
+        private readonly Stopwatch _manualStepStopwatch;
+        private readonly Func<long> _manualStepClock;
 
         // Shared property source for the composition and ITM mapper field plans.
         // Null on the empty-config fast path. BeginFrame runs once per Tick BEFORE
@@ -112,11 +126,24 @@ namespace FanaBridge.Display.Runtime
         // are enumerated on DisplayPanelSnapshot.
         private volatile DisplayPanelSnapshot _panelSnapshot;
 
-        public DeviceDisplayRuntime(DeviceConfig config, Func<Func<long>> itmClock, Action<string> log)
+        public DeviceDisplayRuntime(
+            DeviceConfig config,
+            Func<Func<long>> itmClock,
+            Action<string> log,
+            Func<long> manualStepClock = null)
         {
             _config = config;
             _itmClock = itmClock ?? (() => null);
             _log = log ?? (_ => { });
+            if (manualStepClock != null)
+            {
+                _manualStepClock = manualStepClock;
+            }
+            else
+            {
+                _manualStepStopwatch = Stopwatch.StartNew();
+                _manualStepClock = () => _manualStepStopwatch.ElapsedMilliseconds;
+            }
         }
 
         // ── UI / status reads (volatile-envelope backed, thread-safe) ────
@@ -144,6 +171,9 @@ namespace FanaBridge.Display.Runtime
         /// <summary>Test seam: the shared property source, null on the empty-config path.</summary>
         internal SimHubPropertySource PropertySource => _propertySource;
 
+        /// <summary>Test seam: currently accepted, undelivered page-step fires.</summary>
+        internal int PendingManualSteps => Volatile.Read(ref _pendingManualStepCount);
+
         // ── Config (volatile release / acquire, the rebuild signal) ──────
 
         /// <summary>The current v2 document snapshot, or null when none.</summary>
@@ -159,6 +189,34 @@ namespace FanaBridge.Display.Runtime
         internal static bool IsLiveCompositionV2(DisplayConfigV2 config)
             => config != null && config.Settings != null
                 && config.Settings.Mode != SettingsMode.Off;
+
+        /// <summary>
+        /// Accepts a next/previous action fire from any thread when v2 is live.
+        /// The DataUpdate thread coalesces all fresh fires to at most one net step.
+        /// </summary>
+        internal bool EnqueueManualStep(int direction)
+        {
+            if (direction == 0 || !IsLiveCompositionV2(_configV2))
+                return false;
+
+            if (Interlocked.Increment(ref _pendingManualStepCount)
+                > MaxPendingManualSteps)
+            {
+                Interlocked.Decrement(ref _pendingManualStepCount);
+                if (Interlocked.Exchange(ref _manualStepOverflowWarned, 1) == 0)
+                {
+                    _log("Display page actions: more than "
+                        + MaxPendingManualSteps
+                        + " undelivered steps; dropping overflow");
+                }
+                return false;
+            }
+
+            _pendingManualSteps.Enqueue(new QueuedManualStep(
+                direction > 0 ? +1 : -1,
+                _manualStepClock()));
+            return true;
+        }
 
         /// <summary>Publishes a normalized v2 document (volatile release).</summary>
         internal void SetConfigV2(DisplayConfigV2 normalized) => _configV2 = normalized;
@@ -819,13 +877,36 @@ namespace FanaBridge.Display.Runtime
             _lastInGame = inGame;
 
             var content = BuildSegmentContent(data, inGame, _compositionProperties);
+            SeatManualInput? manual = TryTakeManualStep(out int direction)
+                ? SeatManualInput.StepWalk(direction)
+                : (SeatManualInput?)null;
             _composedResolution = _compositionV2.Tick(new DisplayCompositionV2TickInput
             {
                 InGame = inGame,
                 GameChanged = gameChanged,
                 GameId = gameId,
+                Manual = manual,
                 Content = content,
             });
+        }
+
+        private bool TryTakeManualStep(out int direction)
+        {
+            long now = _manualStepClock();
+            int net = 0;
+            while (_pendingManualSteps.TryDequeue(out QueuedManualStep step))
+            {
+                Interlocked.Decrement(ref _pendingManualStepCount);
+                long age = now - step.EnqueuedAtMs;
+                if (age >= 0 && age <= MaxManualStepAgeMs)
+                    net += step.Direction;
+            }
+
+            if (Volatile.Read(ref _pendingManualStepCount) == 0)
+                Interlocked.Exchange(ref _manualStepOverflowWarned, 0);
+
+            direction = Math.Sign(net);
+            return direction != 0;
         }
 
         /// <summary>
@@ -948,16 +1029,18 @@ namespace FanaBridge.Display.Runtime
 
         private void EnsureCatalogResolved()
         {
-            string key = (_config.WheelCode ?? "").Trim().ToLowerInvariant()
+            string key = (_config.ModuleCode ?? "").Trim().ToLowerInvariant()
+                + ":" + (_config.WheelCode ?? "").Trim().ToLowerInvariant()
                 + ":" + _itmDeviceId;
-            if (string.Equals(_compositionCatalogKey, key, StringComparison.Ordinal)
-                && _compositionCatalog != null)
+            // A miss is a resolved result too. Memoizing it prevents the 100 ms poll
+            // path from repeating the same warning until device identity changes.
+            if (string.Equals(_compositionCatalogKey, key, StringComparison.Ordinal))
                 return;
 
-            Action<string> log = msg => SimHub.Logging.Current.Info("FanaBridge: " + msg);
+            Action<string> log = msg => _log("FanaBridge: " + msg);
             WheelCatalog catalog;
             if (!CatalogLoader.TryResolve(_config.WheelCode, out catalog, log,
-                    itmDeviceId: _itmDeviceId))
+                    itmDeviceId: _itmDeviceId, moduleCode: _config.ModuleCode))
                 catalog = null;
             _compositionCatalog = catalog;
             _compositionCatalogKey = key;
@@ -982,6 +1065,7 @@ namespace FanaBridge.Display.Runtime
         /// <summary>Drop the composition engine and its published parts (lifecycle edges).</summary>
         private void DropEngines()
         {
+            ClearPendingManualSteps();
             _compositionV2 = null;
             _composedResolution = null;
             _compositionBoundToDriver = false;
@@ -995,6 +1079,7 @@ namespace FanaBridge.Display.Runtime
 
         private void DropV2CompositionOnly()
         {
+            ClearPendingManualSteps();
             if (_compositionV2 == null && _composedResolution == null)
                 return;
             bool heldPolicy = _compositionV2 != null
@@ -1016,6 +1101,25 @@ namespace FanaBridge.Display.Runtime
                 if (heldPolicy)
                     _itmDisplay.RestoreBuiltInPagePolicy();
             }
+        }
+
+        private void ClearPendingManualSteps()
+        {
+            while (_pendingManualSteps.TryDequeue(out QueuedManualStep ignored))
+                Interlocked.Decrement(ref _pendingManualStepCount);
+            Interlocked.Exchange(ref _manualStepOverflowWarned, 0);
+        }
+
+        private readonly struct QueuedManualStep
+        {
+            internal QueuedManualStep(int direction, long enqueuedAtMs)
+            {
+                Direction = direction;
+                EnqueuedAtMs = enqueuedAtMs;
+            }
+
+            internal int Direction { get; }
+            internal long EnqueuedAtMs { get; }
         }
 
         /// <summary>

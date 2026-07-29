@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Rules;
 
 namespace FanaBridge.Display.Composition
@@ -22,6 +23,13 @@ namespace FanaBridge.Display.Composition
 
         /// <summary>Caller-injected game identity; empty/null = unspecified.</summary>
         public string GameId { get; set; }
+
+        /// <summary>
+        /// Host-latched manual press delivered for this tick. Runtime page actions use
+        /// <see cref="SeatManualInput.StepWalk"/> here; director-originated native/adopt
+        /// presses continue to arrive through the existing previous-tick carrier.
+        /// </summary>
+        public SeatManualInput? Manual { get; set; }
 
         /// <summary>
         /// Segment content sources (speed/gear/… + optional property reader). When

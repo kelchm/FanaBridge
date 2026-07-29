@@ -650,6 +650,8 @@ namespace FanaBridge.Tests.Display
             public IDisplayPropertyCatalog? LastPropertyCatalog;
             public IMappedRoleCatalog? LastRoleCatalog;
             public IDisplayPickerStore? LastPickerStore;
+            public int DisplayPanelCreateCount;
+            public int TuningPanelCreateCount;
 
             public System.Windows.Controls.Control CreateDisplayPanel(
                 IDisplayPanelHost host,
@@ -657,6 +659,7 @@ namespace FanaBridge.Tests.Display
                 IMappedRoleCatalog roleCatalog,
                 IDisplayPickerStore pickerStore)
             {
+                DisplayPanelCreateCount++;
                 LastHost = host;
                 LastPropertyCatalog = propertyCatalog;
                 LastRoleCatalog = roleCatalog;
@@ -664,7 +667,11 @@ namespace FanaBridge.Tests.Display
                 return null!;   // no WPF control off the UI thread; the tab only stores it
             }
 
-            public System.Windows.Controls.Control CreateTuningPanel(JObject customSettings) => null!;
+            public System.Windows.Controls.Control CreateTuningPanel(JObject customSettings)
+            {
+                TuningPanelCreateCount++;
+                return null!;
+            }
         }
 
         // A display-only wheel (no LEDs, no encoders) so GetSettingsControls yields
@@ -721,6 +728,17 @@ namespace FanaBridge.Tests.Display
             var inst = BareDisplayInstance("None", out var panels);
             Assert.Empty(inst.GetSettingsControls());
             Assert.Null(panels.LastHost);
+        }
+
+        [Fact]
+        public void GetSettingsControls_ReusesConstructedPanels_PerDevice()
+        {
+            var inst = BareDisplayInstance("Itm", out var panels);
+
+            Assert.Single(inst.GetSettingsControls());
+            Assert.Single(inst.GetSettingsControls());
+
+            Assert.Equal(1, panels.DisplayPanelCreateCount);
         }
 
         // ── Display-values snapshot (the live-mirror feed) ───────────────

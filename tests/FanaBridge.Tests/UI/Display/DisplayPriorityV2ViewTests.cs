@@ -43,6 +43,7 @@ namespace FanaBridge.Tests.UI.Display
         {
             public DisplayConfigV2 Live = null!;
             public string WheelCode { get; set; } = "pbme";
+            public string ModuleCode { get; set; } = null!;
 
             public DisplaySettings DisplaySettings { get; } = new DisplaySettings();
             public DisplayType DisplayType => DisplayType.Itm;
@@ -80,6 +81,7 @@ namespace FanaBridge.Tests.UI.Display
         private sealed class EmptyRoleCatalog : IMappedRoleCatalog
         {
             public MappedRoles GetMappedRoles() => MappedRoles.None;
+            public IReadOnlyList<string> GetInputActionTargets() => Array.Empty<string>();
         }
 
         private static DisplayConfigV2 SeedDoc()

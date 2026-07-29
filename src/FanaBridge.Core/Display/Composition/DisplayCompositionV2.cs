@@ -43,6 +43,8 @@ namespace FanaBridge.Display.Composition
 
         // ── Cross-tick edges (order law: press / adopt feed NEXT tick) ──
         private SeatManualInput? _pendingManual;
+        private readonly Queue<SeatManualInput> _deferredHostManuals =
+            new Queue<SeatManualInput>();
         private bool _pendingPressLastTick;
         private bool? _lastSendAccepted;
         private WheelScreenLatchSet _wsLatches = WheelScreenLatchSet.Empty;
@@ -275,9 +277,29 @@ namespace FanaBridge.Display.Composition
                 snapshots.Add(CarrierTickSnapshot.From(entry.Spec, entry.Runtime, now));
             }
 
-            // ── 2. E4 seat (manual = PREVIOUS tick's director adopt edge only) ─
-            SeatManualInput? manual = _pendingManual;
+            // ── 2. E4 seat (host-latched press or previous director adopt edge) ─
+            SeatManualInput? directorManual = _pendingManual;
             _pendingManual = null;
+            SeatManualInput? manual;
+            if (directorManual.HasValue)
+            {
+                // A director adopt/manual edge already owns this tick under the
+                // press-feeds-next-tick law. Preserve a colliding host press for the
+                // following tick instead of letting null-coalescing discard one edge.
+                manual = directorManual;
+                if (input.Manual.HasValue)
+                    _deferredHostManuals.Enqueue(input.Manual.Value);
+            }
+            else if (_deferredHostManuals.Count > 0)
+            {
+                manual = _deferredHostManuals.Dequeue();
+                if (input.Manual.HasValue)
+                    _deferredHostManuals.Enqueue(input.Manual.Value);
+            }
+            else
+            {
+                manual = input.Manual;
+            }
             _lastSeatManualInput = manual;
 
             var seatResult = _seat.Tick(new SeatArbiterTickInput
@@ -294,8 +316,8 @@ namespace FanaBridge.Display.Composition
             _lastAggregates = seatResult.Aggregates ?? Array.Empty<AggregateMembership>();
             _lastManual = seatResult.Manual;
 
-            // ── 3. Wheel-screen dismissal latch (press from previous director edge) ─
-            bool pressThisTick = _pendingPressLastTick;
+            // ── 3. Wheel-screen dismissal latch (same press carrier as E4) ─
+            bool pressThisTick = manual.HasValue || _pendingPressLastTick;
             _lastSeatPressThisTick = pressThisTick;
             _wsLatches = WheelScreenDismissal.Apply(
                 pressThisTick,

@@ -80,6 +80,18 @@ namespace FanaBridge
         private readonly List<Adapters.FanatecWheelDeviceInstance> _deviceInstances =
             new List<Adapters.FanatecWheelDeviceInstance>();
 
+        // Stable handler owner for the two SimHub-facing display walk actions. The
+        // plugin survives manager restarts, so the hub re-registers per manager token.
+        private readonly DisplayPageActionHub _displayPageActions;
+
+        public FanatecPlugin()
+        {
+            _displayPageActions = new DisplayPageActionHub(EnqueueDisplayPageStep);
+        }
+
+        /// <summary>Test seam for the plugin-level action registrar.</summary>
+        internal DisplayPageActionHub DisplayPageActionsForTest => _displayPageActions;
+
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
         public event Action StateChanged;
 
@@ -263,6 +275,32 @@ namespace FanaBridge
             if (instance == null) return;
             lock (_deviceInstancesLock)
                 _deviceInstances.Remove(instance);
+        }
+
+        /// <summary>
+        /// SimHub action-handler target. Action callbacks may run off-thread, so take a
+        /// short registry snapshot and let each device runtime perform its own bounded,
+        /// thread-safe enqueue. Disconnected or non-v2 instances reject the step.
+        /// </summary>
+        private void EnqueueDisplayPageStep(int direction)
+        {
+            Adapters.FanatecWheelDeviceInstance[] instances;
+            lock (_deviceInstancesLock)
+                instances = _deviceInstances.ToArray();
+
+            foreach (var instance in instances)
+            {
+                try
+                {
+                    instance.EnqueueDisplayPageStep(direction);
+                }
+                catch (Exception ex)
+                {
+                    SimHub.Logging.Current.Debug(
+                        "FanaBridge: display page action routing failed: "
+                        + ex.GetBaseException().Message);
+                }
+            }
         }
 
         /// <summary>
@@ -465,6 +503,11 @@ namespace FanaBridge
             this.AddEvent("DeviceConnected");
             this.AddEvent("DeviceDisconnected");
             this.AddEvent("WheelChanged");
+
+            // --- Actions ---
+            // Host-visible only: SimHub namespaces these by FanatecPlugin, exactly like
+            // the events above. They intentionally have no FanaBridge settings UI.
+            _displayPageActions.EnsureRegistered(pluginManager);
 
             SimHub.Logging.Current.Info(
                 $"FanaBridge: Init complete, connected={_connectionMonitor.IsConnected}");

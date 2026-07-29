@@ -402,5 +402,61 @@ namespace FanaBridge.Tests.Display
             Assert.Same(s.Instance.DisplayRuntimeForTest.ComposedResolution, snap.ComposedResolution);
         }
 
+        [Fact]
+        public void PhubPbme_RuntimeConstruction_UsesModuleCatalog_NonEmptyEnvelope()
+        {
+            var profile = WheelProfileStore.FindByWheelType("PHUB", "PBME");
+            Assert.NotNull(profile);
+            var runtime = new DeviceDisplayRuntime(
+                new DeviceConfig
+                {
+                    Profile = profile,
+                    Capabilities = new WheelCapabilities(profile!),
+                },
+                itmClock: () => null,
+                log: _ => { });
+
+            runtime.SetConfigV2(DisplayConfigV2Serializer.Load(
+                V2LegacyOnly().ToString(), _ => { }));
+            runtime.TickLegacyRules(
+                null, Live(gear: "3"), new DisplaySettings { DisplayMode = "Gear" });
+
+            Assert.NotNull(runtime.Composition);
+            Assert.NotNull(runtime.Snapshot?.ComposedResolution);
+            Assert.True(
+                runtime.Snapshot!.ComposedResolution!.CapabilityEnvelope.FieldParamCount > 0);
+        }
+
+        [Fact]
+        public void MissingCatalog_WarnsOnceAcrossRepeatedRuntimePolls()
+        {
+            var profile = new WheelProfile
+            {
+                Id = "NO_CATALOG",
+                Name = "No catalog",
+                Match = new ProfileMatch { WheelType = "NO-CATALOG" },
+                Display = "basic",
+            };
+            var logs = new List<string>();
+            var runtime = new DeviceDisplayRuntime(
+                new DeviceConfig
+                {
+                    Profile = profile,
+                    Capabilities = new WheelCapabilities(profile),
+                },
+                itmClock: () => null,
+                log: logs.Add);
+
+            runtime.SetConfigV2(DisplayConfigV2Serializer.Load(
+                V2LegacyOnly().ToString(), _ => { }));
+            for (int i = 0; i < 5; i++)
+            {
+                runtime.TickLegacyRules(
+                    null, Live(gear: "3"), new DisplaySettings { DisplayMode = "Gear" });
+            }
+
+            Assert.Single(logs, x => x.Contains("no shipped catalog"));
+        }
+
     }
 }

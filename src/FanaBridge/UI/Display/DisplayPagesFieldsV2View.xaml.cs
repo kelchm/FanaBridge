@@ -405,6 +405,7 @@ namespace FanaBridge.UI.Display
             btnOvSplit.Visibility = CanSplitCurrentOverride()
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            ConstrainOverrideModal();
             popupOverride.IsOpen = true;
             return true;
         }
@@ -1149,8 +1150,6 @@ namespace FanaBridge.UI.Display
                     TextWrapping = TextWrapping.Wrap,
                 });
             }
-            header.Children.Add(titleCol);
-
             if (!section.IsInertCollision && !section.IsLocked)
             {
                 var addBtn = new Button
@@ -1164,6 +1163,7 @@ namespace FanaBridge.UI.Display
                     Foreground = WhiteFg,
                     Cursor = Cursors.Hand,
                     VerticalAlignment = VerticalAlignment.Top,
+                    MinWidth = 126,
                 };
                 DockPanel.SetDock(addBtn, Dock.Right);
                 ushort addParam = section.ParamId;
@@ -1174,6 +1174,9 @@ namespace FanaBridge.UI.Display
                 };
                 header.Children.Add(addBtn);
             }
+            // The right-docked action must be added before the fill child. Otherwise
+            // DockPanel treats the action as LastChildFill and clips its ruled label.
+            header.Children.Add(titleCol);
 
             ushort focusParam = section.ParamId;
             header.MouseLeftButtonDown += (s, e) =>
@@ -1750,7 +1753,34 @@ namespace FanaBridge.UI.Display
                 if (item == null) continue;
                 panelRotationOut.Children.Add(RotationRow(item, inList: false, indexInList: i));
             }
+            ConstrainRotationModal();
             popupRotation.IsOpen = true;
+        }
+
+        private void Root_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (popupOverride != null && popupOverride.IsOpen)
+                ConstrainOverrideModal();
+            if (popupRotation != null && popupRotation.IsOpen)
+                ConstrainRotationModal();
+        }
+
+        private void ConstrainOverrideModal()
+        {
+            DisplayModalLayout.Constrain(
+                this,
+                popupOverride,
+                chromeOverrideModal,
+                fallbackHeight: 640);
+        }
+
+        private void ConstrainRotationModal()
+        {
+            DisplayModalLayout.Constrain(
+                this,
+                popupRotation,
+                chromeRotationModal,
+                fallbackHeight: 640);
         }
 
         private UIElement RotationRow(

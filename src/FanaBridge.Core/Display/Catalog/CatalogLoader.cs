@@ -162,8 +162,11 @@ namespace FanaBridge.Display.Catalog
         }
 
         /// <summary>
-        /// Resolves a shipped catalog by <paramref name="wheelCode"/> (lowercased;
-        /// OQ-2). When <paramref name="itmDeviceId"/> is set and the catalog declares
+        /// Resolves a shipped catalog by display <paramref name="moduleCode"/> first,
+        /// then falls back to <paramref name="wheelCode"/> (both lowercased; OQ-2).
+        /// This preserves the wheel/hub distinction for composites whose catalog belongs
+        /// to the attached display module. When <paramref name="itmDeviceId"/> is set
+        /// and the catalog declares
         /// a deviceId, a mismatch is <b>logged</b> (never throws — same style as parse
         /// failures) and the catalog is still returned. Unknown code → false, catalog
         /// null, warning logged.
@@ -172,10 +175,12 @@ namespace FanaBridge.Display.Catalog
             string wheelCode,
             out WheelCatalog catalog,
             Action<string> log = null,
-            byte? itmDeviceId = null)
+            byte? itmDeviceId = null,
+            string moduleCode = null)
         {
-            string key = NormalizeWheelCode(wheelCode);
-            if (key == null)
+            string wheelKey = NormalizeWheelCode(wheelCode);
+            string moduleKey = NormalizeWheelCode(moduleCode);
+            if (wheelKey == null && moduleKey == null)
             {
                 catalog = null;
                 SafeLog(log, "Catalog: no shipped catalog for wheel code ''");
@@ -183,10 +188,20 @@ namespace FanaBridge.Display.Catalog
             }
 
             var set = LoadShipped(log);
-            if (!set.TryGetValue(key, out catalog))
+            catalog = null;
+            string key = null;
+            if (moduleKey != null && set.TryGetValue(moduleKey, out catalog))
+                key = moduleKey;
+            else if (wheelKey != null && set.TryGetValue(wheelKey, out catalog))
+                key = wheelKey;
+
+            if (key == null)
             {
                 catalog = null;
-                SafeLog(log, "Catalog: no shipped catalog for wheel code '" + key + "'");
+                string identity = moduleKey == null
+                    ? "'" + wheelKey + "'"
+                    : "'" + moduleKey + "' (module), '" + (wheelKey ?? "") + "' (wheel)";
+                SafeLog(log, "Catalog: no shipped catalog for wheel code " + identity);
                 return false;
             }
 

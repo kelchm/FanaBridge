@@ -28,6 +28,7 @@ namespace FanaBridge.UI.Display
         private DisplayConfigV2 _config;
         private bool _suppressEvents;
         private DisplayOverviewV2Model _model;
+        private DisplayType? _configuredDisplayType;
 
         // E9 later-phase: N1 destination (v2 Pages & Fields) is not built yet — spoke
         // stays disabled with a DisplayCopy tooltip. N2 Priority is LIVE (phase 3a).
@@ -81,6 +82,9 @@ namespace FanaBridge.UI.Display
             var envelope = _host.Snapshot;
             var config = _host.GetDisplayConfigV2();
             _config = config;
+            var displayType = _host.DisplayType;
+            if (_configuredDisplayType != displayType)
+                ConfigureModeSegments(displayType);
 
             var resolution = ProjectResolution(envelope);
             var values = envelope?.Values;
@@ -89,7 +93,7 @@ namespace FanaBridge.UI.Display
                 config,
                 resolution,
                 values,
-                _host.DisplayType,
+                displayType,
                 _catalog,
                 _aliases,
                 nextPageMapped: false,
@@ -154,6 +158,7 @@ namespace FanaBridge.UI.Display
 
         private void ConfigureModeSegments(DisplayType displayType)
         {
+            _configuredDisplayType = displayType;
             _suppressEvents = true;
             if (displayType == DisplayType.Itm)
             {

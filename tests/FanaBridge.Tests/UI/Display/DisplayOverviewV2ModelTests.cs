@@ -167,6 +167,28 @@ namespace FanaBridge.Tests.UI.Display
             var itmRow = model.PriorityRows[0];
             Assert.Equal(OverviewRowState.Off, itmRow.State);
             Assert.Equal(DisplayCopy.CantRunHere, itmRow.StatusCopy);
+            Assert.Equal(DisplayCopy.SegmentDisplay, model.SurfaceWord);
+
+            var baseRow = model.PriorityRows.Single(r => r.IsPinned
+                && r.RankText == DisplayCopy.PriorityBaseRank);
+            Assert.Equal(OverviewRowState.Off, baseRow.State);
+            Assert.Equal(DisplayCopy.CantRunHere, baseRow.StatusCopy);
+
+            doc.Priority.Rest.Idle = new IdleSpec
+            {
+                Kind = IdleKind.Page,
+                Page = new PageRef
+                {
+                    Kind = PageRefKind.ItmPage,
+                    CatalogPageId = "tyreTemps",
+                },
+            };
+            model = DisplayOverviewV2Model.Project(
+                doc, EmptyConnected(), null, DisplayType.Itm);
+            var idleRow = model.PriorityRows.Single(r => r.IsPinned
+                && r.RankText == string.Empty);
+            Assert.Equal(OverviewRowState.Off, idleRow.State);
+            Assert.Equal(DisplayCopy.CantRunHere, idleRow.StatusCopy);
         }
 
         [Fact]

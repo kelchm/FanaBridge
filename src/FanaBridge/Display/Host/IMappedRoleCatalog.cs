@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace FanaBridge.Display.Host
 {
     /// <summary>
@@ -15,5 +17,12 @@ namespace FanaBridge.Display.Host
         /// (<see cref="MappedRolesSource.None"/>) — so the UI can hint "mapped on this wheel"
         /// vs "all roles".</summary>
         MappedRoles GetMappedRoles();
+
+        /// <summary>
+        /// SimHub input-action targets from
+        /// <c>PluginManager.Settings.InputActionMapping</c>. This is the authoritative
+        /// store for plugin-action bindings; Control Mapper role labels are unrelated.
+        /// </summary>
+        IReadOnlyList<string> GetInputActionTargets();
     }
 }

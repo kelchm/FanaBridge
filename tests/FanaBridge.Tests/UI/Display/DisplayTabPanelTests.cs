@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Windows;
+using System.Windows.Controls;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
@@ -51,6 +52,96 @@ namespace FanaBridge.Tests.UI.Display
             });
         }
 
+        [Fact]
+        public void PhubPbme_CompositeBindsCatalog_AddPicker_OverrideDoor_AndOrigin()
+        {
+            OnSta(() =>
+            {
+                var host = new FakeHost
+                {
+                    WheelCode = "PHUB",
+                    ModuleCode = "PBME",
+                };
+                host.SetLive(new DisplayConfigV2
+                {
+                    Settings = new SettingsBlock { Mode = SettingsMode.On },
+                    Pages = new List<PageEntry>
+                    {
+                        new PageEntry
+                        {
+                            Kind = PageEntryKind.ItmPage,
+                            CatalogPageId = "tyreTemps",
+                            Removed = true,
+                        },
+                    },
+                    Priority = new PriorityLadder
+                    {
+                        Rest = new RestBlock
+                        {
+                            InSessionPage = new PageRef
+                            {
+                                Kind = PageRefKind.ItmPage,
+                                CatalogPageId = "lapInfo",
+                            },
+                            Idle = new IdleSpec { Kind = IdleKind.Blank },
+                        },
+                    },
+                });
+
+                var panel = new DisplayTabPanel();
+                panel.BindCore(
+                    host,
+                    new EmptyPropertyCatalog(),
+                    new EmptyRoleCatalog(),
+                    pickerStore: null);
+
+                Assert.Equal("pbme", panel.viewPriorityV2.BoundCatalog.WheelId);
+                Assert.Contains(
+                    panel.viewAddPageV2.ModelForTest.ItmChoices,
+                    p => p.CatalogPageId == "tyreTemps");
+                panel.viewAddPageV2.PopulateItmPickerForTest();
+                Assert.Equal(Visibility.Collapsed, panel.viewAddPageV2.txtItmPickerEmpty.Visibility);
+                Assert.Single(panel.viewAddPageV2.listItmChoices.Items);
+                Assert.True(panel.viewPagesFieldsV2.OpenFirstOverrideFormCore());
+
+                var allPresent = DisplayConfigV2Serializer.Clone(host.GetDisplayConfigV2());
+                allPresent.Pages[0].Removed = false;
+                host.SetLive(allPresent);
+                panel.viewAddPageV2.Poll(force: true);
+                panel.viewAddPageV2.PopulateItmPickerForTest();
+                Assert.Equal(Visibility.Visible, panel.viewAddPageV2.txtItmPickerEmpty.Visibility);
+                Assert.Equal(
+                    DisplayCopy.EveryCatalogPageAlreadyOnWheel,
+                    panel.viewAddPageV2.txtItmPickerEmpty.Text);
+                Assert.Empty(panel.viewAddPageV2.listItmChoices.Items);
+
+                var legacyOnly = DisplayConfigV2Serializer.Clone(allPresent);
+                legacyOnly.Settings.Mode = SettingsMode.LegacyOnly;
+                host.SetLive(legacyOnly);
+                panel.PollForTest(force: false);
+                Assert.Equal(
+                    DisplayCopy.SegmentDisplay,
+                    panel.viewOverviewV2.txtSurfaceWord.Text);
+
+                panel.NavigateToAddPage(AddPageOrigin.PagesAndFields);
+                Assert.Equal(DisplayCopy.PagesAndFields, panel.viewAddPageV2.txtPriorityCrumb.Text);
+                panel.viewAddPageV2.ReturnToOriginAfterCreateForTest();
+                Assert.Equal(Visibility.Visible, panel.viewPagesFieldsV2.Visibility);
+                panel.NavigateToAddPage(AddPageOrigin.Priority);
+                Assert.Equal(DisplayCopy.Priority, panel.viewAddPageV2.txtPriorityCrumb.Text);
+
+                Assert.Equal(
+                    3,
+                    ((StackPanel)panel.viewOverviewV2.segMode.Child).Children.Count);
+                panel.NavigateToOverviewForTest();
+                host.DisplayType = DisplayType.Basic;
+                panel.PollForTest(force: false);
+                Assert.Equal(
+                    2,
+                    ((StackPanel)panel.viewOverviewV2.segMode.Child).Children.Count);
+            });
+        }
+
         private static void OnSta(Action body)
         {
             Exception error = null!;
@@ -76,9 +167,10 @@ namespace FanaBridge.Tests.UI.Display
         {
             private DisplayConfigV2 _live = null!;
 
-            public DisplayType DisplayType => DisplayType.Itm;
+            public DisplayType DisplayType { get; set; } = DisplayType.Itm;
             public byte ItmDeviceId => 3;
-            public string WheelCode => "pbme";
+            public string WheelCode { get; set; } = "pbme";
+            public string ModuleCode { get; set; } = null!;
             public DisplayPanelSnapshot Snapshot => null!;
 
             public DisplayConfigV2 GetDisplayConfigV2() => _live;
@@ -104,6 +196,11 @@ namespace FanaBridge.Tests.UI.Display
                     new DisplayConfigV2(),
                     _ => { });
             }
+
+            public void SetLive(DisplayConfigV2 config)
+            {
+                _live = config;
+            }
         }
 
         private sealed class EmptyPropertyCatalog : IDisplayPropertyCatalog
@@ -121,6 +218,7 @@ namespace FanaBridge.Tests.UI.Display
         private sealed class EmptyRoleCatalog : IMappedRoleCatalog
         {
             public MappedRoles GetMappedRoles() => MappedRoles.None;
+            public IReadOnlyList<string> GetInputActionTargets() => Array.Empty<string>();
         }
     }
 }

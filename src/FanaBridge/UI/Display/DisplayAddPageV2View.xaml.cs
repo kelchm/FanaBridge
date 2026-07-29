@@ -11,6 +11,12 @@ using FanaBridge.Profiles;
 
 namespace FanaBridge.UI.Display
 {
+    internal enum AddPageOrigin
+    {
+        Priority,
+        PagesAndFields,
+    }
+
     /// <summary>
     /// Add-a-page flow (5h). Plain door live; setup porch inert (D20 /
     /// <see cref="DisplayCopy.SpokeArrivingLater"/>). Session writes for the page door;
@@ -22,12 +28,13 @@ namespace FanaBridge.UI.Display
         private WheelCatalog _catalog;
         private DisplayAddPageV2Model _model;
         private string _selectedCatalogPageId;
+        private AddPageOrigin _origin = AddPageOrigin.Priority;
 
         /// <summary>‹ Overview breadcrumb (first leaf).</summary>
         public event EventHandler BackRequested;
 
-        /// <summary>Priority middle-leaf (B-N2) or post-create return.</summary>
-        public event EventHandler PriorityRequested;
+        /// <summary>Middle breadcrumb returns to the surface that opened Add.</summary>
+        public event EventHandler OriginRequested;
 
         /// <summary>Plain-door "An entrypoint" → Priority create form (host wires).</summary>
         public event EventHandler EntrypointDoorRequested;
@@ -84,7 +91,7 @@ namespace FanaBridge.UI.Display
         private void ApplyStaticCopy()
         {
             txtTitle.Text = DisplayCopy.Add;
-            txtPriorityCrumb.Text = DisplayCopy.Priority;
+            ApplyOriginCopy();
             txtDivider.Text = DisplayCopy.ModeProfileDivider;
             radItm.Content = DisplayCopy.PageKindItm;
             radHosted.Content = DisplayCopy.PageKindHosted;
@@ -127,6 +134,7 @@ namespace FanaBridge.UI.Display
             ToolTipService.SetShowOnDisabled(txtSetupSearch, true);
             txtSetupSearch.IsEnabled = model.SetupPorchEnabled;
             txtSetupNote.Text = model.SetupPorchNote ?? string.Empty;
+            txtSetupNote.ToolTip = model.SetupPorchTooltip;
 
             txtDoorLabel.Text = model.PlainDoorLabel;
             txtDoorNote.Text = model.PlainDoorNote;
@@ -230,7 +238,19 @@ namespace FanaBridge.UI.Display
         private void PickItm_Click(object sender, RoutedEventArgs e)
         {
             if (_model == null) return;
+            PopulateItmPicker();
+            popupItmPicker.IsOpen = true;
+        }
+
+        private void PopulateItmPicker()
+        {
             listItmChoices.Items.Clear();
+            txtItmPickerEmpty.Text = _model?.ItmPickerEmptyState ?? string.Empty;
+            txtItmPickerEmpty.Visibility = _model != null
+                && _model.ItmChoices.Count == 0
+                && !string.IsNullOrEmpty(_model.ItmPickerEmptyState)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
             for (int i = 0; i < _model.ItmChoices.Count; i++)
             {
                 var choice = _model.ItmChoices[i];
@@ -281,7 +301,6 @@ namespace FanaBridge.UI.Display
                 row.MouseLeftButtonUp += ItmChoice_Click;
                 listItmChoices.Items.Add(row);
             }
-            popupItmPicker.IsOpen = true;
         }
 
         private void ItmChoice_Click(object sender, MouseButtonEventArgs e)
@@ -346,15 +365,38 @@ namespace FanaBridge.UI.Display
             bannerConflict.Visibility = Visibility.Collapsed;
             HidePageForm();
             ConfigApplied?.Invoke(this, EventArgs.Empty);
-            // B-O3: return to Priority after create.
-            PriorityRequested?.Invoke(this, EventArgs.Empty);
+            ReturnToOriginAfterCreate();
         }
 
         private void BackOverview_Click(object sender, RoutedEventArgs e)
             => BackRequested?.Invoke(this, EventArgs.Empty);
 
         private void BackPriority_Click(object sender, RoutedEventArgs e)
-            => PriorityRequested?.Invoke(this, EventArgs.Empty);
+            => OriginRequested?.Invoke(this, EventArgs.Empty);
+
+        internal void SetOrigin(AddPageOrigin origin)
+        {
+            _origin = origin;
+            ApplyOriginCopy();
+        }
+
+        private void ApplyOriginCopy()
+        {
+            if (txtPriorityCrumb != null)
+            {
+                txtPriorityCrumb.Text = _origin == AddPageOrigin.PagesAndFields
+                    ? DisplayCopy.PagesAndFields
+                    : DisplayCopy.Priority;
+            }
+        }
+
+        internal AddPageOrigin OriginForTest => _origin;
+        internal DisplayAddPageV2Model ModelForTest => _model;
+        internal void PopulateItmPickerForTest() => PopulateItmPicker();
+        internal void ReturnToOriginAfterCreateForTest() => ReturnToOriginAfterCreate();
+
+        private void ReturnToOriginAfterCreate()
+            => OriginRequested?.Invoke(this, EventArgs.Empty);
 
         /// <summary>Test seam: run the page create path without WPF clicks.</summary>
         internal bool CreatePageForTest(

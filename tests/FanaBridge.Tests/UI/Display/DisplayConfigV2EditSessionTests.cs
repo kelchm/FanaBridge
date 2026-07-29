@@ -30,6 +30,7 @@ namespace FanaBridge.Tests.UI.Display
             public DisplayType DisplayType => DisplayType.Itm;
             public byte ItmDeviceId => 3;
             public string WheelCode { get; set; } = "pbme";
+            public string ModuleCode { get; set; } = null!;
             public DisplayConfigV2 GetDisplayConfigV2() => Live;
             public void ApplyDisplayConfigV2(DisplayConfigV2 config)
             {
@@ -293,6 +294,7 @@ namespace FanaBridge.Tests.UI.Display
             public DisplayType DisplayType => DisplayType.Itm;
             public byte ItmDeviceId => 3;
             public string WheelCode => "pbme";
+            public string ModuleCode => null;
             public DisplayConfigV2 GetDisplayConfigV2() => _runtime.CurrentConfigV2;
             public void ApplyDisplayConfigV2(DisplayConfigV2 config)
                 => _runtime.ApplyDisplayConfigV2(config);

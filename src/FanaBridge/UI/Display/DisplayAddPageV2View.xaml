@@ -18,7 +18,7 @@
     -->
     <DockPanel LastChildFill="True" Margin="0">
 
-        <!-- ViewHeaderRow: ‹ Overview / Priority / Add (D16 — verbatim even from P&F) -->
+            <!-- ViewHeaderRow: ‹ Overview / actual origin / Add -->
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
                 <Button Style="{StaticResource GhostBack}" Click="BackOverview_Click">
@@ -160,7 +160,15 @@
             <Border Background="#2B2B2D" BorderBrush="#545456" BorderThickness="1"
                     Width="360" MaxHeight="360" Padding="0,8,0,8">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="340">
-                    <ItemsControl x:Name="listItmChoices" />
+                    <StackPanel>
+                        <TextBlock x:Name="txtItmPickerEmpty"
+                                   Margin="12,8"
+                                   FontSize="12.5"
+                                   Foreground="#9A9A9C"
+                                   TextWrapping="Wrap"
+                                   Visibility="Collapsed" />
+                        <ItemsControl x:Name="listItmChoices" />
+                    </StackPanel>
                 </ScrollViewer>
             </Border>
         </Popup>

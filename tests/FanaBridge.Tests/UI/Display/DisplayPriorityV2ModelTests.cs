@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Host;
+using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Schema2;
 using FanaBridge.Profiles;
 using FanaBridge.UI.Display;
+using SimHub.Plugins;
+using SimHubInputMapping = SimHub.Plugins.InputMapping;
 using Xunit;
 
 namespace FanaBridge.Tests.UI.Display
@@ -63,6 +67,7 @@ namespace FanaBridge.Tests.UI.Display
             Assert.False(model.Rows[0].IsPinned);
             Assert.True(model.Rows[1].IsBaseRow);
             Assert.True(model.Rows[2].IsIdleRow);
+            Assert.Equal("PRIORITY · 1 ENTRY", model.LadderHeader);
         }
 
         // ── Row states / status ──────────────────────────────────────────
@@ -90,6 +95,34 @@ namespace FanaBridge.Tests.UI.Display
 
             Assert.Equal(PriorityRowState.Off, model.Rows[0].State);
             Assert.Equal(DisplayCopy.CantRunHere, model.Rows[0].StatusCopy);
+            Assert.Equal(DisplayCopy.SegmentDisplay, model.SurfaceWord);
+            Assert.True(model.ShowSegmentPreview);
+
+            doc.Priority.Rest.InSessionPage = new PageRef
+            {
+                Kind = PageRefKind.ItmPage,
+                CatalogPageId = "lapInfo",
+            };
+            model = DisplayPriorityV2Model.Project(
+                doc, EmptyConnected(), null, DisplayType.Itm);
+            var baseRow = model.Rows.Single(r => r.IsBaseRow);
+            Assert.Equal(PriorityRowState.Off, baseRow.State);
+            Assert.Equal(DisplayCopy.CantRunHere, baseRow.StatusCopy);
+
+            doc.Priority.Rest.Idle = new IdleSpec
+            {
+                Kind = IdleKind.Page,
+                Page = new PageRef
+                {
+                    Kind = PageRefKind.ItmPage,
+                    CatalogPageId = "tyreTemps",
+                },
+            };
+            model = DisplayPriorityV2Model.Project(
+                doc, EmptyConnected(), null, DisplayType.Itm);
+            var idleRow = model.Rows.Single(r => r.IsIdleRow);
+            Assert.Equal(PriorityRowState.Off, idleRow.State);
+            Assert.Equal(DisplayCopy.CantRunHere, idleRow.StatusCopy);
         }
 
         [Fact]
@@ -331,23 +364,41 @@ namespace FanaBridge.Tests.UI.Display
         }
 
         [Fact]
-        public void ResolvePageControlMapping_ReadsMappedRoles()
+        public void ResolvePageControlMapping_ReadsRealInputActionMappingTargets()
         {
-            var roles = new MappedRoles(
-                new[] { "NextPage", "Previous page", "SomeOther" },
-                MappedRolesSource.MappedOnThisWheel);
-            DisplayPriorityV2Model.ResolvePageControlMapping(
-                roles, out bool next, out bool prev);
-            Assert.True(next);
-            Assert.True(prev);
+            var settings = new PluginManagerSettings
+            {
+                InputActionMapping = new ObservableCollection<SimHubInputMapping>
+                {
+                    new SimHubInputMapping
+                    {
+                        Target = "FanatecPlugin.DisplayNextPage",
+                    },
+                    new SimHubInputMapping
+                    {
+                        Target = "SomeOtherPlugin.SomeAction",
+                    },
+                },
+            };
 
-            var catalogOnly = new MappedRoles(
-                new[] { "NextPage", "PreviousPage" },
-                MappedRolesSource.AllRoles);
             DisplayPriorityV2Model.ResolvePageControlMapping(
-                catalogOnly, out next, out prev);
-            Assert.False(next);
+                InputActionMappingReader.Read(settings),
+                out bool next,
+                out bool prev);
+            Assert.True(next);
             Assert.False(prev);
+
+            settings.InputActionMapping = new ObservableCollection<SimHubInputMapping>
+            {
+                new SimHubInputMapping
+                {
+                    Target = "FanatecPlugin.DisplayPreviousPage",
+                },
+            };
+            DisplayPriorityV2Model.ResolvePageControlMapping(
+                InputActionMappingReader.Read(settings), out next, out prev);
+            Assert.False(next);
+            Assert.True(prev);
         }
 
         // ── Aggregate (Q7/P4) ────────────────────────────────────────────
@@ -489,6 +540,7 @@ namespace FanaBridge.Tests.UI.Display
                 .FirstOrDefault(g => g.Header == DisplayCopy.PlaylistsGroup);
             Assert.NotNull(pl);
             Assert.Empty(pl.Items);
+            Assert.Equal(DisplayCopy.NoPlaylistsYet, pl.EmptyState);
             // P5: no "Keep the last page shown"
             Assert.DoesNotContain(
                 model.IdlePicker.Groups.SelectMany(g => g.Items),

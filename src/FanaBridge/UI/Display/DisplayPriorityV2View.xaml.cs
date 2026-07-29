@@ -130,13 +130,13 @@ namespace FanaBridge.UI.Display
             var resolution = ProjectResolution(envelope);
             var values = envelope?.Values;
 
-            // Digest §5: real next/prev mapping from Control Mapper roles on this rim.
+            // Digest §5: real next/prev mapping from SimHub's plugin-action bindings.
             bool nextMapped = false;
             bool prevMapped = false;
             if (_roleCatalog != null)
             {
                 DisplayPriorityV2Model.ResolvePageControlMapping(
-                    _roleCatalog.GetMappedRoles(),
+                    _roleCatalog.GetInputActionTargets(),
                     out nextMapped,
                     out prevMapped);
             }
@@ -1417,11 +1417,6 @@ namespace FanaBridge.UI.Display
             for (int g = 0; g < _activePicker.Groups.Count; g++)
             {
                 var group = _activePicker.Groups[g];
-                // Hide empty playlist group unless it has items (task #22).
-                if (string.Equals(group.Header, DisplayCopy.PlaylistsGroup, StringComparison.Ordinal)
-                    && group.Items.Count == 0)
-                    continue;
-
                 var items = new List<PriorityPickerItemModel>();
                 for (int i = 0; i < group.Items.Count; i++)
                 {
@@ -1442,7 +1437,8 @@ namespace FanaBridge.UI.Display
                 {
                     filtered.Add(new PriorityPickerGroupModel(
                         group.Header,
-                        new System.Collections.ObjectModel.ReadOnlyCollection<PriorityPickerItemModel>(items)));
+                        new System.Collections.ObjectModel.ReadOnlyCollection<PriorityPickerItemModel>(items),
+                        emptyState: query.Length == 0 ? group.EmptyState : null));
                 }
             }
             listPickerGroups.ItemsSource = filtered;
@@ -1746,7 +1742,23 @@ namespace FanaBridge.UI.Display
             RefreshLiveValue();
             RefreshEntrypointSentence();
             UpdateUntilDismissedCard();
+            ConstrainEntrypointModal();
             popupEntrypoint.IsOpen = true;
+        }
+
+        private void Root_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (popupEntrypoint != null && popupEntrypoint.IsOpen)
+                ConstrainEntrypointModal();
+        }
+
+        private void ConstrainEntrypointModal()
+        {
+            DisplayModalLayout.Constrain(
+                this,
+                popupEntrypoint,
+                chromeEntrypointModal,
+                fallbackHeight: 640);
         }
 
         private void SelectSourceKind(ValueSourceKind kind)

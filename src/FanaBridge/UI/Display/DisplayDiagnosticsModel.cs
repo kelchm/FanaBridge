@@ -227,8 +227,10 @@ namespace FanaBridge.UI.Display
                 return DisplayCopy.ManualPaging;
             if (string.Equals(carrierId, SeatArbiter.RestCarrierId, StringComparison.Ordinal))
                 return DisplayCopy.BasePage;
-            if (string.Equals(carrierId, DestinationIds.RestIdle, StringComparison.Ordinal)
-                || string.Equals(carrierId, DestinationIds.RestInSession, StringComparison.Ordinal))
+            if (string.Equals(carrierId, DestinationIds.RestIdle, StringComparison.Ordinal))
+                return DisplayCopy.OutsideASession;
+
+            if (string.Equals(carrierId, DestinationIds.RestInSession, StringComparison.Ordinal))
                 return DisplayCopy.BasePage;
 
             if (config?.Priority?.EffectiveRows != null)

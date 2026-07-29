@@ -451,6 +451,28 @@ namespace FanaBridge.Tests.UI.Display
             }
         }
 
+        [Fact]
+        public void OutsideSessionCarrier_HasItsOwnLabel_NotBasePage()
+        {
+            var statuses = new List<CarrierResolutionStatus>
+            {
+                new CarrierResolutionStatus(
+                    DestinationIds.RestIdle,
+                    SeatArbiter.DisplaySurfaceId,
+                    DestinationIds.RestIdle,
+                    CarrierPresence.Waiting,
+                    null,
+                    CarrierRowLabels.None),
+            };
+
+            var model = DisplayDiagnosticsModel.Project(
+                Snapshot(statuses, new List<SurfaceWinner>(), deviceKey: "x"));
+
+            var row = Assert.Single(model.LadderRows);
+            Assert.Equal(DisplayCopy.OutsideASession, row.Label);
+            Assert.NotEqual(DisplayCopy.BasePage, row.Label);
+        }
+
         // ── Helpers ──────────────────────────────────────────────────────
 
         private static DisplayResolutionSnapshotModel ResolutionWithCarrier(

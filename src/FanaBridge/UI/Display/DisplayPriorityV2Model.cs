@@ -5,6 +5,7 @@ using System.Globalization;
 using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Host;
+using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Schema2;
 using FanaBridge.Display.Twin;
@@ -73,11 +74,14 @@ namespace FanaBridge.UI.Display
             // Q1 PROVISIONAL: disconnected → document ladder with "no wheel" status.
             bool disconnected = !resolution.IsConnected;
 
-            string surfaceWord = isItm ? DisplayCopy.ItmDisplay : DisplayCopy.SegmentDisplay;
+            string surfaceWord = isItm && !legacyOnly
+                ? DisplayCopy.ItmDisplay
+                : DisplayCopy.SegmentDisplay;
             string situation = resolution.InGame ? DisplayCopy.InGame : DisplayCopy.SituationIdle;
 
-            // 5j: segment preview column; 5b: no preview.
-            bool showSegmentPreview = !isItm && !modeOff;
+            // The preview follows the active surface: segment-only wheels and
+            // Legacy Only on an ITM wheel both paint the segment display.
+            bool showSegmentPreview = (!isItm || legacyOnly) && !modeOff;
             string previewCaption = showSegmentPreview
                 ? BuildPreviewCaption(values, config, catalog, resolution)
                 : null;
@@ -316,8 +320,8 @@ namespace FanaBridge.UI.Display
             }
 
             list.Add(ProjectBaseRow(
-                config, catalog, winnerId, winnerDest, showKindBadges));
-            list.Add(ProjectIdleRow(config, catalog, winnerDest));
+                config, catalog, winnerId, winnerDest, showKindBadges, legacyOnly));
+            list.Add(ProjectIdleRow(config, catalog, winnerDest, legacyOnly));
 
             return new ReadOnlyCollection<PriorityRowModel>(list);
         }
@@ -482,13 +486,17 @@ namespace FanaBridge.UI.Display
             WheelCatalog catalog,
             string winnerId,
             string winnerDest,
-            bool showKindBadges)
+            bool showKindBadges,
+            bool legacyOnly)
         {
             var pageRef = config?.Priority?.Rest?.InSessionPage;
             var dest = ResolvePageRefDestination(pageRef, config, catalog, showKindBadges);
-            bool isWinner =
+            bool provisionalCantRun = legacyOnly
+                && pageRef != null
+                && pageRef.Kind == PageRefKind.ItmPage;
+            bool isWinner = !provisionalCantRun && (
                 string.Equals(winnerId, SeatArbiter.RestCarrierId, StringComparison.Ordinal)
-                || string.Equals(winnerDest, DestinationIds.RestInSession, StringComparison.Ordinal);
+                || string.Equals(winnerDest, DestinationIds.RestInSession, StringComparison.Ordinal));
 
             return new PriorityRowModel(
                 rowId: PriorityRowModel.BaseExpandKey,
@@ -497,8 +505,10 @@ namespace FanaBridge.UI.Display
                 kind: PriorityRowKind.Unknown, // pinned base — not a ranked kind
                 destination: dest,
                 detail: DisplayCopy.WhenNothingAboveIsLive,
-                statusCopy: DisplayCopy.StatusDash,
-                state: isWinner ? PriorityRowState.Winner : PriorityRowState.Pinned,
+                statusCopy: provisionalCantRun ? DisplayCopy.CantRunHere : DisplayCopy.StatusDash,
+                state: provisionalCantRun
+                    ? PriorityRowState.Off
+                    : (isWinner ? PriorityRowState.Winner : PriorityRowState.Pinned),
                 carrierId: SeatArbiter.RestCarrierId,
                 isPinned: true,
                 showGrip: false,
@@ -525,7 +535,8 @@ namespace FanaBridge.UI.Display
         private static PriorityRowModel ProjectIdleRow(
             DisplayConfigV2 config,
             WheelCatalog catalog,
-            string winnerDest)
+            string winnerDest,
+            bool legacyOnly)
         {
             var idle = config?.Priority?.Rest?.Idle;
             var dest = new PriorityDestinationModel(
@@ -537,7 +548,11 @@ namespace FanaBridge.UI.Display
 
             // Detail cell is the idle target editor (combobox), not a sentence.
             string idleLabel = IdleTargetLabel(idle, config, catalog);
-            bool isWinner = string.Equals(winnerDest, DestinationIds.RestIdle, StringComparison.Ordinal);
+            bool provisionalCantRun = legacyOnly
+                && idle?.Kind == IdleKind.Page
+                && idle.Page?.Kind == PageRefKind.ItmPage;
+            bool isWinner = !provisionalCantRun
+                && string.Equals(winnerDest, DestinationIds.RestIdle, StringComparison.Ordinal);
 
             bool showPlaylistBadge = idle != null
                 && idle.Kind == IdleKind.Playlist
@@ -554,8 +569,10 @@ namespace FanaBridge.UI.Display
                 kind: PriorityRowKind.Unknown,
                 destination: dest,
                 detail: idleLabel,
-                statusCopy: DisplayCopy.StatusDash,
-                state: isWinner ? PriorityRowState.Winner : PriorityRowState.Pinned,
+                statusCopy: provisionalCantRun ? DisplayCopy.CantRunHere : DisplayCopy.StatusDash,
+                state: provisionalCantRun
+                    ? PriorityRowState.Off
+                    : (isWinner ? PriorityRowState.Winner : PriorityRowState.Pinned),
                 carrierId: DestinationIds.RestIdle,
                 isPinned: true,
                 showGrip: false,
@@ -1240,7 +1257,8 @@ namespace FanaBridge.UI.Display
                 DisplayCopy.PlaylistsGroup,
                 playlistItems.Count == 0
                     ? NoPickerItems
-                    : new ReadOnlyCollection<PriorityPickerItemModel>(playlistItems)));
+                    : new ReadOnlyCollection<PriorityPickerItemModel>(playlistItems),
+                emptyState: playlistItems.Count == 0 ? DisplayCopy.NoPlaylistsYet : null));
 
             return new PriorityPickerModel(
                 searchPlaceholder: DisplayCopy.SearchPagesScreensPlaylists,
@@ -1800,50 +1818,46 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>
-        /// Derive next/previous page mapped flags from Control Mapper roles on this rim
-        /// (digest §5 / <see cref="IMappedRoleCatalog"/>). Roles named like NextPage /
-        /// PreviousPage (with or without spaces) count; catalog-fallback role lists
-        /// (not actually mapped on this wheel) yield both false.
+        /// Derive next/previous page mapped flags from SimHub's plugin-action mapping
+        /// targets (digest §5 / <see cref="IMappedRoleCatalog"/>). InputActionMapping
+        /// persists the generated-action key (<c>plugin type.action name</c>).
         /// </summary>
         internal static void ResolvePageControlMapping(
-            MappedRoles roles,
+            IReadOnlyList<string> targets,
             out bool nextPageMapped,
             out bool prevPageMapped)
         {
             nextPageMapped = false;
             prevPageMapped = false;
-            if (roles == null
-                || roles.Roles == null
-                || roles.Roles.Count == 0
-                || roles.Source == MappedRolesSource.None
-                || roles.Source == MappedRolesSource.AllRoles)
+            if (targets == null || targets.Count == 0)
                 return;
 
-            for (int i = 0; i < roles.Roles.Count; i++)
+            for (int i = 0; i < targets.Count; i++)
             {
-                string r = roles.Roles[i];
-                if (string.IsNullOrEmpty(r))
+                string target = targets[i];
+                if (string.IsNullOrEmpty(target))
                     continue;
-                if (IsNextPageRole(r))
+                if (IsNextPageTarget(target))
                     nextPageMapped = true;
-                else if (IsPrevPageRole(r))
+                else if (IsPrevPageTarget(target))
                     prevPageMapped = true;
             }
         }
 
-        private static bool IsNextPageRole(string role)
+        private static bool IsNextPageTarget(string target)
         {
-            return string.Equals(role, "NextPage", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(role, "Next page", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(role, DisplayCopy.NextPage, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(
+                target,
+                DisplayPageActionHub.NextMappedTarget,
+                StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool IsPrevPageRole(string role)
+        private static bool IsPrevPageTarget(string target)
         {
-            return string.Equals(role, "PreviousPage", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(role, "Previous page", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(role, "PrevPage", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(role, DisplayCopy.PreviousPage, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(
+                target,
+                DisplayPageActionHub.PreviousMappedTarget,
+                StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>Build IdleSpec from a picker selection.</summary>
@@ -2604,15 +2618,19 @@ namespace FanaBridge.UI.Display
     public sealed class PriorityPickerGroupModel
     {
         public PriorityPickerGroupModel(
-            string header, IReadOnlyList<PriorityPickerItemModel> items)
+            string header,
+            IReadOnlyList<PriorityPickerItemModel> items,
+            string emptyState = null)
         {
             Header = header ?? string.Empty;
             Items = items ?? new ReadOnlyCollection<PriorityPickerItemModel>(
                 Array.Empty<PriorityPickerItemModel>());
+            EmptyState = emptyState;
         }
 
         public string Header { get; }
         public IReadOnlyList<PriorityPickerItemModel> Items { get; }
+        public string EmptyState { get; }
     }
 
     public sealed class PriorityPickerItemModel

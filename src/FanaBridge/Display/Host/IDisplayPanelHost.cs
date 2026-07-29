@@ -35,6 +35,12 @@ namespace FanaBridge.Display.Host
         string WheelCode { get; }
 
         /// <summary>
+        /// Attached display-module code for a hub/module composite. Catalog resolution
+        /// prefers this identity and falls back to <see cref="WheelCode"/>.
+        /// </summary>
+        string ModuleCode { get; }
+
+        /// <summary>
         /// The current v2 document, or null when none is live.
         /// Reference-stable between edits — never mutate; build a new document and
         /// pass it to <see cref="ApplyDisplayConfigV2"/>.

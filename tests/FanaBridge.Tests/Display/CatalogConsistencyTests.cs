@@ -415,6 +415,20 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void TryResolve_Composite_PrefersModule_ThenFallsBackToWheel()
+        {
+            Assert.True(CatalogLoader.TryResolve(
+                "pswbent", out var moduleCatalog, _ => { },
+                itmDeviceId: 3, moduleCode: "PBME"));
+            Assert.Equal("pbme", moduleCatalog!.WheelId);
+
+            Assert.True(CatalogLoader.TryResolve(
+                "pswbent", out var wheelCatalog, _ => { },
+                itmDeviceId: 4, moduleCode: "no-such-module"));
+            Assert.Equal("pswbent", wheelCatalog!.WheelId);
+        }
+
+        [Fact]
         public void TryResolve_UnknownCode_MissesWithWarning()
         {
             var warnings = new List<string>();

@@ -8,6 +8,7 @@ using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Runtime;
+using FanaBridge.Display.Schema2;
 using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
 
@@ -33,9 +34,12 @@ namespace FanaBridge.UI.Display
         private IDisplayPanelHost _host;
         private Dictionary<TabView, UIElement> _views;
         private TabView _currentView = TabView.Overview;
+        private AddPageOrigin _addPageOrigin = AddPageOrigin.Priority;
         private DispatcherTimer _timer;
         private DisplayValuesSnapshot _lastValues;
         private ComposedResolutionRecord _lastComposed;
+        private DisplayConfigV2 _lastConfig;
+        private DisplayType? _lastDisplayType;
         private string _lastStatus;
 
         public DisplayTabPanel()
@@ -81,7 +85,8 @@ namespace FanaBridge.UI.Display
                 _host.WheelCode,
                 out wheelCatalog,
                 _ => { },
-                itmDeviceId: _host.ItmDeviceId);
+                itmDeviceId: _host.ItmDeviceId,
+                moduleCode: _host.ModuleCode);
 
             viewOverviewV2.Bind(_host, catalog: wheelCatalog);
             viewOverviewV2.ControlMapperRequested += (s, e) => OpenControlMapper();
@@ -101,7 +106,8 @@ namespace FanaBridge.UI.Display
             viewPriorityV2.BackRequested += (s, e) => NavigateTo(TabView.Overview);
             viewPriorityV2.SetPagesAndFieldsDestinationLive(true);
             viewPriorityV2.PagesAndFieldsRequested += (s, e) => NavigateTo(TabView.PagesFields);
-            viewPriorityV2.AddPageRequested += (s, e) => NavigateTo(TabView.AddPage);
+            viewPriorityV2.AddPageRequested += (s, e) =>
+                NavigateToAddPage(AddPageOrigin.Priority);
 
             viewPagesFieldsV2.Bind(
                 _host,
@@ -111,11 +117,15 @@ namespace FanaBridge.UI.Display
                 pickerStore: pickerStore);
             viewPagesFieldsV2.BackRequested += (s, e) => NavigateTo(TabView.Overview);
             viewPagesFieldsV2.PriorityRequested += (s, e) => NavigateTo(TabView.Priority);
-            viewPagesFieldsV2.AddPageRequested += (s, e) => NavigateTo(TabView.AddPage);
+            viewPagesFieldsV2.AddPageRequested += (s, e) =>
+                NavigateToAddPage(AddPageOrigin.PagesAndFields);
 
             viewAddPageV2.Bind(_host, catalog: wheelCatalog);
             viewAddPageV2.BackRequested += (s, e) => NavigateTo(TabView.Overview);
-            viewAddPageV2.PriorityRequested += (s, e) => NavigateTo(TabView.Priority);
+            viewAddPageV2.OriginRequested += (s, e) => NavigateTo(
+                _addPageOrigin == AddPageOrigin.PagesAndFields
+                    ? TabView.PagesFields
+                    : TabView.Priority);
             viewAddPageV2.EntrypointDoorRequested += (s, e) =>
             {
                 NavigateTo(TabView.Priority);
@@ -164,6 +174,16 @@ namespace FanaBridge.UI.Display
                     break;
             }
         }
+
+        internal void NavigateToAddPage(AddPageOrigin origin)
+        {
+            _addPageOrigin = origin;
+            viewAddPageV2.SetOrigin(origin);
+            NavigateTo(TabView.AddPage);
+        }
+
+        internal void NavigateToOverviewForTest()
+            => NavigateTo(TabView.Overview);
 
         /// <summary>
         /// Routes to the selected v2 surface when a v2 document exists; otherwise
@@ -214,7 +234,8 @@ namespace FanaBridge.UI.Display
             if (_host == null)
                 return;
 
-            bool hasDocument = _host.GetDisplayConfigV2() != null;
+            var config = _host.GetDisplayConfigV2();
+            bool hasDocument = config != null;
             if (!hasDocument && _currentView != TabView.Overview)
                 _currentView = TabView.Overview;
             ApplyDocumentSurface();
@@ -225,13 +246,18 @@ namespace FanaBridge.UI.Display
             var values = envelope?.Values;
             var composed = envelope?.ComposedResolution;
             string status = envelope?.ItmStatus;
+            var displayType = _host.DisplayType;
             bool changed = force
                 || !ReferenceEquals(values, _lastValues)
                 || !ReferenceEquals(composed, _lastComposed)
+                || !ReferenceEquals(config, _lastConfig)
+                || _lastDisplayType != displayType
                 || !string.Equals(status, _lastStatus, StringComparison.Ordinal);
 
             _lastValues = values;
             _lastComposed = composed;
+            _lastConfig = config;
+            _lastDisplayType = displayType;
             _lastStatus = status;
             if (!changed)
                 return;

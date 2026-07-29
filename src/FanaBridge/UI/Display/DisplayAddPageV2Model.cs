@@ -36,7 +36,8 @@ namespace FanaBridge.UI.Display
             string situation = resolution.InGame ? DisplayCopy.InGame : DisplayCopy.SituationIdle;
 
             // D20: setup porch ships inert — no setup type family under src/.
-            string setupPorchNote = DisplayCopy.SpokeArrivingLater("Setups");
+            string setupPorchNote = DisplayCopy.NoSetupsAvailable;
+            string setupPorchTooltip = DisplayCopy.SpokeArrivingLater("Setups");
             bool setupPorchEnabled = false;
 
             var doors = new ReadOnlyCollection<AddPageDoorCardModel>(new[]
@@ -62,6 +63,11 @@ namespace FanaBridge.UI.Display
             });
 
             var itmChoices = BuildItmChoices(config, catalog);
+            string itmPickerEmptyState = itmChoices.Count == 0
+                ? (HasCatalogPages(catalog)
+                    ? DisplayCopy.EveryCatalogPageAlreadyOnWheel
+                    : DisplayCopy.NoCatalogPagesAvailable)
+                : null;
 
             return new DisplayAddPageV2Model(
                 surfaceWord: surfaceWord,
@@ -71,12 +77,14 @@ namespace FanaBridge.UI.Display
                 isItmWheel: isItm,
                 setupPorchEnabled: setupPorchEnabled,
                 setupPorchNote: setupPorchNote,
+                setupPorchTooltip: setupPorchTooltip,
                 setupSearchPlaceholder: DisplayCopy.SearchSetups,
                 setupColumnLabel: DisplayCopy.StartFromASetup,
                 plainDoorLabel: DisplayCopy.OrAddOneThing,
                 plainDoorNote: DisplayCopy.NothingCreatedUntilSave,
                 doors: doors,
                 itmChoices: itmChoices,
+                itmPickerEmptyState: itmPickerEmptyState,
                 pageAddedNote: DisplayCopy.PageAddedAtTopOfPriority);
         }
 
@@ -88,12 +96,14 @@ namespace FanaBridge.UI.Display
             bool isItmWheel,
             bool setupPorchEnabled,
             string setupPorchNote,
+            string setupPorchTooltip,
             string setupSearchPlaceholder,
             string setupColumnLabel,
             string plainDoorLabel,
             string plainDoorNote,
             IReadOnlyList<AddPageDoorCardModel> doors,
             IReadOnlyList<AddPageItmChoiceModel> itmChoices,
+            string itmPickerEmptyState,
             string pageAddedNote)
         {
             SurfaceWord = surfaceWord;
@@ -103,12 +113,14 @@ namespace FanaBridge.UI.Display
             IsItmWheel = isItmWheel;
             SetupPorchEnabled = setupPorchEnabled;
             SetupPorchNote = setupPorchNote;
+            SetupPorchTooltip = setupPorchTooltip;
             SetupSearchPlaceholder = setupSearchPlaceholder;
             SetupColumnLabel = setupColumnLabel;
             PlainDoorLabel = plainDoorLabel;
             PlainDoorNote = plainDoorNote;
             Doors = doors ?? NoDoors;
             ItmChoices = itmChoices ?? NoItmChoices;
+            ItmPickerEmptyState = itmPickerEmptyState;
             PageAddedNote = pageAddedNote;
         }
 
@@ -121,8 +133,11 @@ namespace FanaBridge.UI.Display
         /// <summary>Always false this wave — D20 inert setup porch.</summary>
         public bool SetupPorchEnabled { get; }
 
-        /// <summary><see cref="DisplayCopy.SpokeArrivingLater"/> for "Setups".</summary>
+        /// <summary>Ruled inert body copy; never an empty porch card.</summary>
         public string SetupPorchNote { get; }
+
+        /// <summary><see cref="DisplayCopy.SpokeArrivingLater"/> for "Setups".</summary>
+        public string SetupPorchTooltip { get; }
 
         public string SetupSearchPlaceholder { get; }
         public string SetupColumnLabel { get; }
@@ -130,7 +145,21 @@ namespace FanaBridge.UI.Display
         public string PlainDoorNote { get; }
         public IReadOnlyList<AddPageDoorCardModel> Doors { get; }
         public IReadOnlyList<AddPageItmChoiceModel> ItmChoices { get; }
+        public string ItmPickerEmptyState { get; }
         public string PageAddedNote { get; }
+
+        private static bool HasCatalogPages(WheelCatalog catalog)
+        {
+            if (catalog?.Itm?.Pages == null)
+                return false;
+            for (int i = 0; i < catalog.Itm.Pages.Count; i++)
+            {
+                var page = catalog.Itm.Pages[i];
+                if (page != null && !string.IsNullOrEmpty(page.Id))
+                    return true;
+            }
+            return false;
+        }
 
         /// <summary>
         /// Catalog ITM pages currently Removed. Catalog pages are present by default,
