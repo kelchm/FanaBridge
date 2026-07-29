@@ -668,6 +668,8 @@ namespace FanaBridge.Display.Schema2
 
                     runtime.Add(row);
                 }
+
+                ValidateSplitOrigins(storedRows, warn);
             }
 
             // Manual restoration FIRST (runtime view only).
@@ -722,6 +724,60 @@ namespace FanaBridge.Display.Schema2
             if (config.Priority.Rest != null)
                 NormalizeRest(config.Priority.Rest, hostedPageIds, itmCatalogIds,
                     playlistIds, catalog, warn);
+        }
+
+        private static void ValidateSplitOrigins(
+            IList<PriorityRow> rows, Action<string> warn)
+        {
+            foreach (var row in rows)
+            {
+                if (row?.SplitOrigin == null)
+                    continue;
+
+                string label = "priority row '" + (row.Id ?? row.KindRaw ?? "?") + "'";
+                bool summonSatellite = row.Kind == PriorityRowKind.Satellite
+                    && row.ChildRef == null
+                    && row.Summons != null
+                    && row.Summons.Count > 0;
+                if (!summonSatellite)
+                {
+                    row.DegradedAtLoad = true;
+                    warn(label + " degraded — splitOrigin is only valid on a summon satellite");
+                    continue;
+                }
+
+                var origin = row.SplitOrigin;
+                if (string.IsNullOrWhiteSpace(origin.RowId)
+                    || !origin.SummonIndex.HasValue
+                    || origin.SummonIndex.Value < 0)
+                {
+                    row.DegradedAtLoad = true;
+                    warn(label + " degraded — splitOrigin is incomplete");
+                    continue;
+                }
+
+                PriorityRow home = null;
+                foreach (var candidate in rows)
+                {
+                    if (candidate != null
+                        && candidate.Kind == PriorityRowKind.Seat
+                        && string.Equals(
+                            candidate.Id, origin.RowId, StringComparison.Ordinal))
+                    {
+                        home = candidate;
+                        break;
+                    }
+                }
+
+                if (home == null
+                    || !string.Equals(
+                        TargetKey(home.Target), TargetKey(row.Target),
+                        StringComparison.Ordinal))
+                {
+                    row.DegradedAtLoad = true;
+                    warn(label + " degraded — splitOrigin does not name its target's home seat");
+                }
+            }
         }
 
         private static void NormalizePriorityRow(

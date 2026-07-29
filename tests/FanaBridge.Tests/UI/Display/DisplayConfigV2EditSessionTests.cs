@@ -473,6 +473,12 @@ namespace FanaBridge.Tests.UI.Display
             Assert.Equal("sum-2", sat.Summons[0].Id);
             Assert.Equal(PageRefKind.ItmPage, sat.Target.Kind);
             Assert.Equal("lapInfo", sat.Target.CatalogPageId);
+            Assert.NotNull(sat.SplitOrigin);
+            Assert.Equal("seat-1", sat.SplitOrigin.RowId);
+            Assert.Equal(1, sat.SplitOrigin.SummonIndex);
+            Assert.True(sat.ExtensionData == null
+                || !sat.ExtensionData.Keys.Any(k => k.StartsWith(
+                    "__fanaBridgeSplit", StringComparison.Ordinal)));
         }
 
         [Fact]
@@ -497,6 +503,201 @@ namespace FanaBridge.Tests.UI.Display
 
             caller.Field = "99";
             Assert.Equal("5", sat.ChildRef.Field);
+        }
+
+        // OWNER-WAIVED FIDELITY (Surface C): rejoin inverse of split.
+        [Fact]
+        public void MergeSatellite_Summon_RoundTrip_RestoresHomeAndDeletesSat()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.SplitSatellite("seat-1", "sum-2");
+            var sat = session.Document.Priority.Rows
+                .First(r => r.Kind == PriorityRowKind.Satellite);
+            string satId = sat.Id;
+
+            string persisted = DisplayConfigV2Serializer.Save(session.Document);
+            var reopened = DisplayConfigV2EditSession.Open(
+                DisplayConfigV2Serializer.Load(persisted, _ => { }));
+            reopened.MergeSatellite(satId);
+
+            Assert.DoesNotContain(
+                reopened.Document.Priority.Rows, r => r.Id == satId);
+            var seat = reopened.Document.Priority.Rows.First(r => r.Id == "seat-1");
+            Assert.Equal(2, seat.Summons.Count);
+            Assert.Equal(new[] { "sum-1", "sum-2" },
+                seat.Summons.Select(s => s.Id).ToArray());
+            Assert.DoesNotContain("__fanaBridgeSplit", persisted);
+        }
+
+        [Fact]
+        public void MergeSatellite_WithoutHome_PromotesAndClearsSplitOrigin()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.SplitSatellite("seat-1", "sum-2");
+            var sat = session.Document.Priority.Rows
+                .First(r => r.Kind == PriorityRowKind.Satellite);
+            string satId = sat.Id;
+
+            var withoutHome = DisplayConfigV2Serializer.Clone(session.Document);
+            withoutHome.Priority.Rows.RemoveAll(r => r.Id == "seat-1");
+            var orphanSession = DisplayConfigV2EditSession.Open(withoutHome);
+            orphanSession.MergeSatellite(satId);
+
+            var promoted = Assert.Single(
+                orphanSession.Document.Priority.Rows, r => r.Id == satId);
+            Assert.Equal(PriorityRowKind.Seat, promoted.Kind);
+            Assert.Null(promoted.SplitOrigin);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void RemoveTargetRows_ClearsDeletedSatelliteSplitOrigin(bool removeContent)
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.SplitSatellite("seat-1", "sum-2");
+            var mutationClone = DisplayConfigV2Serializer.Clone(session.Document);
+            var deletedSatellite = mutationClone.Priority.Rows
+                .First(r => r.Kind == PriorityRowKind.Satellite);
+            Assert.NotNull(deletedSatellite.SplitOrigin);
+
+            try
+            {
+                DisplayConfigV2Serializer.CloneHookForTest = _ => mutationClone;
+                var target = new PageRef
+                {
+                    Kind = PageRefKind.ItmPage,
+                    CatalogPageId = "lapInfo",
+                };
+                if (removeContent)
+                {
+                    Assert.True(CatalogLoader.TryResolve(
+                        "pbme", out var catalog, _ => { }));
+                    session.RemovePageContent(target, catalog);
+                }
+                else
+                {
+                    session.RemoveRowsForTarget(target);
+                }
+            }
+            finally
+            {
+                DisplayConfigV2Serializer.CloneHookForTest = null!;
+            }
+
+            Assert.Null(deletedSatellite.SplitOrigin);
+            Assert.DoesNotContain(
+                session.Document.Priority.Rows,
+                r => r.Kind == PriorityRowKind.Satellite);
+        }
+
+        [Fact]
+        public void MergeSatellite_ChildRef_DeletesSatelliteOnly()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.SplitSatellite("seat-1", new ChildRef
+            {
+                Field = "5",
+                OverrideId = "ov-1",
+            });
+            var satId = session.Document.Priority.Rows
+                .First(r => r.Kind == PriorityRowKind.Satellite && r.ChildRef != null).Id;
+
+            // Override remains on the field ladder (split is insert-only for ChildRef).
+            Assert.Contains(
+                session.Document.Fields[5].Overrides, o => o.Id == "ov-1");
+
+            session.MergeSatellite(satId);
+            Assert.DoesNotContain(
+                session.Document.Priority.Rows, r => r.Id == satId);
+            Assert.Contains(
+                session.Document.Fields[5].Overrides, o => o.Id == "ov-1");
+        }
+
+        [Fact]
+        public void MergeSatellite_TryApply_Succeeds()
+        {
+            var host = new FakeHost { Live = SeedLive() };
+            var session = DisplayConfigV2EditSession.Open(host.Live);
+            session.SplitSatellite("seat-1", "sum-2");
+            var satId = session.Document.Priority.Rows
+                .First(r => r.Kind == PriorityRowKind.Satellite).Id;
+            session.MergeSatellite(satId);
+            var result = session.TryApply(host);
+            Assert.True(result.Succeeded);
+            Assert.DoesNotContain(
+                host.Live.Priority.Rows, r => r.Kind == PriorityRowKind.Satellite);
+        }
+
+        // Surface B: AddPage
+        [Fact]
+        public void AddPage_Hosted_AppendsPageAndSeatAtTop()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.AddPage(new PageEntry
+            {
+                Kind = PageEntryKind.HostedPage,
+                Name = "Alerts",
+            }, addToRotation: false, ensurePrioritySeat: true);
+
+            var hosted = Assert.Single(
+                session.Document.Pages.Where(p => p.Kind == PageEntryKind.HostedPage
+                    && p.Name == "Alerts"));
+            Assert.False(string.IsNullOrEmpty(hosted.Id));
+            var top = session.Document.Priority.Rows[0];
+            Assert.Equal(PriorityRowKind.Seat, top.Kind);
+            Assert.Equal(PageRefKind.HostedPage, top.Target.Kind);
+            Assert.Equal(hosted.Id, top.Target.Id);
+        }
+
+        [Fact]
+        public void AddPage_Itm_RestoresRemoved_AndRotation()
+        {
+            var live = SeedLive();
+            live.Pages = new List<PageEntry>
+            {
+                new PageEntry
+                {
+                    Kind = PageEntryKind.ItmPage,
+                    CatalogPageId = "tyreTemps",
+                    Removed = true,
+                },
+            };
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { });
+
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.AddPage(new PageEntry
+            {
+                Kind = PageEntryKind.ItmPage,
+                CatalogPageId = "tyreTemps",
+                NameOverride = "Tire Temps",
+            }, addToRotation: true, ensurePrioritySeat: true);
+
+            var pe = session.Document.Pages
+                .First(p => p.CatalogPageId == "tyreTemps");
+            Assert.False(pe.Removed);
+            Assert.Equal("Tire Temps", pe.NameOverride);
+            Assert.Contains(
+                session.Document.PageOrder,
+                r => r.Kind == PageRefKind.ItmPage && r.CatalogPageId == "tyreTemps");
+        }
+
+        [Fact]
+        public void AddPage_TryApply_DocumentHasPageAndSeat()
+        {
+            var host = new FakeHost { Live = SeedLive() };
+            var session = DisplayConfigV2EditSession.Open(host.Live);
+            session.AddPage(new PageEntry
+            {
+                Kind = PageEntryKind.HostedPage,
+                Name = "Pit",
+            });
+            var result = session.TryApply(host);
+            Assert.True(result.Succeeded);
+            Assert.Contains(
+                host.Live.Pages, p => p.Kind == PageEntryKind.HostedPage && p.Name == "Pit");
+            Assert.Equal(PriorityRowKind.Seat, host.Live.Priority.Rows[0].Kind);
         }
 
         [Fact]
@@ -1152,6 +1353,8 @@ namespace FanaBridge.Tests.UI.Display
         [InlineData("SetSummonEnabled")]
         [InlineData("SplitSatelliteSummon")]
         [InlineData("SplitSatelliteChildRef")]
+        [InlineData("MergeSatellite")]
+        [InlineData("AddPage")]
         [InlineData("SetReturnToRestAfterMs")]
         [InlineData("SetIdle")]
         [InlineData("SetActsAsEntrypoint")]
@@ -1208,6 +1411,21 @@ namespace FanaBridge.Tests.UI.Display
                     break;
                 case "SplitSatelliteChildRef":
                     session.SplitSatellite("seat-2", new ChildRef { Field = "5", OverrideId = "ov-1" });
+                    break;
+                case "MergeSatellite":
+                {
+                    session.SplitSatellite("seat-1", "sum-2");
+                    var sat = session.Document.Priority.Rows
+                        .First(r => r.Kind == PriorityRowKind.Satellite);
+                    session.MergeSatellite(sat.Id);
+                    break;
+                }
+                case "AddPage":
+                    session.AddPage(new PageEntry
+                    {
+                        Kind = PageEntryKind.HostedPage,
+                        Name = "BytePreserve",
+                    });
                     break;
                 case "SetReturnToRestAfterMs":
                     session.SetReturnToRestAfterMs(9000);

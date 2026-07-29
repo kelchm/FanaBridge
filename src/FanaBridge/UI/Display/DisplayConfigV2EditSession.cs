@@ -256,10 +256,11 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>
-        /// Move one summon out of <paramref name="sourceRowId"/> into a new satellite
-        /// row (summons-satellite shape): Kind = Satellite, Target copied from the
-        /// source when present, Summons = [that summon]. Inserted immediately after the
-        /// source. No-op when the source or summon is missing.
+        /// OWNER-WAIVED FIDELITY (digest Surface C / D19): undrawn surface — board gate
+        /// waived. Move one summon out of <paramref name="sourceRowId"/> into a new
+        /// satellite row (summons-satellite shape): Kind = Satellite, Target copied from
+        /// the source when present, Summons = [that summon]. Inserted immediately after
+        /// the source. No-op when the source or summon is missing.
         /// </summary>
         public DisplayConfigV2 SplitSatellite(string sourceRowId, string summonId)
         {
@@ -287,6 +288,11 @@ namespace FanaBridge.UI.Display
                     Id = Guid.NewGuid().ToString("N"),
                     Target = source.Target,
                     Summons = new List<Summon> { summon },
+                    SplitOrigin = new SplitOrigin
+                    {
+                        RowId = source.Id,
+                        SummonIndex = sIndex,
+                    },
                 };
                 rows.Insert(sourceIndex + 1, satellite);
                 return true;
@@ -294,8 +300,9 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>
-        /// Insert a ChildRef-satellite after <paramref name="afterRowId"/> (or at end
-        /// when null/unknown). Digest shape: Kind = Satellite + <see cref="ChildRef"/>.
+        /// OWNER-WAIVED FIDELITY (digest Surface C / D19): undrawn surface — board gate
+        /// waived. Insert a ChildRef-satellite after <paramref name="afterRowId"/> (or at
+        /// end when null/unknown). Digest shape: Kind = Satellite + <see cref="ChildRef"/>.
         /// Clones the supplied ChildRef before attachment.
         /// </summary>
         public DisplayConfigV2 SplitSatellite(string afterRowId, ChildRef childRef)
@@ -515,6 +522,8 @@ namespace FanaBridge.UI.Display
                         continue;
                     if (!string.Equals(TargetKey(row.Target), key, StringComparison.Ordinal))
                         continue;
+                    if (row.Kind == PriorityRowKind.Satellite)
+                        row.SplitOrigin = null;
                     rows.RemoveAt(i);
                     any = true;
                 }
@@ -648,6 +657,8 @@ namespace FanaBridge.UI.Display
                         continue;
                     if (!string.Equals(TargetKey(row.Target), key, StringComparison.Ordinal))
                         continue;
+                    if (row.Kind == PriorityRowKind.Satellite)
+                        row.SplitOrigin = null;
                     rows.RemoveAt(i);
                     any = true;
                 }
@@ -908,6 +919,290 @@ namespace FanaBridge.UI.Display
                 return true;
             });
         }
+
+        /// <summary>
+        /// Add or restore a <see cref="PageEntry"/> on <see cref="DisplayConfigV2.Pages"/>.
+        /// ITM: clears <see cref="PageEntry.Removed"/> when a matching entry exists;
+        /// otherwise appends a clone. Hosted: assigns a GUID id when blank, appends.
+        /// Optional rotation membership appends a <see cref="PageRef"/> to
+        /// <see cref="DisplayConfigV2.PageOrder"/> when missing. Optional priority seat
+        /// at rank 1 via <see cref="EnsureAuthoredRow"/> + move-to-front (plain door
+        /// "A page" — digest B.4 / B-O1).
+        /// </summary>
+        public DisplayConfigV2 AddPage(
+            PageEntry entry,
+            bool addToRotation = false,
+            bool ensurePrioritySeat = true)
+        {
+            if (entry == null)
+                return _document;
+
+            var owned = DisplayConfigV2Serializer.CloneNode(entry);
+            if (owned.Kind == PageEntryKind.Unknown)
+                return _document;
+
+            if (owned.Kind == PageEntryKind.HostedPage
+                && string.IsNullOrWhiteSpace(owned.Id))
+                owned.Id = Guid.NewGuid().ToString("N");
+
+            if (owned.Kind == PageEntryKind.ItmPage
+                && string.IsNullOrWhiteSpace(owned.CatalogPageId))
+                return _document;
+
+            return Mutate(doc =>
+            {
+                if (doc.Pages == null)
+                    doc.Pages = new List<PageEntry>();
+
+                PageRef targetRef = null;
+                if (owned.Kind == PageEntryKind.ItmPage)
+                {
+                    PageEntry existing = null;
+                    for (int i = 0; i < doc.Pages.Count; i++)
+                    {
+                        var p = doc.Pages[i];
+                        if (p != null
+                            && p.Kind == PageEntryKind.ItmPage
+                            && string.Equals(
+                                p.CatalogPageId, owned.CatalogPageId, StringComparison.Ordinal))
+                        {
+                            existing = p;
+                            break;
+                        }
+                    }
+
+                    if (existing != null)
+                    {
+                        existing.Removed = false;
+                        if (!string.IsNullOrEmpty(owned.NameOverride))
+                            existing.NameOverride = owned.NameOverride;
+                    }
+                    else
+                    {
+                        owned.Removed = false;
+                        doc.Pages.Add(owned);
+                    }
+
+                    targetRef = new PageRef
+                    {
+                        Kind = PageRefKind.ItmPage,
+                        CatalogPageId = owned.CatalogPageId,
+                    };
+                }
+                else if (owned.Kind == PageEntryKind.HostedPage)
+                {
+                    // Identity race: replace soft-match id if already present.
+                    for (int i = 0; i < doc.Pages.Count; i++)
+                    {
+                        var p = doc.Pages[i];
+                        if (p != null
+                            && p.Kind == PageEntryKind.HostedPage
+                            && string.Equals(p.Id, owned.Id, StringComparison.Ordinal))
+                        {
+                            // Already present — still honour rotation / seat options below.
+                            targetRef = new PageRef
+                            {
+                                Kind = PageRefKind.HostedPage,
+                                Id = owned.Id,
+                            };
+                            goto AfterPageWrite;
+                        }
+                    }
+                    doc.Pages.Add(owned);
+                    targetRef = new PageRef
+                    {
+                        Kind = PageRefKind.HostedPage,
+                        Id = owned.Id,
+                    };
+                }
+                else
+                {
+                    return false;
+                }
+
+            AfterPageWrite:
+                if (targetRef == null)
+                    return false;
+
+                if (addToRotation)
+                {
+                    if (doc.PageOrder == null)
+                        doc.PageOrder = new List<PageRef>();
+                    string key = TargetKey(targetRef);
+                    bool found = false;
+                    for (int i = 0; i < doc.PageOrder.Count; i++)
+                    {
+                        if (string.Equals(
+                                TargetKey(doc.PageOrder[i]), key, StringComparison.Ordinal))
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                        doc.PageOrder.Add(DisplayConfigV2Serializer.CloneNode(targetRef));
+                }
+
+                if (ensurePrioritySeat)
+                {
+                    var rows = RowsOf(doc);
+                    string targetKey = TargetKey(targetRef);
+                    PriorityRow existingSeat = null;
+                    for (int i = 0; i < rows.Count; i++)
+                    {
+                        var r = rows[i];
+                        if (r == null || r.Kind != PriorityRowKind.Seat)
+                            continue;
+                        if (string.Equals(TargetKey(r.Target), targetKey, StringComparison.Ordinal))
+                        {
+                            existingSeat = r;
+                            break;
+                        }
+                    }
+
+                    if (existingSeat == null)
+                    {
+                        // Plain-door note: page lands at the top of Priority.
+                        rows.Insert(0, new PriorityRow
+                        {
+                            Kind = PriorityRowKind.Seat,
+                            Id = "seat-" + (targetKey ?? Guid.NewGuid().ToString("N")),
+                            Target = DisplayConfigV2Serializer.CloneNode(targetRef),
+                            Summons = new List<Summon>(),
+                        });
+                    }
+                    else
+                    {
+                        int idx = IndexOfRow(rows, existingSeat.Id);
+                        if (idx > 0)
+                        {
+                            var item = rows[idx];
+                            rows.RemoveAt(idx);
+                            rows.Insert(0, item);
+                        }
+                    }
+                }
+
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// OWNER-WAIVED FIDELITY (digest Surface C / D19): inverse of
+        /// <see cref="SplitSatellite(string, string)"/>. Moves the satellite's summon
+        /// back onto the home seat (same Target) and deletes the satellite. ChildRef
+        /// satellites are deleted only (the child was never removed from its ladder —
+        /// SplitSatellite ChildRef is insert-only). No-op when missing / not a satellite.
+        /// </summary>
+        public DisplayConfigV2 MergeSatellite(string satelliteRowId)
+        {
+            if (string.IsNullOrEmpty(satelliteRowId))
+                return _document;
+
+            return Mutate(doc =>
+            {
+                var rows = RowsOf(doc);
+                int satIndex = IndexOfRow(rows, satelliteRowId);
+                if (satIndex < 0)
+                    return false;
+
+                var sat = rows[satIndex];
+                if (sat == null || sat.Kind != PriorityRowKind.Satellite)
+                    return false;
+
+                // ChildRef-satellite: delete only (child stays on its host ladder).
+                if (sat.ChildRef != null
+                    && (HasFieldChildRefShape(sat.ChildRef) || HasLayerChildRefShape(sat.ChildRef)))
+                {
+                    sat.SplitOrigin = null;
+                    rows.RemoveAt(satIndex);
+                    return true;
+                }
+
+                // Summons-satellite: move summons home, then delete.
+                if (sat.Summons == null || sat.Summons.Count == 0)
+                {
+                    sat.SplitOrigin = null;
+                    rows.RemoveAt(satIndex);
+                    return true;
+                }
+
+                string homeKey = TargetKey(sat.Target);
+                string originalHomeId = sat.SplitOrigin?.RowId;
+                PriorityRow home = null;
+                if (!string.IsNullOrEmpty(originalHomeId))
+                {
+                    for (int i = 0; i < rows.Count; i++)
+                    {
+                        var r = rows[i];
+                        if (r != null
+                            && r.Kind == PriorityRowKind.Seat
+                            && string.Equals(r.Id, originalHomeId, StringComparison.Ordinal)
+                            && string.Equals(
+                                TargetKey(r.Target), homeKey, StringComparison.Ordinal))
+                        {
+                            home = r;
+                            break;
+                        }
+                    }
+                }
+                if (home == null)
+                {
+                    for (int i = 0; i < rows.Count; i++)
+                    {
+                        var r = rows[i];
+                        if (r != null
+                            && r.Kind == PriorityRowKind.Seat
+                            && string.Equals(
+                                TargetKey(r.Target), homeKey, StringComparison.Ordinal))
+                        {
+                            home = r;
+                            break;
+                        }
+                    }
+                }
+
+                if (home == null)
+                {
+                    // No home seat — promote the satellite back to a seat in place.
+                    sat.Kind = PriorityRowKind.Seat;
+                    sat.SplitOrigin = null;
+                    return true;
+                }
+
+                if (home.Summons == null)
+                    home.Summons = new List<Summon>();
+                int insertAt = sat.SplitOrigin?.SummonIndex ?? home.Summons.Count;
+                insertAt = Math.Max(0, Math.Min(insertAt, home.Summons.Count));
+                for (int s = 0; s < sat.Summons.Count; s++)
+                {
+                    if (sat.Summons[s] == null)
+                        continue;
+                    home.Summons.Insert(
+                        Math.Min(insertAt++, home.Summons.Count),
+                        DisplayConfigV2Serializer.CloneNode(sat.Summons[s]));
+                }
+
+                // Re-find index (home may be before sat; sat index still valid if home was earlier).
+                satIndex = IndexOfRow(rows, satelliteRowId);
+                if (satIndex >= 0)
+                {
+                    sat.SplitOrigin = null;
+                    rows.RemoveAt(satIndex);
+                }
+                return true;
+            });
+        }
+
+        private static bool HasFieldChildRefShape(ChildRef cr)
+            => cr != null
+               && !string.IsNullOrEmpty(cr.Field)
+               && !string.IsNullOrEmpty(cr.OverrideId);
+
+        private static bool HasLayerChildRefShape(ChildRef cr)
+            => cr != null
+               && !string.IsNullOrEmpty(cr.PageId)
+               && !string.IsNullOrEmpty(cr.LayerId);
 
         /// <summary>
         /// Reorder one entry inside <see cref="DisplayConfigV2.PageOrder"/>. No-op when

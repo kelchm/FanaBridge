@@ -113,6 +113,13 @@ namespace FanaBridge.Display.Schema2
         [JsonProperty("lifetime")]
         public Lifetime Lifetime { get; set; }
 
+        /// <summary>
+        /// Summon-satellite provenance used to preserve the summon's authored order when
+        /// it rejoins its home row. Absent on every other row shape.
+        /// </summary>
+        [JsonProperty("splitOrigin")]
+        public SplitOrigin SplitOrigin { get; set; }
+
         /// <summary>Manual row: return-to-rest timer. Absent/null = off (default).</summary>
         [JsonProperty("returnToRestAfterMs")]
         public int? ReturnToRestAfterMs { get; set; }
@@ -147,6 +154,26 @@ namespace FanaBridge.Display.Schema2
         /// Document preserves both; runtime does not silently prefer either shape.</summary>
         [JsonIgnore]
         public bool ChildRefAmbiguous { get; internal set; }
+    }
+
+    /// <summary>
+    /// Origin of a summon satellite, retained only until rejoin so the summon returns to
+    /// its authored position on the home row.
+    /// </summary>
+    public class SplitOrigin
+    {
+        /// <summary>Stable id of the seat from which the summon was split.</summary>
+        [JsonProperty("rowId")]
+        public string RowId { get; set; }
+
+        /// <summary>Zero-based authored position of the summon on its home row.</summary>
+        [JsonProperty("summonIndex")]
+        public int? SummonIndex { get; set; }
+
+        /// <summary>Members this build does not recognize, preserved verbatim for
+        /// round-trips.</summary>
+        [JsonExtensionData]
+        public IDictionary<string, JToken> ExtensionData { get; set; }
     }
 
     /// <summary>Priority row discriminator.</summary>

@@ -145,8 +145,8 @@
         <Popup x:Name="popupPicker" Placement="MousePoint" StaysOpen="False"
                AllowsTransparency="True">
             <Border Background="#2B2B2D" BorderBrush="#545456" BorderThickness="1"
-                    Width="452" MaxHeight="420" Padding="0,8,0,8">
-                <DockPanel>
+                    Width="452" MaxHeight="480" Padding="0,8,0,8">
+                <DockPanel x:Name="panelPickerLayout">
                     <TextBox x:Name="txtPickerSearch" DockPanel.Dock="Top"
                              Margin="10,0,10,8" Padding="6,5" FontSize="12.5"
                              Background="#1E1E20" Foreground="#E6E6E6"
@@ -154,7 +154,14 @@
                     <TextBlock x:Name="txtPickerFooter" DockPanel.Dock="Bottom"
                                FontSize="11" Foreground="#7A7A7A" TextWrapping="Wrap"
                                Margin="12,8,12,4" />
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="320">
+                    <!-- Surface D: 5o read-only playlist card (expanded PLAYLISTS row) -->
+                    <Border x:Name="panelPlaylistCard" DockPanel.Dock="Bottom"
+                            Background="#232325" BorderBrush="#454547" BorderThickness="1"
+                            Margin="10,4,10,4" Padding="10,8" Visibility="Collapsed">
+                        <StackPanel x:Name="panelPlaylistCardBody" />
+                    </Border>
+                    <ScrollViewer x:Name="scrollPickerGroups"
+                                  VerticalScrollBarVisibility="Auto" MaxHeight="320">
                         <ItemsControl x:Name="listPickerGroups">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
@@ -165,11 +172,12 @@
                                         <ItemsControl ItemsSource="{Binding Items}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <Border Padding="12,7" Cursor="Hand"
-                                                            Background="Transparent"
-                                                            MouseLeftButtonUp="PickerItem_Click"
-                                                            Tag="{Binding}">
-                                                        <Grid>
+                                                    <StackPanel>
+                                                        <Border Padding="12,7" Cursor="Hand"
+                                                                Background="Transparent"
+                                                                MouseLeftButtonUp="PickerItem_Click"
+                                                                Tag="{Binding}">
+                                                            <Grid>
                                                             <Grid.ColumnDefinitions>
                                                                 <ColumnDefinition Width="16" />
                                                                 <ColumnDefinition Width="Auto" />
@@ -201,8 +209,9 @@
                                                                        FontSize="11" Foreground="#7FCE9A"
                                                                        Margin="8,0,0,0"
                                                                        VerticalAlignment="Center" />
-                                                        </Grid>
-                                                    </Border>
+                                                            </Grid>
+                                                        </Border>
+                                                    </StackPanel>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>

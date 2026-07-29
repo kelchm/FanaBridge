@@ -310,6 +310,58 @@ namespace FanaBridge.Tests.UI.Display
         }
 
         [Fact]
+        public void PlainDoor_OpensRealEntrypointCreateFlow()
+        {
+            OnSta(() =>
+            {
+                var host = new FakeHost { Live = SeedDoc() };
+                var view = new DisplayPriorityV2View();
+                view.Bind(host);
+
+                Assert.True(view.OpenFirstEntrypointFormCore());
+            });
+        }
+
+        [Fact]
+        public void SplitSummonCore_SplitsChosenDisabledSummon()
+        {
+            OnSta(() =>
+            {
+                var live = SeedDoc();
+                live.Priority.Rows[0].Summons.Add(new Summon
+                {
+                    Id = "sum-2",
+                    Name = "disabled authored summon",
+                    Enabled = false,
+                    Condition = new Condition
+                    {
+                        Source = new ValueSource
+                        {
+                            Kind = ValueSourceKind.BuiltIn,
+                            Name = "Speed",
+                        },
+                        Operator = ConditionOperator.GreaterThan,
+                        Value = 100,
+                    },
+                });
+                var host = new FakeHost { Live = live };
+                var view = new DisplayPriorityV2View();
+                view.Bind(host);
+
+                view.SplitSummonCore("seat-full", "sum-2");
+
+                var home = host.Live.Priority.Rows.Single(r => r.Id == "seat-full");
+                Assert.Single(home.Summons);
+                Assert.Equal("sum-1", home.Summons[0].Id);
+                var satellite = Assert.Single(host.Live.Priority.Rows,
+                    r => r.Kind == PriorityRowKind.Satellite);
+                var chosen = Assert.Single(satellite.Summons);
+                Assert.Equal("sum-2", chosen.Id);
+                Assert.False(chosen.Enabled);
+            });
+        }
+
+        [Fact]
         public void PagesAndFieldsDestination_NotLive_NavigateIsNoOp()
         {
             OnSta(() =>
@@ -339,6 +391,51 @@ namespace FanaBridge.Tests.UI.Display
                 view.PagesAndFieldsRequested += (s, e) => raised++;
                 view.NavigateToPagesAndFieldsForTest();
                 Assert.Equal(1, raised);
+            });
+        }
+
+        [Fact]
+        public void PlaylistPicker_ExpandDoesNotWrite_ConfirmWritesAndKeepsOpen()
+        {
+            OnSta(() =>
+            {
+                var doc = SeedDoc();
+                doc.Playlists = new List<PlaylistEntry>
+                {
+                    new PlaylistEntry
+                    {
+                        Id = "pl-evening",
+                        Name = "Evening loop",
+                        Steps = new List<PlaylistStep>
+                        {
+                            new PlaylistStep
+                            {
+                                Destination = new IdleSpec { Kind = IdleKind.Blank },
+                            },
+                        },
+                    },
+                };
+                doc.Priority.Rest = new RestBlock
+                {
+                    Idle = new IdleSpec { Kind = IdleKind.Blank },
+                };
+                var host = new FakeHost { Live = doc };
+                var view = new DisplayPriorityV2View();
+                view.Bind(host);
+
+                Assert.True(view.OpenIdlePickerCore());
+                var item = view.ActivePickerForTest.Groups
+                    .SelectMany(g => g.Items)
+                    .Single(i => i.PlaylistId == "pl-evening");
+                string before = DisplayConfigV2Serializer.Save(host.Live);
+
+                Assert.True(view.ExpandPlaylistPickerItemCore(item));
+                Assert.Equal(before, DisplayConfigV2Serializer.Save(host.Live));
+
+                Assert.True(view.ConfirmPlaylistPickerItemCore(item));
+                Assert.Equal(IdleKind.Playlist, host.Live.Priority.Rest.Idle.Kind);
+                Assert.Equal("pl-evening", host.Live.Priority.Rest.Idle.Playlist);
+                Assert.True(view.PlaylistInspectionExpandedForTest);
             });
         }
     }

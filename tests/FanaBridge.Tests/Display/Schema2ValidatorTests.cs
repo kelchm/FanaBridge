@@ -837,6 +837,66 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void Shape_SplitOrigin_StrayOrForeign_DegradesAndSurvives()
+        {
+            const string json = @"{
+  ""schemaVersion"": 2,
+  ""pages"": [
+    { ""kind"": ""hostedPage"", ""id"": ""p-a"", ""name"": ""A"" },
+    { ""kind"": ""hostedPage"", ""id"": ""p-b"", ""name"": ""B"" }
+  ],
+  ""priority"": {
+    ""rows"": [
+      {
+        ""kind"": ""seat"",
+        ""id"": ""seat-a"",
+        ""target"": { ""kind"": ""hostedPage"", ""id"": ""p-a"" },
+        ""splitOrigin"": { ""rowId"": ""seat-b"", ""summonIndex"": 0 }
+      },
+      {
+        ""kind"": ""seat"",
+        ""id"": ""seat-b"",
+        ""target"": { ""kind"": ""hostedPage"", ""id"": ""p-b"" }
+      },
+      {
+        ""kind"": ""satellite"",
+        ""id"": ""sat-a"",
+        ""target"": { ""kind"": ""hostedPage"", ""id"": ""p-a"" },
+        ""summons"": [
+          {
+            ""id"": ""sum-a"",
+            ""condition"": {
+              ""source"": { ""kind"": ""builtIn"", ""name"": ""FuelPercent"" },
+              ""operator"": ""lessThan"",
+              ""value"": 10
+            },
+            ""lifetime"": { ""kind"": ""whileTrue"" }
+          }
+        ],
+        ""splitOrigin"": {
+          ""rowId"": ""seat-b"",
+          ""summonIndex"": 0,
+          ""future"": true
+        }
+      },
+      { ""kind"": ""manual"" }
+    ]
+  }
+}";
+            var cfg = DeserializeOnly(json);
+            string before = Save(cfg);
+            var log = new List<string>();
+
+            Norm(cfg, log);
+
+            Assert.True(cfg.Priority.Rows[0].DegradedAtLoad);
+            Assert.True(cfg.Priority.Rows[2].DegradedAtLoad);
+            Assert.Equal("seat-b", cfg.Priority.Rows[2].SplitOrigin.RowId);
+            Assert.True(log.Count(m => m.Contains("splitOrigin")) >= 2);
+            AssertUtf8Equal(before, Save(cfg));
+        }
+
+        [Fact]
         public void Shape_WhileTrue_OperatorLess_Degraded()
         {
             var cfg = DocWithHosted();

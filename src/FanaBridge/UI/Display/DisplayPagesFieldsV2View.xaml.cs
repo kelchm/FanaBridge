@@ -402,8 +402,35 @@ namespace FanaBridge.UI.Display
             }
 
             btnOvDelete.Visibility = isNew ? Visibility.Collapsed : Visibility.Visible;
+            btnOvSplit.Visibility = CanSplitCurrentOverride()
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             popupOverride.IsOpen = true;
             return true;
+        }
+
+        /// <summary>Surface B plain door: choose the first authored/catalog field and open 5g.</summary>
+        internal bool OpenFirstOverrideFormCore()
+        {
+            if (_model == null)
+                return false;
+            var fields = _catalog?.Itm?.Fields;
+            if (fields != null)
+            {
+                for (int i = 0; i < fields.Count; i++)
+                {
+                    var field = fields[i];
+                    if (field != null && field.ParamId != 0 && field.Overridable != false)
+                        return OpenOverrideFormCore(field.ParamId, null, isNew: true);
+                }
+            }
+            var authored = _host?.GetDisplayConfigV2()?.Fields;
+            if (authored != null)
+            {
+                foreach (var field in authored)
+                    return OpenOverrideFormCore(field.Key, null, isNew: true);
+            }
+            return false;
         }
 
         /// <summary>
@@ -583,6 +610,7 @@ namespace FanaBridge.UI.Display
             radBringUpPin.Content = DisplayCopy.BringUpStaysWhileActive;
             EnsureBringUpSecondsChrome();
             btnOvDelete.Content = DisplayCopy.Delete;
+            btnOvSplit.Content = DisplayCopy.GiveThisOverrideItsOwnPriority;
             btnOvCancel.Content = DisplayCopy.Cancel;
             btnOvSave.Content = DisplayCopy.Save;
             txtOvChevron.Text = DisplayCopy.PropertyRowChevron;
@@ -1880,6 +1908,59 @@ namespace FanaBridge.UI.Display
         {
             OverrideDeleteCore();
             CloseOverrideForm();
+        }
+
+        private void OverrideSplit_Click(object sender, RoutedEventArgs e)
+        {
+            if (SplitCurrentOverrideCore())
+                CloseOverrideForm();
+        }
+
+        /// <summary>5g footer path: split this flagged override into a ChildRef satellite.</summary>
+        internal bool SplitCurrentOverrideCore()
+        {
+            if (!CanSplitCurrentOverride())
+                return false;
+            ushort paramId = _ovParamId;
+            string overrideId = _ovOverrideId;
+            string homeRowId = _ovHomeRowId;
+            ApplyEdit(session => session.SplitSatellite(
+                homeRowId,
+                new ChildRef
+                {
+                    Field = paramId.ToString(CultureInfo.InvariantCulture),
+                    OverrideId = overrideId,
+                }));
+            return true;
+        }
+
+        private bool CanSplitCurrentOverride()
+        {
+            if (_host == null
+                || _ovIsNew
+                || string.IsNullOrEmpty(_ovOverrideId)
+                || string.IsNullOrEmpty(_ovHomeRowId))
+                return false;
+            var config = _host.GetDisplayConfigV2();
+            if (!FieldLadderMap.TryFindOverride(
+                    config, _catalog, _ovParamId, _ovOverrideId, out var ov)
+                || ov == null
+                || !ov.ActsAsEntrypoint
+                || ov.ActsAsEntrypointIgnored)
+                return false;
+            var rows = config?.Priority?.Rows;
+            if (rows == null)
+                return true;
+            string field = _ovParamId.ToString(CultureInfo.InvariantCulture);
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var child = rows[i]?.ChildRef;
+                if (child != null
+                    && string.Equals(child.Field, field, StringComparison.Ordinal)
+                    && string.Equals(child.OverrideId, _ovOverrideId, StringComparison.Ordinal))
+                    return false;
+            }
+            return true;
         }
 
         private void OverrideCancel_Click(object sender, RoutedEventArgs e)

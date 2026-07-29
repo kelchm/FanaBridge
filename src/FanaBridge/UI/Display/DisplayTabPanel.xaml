@@ -312,6 +312,9 @@
                 <!-- E9 Surface A: Pages & Fields (5c/5d/5g/5p + 8c field filter).
                      Hub-and-spoke from Overview N1 / Priority Q6; ‹ back to Overview. -->
                 <ui:DisplayPagesFieldsV2View x:Name="viewPagesFieldsV2" Visibility="Collapsed" />
+
+                <!-- E9 Surface B: Add-a-page (5h plain door + inert setup porch) -->
+                <ui:DisplayAddPageV2View x:Name="viewAddPageV2" Visibility="Collapsed" />
             </Grid>
 
         </StackPanel>

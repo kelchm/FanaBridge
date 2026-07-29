@@ -234,6 +234,11 @@
                                     Padding="12,6" Background="Transparent"
                                     BorderBrush="#8B3A3A" BorderThickness="1"
                                     Foreground="#E07070" Click="OverrideDelete_Click" />
+                            <Button x:Name="btnOvSplit" DockPanel.Dock="Left"
+                                    Padding="12,6" Margin="8,0,0,0"
+                                    Background="#232325" BorderBrush="#545456"
+                                    BorderThickness="1" Foreground="#9FBDD4"
+                                    Click="OverrideSplit_Click" Visibility="Collapsed" />
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Button x:Name="btnOvCancel" Padding="12,6" Margin="0,0,8,0"
                                         Background="#232325" BorderBrush="#454547"

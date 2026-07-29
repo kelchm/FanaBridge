@@ -125,6 +125,11 @@ namespace FanaBridge.Tests.Display
           ""overrideId"": ""o-1"",
           ""v3Child"": true
         },
+        ""splitOrigin"": {
+          ""rowId"": ""s-1"",
+          ""summonIndex"": 0,
+          ""v3SplitOrigin"": { ""keep"": true }
+        },
         ""lifetime"": { ""kind"": ""forDuration"", ""durationMs"": 1000, ""v3SatLife"": 3 }
       },
       {
@@ -236,6 +241,7 @@ namespace FanaBridge.Tests.Display
             ("priority.rows[0].summons[0].lifetime.v3SumLife", @"[1,2]"),
             ("priority.rows[0].bringUpLifetime.v3BringUp", @"""pin"""),
             ("priority.rows[1].childRef.v3Child", @"true"),
+            ("priority.rows[1].splitOrigin.v3SplitOrigin", @"{""keep"":true}"),
             ("priority.rows[1].lifetime.v3SatLife", @"3"),
             ("priority.rows[2].v3Manual", @"""m"""),
             ("priority.rest.v3Rest", @"1"),
@@ -456,6 +462,39 @@ namespace FanaBridge.Tests.Display
             var ver = saved["schemaVersion"];
             Assert.NotNull(ver);
             Assert.Equal(DisplayConfigV2.CurrentSchemaVersion, (int)ver!);
+        }
+
+        [Fact]
+        public void SplitOrigin_CamelCase_DefaultAndExplicitNullAreAbsent()
+        {
+            var cfg = new DisplayConfigV2();
+            cfg.Priority.Rows.Add(new PriorityRow
+            {
+                Kind = PriorityRowKind.Satellite,
+                Id = "sat",
+                SplitOrigin = new SplitOrigin
+                {
+                    RowId = "seat",
+                    SummonIndex = 0,
+                },
+            });
+            cfg.Priority.Rows.Add(new PriorityRow
+            {
+                Kind = PriorityRowKind.Manual,
+                SplitOrigin = null,
+            });
+
+            var saved = ParseSaved(DisplayConfigV2Serializer.Save(cfg));
+            Assert.Equal("seat", (string?)Select(
+                saved, "priority.rows[0].splitOrigin.rowId"));
+            Assert.Equal(0, (int?)Select(
+                saved, "priority.rows[0].splitOrigin.summonIndex"));
+            Assert.Null(Select(saved, "priority.rows[1].splitOrigin"));
+
+            var explicitNull = ParseSaved(DisplayConfigV2Serializer.Save(Load(
+                @"{""schemaVersion"":2,""priority"":{""rows"":["
+                + @"{""kind"":""manual"",""splitOrigin"":null}]}}")));
+            Assert.Null(Select(explicitNull, "priority.rows[0].splitOrigin"));
         }
 
         [Fact]

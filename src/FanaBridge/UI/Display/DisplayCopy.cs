@@ -36,11 +36,37 @@ namespace FanaBridge.UI.Display
         /// <summary>Not runnable on this wheel / surface.</summary>
         public const string CantRunHere = "CAN'T RUN HERE";
 
+        public static string CantRunHereWithReason(string reason)
+        {
+            return string.IsNullOrWhiteSpace(reason)
+                ? CantRunHere
+                : CantRunHere + " · " + reason;
+        }
+
+        public const string SatelliteReasonAmbiguousChild = "child host is ambiguous";
+        public const string SatelliteReasonTargetIgnored = "stored target is unavailable";
+        public const string SatelliteReasonSummonsIgnored = "summons cannot be used";
+        public const string SatelliteReasonUnavailable = "reference cannot be resolved";
+
+        public static string SplitSummonChoice(string label, bool enabled)
+        {
+            return enabled ? (label ?? string.Empty) : (label ?? string.Empty) + " · " + Off;
+        }
+
         /// <summary>
         /// Playlist step skipped by capability / degrade (read-only view label, P6 rider b).
         /// Wording lives here only — no view spells the skip label inline.
         /// </summary>
         public const string PlaylistStepSkipped = "skipped · can't run here";
+
+        public const string UnavailablePlaylistDestination = "Unavailable destination";
+
+        public const string CurrentProfile = "Current profile";
+        public const string ProfilesManager = "Profiles manager";
+        public const string EditProfile = "Edit profile";
+        public const string CloneProfile = "Clone profile";
+        public const string NewProfile = "New profile";
+        public const string UseThisPlaylist = "Use this playlist";
 
         /// <summary>
         /// Sub-floor duration clamp marker (P2 degrade-visible). Paired with the clamped
@@ -1815,5 +1841,143 @@ namespace FanaBridge.UI.Display
 
         /// <summary>Field base noun (lowercase) — existing FieldBase member covers "base".</summary>
         // FieldBase / BaseBlockLabel exist above.
+
+        // ── Surface B — Add-a-page flow (board 5h) ────────────────────────
+
+        /// <summary>5h breadcrumb leaf.</summary>
+        public const string Add = "Add";
+
+        /// <summary>5h setup column label.</summary>
+        public const string StartFromASetup = "START FROM A SETUP";
+
+        /// <summary>5h setup search placeholder.</summary>
+        public const string SearchSetups = "Search setups";
+
+        /// <summary>5h filter pill: All.</summary>
+        public const string FilterAll = "All";
+
+        /// <summary>5h plain-door column label.</summary>
+        public const string OrAddOneThing = "OR ADD ONE THING";
+
+        /// <summary>5h plain-door note.</summary>
+        public const string NothingCreatedUntilSave = "Nothing is created until you save.";
+
+        /// <summary>5h door card: A page.</summary>
+        public const string DoorAPage = "A page";
+
+        /// <summary>5h door card sub: A page.</summary>
+        public const string DoorAPageSub =
+            "One of this wheel's ITM pages, or a page hosted on Legacy";
+
+        /// <summary>5h door card: An entrypoint.</summary>
+        public const string DoorAnEntrypoint = "An entrypoint";
+
+        /// <summary>5h door card sub: An entrypoint.</summary>
+        public const string DoorAnEntrypointSub =
+            "Starts on the first page; change it in the form";
+
+        /// <summary>5h door card: An override.</summary>
+        public const string DoorAnOverride = "An override";
+
+        /// <summary>5h door card sub: An override.</summary>
+        public const string DoorAnOverrideSub =
+            "Starts on the first page and field; change either in the form";
+
+        /// <summary>5h configure note (setup porch / plain-door priority landing).</summary>
+        public const string PageAddedAtTopOfPriority =
+            "The page will be added at the top of Priority.";
+
+        /// <summary>5h create-page form: kind ITM.</summary>
+        public const string PageKindItm = "ITM page";
+
+        /// <summary>5h create-page form: kind hosted.</summary>
+        public const string PageKindHosted = "Hosted page";
+
+        /// <summary>5h create-page form: name field.</summary>
+        public const string PageNameLabel = "Name";
+
+        /// <summary>5h create-page form: add to rotation toggle.</summary>
+        public const string AddToTheRotation = "Add to the Rotation";
+
+        /// <summary>5h create-page form primary.</summary>
+        public const string CreatePage = "Create page";
+
+        /// <summary>5h create-page: pick ITM page (reuses 5n shell).</summary>
+        public const string ChooseItmPage = "Choose an ITM page…";
+
+        /// <summary>5h setup porch empty list note — manifest family does not exist.</summary>
+        // SpokeArrivingLater("Setups") — D20 / Q12 honesty for the inert setup column.
+
+        // ── Surface C — satellite split (OWNER-WAIVED FIDELITY / D19) ─────
+
+        /// <summary>
+        /// OWNER-WAIVED FIDELITY: undrawn surface. 5b overflow menu item, verbatim.
+        /// </summary>
+        public const string GiveThisEntrypointItsOwnPriority =
+            "Give this entrypoint its own priority";
+
+        /// <summary>
+        /// OWNER-WAIVED FIDELITY: undrawn surface. 5j annotation verb, verbatim.
+        /// </summary>
+        public const string GiveThisLayerItsOwnPriority =
+            "Give this layer its own priority";
+
+        /// <summary>
+        /// OWNER-WAIVED FIDELITY: undrawn surface. Parallel construction for field child.
+        /// </summary>
+        public const string GiveThisOverrideItsOwnPriority =
+            "Give this override its own priority";
+
+        /// <summary>
+        /// OWNER-WAIVED FIDELITY: reference marker in the PAGE cell — ruled › glyph
+        /// reused as a *from* separator (brief §B1 / §C glyph set; no new badge).
+        /// </summary>
+        public const string SplitRowFromMarker = "›";
+
+        /// <summary>
+        /// OWNER-WAIVED FIDELITY / PROVISIONAL: inverse of the split; naming loop.
+        /// </summary>
+        public const string RejoinTheHomeRow = "Rejoin the home row";
+
+        /// <summary>
+        /// OWNER-WAIVED FIDELITY / PROVISIONAL: satellite detail explainer.
+        /// </summary>
+        public const string SplitRowExplainer =
+            "Ranked on its own. It still opens the same page — it just no longer waits behind the other entrypoints on that page.";
+
+        // ── Surface D — playlist read-only card (5o completion) ───────────
+
+        /// <summary>5o header chip on the read-only playlist card.</summary>
+        public const string ReadOnlyChip = "READ-ONLY";
+
+        /// <summary>5o STEPS section label.</summary>
+        public const string StepsLabel = "STEPS";
+
+        /// <summary>5o steps caption: "in order · the last one holds".</summary>
+        public const string StepsInOrderLastHolds = "in order · the last one holds";
+
+        /// <summary>Final step duration cell when terminal is hold.</summary>
+        public const string PlaylistStepHolds = "holds";
+
+        /// <summary>5o provenance: "Created by the {0} setup — re-run it to change the timing or the steps."</summary>
+        public static string CreatedBySetupRerun(string setupName)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Created by the {0} setup — re-run it to change the timing or the steps.",
+                setupName ?? string.Empty);
+        }
+
+        /// <summary>5o footer: "Used by {0} on this profile."</summary>
+        public static string UsedByOnThisProfile(string consumerName)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Used by {0} on this profile.",
+                consumerName ?? string.Empty);
+        }
+
+        /// <summary>5o footer button — disabled this wave (no setup writer).</summary>
+        public const string ReRunTheSetup = "Re-run the setup";
     }
 }

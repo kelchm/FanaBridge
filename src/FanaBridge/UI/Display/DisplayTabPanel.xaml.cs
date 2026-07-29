@@ -39,7 +39,7 @@ namespace FanaBridge.UI.Display
     /// </summary>
     public partial class DisplayTabPanel : UserControl
     {
-        private enum TabView { Overview, Triggers, Pages, Legacy, Diagnostics, Priority, PagesFields }
+        private enum TabView { Overview, Triggers, Pages, Legacy, Diagnostics, Priority, PagesFields, AddPage }
 
         private IDisplayPanelHost _host;
         private IDisplayPropertyCatalog _propertyCatalog;
@@ -174,6 +174,7 @@ namespace FanaBridge.UI.Display
                 { TabView.Diagnostics, viewDiagnostics },
                 { TabView.Priority, viewPriorityV2 },
                 { TabView.PagesFields, viewPagesFieldsV2 },
+                { TabView.AddPage, viewAddPageV2 },
             };
 
             // The Triggers editor is its own control now — bind it to the same host, catalogs,
@@ -254,6 +255,8 @@ namespace FanaBridge.UI.Display
             // Q6: Pages & Fields destination is LIVE — field links route here.
             viewPriorityV2.SetPagesAndFieldsDestinationLive(true);
             viewPriorityV2.PagesAndFieldsRequested += (s, e) => NavigateTo(TabView.PagesFields);
+            // Surface B: + Add a page → 5h.
+            viewPriorityV2.AddPageRequested += (s, e) => NavigateTo(TabView.AddPage);
             viewPriorityV2.ConfigApplied += (s, e) =>
             {
                 _settings = _host.DisplaySettings ?? _settings;
@@ -269,8 +272,29 @@ namespace FanaBridge.UI.Display
                 pickerStore: _pickerStore);
             viewPagesFieldsV2.BackRequested += (s, e) => NavigateTo(TabView.Overview);
             viewPagesFieldsV2.PriorityRequested += (s, e) => NavigateTo(TabView.Priority);
-            // Surface B (Add a page) not live this loop — leave AddPageRequested unwired.
+            // Surface B: strip + Add a page tile → 5h.
+            viewPagesFieldsV2.AddPageRequested += (s, e) => NavigateTo(TabView.AddPage);
             viewPagesFieldsV2.ConfigApplied += (s, e) =>
+            {
+                _settings = _host.DisplaySettings ?? _settings;
+                UpdateModeState();
+            };
+
+            // E9 Surface B: Add-a-page plain door (setup porch inert D20).
+            viewAddPageV2.Bind(_host, catalog: wheelCatalog);
+            viewAddPageV2.BackRequested += (s, e) => NavigateTo(TabView.Overview);
+            viewAddPageV2.PriorityRequested += (s, e) => NavigateTo(TabView.Priority);
+            viewAddPageV2.EntrypointDoorRequested += (s, e) =>
+            {
+                NavigateTo(TabView.Priority);
+                viewPriorityV2.OpenFirstEntrypointFormCore();
+            };
+            viewAddPageV2.OverrideDoorRequested += (s, e) =>
+            {
+                NavigateTo(TabView.PagesFields);
+                viewPagesFieldsV2.OpenFirstOverrideFormCore();
+            };
+            viewAddPageV2.ConfigApplied += (s, e) =>
             {
                 _settings = _host.DisplaySettings ?? _settings;
                 UpdateModeState();
@@ -561,6 +585,10 @@ namespace FanaBridge.UI.Display
             if (view == TabView.PagesFields && _host != null)
                 viewPagesFieldsV2.Poll(force: true);
 
+            // E9 Surface B Add-a-page: force a fresh projection on entry.
+            if (view == TabView.AddPage && _host != null)
+                viewAddPageV2.Poll(force: true);
+
             // The DISPLAY MODE header belongs to the hub — it shows on Overview (ITM) and
             // whenever control is Off, never inside an editor unless Off keeps it up.
             RefreshModeHeader();
@@ -714,7 +742,8 @@ namespace FanaBridge.UI.Display
             if (DisplayShellRouting.LeaveDiagnosticsAfterV2Removed(
                     _currentView == TabView.Diagnostics, v2Live)
                 || (_currentView == TabView.Priority && !v2Live)
-                || (_currentView == TabView.PagesFields && !v2Live))
+                || (_currentView == TabView.PagesFields && !v2Live)
+                || (_currentView == TabView.AddPage && !v2Live))
             {
                 NavigateTo(TabView.Overview);
                 RestoreV1OverviewSurface();
@@ -727,11 +756,12 @@ namespace FanaBridge.UI.Display
             bool diagnosticsV2 = _currentView == TabView.Diagnostics && v2Live;
             bool priorityV2 = _currentView == TabView.Priority && v2Live;
             bool pagesFieldsV2 = _currentView == TabView.PagesFields && v2Live;
+            bool addPageV2 = _currentView == TabView.AddPage && v2Live;
             bool editorActive = _currentView == TabView.Triggers
                 || _currentView == TabView.Pages
                 || _currentView == TabView.Legacy;
             if (!itmLive && !legacyLive && !editorActive && !overviewV2 && !diagnosticsV2
-                && !priorityV2 && !pagesFieldsV2)
+                && !priorityV2 && !pagesFieldsV2 && !addPageV2)
                 return;
 
             // ONE volatile read — the envelope; the parts gate their own re-renders
@@ -762,6 +792,9 @@ namespace FanaBridge.UI.Display
             // E9 Surface A Pages & Fields: same envelope poll gate.
             if (pagesFieldsV2 && (force || composedChanged || statusChanged || valuesChanged))
                 viewPagesFieldsV2.Poll(force: force);
+            // E9 Surface B Add-a-page: same envelope poll gate.
+            if (addPageV2 && (force || composedChanged || statusChanged || valuesChanged))
+                viewAddPageV2.Poll(force: force);
             // Re-evaluate v2 surface if the document appeared/disappeared mid-session.
             if (force || composedChanged || snapshotChanged)
                 ApplyOverviewDocumentSurface();

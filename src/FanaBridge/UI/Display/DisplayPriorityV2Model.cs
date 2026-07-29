@@ -34,6 +34,10 @@ namespace FanaBridge.UI.Display
             new ReadOnlyCollection<PriorityChildRowModel>(
                 Array.Empty<PriorityChildRowModel>());
 
+        private static readonly IReadOnlyList<PrioritySplitSummonModel> NoSplitSummons =
+            new ReadOnlyCollection<PrioritySplitSummonModel>(
+                Array.Empty<PrioritySplitSummonModel>());
+
         private static readonly IReadOnlyList<PriorityPickerItemModel> NoPickerItems =
             new ReadOnlyCollection<PriorityPickerItemModel>(
                 Array.Empty<PriorityPickerItemModel>());
@@ -120,9 +124,9 @@ namespace FanaBridge.UI.Display
                 modeOffEmptyState: modeOff ? DisplayCopy.ModeOffEmptyState : null,
                 ladderHeader: DisplayCopy.LadderHeaderCount(rankedCount),
                 ladderSubtitle: ladderSubtitle,
-                // Q12: Add flow blocked → disabled with SpokeArrivingLater.
-                addPageEnabled: false,
-                addPageTooltip: DisplayCopy.SpokeArrivingLater(DisplayCopy.AddAPage.TrimStart('+', ' ')),
+                // Surface B: plain door live — + Add a page routes to 5h.
+                addPageEnabled: true,
+                addPageTooltip: null,
                 pageColWidth: pageColWidth,
                 statusColWidth: statusColWidth,
                 showKindBadges: showKindBadges,
@@ -205,7 +209,7 @@ namespace FanaBridge.UI.Display
         public string LadderHeader { get; }
         public string LadderSubtitle { get; }
 
-        /// <summary>Q12: false this phase; tooltip is SpokeArrivingLater.</summary>
+        /// <summary>Surface B: true — routes to the Add-a-page flow (5h).</summary>
         public bool AddPageEnabled { get; }
         public string AddPageTooltip { get; }
 
@@ -291,7 +295,10 @@ namespace FanaBridge.UI.Display
                 var row = rows[i];
                 if (row == null) continue;
                 rank++;
-                bool expanded = expandedRowIds != null
+                // OWNER-WAIVED FIDELITY (Surface C / D19): satellites do not expand —
+                // single child already stated in the detail cell; disclosure slot empty.
+                bool expanded = row.Kind != PriorityRowKind.Satellite
+                    && expandedRowIds != null
                     && !string.IsNullOrEmpty(row.Id)
                     && expandedRowIds.Contains(row.Id);
                 // Manual has no stable id — expand via kind key.
@@ -359,7 +366,18 @@ namespace FanaBridge.UI.Display
                 ? DisplayCopy.NoWheel
                 : ResolveStatus(carrier, isWinner, isOff, provisionalCantRun);
 
+            // OWNER-WAIVED FIDELITY (Surface C): ChildRef satellites resolve host page
+            // from the child; summons satellites keep Target (same page as home).
             var dest = ResolveDestination(row, config, catalog, showKindBadges);
+            string referenceName = null;
+            if (row.Kind == PriorityRowKind.Satellite)
+            {
+                referenceName = ResolveSatelliteReferenceName(row, config, catalog, aliases);
+                // ChildRef with no stored target: dest may be empty — fill from child host.
+                if (string.IsNullOrEmpty(dest.Name) && row.ChildRef != null)
+                    dest = ResolveChildRefHostDestination(row.ChildRef, config, catalog, showKindBadges);
+            }
+
             bool hasAggregate = row.Kind == PriorityRowKind.Seat
                 && !string.IsNullOrEmpty(row.Id)
                 && aggregates.TryGetValue(row.Id, out var _)
@@ -369,6 +387,8 @@ namespace FanaBridge.UI.Display
                 row, config, aliases, carriers, aggregates, allCarriers,
                 manual, nextMapped, prevMapped, expanded, hasAggregate, catalog,
                 ref cycleMentioned);
+            if (row.Kind == PriorityRowKind.Satellite && row.ChildRef != null)
+                detail = ResolveChildRefDetail(row.ChildRef, config, catalog, aliases);
 
             // Lifetime tail is already composed into detail for condition rows.
             var entrypoints = expanded && row.Kind == PriorityRowKind.Seat
@@ -394,13 +414,32 @@ namespace FanaBridge.UI.Display
                     rememberedManualSeconds);
             }
 
-            // Seat menu items (Q3: seats only this phase; Manual/base/idle glyph inert).
+            // Seat + satellite menus (Q3 / Surface C). Manual/base/idle glyph inert.
             bool showMenu = row.Kind == PriorityRowKind.Seat
                 || row.Kind == PriorityRowKind.Satellite;
 
             string primarySummonId = FirstEnabledSummonId(row);
             bool primaryEnabled = primarySummonId != null
                 && IsSummonEnabled(row, primarySummonId);
+
+            var splitSummons = BuildSplitSummons(row, aliases);
+            // OWNER-WAIVED FIDELITY C-O2: authored count includes disabled summons.
+            bool canSplit = row.Kind == PriorityRowKind.Seat
+                && splitSummons.Count >= 2;
+            // OWNER-WAIVED FIDELITY: rejoin only on satellites.
+            bool canRejoin = row.Kind == PriorityRowKind.Satellite;
+
+            // Degrade-visible: ChildRefAmbiguous / TargetIgnored / SummonsIgnored →
+            // CantRunHere in status (honesty set §B8).
+            if (row.Kind == PriorityRowKind.Satellite
+                && (row.ChildRefAmbiguous || row.TargetIgnored || row.SummonsIgnored
+                    || row.DegradedAtLoad)
+                && !disconnected)
+            {
+                status = DisplayCopy.CantRunHereWithReason(
+                    ResolveSatelliteDegradedReason(row));
+                state = PriorityRowState.Off;
+            }
 
             return new PriorityRowModel(
                 rowId: row.Id ?? (row.Kind == PriorityRowKind.Manual
@@ -416,7 +455,8 @@ namespace FanaBridge.UI.Display
                 isPinned: false,
                 showGrip: true,
                 isExpanded: expanded,
-                showDisclosure: expanded,
+                // OWNER-WAIVED FIDELITY: satellites never show disclosure.
+                showDisclosure: expanded && row.Kind != PriorityRowKind.Satellite,
                 isMaterialized: row.MaterializedAtLoad,
                 target: row.Target,
                 entrypoints: entrypoints,
@@ -429,7 +469,12 @@ namespace FanaBridge.UI.Display
                 primarySummonId: primarySummonId,
                 primarySummonEnabled: primaryEnabled,
                 returnToRestAfterMs: row.ReturnToRestAfterMs,
-                pageName: dest.Name);
+                pageName: dest.Name,
+                // OWNER-WAIVED FIDELITY: reference marker › + child/summon name.
+                splitReferenceName: referenceName,
+                splitSummons: splitSummons,
+                canSplitEntrypoint: canSplit,
+                canRejoinHome: canRejoin);
         }
 
         private static PriorityRowModel ProjectBaseRow(
@@ -1879,9 +1924,9 @@ namespace FanaBridge.UI.Display
             for (int i = 0; i < pl.Steps.Count; i++)
             {
                 var step = pl.Steps[i];
-                if (step?.Destination == null) continue;
-                string name = StepDestinationName(step.Destination, null, catalog);
-                bool skipped = step.DegradedAtLoad
+                string name = StepDestinationName(step?.Destination, null, catalog);
+                bool skipped = step?.Destination == null
+                    || step.DegradedAtLoad
                     || step.Destination.DegradedAtLoad
                     || StepCapabilitySkipped(step.Destination, catalog);
                 if (skipped)
@@ -1916,7 +1961,7 @@ namespace FanaBridge.UI.Display
         private static string StepDestinationName(
             IdleSpec dest, DisplayConfigV2 config, WheelCatalog catalog)
         {
-            if (dest == null) return string.Empty;
+            if (dest == null) return DisplayCopy.UnavailablePlaylistDestination;
             switch (dest.Kind)
             {
                 case IdleKind.Blank:
@@ -1931,6 +1976,330 @@ namespace FanaBridge.UI.Display
                 default:
                     return dest.KindRaw ?? string.Empty;
             }
+        }
+
+        // ── Surface C helpers (OWNER-WAIVED FIDELITY) ────────────────────
+
+        private static IReadOnlyList<PrioritySplitSummonModel> BuildSplitSummons(
+            PriorityRow row, AliasTable aliases)
+        {
+            if (row?.Summons == null || row.Kind != PriorityRowKind.Seat)
+                return NoSplitSummons;
+            var choices = new List<PrioritySplitSummonModel>();
+            for (int i = 0; i < row.Summons.Count; i++)
+            {
+                var summon = row.Summons[i];
+                if (summon == null || string.IsNullOrEmpty(summon.Id))
+                    continue;
+                string label = !string.IsNullOrWhiteSpace(summon.Name)
+                    ? summon.Name
+                    : ConditionSentence.From(summon.Condition, summon.Lifetime, aliases);
+                if (string.IsNullOrWhiteSpace(label))
+                    label = summon.Id;
+                choices.Add(new PrioritySplitSummonModel(
+                    summon.Id, label, summon.EffectivelyEnabled));
+            }
+            return choices.Count == 0
+                ? NoSplitSummons
+                : new ReadOnlyCollection<PrioritySplitSummonModel>(choices);
+        }
+
+        /// <summary>
+        /// OWNER-WAIVED FIDELITY: name after the › marker — summon name/sentence, or
+        /// the child's own name (5j: "names the layer it came from").
+        /// </summary>
+        private static string ResolveSatelliteReferenceName(
+            PriorityRow row,
+            DisplayConfigV2 config,
+            WheelCatalog catalog,
+            AliasTable aliases)
+        {
+            if (row == null)
+                return null;
+
+            if (row.ChildRef != null)
+            {
+                if (!string.IsNullOrEmpty(row.ChildRef.Field)
+                    && !string.IsNullOrEmpty(row.ChildRef.OverrideId))
+                {
+                    if (FieldLadderMap.TryFindOverride(
+                            config, catalog, ParseParamId(row.ChildRef.Field),
+                            row.ChildRef.OverrideId, out var ov)
+                        && ov != null)
+                    {
+                        return ResolveFieldName(
+                            catalog, ParseParamId(row.ChildRef.Field), row.ChildRef.OverrideId);
+                    }
+                    return row.ChildRef.OverrideId;
+                }
+
+                if (!string.IsNullOrEmpty(row.ChildRef.PageId)
+                    && !string.IsNullOrEmpty(row.ChildRef.LayerId)
+                    && config?.Pages != null)
+                {
+                    for (int i = 0; i < config.Pages.Count; i++)
+                    {
+                        var p = config.Pages[i];
+                        if (p == null || p.Layers == null
+                            || !string.Equals(p.Id, row.ChildRef.PageId, StringComparison.Ordinal))
+                            continue;
+                        for (int l = 0; l < p.Layers.Count; l++)
+                        {
+                            var layer = p.Layers[l];
+                            if (layer != null
+                                && string.Equals(
+                                    layer.Id, row.ChildRef.LayerId, StringComparison.Ordinal))
+                            {
+                                return !string.IsNullOrWhiteSpace(layer.Name)
+                                    ? layer.Name
+                                    : layer.Id;
+                            }
+                        }
+                    }
+                    return row.ChildRef.LayerId;
+                }
+            }
+
+            // Summons-satellite: first effectively-enabled summon name/sentence.
+            if (row.Summons != null)
+            {
+                for (int i = 0; i < row.Summons.Count; i++)
+                {
+                    var s = row.Summons[i];
+                    if (s == null || !s.EffectivelyEnabled)
+                        continue;
+                    if (!string.IsNullOrWhiteSpace(s.Name))
+                        return s.Name;
+                    string sentence = ConditionSentence.From(s.Condition, s.Lifetime, aliases);
+                    if (!string.IsNullOrEmpty(sentence))
+                        return sentence;
+                    return s.Id;
+                }
+            }
+
+            return null;
+        }
+
+        private static string ResolveChildRefDetail(
+            ChildRef childRef,
+            DisplayConfigV2 config,
+            WheelCatalog catalog,
+            AliasTable aliases)
+        {
+            if (childRef == null)
+                return string.Empty;
+            if (!string.IsNullOrEmpty(childRef.Field)
+                && !string.IsNullOrEmpty(childRef.OverrideId)
+                && FieldLadderMap.TryFindOverride(
+                    config, catalog, ParseParamId(childRef.Field),
+                    childRef.OverrideId, out var ov)
+                && ov != null)
+            {
+                string sentence = ConditionSentence.From(ov.Condition, ov.Lifetime, aliases);
+                return (sentence ?? string.Empty) + LifetimeSuffix(ov.Lifetime);
+            }
+            if (!string.IsNullOrEmpty(childRef.PageId)
+                && !string.IsNullOrEmpty(childRef.LayerId)
+                && config?.Pages != null)
+            {
+                for (int p = 0; p < config.Pages.Count; p++)
+                {
+                    var page = config.Pages[p];
+                    if (page?.Layers == null
+                        || !string.Equals(page.Id, childRef.PageId, StringComparison.Ordinal))
+                        continue;
+                    for (int l = 0; l < page.Layers.Count; l++)
+                    {
+                        var layer = page.Layers[l];
+                        if (layer == null
+                            || !string.Equals(layer.Id, childRef.LayerId, StringComparison.Ordinal))
+                            continue;
+                        string sentence = ConditionSentence.From(
+                            layer.Condition, layer.Lifetime, aliases);
+                        return (sentence ?? string.Empty) + LifetimeSuffix(layer.Lifetime);
+                    }
+                }
+            }
+            return string.Empty;
+        }
+
+        private static string ResolveFieldName(
+            WheelCatalog catalog, ushort paramId, string fallback)
+        {
+            var fields = catalog?.Itm?.Fields;
+            if (fields != null)
+            {
+                for (int i = 0; i < fields.Count; i++)
+                {
+                    var field = fields[i];
+                    if (field == null || field.ParamId != paramId)
+                        continue;
+                    if (!string.IsNullOrWhiteSpace(field.DisplayLabel))
+                        return field.DisplayLabel;
+                    if (!string.IsNullOrWhiteSpace(field.ShortCode))
+                        return field.ShortCode;
+                    if (!string.IsNullOrWhiteSpace(field.FirmwareLabel))
+                        return field.FirmwareLabel;
+                    if (!string.IsNullOrWhiteSpace(field.Id))
+                        return field.Id;
+                }
+            }
+            return fallback;
+        }
+
+        private static string ResolveSatelliteDegradedReason(PriorityRow row)
+        {
+            if (row == null)
+                return DisplayCopy.SatelliteReasonUnavailable;
+            if (row.ChildRefAmbiguous)
+                return DisplayCopy.SatelliteReasonAmbiguousChild;
+            if (row.TargetIgnored)
+                return DisplayCopy.SatelliteReasonTargetIgnored;
+            if (row.SummonsIgnored)
+                return DisplayCopy.SatelliteReasonSummonsIgnored;
+            return DisplayCopy.SatelliteReasonUnavailable;
+        }
+
+        private static ushort ParseParamId(string field)
+        {
+            if (ushort.TryParse(field, NumberStyles.Integer, CultureInfo.InvariantCulture, out ushort id))
+                return id;
+            return 0;
+        }
+
+        private static PriorityDestinationModel ResolveChildRefHostDestination(
+            ChildRef childRef,
+            DisplayConfigV2 config,
+            WheelCatalog catalog,
+            bool showKindBadges)
+        {
+            if (childRef == null)
+                return new PriorityDestinationModel(NoBadges, string.Empty, false, false, false);
+
+            if (!string.IsNullOrEmpty(childRef.PageId))
+            {
+                return ResolvePageRefDestination(
+                    new PageRef { Kind = PageRefKind.HostedPage, Id = childRef.PageId },
+                    config, catalog, showKindBadges);
+            }
+
+            // Field child: host page from catalog placement of the param (first host).
+            if (!string.IsNullOrEmpty(childRef.Field) && catalog != null)
+            {
+                ushort paramId = ParseParamId(childRef.Field);
+                string logical = CatalogFields.LogicalIdForParam(catalog, paramId);
+                if (!string.IsNullOrEmpty(logical))
+                {
+                    var hosts = CatalogFields.HostPageIds(catalog, logical);
+                    if (hosts != null && hosts.Count > 0)
+                    {
+                        return ResolvePageRefDestination(
+                            new PageRef
+                            {
+                                Kind = PageRefKind.ItmPage,
+                                CatalogPageId = hosts[0],
+                            },
+                            config, catalog, showKindBadges);
+                    }
+                }
+            }
+
+            return new PriorityDestinationModel(NoBadges, string.Empty, false, false, false);
+        }
+
+        // ── Surface D: playlist read-only card ───────────────────────────
+
+        /// <summary>
+        /// Project the 5o read-only playlist card for a document playlist (picker expanded
+        /// detail). Null when the playlist id is missing.
+        /// </summary>
+        public static PlaylistReadOnlyCardModel ProjectPlaylistCard(
+            DisplayConfigV2 config,
+            string playlistId,
+            WheelCatalog catalog = null)
+        {
+            if (config?.Playlists == null || string.IsNullOrEmpty(playlistId))
+                return null;
+
+            PlaylistEntry pl = null;
+            for (int i = 0; i < config.Playlists.Count; i++)
+            {
+                var p = config.Playlists[i];
+                if (p != null && string.Equals(p.Id, playlistId, StringComparison.Ordinal))
+                {
+                    pl = p;
+                    break;
+                }
+            }
+            if (pl == null)
+                return null;
+
+            string name = !string.IsNullOrEmpty(pl.Name)
+                ? pl.Name
+                : GeneratedPlaylistName(pl, config, catalog);
+
+            var steps = new List<PlaylistCardStepModel>();
+            if (pl.Steps != null)
+            {
+                for (int i = 0; i < pl.Steps.Count; i++)
+                {
+                    var step = pl.Steps[i];
+                    string destName = StepDestinationName(step?.Destination, config, catalog);
+                    bool isLast = i == pl.Steps.Count - 1;
+                    bool holds = isLast
+                        && (pl.Terminal == PlaylistTerminal.Hold
+                            || pl.Terminal == PlaylistTerminal.Unknown);
+                    bool skipped = step?.Destination == null
+                        || step.DegradedAtLoad
+                        || step.Destination.DegradedAtLoad
+                        || StepCapabilitySkipped(step.Destination, catalog);
+
+                    string duration;
+                    if (skipped)
+                        duration = DisplayCopy.PlaylistStepSkipped;
+                    else if (holds && !step.DurationMsPresent)
+                        duration = DisplayCopy.PlaylistStepHolds;
+                    else if (step.DurationMsPresent)
+                        duration = DisplayCopy.PlaylistStepDurationLabel(step)
+                            ?? DisplayCopy.PlaylistStepDuration(step.DurationMs);
+                    else
+                        duration = DisplayCopy.PlaylistStepHolds;
+
+                    steps.Add(new PlaylistCardStepModel(
+                        numeral: (i + 1).ToString(CultureInfo.InvariantCulture),
+                        destinationName: destName,
+                        durationLabel: duration,
+                        isLast: isLast,
+                        isSkipped: skipped));
+                }
+            }
+
+            // The schema has no setup identity. Do not invent one from playlist data.
+            string provenance = null;
+
+            // Consumer: idle row when rest.idle targets this playlist.
+            string consumer = DisplayCopy.OutsideASession;
+            bool usedByIdle = config.Priority?.Rest?.Idle != null
+                && config.Priority.Rest.Idle.Kind == IdleKind.Playlist
+                && string.Equals(
+                    config.Priority.Rest.Idle.Playlist, playlistId, StringComparison.Ordinal);
+            string usedBy = usedByIdle
+                ? DisplayCopy.UsedByOnThisProfile(consumer)
+                : null;
+
+            return new PlaylistReadOnlyCardModel(
+                badge: DisplayCopy.PlaylistBadge,
+                name: name,
+                readOnlyChip: DisplayCopy.ReadOnlyChip,
+                stepsLabel: DisplayCopy.StepsLabel,
+                stepsCaption: DisplayCopy.StepsInOrderLastHolds,
+                steps: new ReadOnlyCollection<PlaylistCardStepModel>(steps),
+                provenance: provenance,
+                usedByLine: usedBy,
+                reRunLabel: DisplayCopy.ReRunTheSetup,
+                // No setup writer — disabled with SpokeArrivingLater (phase-1 precedent).
+                reRunEnabled: false,
+                reRunTooltip: DisplayCopy.SpokeArrivingLater("Setups"));
         }
     }
 
@@ -1990,7 +2359,11 @@ namespace FanaBridge.UI.Display
             bool isIdleRow = false,
             string idleTargetLabel = null,
             string idleTrailingNote = null,
-            bool showPlaylistBadge = false)
+            bool showPlaylistBadge = false,
+            string splitReferenceName = null,
+            IReadOnlyList<PrioritySplitSummonModel> splitSummons = null,
+            bool canSplitEntrypoint = false,
+            bool canRejoinHome = false)
         {
             RowId = rowId;
             RankText = rankText ?? string.Empty;
@@ -2027,6 +2400,12 @@ namespace FanaBridge.UI.Display
             IdleTargetLabel = idleTargetLabel;
             IdleTrailingNote = idleTrailingNote;
             ShowPlaylistBadge = showPlaylistBadge;
+            // OWNER-WAIVED FIDELITY (Surface C / D19).
+            SplitReferenceName = splitReferenceName;
+            SplitSummons = splitSummons ?? new ReadOnlyCollection<PrioritySplitSummonModel>(
+                Array.Empty<PrioritySplitSummonModel>());
+            CanSplitEntrypoint = canSplitEntrypoint;
+            CanRejoinHome = canRejoinHome;
         }
 
         public string RowId { get; }
@@ -2062,8 +2441,25 @@ namespace FanaBridge.UI.Display
         public string IdleTrailingNote { get; }
         public bool ShowPlaylistBadge { get; }
 
+        /// <summary>
+        /// OWNER-WAIVED FIDELITY: child/summon name after the › reference marker in the
+        /// PAGE cell. Null when not a satellite.
+        /// </summary>
+        public string SplitReferenceName { get; }
+
+        /// <summary>Every authored summon that can be selected for splitting.</summary>
+        public IReadOnlyList<PrioritySplitSummonModel> SplitSummons { get; }
+
+        /// <summary>OWNER-WAIVED FIDELITY: seat with 2+ summons may split.</summary>
+        public bool CanSplitEntrypoint { get; }
+
+        /// <summary>OWNER-WAIVED FIDELITY: satellite may rejoin the home row.</summary>
+        public bool CanRejoinHome { get; }
+
         public bool IsManual => Kind == PriorityRowKind.Manual;
         public bool IsSeat => Kind == PriorityRowKind.Seat || Kind == PriorityRowKind.Satellite;
+        /// <summary>OWNER-WAIVED FIDELITY: true only for Kind = Satellite.</summary>
+        public bool IsSatellite => Kind == PriorityRowKind.Satellite;
 
         public bool IsOutlinedStatusChip
             => string.Equals(StatusCopy, DisplayCopy.Off, StringComparison.Ordinal);
@@ -2076,6 +2472,20 @@ namespace FanaBridge.UI.Display
                    || ShowBaseBlock
                    || ManualOptions != null
                    || IsSeat);
+    }
+
+    public sealed class PrioritySplitSummonModel
+    {
+        public PrioritySplitSummonModel(string summonId, string label, bool isEnabled)
+        {
+            SummonId = summonId;
+            Label = label ?? string.Empty;
+            IsEnabled = isEnabled;
+        }
+
+        public string SummonId { get; }
+        public string Label { get; }
+        public bool IsEnabled { get; }
     }
 
     public sealed class PriorityDestinationModel
@@ -2245,5 +2655,73 @@ namespace FanaBridge.UI.Display
         public WheelScreenCommand Screen { get; }
         /// <summary>Playlist id when <see cref="IdleKind"/> is <see cref="IdleKind.Playlist"/>.</summary>
         public string PlaylistId { get; }
+    }
+
+    /// <summary>
+    /// Surface D: 5o read-only playlist card (expanded PLAYLISTS picker row).
+    /// </summary>
+    public sealed class PlaylistReadOnlyCardModel
+    {
+        public PlaylistReadOnlyCardModel(
+            string badge,
+            string name,
+            string readOnlyChip,
+            string stepsLabel,
+            string stepsCaption,
+            IReadOnlyList<PlaylistCardStepModel> steps,
+            string provenance,
+            string usedByLine,
+            string reRunLabel,
+            bool reRunEnabled,
+            string reRunTooltip)
+        {
+            Badge = badge ?? string.Empty;
+            Name = name ?? string.Empty;
+            ReadOnlyChip = readOnlyChip ?? string.Empty;
+            StepsLabel = stepsLabel ?? string.Empty;
+            StepsCaption = stepsCaption ?? string.Empty;
+            Steps = steps ?? new ReadOnlyCollection<PlaylistCardStepModel>(
+                Array.Empty<PlaylistCardStepModel>());
+            Provenance = provenance;
+            UsedByLine = usedByLine;
+            ReRunLabel = reRunLabel ?? string.Empty;
+            ReRunEnabled = reRunEnabled;
+            ReRunTooltip = reRunTooltip;
+        }
+
+        public string Badge { get; }
+        public string Name { get; }
+        public string ReadOnlyChip { get; }
+        public string StepsLabel { get; }
+        public string StepsCaption { get; }
+        public IReadOnlyList<PlaylistCardStepModel> Steps { get; }
+        public string Provenance { get; }
+        public string UsedByLine { get; }
+        public string ReRunLabel { get; }
+        public bool ReRunEnabled { get; }
+        public string ReRunTooltip { get; }
+    }
+
+    public sealed class PlaylistCardStepModel
+    {
+        public PlaylistCardStepModel(
+            string numeral,
+            string destinationName,
+            string durationLabel,
+            bool isLast,
+            bool isSkipped)
+        {
+            Numeral = numeral ?? string.Empty;
+            DestinationName = destinationName ?? string.Empty;
+            DurationLabel = durationLabel ?? string.Empty;
+            IsLast = isLast;
+            IsSkipped = isSkipped;
+        }
+
+        public string Numeral { get; }
+        public string DestinationName { get; }
+        public string DurationLabel { get; }
+        public bool IsLast { get; }
+        public bool IsSkipped { get; }
     }
 }

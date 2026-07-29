@@ -421,6 +421,40 @@ namespace FanaBridge.Tests.UI.Display
             });
         }
 
+        [Fact]
+        public void PlainDoor_OpensRealOverrideCreateFlow()
+        {
+            OnSta(() =>
+            {
+                var host = new FakeHost { Live = MinimalDoc() };
+                var view = new DisplayPagesFieldsV2View();
+                view.Bind(host, catalog: TinyCatalog());
+
+                Assert.True(view.OpenFirstOverrideFormCore());
+            });
+        }
+
+        [Fact]
+        public void OverrideFooter_SplitCore_WritesChildRefSatellite()
+        {
+            OnSta(() =>
+            {
+                var host = new FakeHost { Live = EntrypointDoc(bringUpMs: 2500) };
+                var view = new DisplayPagesFieldsV2View();
+                view.Bind(host, catalog: TinyCatalog());
+
+                Assert.True(view.OpenOverrideFormCore(10, "ov-ep", isNew: false));
+                Assert.Equal(DisplayCopy.GiveThisOverrideItsOwnPriority,
+                    view.btnOvSplit.Content);
+                Assert.True(view.SplitCurrentOverrideCore());
+
+                var satellite = Assert.Single(host.Live.Priority.Rows,
+                    r => r.Kind == PriorityRowKind.Satellite);
+                Assert.Equal("10", satellite.ChildRef.Field);
+                Assert.Equal("ov-ep", satellite.ChildRef.OverrideId);
+            });
+        }
+
         // ── Fixtures ─────────────────────────────────────────────────────
 
         private static DisplayConfigV2 MinimalDoc()

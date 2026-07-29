@@ -37,6 +37,7 @@ namespace FanaBridge.UI.Display
         private readonly SevenSegmentFace _previewFace = new SevenSegmentFace();
         private string _pickerMode; // "idle" | "base"
         private PriorityPickerModel _activePicker;
+        private PriorityPickerItemModel _expandedPlaylistItem;
         private string _epRowId;
         private string _epSummonId;
         private bool _epIsNew;
@@ -69,6 +70,9 @@ namespace FanaBridge.UI.Display
         /// <see cref="SetPagesAndFieldsDestinationLive"/>.
         /// </summary>
         public event EventHandler PagesAndFieldsRequested;
+
+        /// <summary>Surface B: + Add a page → 5h flow.</summary>
+        public event EventHandler AddPageRequested;
 
         /// <summary>
         /// Host declares whether Pages &amp; Fields navigation is live. When false
@@ -484,6 +488,26 @@ namespace FanaBridge.UI.Display
                 Foreground = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0)),
                 VerticalAlignment = VerticalAlignment.Center,
             });
+            // OWNER-WAIVED FIDELITY (Surface C / D19): › reference marker + child name.
+            if (row.IsSatellite && !string.IsNullOrEmpty(row.SplitReferenceName))
+            {
+                pagePanel.Children.Add(new TextBlock
+                {
+                    Text = DisplayCopy.SplitRowFromMarker,
+                    FontSize = 12.5,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0x7A, 0x7A, 0x7A)),
+                    Margin = new Thickness(6, 0, 4, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+                pagePanel.Children.Add(new TextBlock
+                {
+                    Text = row.SplitReferenceName,
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xB4, 0xC4)),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                });
+            }
             Grid.SetColumn(pagePanel, 2);
             grid.Children.Add(pagePanel);
 
@@ -1084,6 +1108,23 @@ namespace FanaBridge.UI.Display
             if (!row.IsSeat)
                 return;
 
+            // OWNER-WAIVED FIDELITY (Surface C / D19): satellite menu is rejoin-only.
+            if (row.IsSatellite)
+            {
+                var rejoin = new MenuItem
+                {
+                    Header = DisplayCopy.RejoinTheHomeRow,
+                    IsEnabled = row.CanRejoinHome,
+                };
+                string satId = row.RowId;
+                rejoin.Click += (s, e) =>
+                    ApplyEdit(session => session.MergeSatellite(satId));
+                menu.Items.Add(rejoin);
+                menu.PlacementTarget = anchor;
+                menu.IsOpen = true;
+                return;
+            }
+
             // Q6 / N1: overflow fields item follows the same destination-live rule as
             // section links and layer rows — never a dead handler while undestined.
             var editFields = new MenuItem { Header = DisplayCopy.EditThisPagesFields };
@@ -1103,7 +1144,29 @@ namespace FanaBridge.UI.Display
             addEp.Click += (s, e) => OpenEntrypointForm(row, null, isNew: true);
             menu.Items.Add(addEp);
 
-            // Q5: split item OMITTED this phase (blocked undrawn).
+            // OWNER-WAIVED FIDELITY (Surface C / D19 / C-O2): split when 2+ summons.
+            if (row.CanSplitEntrypoint && row.SplitSummons.Count >= 2)
+            {
+                var split = new MenuItem
+                {
+                    Header = DisplayCopy.GiveThisEntrypointItsOwnPriority,
+                };
+                string splitRowId = row.RowId;
+                for (int i = 0; i < row.SplitSummons.Count; i++)
+                {
+                    var choice = row.SplitSummons[i];
+                    var splitChoice = new MenuItem
+                    {
+                        Header = DisplayCopy.SplitSummonChoice(
+                            choice.Label, choice.IsEnabled),
+                    };
+                    string splitSummonId = choice.SummonId;
+                    splitChoice.Click += (s, e) =>
+                        SplitSummonCore(splitRowId, splitSummonId);
+                    split.Items.Add(splitChoice);
+                }
+                menu.Items.Add(split);
+            }
 
             if (!string.IsNullOrEmpty(row.PrimarySummonId))
             {
@@ -1155,6 +1218,12 @@ namespace FanaBridge.UI.Display
             menu.IsOpen = true;
         }
 
+        /// <summary>Split the specifically chosen authored summon through the edit session.</summary>
+        internal void SplitSummonCore(string rowId, string summonId)
+        {
+            ApplyEdit(session => session.SplitSatellite(rowId, summonId));
+        }
+
         private void OpenPicker(string mode, PriorityPickerModel picker)
         {
             if (picker == null) return;
@@ -1170,8 +1239,174 @@ namespace FanaBridge.UI.Display
             txtPickerFooter.Text = picker.Footer ?? string.Empty;
             txtPickerFooter.Visibility = string.IsNullOrEmpty(picker.Footer)
                 ? Visibility.Collapsed : Visibility.Visible;
+            _expandedPlaylistItem = null;
+            panelPlaylistCard.Visibility = Visibility.Collapsed;
+            panelPlaylistCardBody.Children.Clear();
             ApplyPickerFilter(string.Empty);
             popupPicker.IsOpen = true;
+        }
+
+        /// <summary>STA test/host seam for the production idle picker bring-up.</summary>
+        internal bool OpenIdlePickerCore()
+        {
+            if (_model?.IdlePicker == null)
+                return false;
+            OpenPicker("idle", _model.IdlePicker);
+            return true;
+        }
+
+        internal PriorityPickerModel ActivePickerForTest => _activePicker;
+        internal bool PlaylistInspectionExpandedForTest => _expandedPlaylistItem != null;
+
+        private void RenderPlaylistCard(string playlistId)
+        {
+            if (panelPlaylistCard == null || panelPlaylistCardBody == null)
+                return;
+
+            var card = DisplayPriorityV2Model.ProjectPlaylistCard(
+                _host?.GetDisplayConfigV2(), playlistId, _catalog);
+            if (card == null)
+            {
+                panelPlaylistCard.Visibility = Visibility.Collapsed;
+                panelPlaylistCardBody.Children.Clear();
+                return;
+            }
+
+            panelPlaylistCardBody.Children.Clear();
+
+            // Header: PLAYLIST badge + name + READ-ONLY chip
+            var header = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            var chip = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x6A, 0x6A, 0x6C)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(4, 1, 4, 1),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Child = new TextBlock
+                {
+                    Text = card.ReadOnlyChip,
+                    FontSize = 10,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0xB0, 0xB0, 0xB0)),
+                },
+            };
+            DockPanel.SetDock(chip, Dock.Right);
+            header.Children.Add(chip);
+            var titleRow = new StackPanel { Orientation = Orientation.Horizontal };
+            titleRow.Children.Add(new TextBlock
+            {
+                Text = card.Badge,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 10,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xB4, 0xC4)),
+                Margin = new Thickness(0, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            titleRow.Children.Add(new TextBlock
+            {
+                Text = card.Name,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0)),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            header.Children.Add(titleRow);
+            panelPlaylistCardBody.Children.Add(header);
+
+            // STEPS
+            panelPlaylistCardBody.Children.Add(new TextBlock
+            {
+                Text = card.StepsLabel,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 9.5,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x8F, 0x8F, 0x8F)),
+                Margin = new Thickness(0, 0, 0, 2),
+            });
+            panelPlaylistCardBody.Children.Add(new TextBlock
+            {
+                Text = card.StepsCaption,
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x7A, 0x7A, 0x7A)),
+                Margin = new Thickness(0, 0, 0, 6),
+            });
+
+            for (int i = 0; i < card.Steps.Count; i++)
+            {
+                var step = card.Steps[i];
+                var stepGrid = new Grid { Margin = new Thickness(0, 0, 0, 3) };
+                stepGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });
+                stepGrid.ColumnDefinitions.Add(
+                    new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                stepGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) });
+                stepGrid.Children.Add(Cell(step.Numeral, 0, mono: true));
+                stepGrid.Children.Add(Cell(step.DestinationName, 1));
+                stepGrid.Children.Add(Cell(step.DurationLabel, 2, mono: true, right: true));
+                panelPlaylistCardBody.Children.Add(stepGrid);
+            }
+
+            // Amber provenance
+            if (!string.IsNullOrEmpty(card.Provenance))
+            {
+                panelPlaylistCardBody.Children.Add(new Border
+                {
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(0x5A, 0x4A, 0x32)),
+                    BorderThickness = new Thickness(3, 0, 0, 0),
+                    Padding = new Thickness(8, 4, 0, 4),
+                    Margin = new Thickness(0, 8, 0, 4),
+                    Child = new TextBlock
+                    {
+                        Text = card.Provenance,
+                        FontSize = 11.5,
+                        Foreground = new SolidColorBrush(Color.FromRgb(0xC9, 0xA9, 0x5F)),
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                });
+            }
+
+            if (!string.IsNullOrEmpty(card.UsedByLine))
+            {
+                panelPlaylistCardBody.Children.Add(new TextBlock
+                {
+                    Text = card.UsedByLine,
+                    FontSize = 11.5,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0xA0, 0xA0, 0xA0)),
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 4, 0, 6),
+                });
+            }
+
+            var reRun = new Button
+            {
+                Content = card.ReRunLabel,
+                IsEnabled = card.ReRunEnabled,
+                Padding = new Thickness(10, 5, 10, 5),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = new SolidColorBrush(Color.FromRgb(0x2C, 0x2C, 0x2E)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x54, 0x54, 0x56)),
+                BorderThickness = new Thickness(1),
+                Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xC8, 0xC8)),
+                FontSize = 12,
+                ToolTip = card.ReRunTooltip,
+            };
+            ToolTipService.SetShowOnDisabled(reRun, true);
+            panelPlaylistCardBody.Children.Add(reRun);
+
+            var confirm = new Button
+            {
+                Content = DisplayCopy.UseThisPlaylist,
+                Tag = _expandedPlaylistItem,
+                Padding = new Thickness(12, 6, 12, 6),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Background = new SolidColorBrush(Color.FromRgb(0x18, 0x7F, 0xAD)),
+                BorderThickness = new Thickness(0),
+                Foreground = Brushes.White,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 8, 0, 0),
+            };
+            confirm.Click += PlaylistConfirm_Click;
+            panelPlaylistCardBody.Children.Add(confirm);
+
+            panelPlaylistCard.Visibility = Visibility.Visible;
         }
 
         private void ApplyPickerFilter(string query)
@@ -1237,6 +1472,19 @@ namespace FanaBridge.UI.Display
             if (item == null || !item.IsEnabled)
                 return;
 
+            // Surface D: the row click expands read-only detail only. The card's distinct
+            // confirmation action is the sole write path for a playlist target.
+            if (item.IdleKind == IdleKind.Playlist && !string.IsNullOrEmpty(item.PlaylistId))
+            {
+                if (!ExpandPlaylistPickerItemCore(item))
+                    return;
+                AttachPlaylistCardToPickerRow(border);
+                RenderPlaylistCard(item.PlaylistId);
+                popupPicker.IsOpen = true;
+                e.Handled = true;
+                return;
+            }
+
             if (string.Equals(_pickerMode, "base", StringComparison.Ordinal))
             {
                 if (item.PageRef == null) return;
@@ -1249,6 +1497,81 @@ namespace FanaBridge.UI.Display
             }
             popupPicker.IsOpen = false;
             e.Handled = true;
+        }
+
+        /// <summary>First playlist click only expands its read-only card.</summary>
+        internal bool ExpandPlaylistPickerItemCore(PriorityPickerItemModel item)
+        {
+            if (item == null
+                || !item.IsEnabled
+                || item.IdleKind != IdleKind.Playlist
+                || string.IsNullOrEmpty(item.PlaylistId)
+                || string.Equals(_pickerMode, "base", StringComparison.Ordinal))
+                return false;
+            _expandedPlaylistItem = item;
+            return true;
+        }
+
+        /// <summary>Distinct playlist confirmation writes idle and keeps inspection open.</summary>
+        internal bool ConfirmPlaylistPickerItemCore(PriorityPickerItemModel item)
+        {
+            if (item == null
+                || !item.IsEnabled
+                || item.IdleKind != IdleKind.Playlist
+                || string.IsNullOrEmpty(item.PlaylistId)
+                || !ReferenceEquals(item, _expandedPlaylistItem))
+                return false;
+            var idle = DisplayPriorityV2Model.IdleFromPickerItem(item);
+            ApplyEdit(session => session.SetIdle(idle));
+            popupPicker.IsOpen = true;
+            return true;
+        }
+
+        private void PlaylistConfirm_Click(object sender, RoutedEventArgs e)
+        {
+            var item = (sender as FrameworkElement)?.Tag as PriorityPickerItemModel;
+            ConfirmPlaylistPickerItemCore(item);
+            e.Handled = true;
+        }
+
+        private void AttachPlaylistCardToPickerRow(FrameworkElement row)
+        {
+            var target = row == null
+                ? null
+                : VisualTreeHelper.GetParent(row) as StackPanel;
+            if (target == null)
+            {
+                RestorePlaylistCardBottomDock();
+                return;
+            }
+            var current = VisualTreeHelper.GetParent(panelPlaylistCard) as Panel
+                ?? LogicalTreeHelper.GetParent(panelPlaylistCard) as Panel;
+            current?.Children.Remove(panelPlaylistCard);
+            panelPlaylistCard.Margin = new Thickness(12, 0, 12, 8);
+            target.Children.Add(panelPlaylistCard);
+        }
+
+        private void RestorePlaylistCardBottomDock()
+        {
+            if (panelPlaylistCard == null || panelPickerLayout == null)
+                return;
+
+            var current = VisualTreeHelper.GetParent(panelPlaylistCard) as Panel
+                ?? LogicalTreeHelper.GetParent(panelPlaylistCard) as Panel;
+            if (!ReferenceEquals(current, panelPickerLayout))
+            {
+                current?.Children.Remove(panelPlaylistCard);
+                int insertAt = scrollPickerGroups == null
+                    ? panelPickerLayout.Children.Count
+                    : panelPickerLayout.Children.IndexOf(scrollPickerGroups);
+                if (insertAt < 0)
+                    panelPickerLayout.Children.Add(panelPlaylistCard);
+                else
+                    panelPickerLayout.Children.Insert(insertAt, panelPlaylistCard);
+            }
+
+            DockPanel.SetDock(panelPlaylistCard, Dock.Bottom);
+            panelPlaylistCard.Margin = new Thickness(10, 4, 10, 4);
         }
 
         private void ConfirmAndRemoveRows(PageRef target, string pageName)
@@ -1750,6 +2073,22 @@ namespace FanaBridge.UI.Display
             return false;
         }
 
+        /// <summary>Surface B plain door: choose the first authored seat and open 5f.</summary>
+        internal bool OpenFirstEntrypointFormCore()
+        {
+            if (_model == null)
+                return false;
+            for (int i = 0; i < _model.Rows.Count; i++)
+            {
+                var row = _model.Rows[i];
+                if (row != null
+                    && row.Kind == PriorityRowKind.Seat
+                    && !string.IsNullOrEmpty(row.RowId))
+                    return OpenEntrypointFormCore(row.RowId, null, isNew: true);
+            }
+            return false;
+        }
+
         private void EntrypointDelete_Click(object sender, RoutedEventArgs e)
         {
             if (_epIsNew || string.IsNullOrEmpty(_epSummonId))
@@ -1953,7 +2292,9 @@ namespace FanaBridge.UI.Display
 
         private void AddPage_Click(object sender, RoutedEventArgs e)
         {
-            // Q12: disabled this phase — handler is a no-op safety net.
+            // Surface B: plain door live.
+            if (_model != null && _model.AddPageEnabled)
+                AddPageRequested?.Invoke(this, EventArgs.Empty);
         }
     }
 }

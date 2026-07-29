@@ -435,16 +435,16 @@ namespace FanaBridge.Tests.UI.Display
             Assert.Equal(15, model.Rows.First(r => r.IsManual).ManualOptions.ShownSeconds);
         }
 
-        // ── Add page gate (Q12) ──────────────────────────────────────────
+        // ── Add page (Surface B — live plain door) ───────────────────────
 
         [Fact]
-        public void AddPage_Disabled_WithSpokeArrivingLater()
+        public void AddPage_Enabled_Live()
         {
             var model = DisplayPriorityV2Model.Project(
                 MinimalDoc(), EmptyConnected(), null, DisplayType.Itm);
 
-            Assert.False(model.AddPageEnabled);
-            Assert.Contains("later build", model.AddPageTooltip);
+            Assert.True(model.AddPageEnabled);
+            Assert.True(string.IsNullOrEmpty(model.AddPageTooltip));
         }
 
         // ── Explainers ───────────────────────────────────────────────────
