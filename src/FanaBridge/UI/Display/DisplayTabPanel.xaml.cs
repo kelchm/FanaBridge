@@ -39,7 +39,7 @@ namespace FanaBridge.UI.Display
     /// </summary>
     public partial class DisplayTabPanel : UserControl
     {
-        private enum TabView { Overview, Triggers, Pages, Legacy, Diagnostics, Priority }
+        private enum TabView { Overview, Triggers, Pages, Legacy, Diagnostics, Priority, PagesFields }
 
         private IDisplayPanelHost _host;
         private IDisplayPropertyCatalog _propertyCatalog;
@@ -173,6 +173,7 @@ namespace FanaBridge.UI.Display
                 { TabView.Legacy,   viewLegacy },
                 { TabView.Diagnostics, viewDiagnostics },
                 { TabView.Priority, viewPriorityV2 },
+                { TabView.PagesFields, viewPagesFieldsV2 },
             };
 
             // The Triggers editor is its own control now — bind it to the same host, catalogs,
@@ -220,14 +221,15 @@ namespace FanaBridge.UI.Display
                 itmDeviceId: _host.ItmDeviceId);
 
             // E9 phase 1: v2 Overview — bound only when a v2 document is live.
-            // N1: v2 Pages & Fields still later phase — spoke DISABLED (DisplayCopy tooltip).
-            // N2: v2 Priority is LIVE this phase (3a).
+            // N1: v2 Pages & Fields is LIVE (Surface A).
+            // N2: v2 Priority is LIVE (phase 3a).
             // N3: SimHub Control mapper via PluginManager.ShowPluginUI<ControlMapperPlugin>.
             // Diagnostics: NEW affordance (RE-SEQUENCE ruling) — not a board spoke.
             viewOverviewV2.Bind(_host, catalog: wheelCatalog);
             viewOverviewV2.ControlMapperRequested += (s, e) => OpenControlMapper();
             viewOverviewV2.DiagnosticsRequested += (s, e) => NavigateTo(TabView.Diagnostics);
             viewOverviewV2.PriorityRequested += (s, e) => NavigateTo(TabView.Priority);
+            viewOverviewV2.PagesAndFieldsRequested += (s, e) => NavigateTo(TabView.PagesFields);
             viewOverviewV2.ConfigApplied += (s, e) =>
             {
                 // Mode write-through may have mutated DisplaySettings — refresh v1 chrome.
@@ -249,15 +251,26 @@ namespace FanaBridge.UI.Display
                 roleCatalog: _roleCatalog,
                 pickerStore: _pickerStore);
             viewPriorityV2.BackRequested += (s, e) => NavigateTo(TabView.Overview);
-            // Q6 end-to-end: DisplayTabPanel owns destination liveness. v2 Pages & Fields
-            // (PX3) is a later phase — N1 discipline identical to Overview: destination
-            // NOT live → layer-row / overflow / section links draw DISABLED with
-            // SpokeArrivingLater (no cursor-only fakes, no dead handlers). Event is
-            // subscribed only when the destination is live:
-            //   viewPriorityV2.SetPagesAndFieldsDestinationLive(true);
-            //   viewPriorityV2.PagesAndFieldsRequested += (s, e) => NavigateTo(/* v2 */);
-            viewPriorityV2.SetPagesAndFieldsDestinationLive(false);
+            // Q6: Pages & Fields destination is LIVE — field links route here.
+            viewPriorityV2.SetPagesAndFieldsDestinationLive(true);
+            viewPriorityV2.PagesAndFieldsRequested += (s, e) => NavigateTo(TabView.PagesFields);
             viewPriorityV2.ConfigApplied += (s, e) =>
+            {
+                _settings = _host.DisplaySettings ?? _settings;
+                UpdateModeState();
+            };
+
+            // E9 Surface A: Pages & Fields — 8c field filter + shared sections.
+            viewPagesFieldsV2.Bind(
+                _host,
+                catalog: wheelCatalog,
+                propertyCatalog: _propertyCatalog,
+                roleCatalog: _roleCatalog,
+                pickerStore: _pickerStore);
+            viewPagesFieldsV2.BackRequested += (s, e) => NavigateTo(TabView.Overview);
+            viewPagesFieldsV2.PriorityRequested += (s, e) => NavigateTo(TabView.Priority);
+            // Surface B (Add a page) not live this loop — leave AddPageRequested unwired.
+            viewPagesFieldsV2.ConfigApplied += (s, e) =>
             {
                 _settings = _host.DisplaySettings ?? _settings;
                 UpdateModeState();
@@ -544,6 +557,10 @@ namespace FanaBridge.UI.Display
             if (view == TabView.Priority && _host != null)
                 viewPriorityV2.Poll(force: true);
 
+            // E9 Surface A Pages & Fields: force a fresh projection on entry.
+            if (view == TabView.PagesFields && _host != null)
+                viewPagesFieldsV2.Poll(force: true);
+
             // The DISPLAY MODE header belongs to the hub — it shows on Overview (ITM) and
             // whenever control is Off, never inside an editor unless Off keeps it up.
             RefreshModeHeader();
@@ -690,13 +707,14 @@ namespace FanaBridge.UI.Display
             // panel is collapsed. A no-op in steady state (two compares).
             SyncResolvedCaps();
 
-            // Doc removed while Diagnostics/Priority open: navigate back + restore v1
-            // BEFORE the live early-return. Without this the poll returns and the panel
-            // stays blank under the v2 gate.
+            // Doc removed while Diagnostics/Priority/PagesFields open: navigate back +
+            // restore v1 BEFORE the live early-return. Without this the poll returns and
+            // the panel stays blank under the v2 gate.
             bool v2Live = _host?.GetDisplayConfigV2() != null;
             if (DisplayShellRouting.LeaveDiagnosticsAfterV2Removed(
                     _currentView == TabView.Diagnostics, v2Live)
-                || (_currentView == TabView.Priority && !v2Live))
+                || (_currentView == TabView.Priority && !v2Live)
+                || (_currentView == TabView.PagesFields && !v2Live))
             {
                 NavigateTo(TabView.Overview);
                 RestoreV1OverviewSurface();
@@ -708,11 +726,12 @@ namespace FanaBridge.UI.Display
                 && _currentView == TabView.Overview;
             bool diagnosticsV2 = _currentView == TabView.Diagnostics && v2Live;
             bool priorityV2 = _currentView == TabView.Priority && v2Live;
+            bool pagesFieldsV2 = _currentView == TabView.PagesFields && v2Live;
             bool editorActive = _currentView == TabView.Triggers
                 || _currentView == TabView.Pages
                 || _currentView == TabView.Legacy;
             if (!itmLive && !legacyLive && !editorActive && !overviewV2 && !diagnosticsV2
-                && !priorityV2)
+                && !priorityV2 && !pagesFieldsV2)
                 return;
 
             // ONE volatile read — the envelope; the parts gate their own re-renders
@@ -740,6 +759,9 @@ namespace FanaBridge.UI.Display
             // E9 phase 3a Priority: re-project on the same envelope changes.
             if (priorityV2 && (force || composedChanged || statusChanged || valuesChanged))
                 viewPriorityV2.Poll(force: force);
+            // E9 Surface A Pages & Fields: same envelope poll gate.
+            if (pagesFieldsV2 && (force || composedChanged || statusChanged || valuesChanged))
+                viewPagesFieldsV2.Poll(force: force);
             // Re-evaluate v2 surface if the document appeared/disappeared mid-session.
             if (force || composedChanged || snapshotChanged)
                 ApplyOverviewDocumentSurface();

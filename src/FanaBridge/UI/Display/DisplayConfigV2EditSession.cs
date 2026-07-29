@@ -719,6 +719,254 @@ namespace FanaBridge.UI.Display
             return ApplyPageContentRemoval(plan);
         }
 
+        // ── Pages & Fields helpers (Surface A) ───────────────────────────
+
+        /// <summary>
+        /// Append a <see cref="FieldOverride"/> to the one-ladder home for
+        /// <paramref name="paramId"/> (sharedFields wins when the catalog binds it;
+        /// otherwise <c>fields[paramId]</c>, creating the entry when absent). Clones
+        /// the supplied override first — the caller's instance is never retained.
+        /// Assigns a GUID id when blank. No-op when <paramref name="ov"/> is null.
+        /// </summary>
+        public DisplayConfigV2 AddOverride(
+            ushort paramId, FieldOverride ov, WheelCatalog catalog = null)
+        {
+            if (ov == null)
+                return _document;
+
+            var owned = DisplayConfigV2Serializer.CloneNode(ov);
+            if (string.IsNullOrWhiteSpace(owned.Id))
+                owned.Id = Guid.NewGuid().ToString("N");
+
+            return Mutate(doc =>
+            {
+                var entry = EnsureFieldHome(doc, paramId, catalog);
+                if (entry == null)
+                    return false;
+                if (entry.Overrides == null)
+                    entry.Overrides = new List<FieldOverride>();
+                entry.Overrides.Add(owned);
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Clone-existing-then-mutate a field override on the one-ladder home.
+        /// The existing node is fully cloned (content/condition/lifetime/extension data
+        /// survive); only non-null authored fields on <paramref name="patch"/> replace
+        /// the corresponding existing fields. Id is always <paramref name="overrideId"/>.
+        /// Shared-field overrides resolve via catalog when provided, else by override-id
+        /// scan (same fallback as <see cref="SetActsAsEntrypoint"/>). No-op when missing.
+        /// </summary>
+        public DisplayConfigV2 UpdateOverride(
+            ushort paramId, string overrideId, FieldOverride patch, WheelCatalog catalog = null)
+        {
+            if (patch == null || string.IsNullOrEmpty(overrideId))
+                return _document;
+
+            return Mutate(doc =>
+            {
+                if (!TryFindOverrideHome(doc, paramId, overrideId, catalog,
+                        out var list, out int index, out var existing)
+                    || existing == null)
+                    return false;
+
+                var owned = DisplayConfigV2Serializer.CloneNode(existing);
+                owned.Id = overrideId;
+                ApplyOverrideEdits(owned, patch);
+                list[index] = owned;
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Remove a field override from the one-ladder home. Shared-side resolution
+        /// matches <see cref="UpdateOverride"/>. No-op when missing.
+        /// </summary>
+        public DisplayConfigV2 RemoveOverride(
+            ushort paramId, string overrideId, WheelCatalog catalog = null)
+        {
+            if (string.IsNullOrEmpty(overrideId))
+                return _document;
+
+            return Mutate(doc =>
+            {
+                if (!TryFindOverrideHome(doc, paramId, overrideId, catalog,
+                        out var list, out int index, out _))
+                    return false;
+                list.RemoveAt(index);
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Reorder overrides on the one-ladder home (array order = rank). No-op when
+        /// either index is out of range or indices are equal.
+        /// </summary>
+        public DisplayConfigV2 MoveOverride(
+            ushort paramId, int fromIndex, int toIndex, WheelCatalog catalog = null)
+        {
+            return Mutate(doc =>
+            {
+                var entry = ResolveFieldHome(doc, paramId, catalog);
+                if (entry?.Overrides == null)
+                    return false;
+                var list = entry.Overrides;
+                if (fromIndex < 0 || fromIndex >= list.Count
+                    || toIndex < 0 || toIndex >= list.Count
+                    || fromIndex == toIndex)
+                    return false;
+
+                var item = list[fromIndex];
+                list.RemoveAt(fromIndex);
+                list.Insert(toIndex, item);
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Set <see cref="FieldEntry.Base"/> on the one-ladder home. Clones the existing
+        /// base (when present) then overlays non-null authored fields from
+        /// <paramref name="fieldBase"/> so extension data and unauthored members survive.
+        /// Creates a page-scoped <c>fields[paramId]</c> entry when no home exists and the
+        /// catalog does not bind a shared ladder. No-op when <paramref name="fieldBase"/>
+        /// is null.
+        /// </summary>
+        public DisplayConfigV2 SetFieldBase(
+            ushort paramId, FieldBase fieldBase, WheelCatalog catalog = null)
+        {
+            if (fieldBase == null)
+                return _document;
+
+            return Mutate(doc =>
+            {
+                var entry = EnsureFieldHome(doc, paramId, catalog);
+                if (entry == null)
+                    return false;
+
+                FieldBase owned;
+                if (entry.Base != null)
+                {
+                    owned = DisplayConfigV2Serializer.CloneNode(entry.Base);
+                    ApplyFieldBaseEdits(owned, fieldBase);
+                }
+                else
+                {
+                    owned = DisplayConfigV2Serializer.CloneNode(fieldBase);
+                }
+                entry.Base = owned;
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Replace <see cref="DisplayConfigV2.PageOrder"/> (rotation membership + order).
+        /// Clones every supplied <see cref="PageRef"/> — caller's list is never retained.
+        /// <b>Tri-state:</b> <c>null</c> → absent (compiled default walk); empty list →
+        /// explicit empty walk; non-empty → that ordered membership. Cycle refs are
+        /// rejected with a validation note (pageOrder forbids cycle) and leave the
+        /// document unchanged.
+        /// </summary>
+        public DisplayConfigV2 SetPageOrder(IReadOnlyList<PageRef> order)
+        {
+            if (order != null)
+            {
+                for (int i = 0; i < order.Count; i++)
+                {
+                    var r = order[i];
+                    if (r != null && r.Kind == PageRefKind.Cycle)
+                    {
+                        _validationNotes = new[] { DisplayCopy.PageOrderMustNotContainCycle };
+                        return _document;
+                    }
+                }
+            }
+
+            return Mutate(doc =>
+            {
+                // Absent (null) stays distinct from explicit empty ([]).
+                if (order == null)
+                {
+                    doc.PageOrder = null;
+                    return true;
+                }
+
+                if (order.Count == 0)
+                {
+                    doc.PageOrder = new List<PageRef>();
+                    return true;
+                }
+
+                var next = new List<PageRef>(order.Count);
+                for (int i = 0; i < order.Count; i++)
+                {
+                    if (order[i] == null)
+                        continue;
+                    next.Add(DisplayConfigV2Serializer.CloneNode(order[i]));
+                }
+                doc.PageOrder = next;
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Reorder one entry inside <see cref="DisplayConfigV2.PageOrder"/>. No-op when
+        /// either index is out of range or indices are equal.
+        /// </summary>
+        public DisplayConfigV2 MovePageOrder(int fromIndex, int toIndex)
+        {
+            return Mutate(doc =>
+            {
+                if (doc.PageOrder == null)
+                    return false;
+                var list = doc.PageOrder;
+                if (fromIndex < 0 || fromIndex >= list.Count
+                    || toIndex < 0 || toIndex >= list.Count
+                    || fromIndex == toIndex)
+                    return false;
+
+                var item = list[fromIndex];
+                list.RemoveAt(fromIndex);
+                list.Insert(toIndex, item);
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Set the home seat's <see cref="PriorityRow.BringUpLifetime"/> (not the
+        /// override). Null clears to absent (≡ whileTrue pin). Non-null clone-merges
+        /// onto the existing lifetime (direction / then / extension data survive;
+        /// kind + duration from the patch). No-op when the row is missing — callers
+        /// materialize via <see cref="EnsureAuthoredRow"/> first when needed.
+        /// </summary>
+        public DisplayConfigV2 SetBringUpLifetime(string rowId, Lifetime lifetime)
+        {
+            return Mutate(doc =>
+            {
+                var row = FindRow(doc, rowId);
+                if (row == null)
+                    return false;
+
+                if (lifetime == null)
+                {
+                    row.BringUpLifetime = null;
+                    return true;
+                }
+
+                if (row.BringUpLifetime == null)
+                {
+                    row.BringUpLifetime = DisplayConfigV2Serializer.CloneNode(lifetime);
+                }
+                else
+                {
+                    var owned = DisplayConfigV2Serializer.CloneNode(row.BringUpLifetime);
+                    MergeLifetimeFields(owned, lifetime);
+                    row.BringUpLifetime = owned;
+                }
+                return true;
+            });
+        }
+
         /// <summary>
         /// Whether the destructive remove-all option is available for
         /// <paramref name="target"/>. ITM requires the <em>target page</em> to resolve
@@ -861,6 +1109,368 @@ namespace FanaBridge.UI.Display
             _generation++;
             RefreshValidationNotes();
             return _document;
+        }
+
+        /// <summary>
+        /// One-ladder home resolution for mutation: sharedFields wins when the catalog
+        /// binds a non-inert entry to <paramref name="paramId"/>; else fields[paramId]
+        /// when not load-degraded. Null when neither contributes.
+        /// </summary>
+        private static FieldEntry ResolveFieldHome(
+            DisplayConfigV2 doc, ushort paramId, WheelCatalog catalog)
+        {
+            if (doc == null)
+                return null;
+
+            if (doc.SharedFields != null && catalog != null)
+            {
+                foreach (var kv in doc.SharedFields)
+                {
+                    var entry = kv.Value;
+                    if (entry == null || entry.DegradedAtLoad || string.IsNullOrEmpty(kv.Key))
+                        continue;
+                    var def = CatalogFields.FindDefinition(catalog, kv.Key);
+                    if (def != null && def.ParamId == paramId)
+                        return entry;
+                }
+            }
+
+            if (doc.Fields != null
+                && doc.Fields.TryGetValue(paramId, out var fieldEntry)
+                && fieldEntry != null
+                && !fieldEntry.DegradedAtLoad)
+            {
+                return fieldEntry;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolve or create a writable field home. Shared ownership (catalog-bound)
+        /// never creates a competing fields entry — only mutates the shared ladder.
+        /// Without a shared home, creates/returns fields[paramId].
+        /// </summary>
+        private static FieldEntry EnsureFieldHome(
+            DisplayConfigV2 doc, ushort paramId, WheelCatalog catalog)
+        {
+            var existing = ResolveFieldHome(doc, paramId, catalog);
+            if (existing != null)
+                return existing;
+
+            // Shared catalog binding with no authored sharedFields entry: create under
+            // the logical id so the one-ladder home is the shared object.
+            if (catalog != null)
+            {
+                string logicalId = CatalogFields.LogicalIdForParam(catalog, paramId);
+                if (!string.IsNullOrEmpty(logicalId)
+                    && CatalogFields.TryGetReach(catalog, logicalId, out int placed, out _)
+                    && placed > 1)
+                {
+                    if (doc.SharedFields == null)
+                        doc.SharedFields = new Dictionary<string, FieldEntry>(StringComparer.Ordinal);
+                    if (!doc.SharedFields.TryGetValue(logicalId, out var shared) || shared == null)
+                    {
+                        shared = new FieldEntry();
+                        doc.SharedFields[logicalId] = shared;
+                    }
+                    return shared;
+                }
+            }
+
+            if (doc.Fields == null)
+                doc.Fields = new Dictionary<ushort, FieldEntry>();
+            if (!doc.Fields.TryGetValue(paramId, out var created) || created == null)
+            {
+                created = new FieldEntry();
+                doc.Fields[paramId] = created;
+            }
+            return created;
+        }
+
+        /// <summary>
+        /// Locate an override list + index for mutation. Catalog-bound shared first,
+        /// then fields[paramId], then sharedFields scan by override id (catalog-free
+        /// shared edit — same fallback as SetActsAsEntrypoint).
+        /// </summary>
+        private static bool TryFindOverrideHome(
+            DisplayConfigV2 doc,
+            ushort paramId,
+            string overrideId,
+            WheelCatalog catalog,
+            out List<FieldOverride> list,
+            out int index,
+            out FieldOverride existing)
+        {
+            list = null;
+            index = -1;
+            existing = null;
+            if (doc == null || string.IsNullOrEmpty(overrideId))
+                return false;
+
+            var home = ResolveFieldHome(doc, paramId, catalog);
+            if (home?.Overrides != null
+                && TryIndexOverride(home.Overrides, overrideId, out index, out existing))
+            {
+                list = home.Overrides;
+                return true;
+            }
+
+            // Catalog-free shared fallback: document-global override id uniqueness.
+            if (doc.SharedFields != null)
+            {
+                foreach (var kv in doc.SharedFields)
+                {
+                    var entry = kv.Value;
+                    if (entry?.Overrides == null)
+                        continue;
+                    if (TryIndexOverride(entry.Overrides, overrideId, out index, out existing))
+                    {
+                        list = entry.Overrides;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryIndexOverride(
+            List<FieldOverride> overrides,
+            string overrideId,
+            out int index,
+            out FieldOverride existing)
+        {
+            index = -1;
+            existing = null;
+            if (overrides == null)
+                return false;
+            for (int i = 0; i < overrides.Count; i++)
+            {
+                var o = overrides[i];
+                if (o != null
+                    && string.Equals(o.Id, overrideId, StringComparison.OrdinalIgnoreCase))
+                {
+                    index = i;
+                    existing = o;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Overlay form-edited fields onto a cloned existing override (UpdateSummon
+        /// deep-merge idiom). Condition and lifetime merge field-wise (extension data /
+        /// hysteresis / direction / then survive). Content merges member-wise (nested
+        /// extension data survives). Writes/alignment/effect/runs apply when the patch
+        /// authors them; override ExtensionData stays on the clone. Enabled and
+        /// ActsAsEntrypoint always apply (form paths that preserve prior Enabled must
+        /// copy it onto the patch first).
+        /// </summary>
+        private static void ApplyOverrideEdits(FieldOverride target, FieldOverride patch)
+        {
+            if (target == null || patch == null)
+                return;
+
+            if (!string.IsNullOrEmpty(patch.WritesRaw)
+                || patch.Writes != FieldWrites.Unknown)
+            {
+                // Prefer raw when present so unknown spellings round-trip.
+                if (!string.IsNullOrEmpty(patch.WritesRaw))
+                    target.WritesRaw = patch.WritesRaw;
+                else
+                    target.Writes = patch.Writes;
+            }
+
+            if (patch.Content != null)
+                MergeContent(target, patch.Content);
+
+            // Alignment: raw presence is the authorship signal (form may force "left").
+            if (patch.AlignmentRaw != null)
+                target.AlignmentRaw = patch.AlignmentRaw;
+            else if (patch.Alignment != FieldAlignment.Left
+                && patch.Alignment != FieldAlignment.Unknown)
+                target.Alignment = patch.Alignment;
+
+            if (!string.IsNullOrEmpty(patch.EffectRaw)
+                || (patch.Effect != ContentEffect.None
+                    && patch.Effect != ContentEffect.Unknown))
+            {
+                if (!string.IsNullOrEmpty(patch.EffectRaw))
+                    target.EffectRaw = patch.EffectRaw;
+                else
+                    target.Effect = patch.Effect;
+            }
+
+            if (patch.Condition != null)
+            {
+                if (target.Condition == null)
+                {
+                    target.Condition = DisplayConfigV2Serializer.CloneNode(patch.Condition);
+                }
+                else
+                {
+                    var tCond = target.Condition;
+                    var pCond = patch.Condition;
+                    if (pCond.Source != null)
+                        MergeValueSource(tCond, pCond.Source);
+                    if (pCond.Operator.HasValue
+                        && pCond.Operator.Value != ConditionOperator.Unknown)
+                        tCond.Operator = pCond.Operator;
+                    if (pCond.Value.HasValue)
+                        tCond.Value = pCond.Value;
+                    // Hysteresis: only overwrite when the patch authors one.
+                    if (pCond.Hysteresis != null)
+                        tCond.Hysteresis = pCond.Hysteresis;
+                }
+            }
+
+            if (patch.Lifetime != null)
+            {
+                if (target.Lifetime == null)
+                    target.Lifetime = DisplayConfigV2Serializer.CloneNode(patch.Lifetime);
+                else
+                    MergeLifetimeFields(target.Lifetime, patch.Lifetime);
+            }
+
+            if (!string.IsNullOrEmpty(patch.RunsRaw)
+                || (patch.Runs != RunsWhen.InGame && patch.Runs != RunsWhen.Unknown))
+            {
+                if (!string.IsNullOrEmpty(patch.RunsRaw))
+                    target.RunsRaw = patch.RunsRaw;
+                else
+                    target.Runs = patch.Runs;
+            }
+
+            // Enabled / ActsAsEntrypoint: bools have no null — form paths that preserve
+            // prior Enabled must copy it onto the patch first (default true would
+            // otherwise re-enable a turned-off override).
+            target.Enabled = patch.Enabled;
+            target.ActsAsEntrypoint = patch.ActsAsEntrypoint;
+        }
+
+        /// <summary>
+        /// Member-wise ContentObject merge: kind/text/source/format from the patch;
+        /// nested ExtensionData on the existing content survives.
+        /// </summary>
+        private static void MergeContent(FieldOverride target, ContentObject patchContent)
+        {
+            if (target == null || patchContent == null)
+                return;
+
+            if (target.Content == null)
+            {
+                target.Content = DisplayConfigV2Serializer.CloneNode(patchContent);
+                return;
+            }
+
+            var existing = target.Content;
+            if (patchContent.Kind != ContentKind.Unknown
+                || !string.IsNullOrEmpty(patchContent.KindRaw))
+            {
+                existing.Kind = patchContent.Kind;
+            }
+            if (patchContent.Text != null)
+                existing.Text = patchContent.Text;
+            if (patchContent.Format != null)
+                existing.Format = patchContent.Format;
+            if (patchContent.Source != null)
+            {
+                if (existing.Source == null)
+                {
+                    existing.Source = DisplayConfigV2Serializer.CloneNode(patchContent.Source);
+                }
+                else
+                {
+                    if (patchContent.Source.Kind != ValueSourceKind.Unknown
+                        || !string.IsNullOrEmpty(patchContent.Source.KindRaw))
+                        existing.Source.Kind = patchContent.Source.Kind;
+                    if (patchContent.Source.Name != null)
+                        existing.Source.Name = patchContent.Source.Name;
+                    if (patchContent.Source.ExtensionData != null
+                        && patchContent.Source.ExtensionData.Count > 0)
+                    {
+                        if (existing.Source.ExtensionData == null)
+                            existing.Source.ExtensionData =
+                                new Dictionary<string, JToken>();
+                        foreach (var kv in patchContent.Source.ExtensionData)
+                            existing.Source.ExtensionData[kv.Key] = kv.Value;
+                    }
+                }
+            }
+            // Content ExtensionData stays on the clone; only add keys the patch authors.
+            if (patchContent.ExtensionData != null && patchContent.ExtensionData.Count > 0)
+            {
+                if (existing.ExtensionData == null)
+                    existing.ExtensionData = new Dictionary<string, JToken>();
+                foreach (var kv in patchContent.ExtensionData)
+                    existing.ExtensionData[kv.Key] = kv.Value;
+            }
+        }
+
+        /// <summary>
+        /// Field-wise lifetime merge onto an existing Lifetime node (direction / then /
+        /// extension data survive when the patch does not author them).
+        /// </summary>
+        private static void MergeLifetimeFields(Lifetime existing, Lifetime patchLife)
+        {
+            if (existing == null || patchLife == null)
+                return;
+
+            if (patchLife.Kind != LifetimeKind.Unknown
+                || !string.IsNullOrEmpty(patchLife.KindRaw))
+            {
+                existing.Kind = patchLife.Kind;
+            }
+            if (patchLife.DurationMsPresent)
+                existing.DurationMs = patchLife.DurationMs;
+            if (!string.IsNullOrEmpty(patchLife.DirectionRaw)
+                || (patchLife.Direction != ChangeDirection.Any
+                    && patchLife.Direction != ChangeDirection.Unknown))
+            {
+                existing.Direction = patchLife.Direction;
+            }
+            if (patchLife.Then != null || !string.IsNullOrEmpty(patchLife.ThenRaw))
+                existing.Then = patchLife.Then;
+            if (patchLife.ExtensionData != null && patchLife.ExtensionData.Count > 0)
+            {
+                if (existing.ExtensionData == null)
+                    existing.ExtensionData = new Dictionary<string, JToken>();
+                foreach (var kv in patchLife.ExtensionData)
+                    existing.ExtensionData[kv.Key] = kv.Value;
+            }
+        }
+
+        /// <summary>
+        /// Overlay base edits onto a cloned FieldBase. Source/format/baseSuffix apply
+        /// when the patch authors them; ExtensionData stays on the clone.
+        /// </summary>
+        private static void ApplyFieldBaseEdits(FieldBase target, FieldBase patch)
+        {
+            if (target == null || patch == null)
+                return;
+
+            if (patch.Source != null)
+            {
+                if (target.Source == null)
+                    target.Source = DisplayConfigV2Serializer.CloneNode(patch.Source);
+                else
+                {
+                    if (patch.Source.Kind != ValueSourceKind.Unknown)
+                        target.Source.Kind = patch.Source.Kind;
+                    if (patch.Source.Name != null)
+                        target.Source.Name = patch.Source.Name;
+                }
+            }
+
+            if (patch.Format != null)
+                target.Format = patch.Format;
+
+            // BaseSuffix: null on patch means "not authored"; empty string clears.
+            // Form always sends the dropdown value (including empty).
+            if (patch.BaseSuffix != null)
+                target.BaseSuffix = patch.BaseSuffix;
         }
 
         private void RefreshValidationNotes()

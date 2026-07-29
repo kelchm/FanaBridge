@@ -1155,9 +1155,37 @@ namespace FanaBridge.Tests.UI.Display
         [InlineData("SetReturnToRestAfterMs")]
         [InlineData("SetIdle")]
         [InlineData("SetActsAsEntrypoint")]
+        [InlineData("AddOverride")]
+        [InlineData("UpdateOverride")]
+        [InlineData("RemoveOverride")]
+        [InlineData("MoveOverride")]
+        [InlineData("SetFieldBase")]
+        [InlineData("SetPageOrder")]
+        [InlineData("MovePageOrder")]
+        [InlineData("SetBringUpLifetime")]
         public void Mutation_PreservesUnknownMembersAndKeyOrder(string which)
         {
             var live = SeedLive();
+            // Seed pageOrder + bring-up home for new helpers.
+            if (live.PageOrder == null)
+                live.PageOrder = new List<PageRef>();
+            if (live.PageOrder.Count == 0)
+            {
+                live.PageOrder.Add(new PageRef
+                {
+                    Kind = PageRefKind.ItmPage,
+                    CatalogPageId = "lapInfo",
+                });
+                live.PageOrder.Add(new PageRef
+                {
+                    Kind = PageRefKind.ItmPage,
+                    CatalogPageId = "lapTimes",
+                });
+            }
+            // Re-normalize so live is a Normalize'd host identity (runtime path).
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { });
+
             var beforeJson = DisplayConfigV2Serializer.Save(live);
             var session = DisplayConfigV2EditSession.Open(live);
 
@@ -1190,6 +1218,60 @@ namespace FanaBridge.Tests.UI.Display
                 case "SetActsAsEntrypoint":
                     session.SetActsAsEntrypoint(ActsAsEntrypointTarget.Field, "5", "ov-1", true);
                     break;
+                case "AddOverride":
+                    session.AddOverride(5, new FieldOverride
+                    {
+                        Id = "ov-new",
+                        Writes = FieldWrites.Suffix,
+                        Content = new ContentObject { Kind = ContentKind.Text, Text = "!" },
+                    });
+                    break;
+                case "UpdateOverride":
+                    session.UpdateOverride(5, "ov-1", new FieldOverride
+                    {
+                        Writes = FieldWrites.Both,
+                        Content = new ContentObject { Kind = ContentKind.Text, Text = "Y" },
+                        Enabled = true,
+                    });
+                    break;
+                case "RemoveOverride":
+                    // Add a second so remove still leaves the extension-data ladder home.
+                    session.AddOverride(5, new FieldOverride { Id = "ov-tmp", Writes = FieldWrites.Value });
+                    session.RemoveOverride(5, "ov-tmp");
+                    break;
+                case "MoveOverride":
+                    session.AddOverride(5, new FieldOverride { Id = "ov-2", Writes = FieldWrites.Value });
+                    session.MoveOverride(5, 0, 1);
+                    break;
+                case "SetFieldBase":
+                    session.SetFieldBase(5, new FieldBase
+                    {
+                        Source = new ValueSource
+                        {
+                            Kind = ValueSourceKind.BuiltIn,
+                            Name = "Fuel",
+                        },
+                        Format = "withTotal",
+                        BaseSuffix = "%",
+                    });
+                    break;
+                case "SetPageOrder":
+                    session.SetPageOrder(new List<PageRef>
+                    {
+                        new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapTimes" },
+                        new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+                    });
+                    break;
+                case "MovePageOrder":
+                    session.MovePageOrder(0, 1);
+                    break;
+                case "SetBringUpLifetime":
+                    session.SetBringUpLifetime("seat-1", new Lifetime
+                    {
+                        Kind = LifetimeKind.ForDuration,
+                        DurationMs = 3000,
+                    });
+                    break;
                 default:
                     throw new InvalidOperationException(which);
             }
@@ -1198,6 +1280,272 @@ namespace FanaBridge.Tests.UI.Display
             AssertUnknownMembersSurvived(beforeJson, afterJson);
             // Original live document identity content unchanged (session clone only).
             Assert.Equal(beforeJson, DisplayConfigV2Serializer.Save(live));
+        }
+
+        // ── Pages & Fields helpers (shapes) ──────────────────────────────
+
+        [Fact]
+        public void AddOverride_AppendsToFieldsLadder_AssignsId()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.AddOverride(5, new FieldOverride
+            {
+                Writes = FieldWrites.Suffix,
+                Content = new ContentObject { Kind = ContentKind.Text, Text = "!" },
+            });
+            var entry = session.Document.Fields[5];
+            Assert.Equal(2, entry.Overrides.Count);
+            Assert.False(string.IsNullOrEmpty(entry.Overrides[1].Id));
+            Assert.Equal("!", entry.Overrides[1].Content.Text);
+        }
+
+        [Fact]
+        public void UpdateOverride_PreservesExtensionData_AndUneditedMembers()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.UpdateOverride(5, "ov-1", new FieldOverride
+            {
+                Content = new ContentObject { Kind = ContentKind.Text, Text = "Z" },
+                Enabled = true,
+                ActsAsEntrypoint = true,
+            });
+            var ov = session.Document.Fields[5].Overrides[0];
+            Assert.Equal("Z", ov.Content.Text);
+            Assert.True(ov.ActsAsEntrypoint);
+            Assert.NotNull(ov.ExtensionData);
+            Assert.Equal("o", (string)ov.ExtensionData["v3Override"]);
+        }
+
+        [Fact]
+        public void UpdateOverride_ContentMergesMemberWise_NestedExtensionSurvives()
+        {
+            var live = SeedLive();
+            live.Fields[5].Overrides[0].Content = new ContentObject
+            {
+                Kind = ContentKind.Text,
+                Text = "X",
+                ExtensionData = new Dictionary<string, JToken>
+                {
+                    ["v3Content"] = "keep-me",
+                },
+            };
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { });
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.UpdateOverride(5, "ov-1", new FieldOverride
+            {
+                Content = new ContentObject { Kind = ContentKind.Text, Text = "Y" },
+                Enabled = true,
+            });
+            var content = session.Document.Fields[5].Overrides[0].Content;
+            Assert.Equal("Y", content.Text);
+            Assert.NotNull(content.ExtensionData);
+            Assert.Equal("keep-me", (string)content.ExtensionData["v3Content"]);
+        }
+
+        [Fact]
+        public void SetPageOrder_TriState_AbsentEmptyExplicit()
+        {
+            var live = SeedLive();
+            Assert.Null(live.PageOrder); // seed: absent
+
+            // Absent → explicit list
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.SetPageOrder(new List<PageRef>
+            {
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+            });
+            Assert.NotNull(session.Document.PageOrder);
+            Assert.Single(session.Document.PageOrder);
+
+            // Explicit → empty (distinct from absent)
+            session.SetPageOrder(new List<PageRef>());
+            Assert.NotNull(session.Document.PageOrder);
+            Assert.Empty(session.Document.PageOrder);
+
+            // Empty → absent
+            session.SetPageOrder(null);
+            Assert.Null(session.Document.PageOrder);
+        }
+
+        [Fact]
+        public void SetBringUpLifetime_CloneMergesExistingLifetime()
+        {
+            var live = SeedLive();
+            var seat = live.Priority.Rows.First(r => r.Id == "seat-1");
+            seat.BringUpLifetime = new Lifetime
+            {
+                Kind = LifetimeKind.WhileTrue,
+                ExtensionData = new Dictionary<string, JToken>
+                {
+                    ["v3Life"] = "preserve",
+                },
+            };
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { });
+
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.SetBringUpLifetime("seat-1", new Lifetime
+            {
+                Kind = LifetimeKind.ForDuration,
+                DurationMs = 2500,
+            });
+            var life = session.Document.Priority.Rows.First(r => r.Id == "seat-1")
+                .BringUpLifetime;
+            Assert.Equal(LifetimeKind.ForDuration, life.Kind);
+            Assert.Equal(2500, life.DurationMs);
+            Assert.NotNull(life.ExtensionData);
+            Assert.Equal("preserve", (string)life.ExtensionData["v3Life"]);
+        }
+
+        [Fact]
+        public void RemoveOverride_DropsById()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.RemoveOverride(5, "ov-1");
+            Assert.Empty(session.Document.Fields[5].Overrides);
+        }
+
+        [Fact]
+        public void MoveOverride_ReordersRank()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.AddOverride(5, new FieldOverride { Id = "ov-2", Writes = FieldWrites.Value });
+            session.MoveOverride(5, 0, 1);
+            Assert.Equal("ov-2", session.Document.Fields[5].Overrides[0].Id);
+            Assert.Equal("ov-1", session.Document.Fields[5].Overrides[1].Id);
+        }
+
+        [Fact]
+        public void SetFieldBase_PreservesFieldExtensionData()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.SetFieldBase(5, new FieldBase
+            {
+                Source = new ValueSource { Kind = ValueSourceKind.BuiltIn, Name = "Fuel" },
+                Format = "bare",
+                BaseSuffix = string.Empty,
+            });
+            var entry = session.Document.Fields[5];
+            Assert.Equal("Fuel", entry.Base.Source.Name);
+            Assert.NotNull(entry.ExtensionData);
+            Assert.True(entry.ExtensionData.ContainsKey("v3Field"));
+        }
+
+        [Fact]
+        public void SetPageOrder_ReplacesOrder_RejectsCycle()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.SetPageOrder(new List<PageRef>
+            {
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+            });
+            Assert.Single(session.Document.PageOrder);
+            Assert.Equal("lapInfo", session.Document.PageOrder[0].CatalogPageId);
+
+            int gen = session.Generation;
+            var blocked = session.SetPageOrder(new List<PageRef>
+            {
+                new PageRef { Kind = PageRefKind.Cycle, Id = "c1" },
+            });
+            Assert.Equal(gen, session.Generation); // no mutation
+            Assert.Contains(session.ValidationNotes, n => n.Contains("cycle") || n.Contains("Cycle")
+                || n == DisplayCopy.PageOrderMustNotContainCycle);
+        }
+
+        [Fact]
+        public void MovePageOrder_SwapsSteps()
+        {
+            var live = SeedLive();
+            live.PageOrder = new List<PageRef>
+            {
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "a" },
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "b" },
+            };
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { });
+            var session = DisplayConfigV2EditSession.Open(live);
+            session.MovePageOrder(0, 1);
+            Assert.Equal("b", session.Document.PageOrder[0].CatalogPageId);
+            Assert.Equal("a", session.Document.PageOrder[1].CatalogPageId);
+        }
+
+        [Fact]
+        public void SetBringUpLifetime_SetsSeatLifetime()
+        {
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.SetBringUpLifetime("seat-1", new Lifetime
+            {
+                Kind = LifetimeKind.ForDuration,
+                DurationMs = 2500,
+            });
+            var seat = session.Document.Priority.Rows.First(r => r.Id == "seat-1");
+            Assert.Equal(LifetimeKind.ForDuration, seat.BringUpLifetime.Kind);
+            Assert.Equal(2500, seat.BringUpLifetime.DurationMs);
+        }
+
+        [Fact]
+        public void SharedOverride_UpdateWithoutCatalog_ByOverrideIdScan()
+        {
+            var live = SeedLive();
+            live.SharedFields = new Dictionary<string, FieldEntry>
+            {
+                ["speed"] = new FieldEntry
+                {
+                    Overrides = new List<FieldOverride>
+                    {
+                        new FieldOverride
+                        {
+                            Id = "sov-1",
+                            Writes = FieldWrites.Suffix,
+                            Content = new ContentObject { Kind = ContentKind.Text, Text = "K" },
+                            ExtensionData = new Dictionary<string, JToken>
+                            {
+                                ["v3SharedOv"] = "keep",
+                            },
+                        },
+                    },
+                },
+            };
+            live = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(live), _ => { });
+            var session = DisplayConfigV2EditSession.Open(live);
+            // param id ignored for shared scan fallback when catalog is null.
+            session.UpdateOverride(4, "sov-1", new FieldOverride
+            {
+                Content = new ContentObject { Kind = ContentKind.Text, Text = "M" },
+                Enabled = true,
+            }, catalog: null);
+            var ov = session.Document.SharedFields["speed"].Overrides[0];
+            Assert.Equal("M", ov.Content.Text);
+            Assert.Equal("keep", (string)ov.ExtensionData["v3SharedOv"]);
+        }
+
+        [Fact]
+        public void OverrideHelpers_EndToEnd_TryApply()
+        {
+            var host = new FakeHost { Live = SeedLive() };
+            var session = DisplayConfigV2EditSession.Open(host.Live);
+            session.AddOverride(5, new FieldOverride
+            {
+                Id = "ov-e2e",
+                Writes = FieldWrites.Suffix,
+                Content = new ContentObject { Kind = ContentKind.Text, Text = "!" },
+            });
+            session.SetFieldBase(5, new FieldBase
+            {
+                Source = new ValueSource { Kind = ValueSourceKind.BuiltIn, Name = "Fuel" },
+                Format = "bare",
+            });
+            session.SetPageOrder(new List<PageRef>
+            {
+                new PageRef { Kind = PageRefKind.ItmPage, CatalogPageId = "lapInfo" },
+            });
+            var result = session.TryApply(host);
+            Assert.True(result.Succeeded);
+            Assert.Contains(host.Live.Fields[5].Overrides, o => o.Id == "ov-e2e");
+            Assert.Equal("Fuel", host.Live.Fields[5].Base.Source.Name);
+            Assert.Single(host.Live.PageOrder);
         }
 
         private static void AssertUnknownMembersSurvived(string beforeJson, string afterJson)
@@ -1213,9 +1561,10 @@ namespace FanaBridge.Tests.UI.Display
             Assert.True(JToken.DeepEquals(before["priority"]!["v3Priority"], after["priority"]!["v3Priority"]));
             Assert.True(JToken.DeepEquals(before["priority"]!["rest"]!["v3Rest"], after["priority"]!["rest"]!["v3Rest"]));
             Assert.True(JToken.DeepEquals(before["fields"]!["5"]!["v3Field"], after["fields"]!["5"]!["v3Field"]));
+            // Find ov-1 by id (MoveOverride may reorder the ladder).
             Assert.Equal(
-                (string)before["fields"]!["5"]!["overrides"]![0]!["v3Override"]!,
-                (string)after["fields"]!["5"]!["overrides"]![0]!["v3Override"]!);
+                FindOverrideExt(before, "5", "ov-1", "v3Override"),
+                FindOverrideExt(after, "5", "ov-1", "v3Override"));
 
             // Extension-member relative key order on the root (serializer clone path).
             AssertRelativeKeyOrder(before, after, "v3Top", "v3TopFlag");
@@ -1223,6 +1572,21 @@ namespace FanaBridge.Tests.UI.Display
                 (JObject)before["priority"]!,
                 (JObject)after["priority"]!,
                 "rows", "rest", "v3Priority");
+        }
+
+        private static string FindOverrideExt(
+            JObject root, string paramKey, string overrideId, string extKey)
+        {
+            var overrides = root["fields"]?[paramKey]?["overrides"] as JArray;
+            if (overrides == null)
+                return null!;
+            foreach (var o in overrides)
+            {
+                if (o == null) continue;
+                if (string.Equals((string)o["id"]!, overrideId, StringComparison.OrdinalIgnoreCase))
+                    return (string)o[extKey]!;
+            }
+            return null!;
         }
 
         private static void AssertRelativeKeyOrder(

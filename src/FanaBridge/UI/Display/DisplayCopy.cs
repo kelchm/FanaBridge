@@ -203,19 +203,33 @@ namespace FanaBridge.UI.Display
                 ShowAllFields);
         }
 
-        // 8c Pages & Fields (boards 5c/5d) — blocked phase; keep copy ready.
+        // 8c Pages & Fields (boards 5c/5d).
         /// <summary>
         /// Filter state line when the focused field is shared — reach restated mid-line.
-        /// Example: "Showing Speed — shared across all 5 ITM pages — Show all fields".
-        /// 8c Pages&amp;Fields charter — phase-gated until 5c/5d render.
+        /// Full reach: "Showing Speed — shared across all 5 ITM pages — Show all fields".
+        /// Partial: "Showing Last lap — shared across 2 of 5 ITM pages — Show all fields".
         /// </summary>
-        public static string FilterStateLineShared(string name, int totalItmPages)
+        /// <param name="name">Focused field display name.</param>
+        /// <param name="placed">Catalog pages that place this field.</param>
+        /// <param name="total">Total ITM pages on the wheel.</param>
+        public static string FilterStateLineShared(string name, int placed, int total)
         {
+            if (total > 0 && placed >= total)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Showing {0} — shared across all {1} ITM pages — {2}",
+                    name ?? string.Empty,
+                    total,
+                    ShowAllFields);
+            }
+
             return string.Format(
                 CultureInfo.InvariantCulture,
-                "Showing {0} — shared across all {1} ITM pages — {2}",
+                "Showing {0} — shared across {1} of {2} ITM pages — {3}",
                 name ?? string.Empty,
-                totalItmPages,
+                placed,
+                total,
                 ShowAllFields);
         }
 
@@ -1345,6 +1359,10 @@ namespace FanaBridge.UI.Display
         public const string InSessionPageMustBeItmOrHosted =
             "Base page must be an ITM or hosted page (cycles are not allowed).";
 
+        /// <summary>Validation note: PageOrder rejects cycle refs.</summary>
+        public const string PageOrderMustNotContainCycle =
+            "The Rotation cannot include a cycle — only ITM and hosted pages.";
+
         /// <summary>Q6 / 8b: whole-row click tooltip on a layer sub-row.</summary>
         public const string OpenThisLayersForm = "Open this layer's form";
 
@@ -1440,6 +1458,9 @@ namespace FanaBridge.UI.Display
         public const string PropertyRowHint =
             "The whole row is the click target; the value on the right is what the property reads right now.";
 
+        /// <summary>Property-row trailing chevron glyph.</summary>
+        public const string PropertyRowChevron = "▸";
+
         /// <summary>Lifetime section label.</summary>
         public const string ForHowLong = "For how long";
 
@@ -1487,5 +1508,312 @@ namespace FanaBridge.UI.Display
 
         /// <summary>Live segment preview column label.</summary>
         public const string TheSegmentsNow = "THE SEGMENTS NOW";
+
+        // ── Pages & Fields (5c/5d/5g/5p — Surface A) ─────────────────────
+        // D1–D15: 8c redesigns the field filter + shared sections; copy below is
+        // the ruled vocabulary. F1–F10 conflict resolutions live in model/view.
+
+        /// <summary>Collection scope label (retained as collection scope, not sub-strip).</summary>
+        public static string FieldsOnPage(string pageName)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "FIELDS ON {0}",
+                pageName ?? string.Empty);
+        }
+
+        /// <summary>"{n} · fixed by firmware".</summary>
+        public static string FieldsFixedByFirmware(int n)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} · fixed by firmware",
+                n);
+        }
+
+        /// <summary>
+        /// D14: scope group header for multi-page fields. 8c said "EVERY ITM PAGE";
+        /// craft call ships SHARED because partial-reach fields exist.
+        /// </summary>
+        public const string ScopeGroupShared = "SHARED";
+
+        /// <summary>Scope group header for page-exclusive fields (D14 / item-11).</summary>
+        public const string ScopeGroupThisPage = "THIS PAGE";
+
+        /// <summary>
+        /// One-line announcement when shared focus clears on a page that does not
+        /// place the field (8c item 9 / D10).
+        /// </summary>
+        public static string SharedFocusClearedOnThisPage(string name)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} isn't on this page — showing all fields again.",
+                name ?? string.Empty);
+        }
+
+        /// <summary>Legacy pill label; prefer <see cref="ShowAllFields"/> for the clear action.</summary>
+        public const string AllFields = "All fields";
+
+        /// <summary>Per-section add affordance.</summary>
+        public const string AddAnOverride = "+ Add an override";
+
+        /// <summary>Override ladder row tooltip (mirror of OpenThisLayersForm).</summary>
+        public const string OpenThisOverridesForm = "Open this override's form";
+
+        /// <summary>BASE block sub-line.</summary>
+        public const string BaseShowsWhenNoOverrideTrue =
+            "shows whenever no override above is true";
+
+        /// <summary>BASE control: source dropdown label.</summary>
+        public const string WhatItReads = "What it reads";
+
+        /// <summary>BASE control: format dropdown label.</summary>
+        public const string HowItsWritten = "How it's written";
+
+        /// <summary>BASE control: suffix dropdown label.</summary>
+        public const string BaseSuffixLabel = "Base suffix";
+
+        /// <summary>BASE suffix note.</summary>
+        public const string BaseSuffixNote =
+            "Printed after the value whenever no override writes the suffix.";
+
+        /// <summary>Amber suppression consequence when one row masks another.</summary>
+        public static string SuffixSuppressedNote(int seconds, string character)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "One row owns the suffix, so for those {0} s the {1} is suppressed.",
+                seconds,
+                character ?? string.Empty);
+        }
+
+        /// <summary>WHERE THIS APPLIES card label.</summary>
+        public const string WhereThisApplies = "WHERE THIS APPLIES";
+
+        /// <summary>WHERE THIS APPLIES body naming the page and its four routes.</summary>
+        public static string WhereThisAppliesBody(string pageBadge, string pageName)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "Everything in this ladder applies whenever {0} · {1} is on the wheel — its own priority, the pit-box page cycle, paged to, or as the Base page.",
+                pageBadge ?? string.Empty,
+                pageName ?? string.Empty);
+        }
+
+        /// <summary>THIS WHEEL card label.</summary>
+        public const string ThisWheel = "THIS WHEEL";
+
+        /// <summary>Envelope capability sentence for the focused field.</summary>
+        public static string ThisWheelEnvelope(string field, int suffixChars, string valueKind)
+        {
+            string suffixPart = suffixChars == 1
+                ? "1 suffix character"
+                : string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0} suffix characters",
+                    suffixChars);
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} takes {1}; its value region takes {2}.",
+                field ?? string.Empty,
+                suffixPart,
+                valueKind ?? string.Empty);
+        }
+
+        /// <summary>THIS PAGE card label (footer card; also group header via ScopeGroupThisPage).</summary>
+        public const string ThisPageCard = "THIS PAGE";
+
+        /// <summary>THIS PAGE card body.</summary>
+        public static string ThisPageBody(string pageName, int index)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "The wheel's own {0} page — page {1} here. Entrypoints point at the page, not the number, so the number can differ on another wheel.",
+                pageName ?? string.Empty,
+                index);
+        }
+
+        /// <summary>Entrypoints list section label.</summary>
+        public const string EntrypointsToThisPage = "ENTRYPOINTS TO THIS PAGE";
+
+        /// <summary>"{n} · read-only here".</summary>
+        public static string ReadOnlyHereCount(int n)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} · read-only here",
+                n);
+        }
+
+        /// <summary>Trailing note under the entrypoints list.</summary>
+        public const string PageRanksNothingAbove =
+            "The numbers are this page's rank in Priority; nothing above it is live.";
+
+        /// <summary>Preview face watermark.</summary>
+        public const string PreviewWatermark = "PREVIEW";
+
+        /// <summary>
+        /// D4: preview caption reworded for 8c dual-channel selection.
+        /// </summary>
+        public const string PreviewLayoutFixedHint =
+            "The layout is fixed in firmware. Clicking a field here picks it — same selection, two ways in.";
+
+        /// <summary>Amber badge on catalog-derived labels until the capture pass.</summary>
+        public const string FromCatalogBadge = "FROM CATALOG";
+
+        /// <summary>Page-strip hosted-slot note (5c).</summary>
+        public const string StripHostedNote =
+            "Slot 6 hosts our own pages, so they sit in this one strip after the ITM pages — no nested row. ITM numbers are firmware addresses; hosted pages have none, so they carry the kind badge instead of a number.";
+
+        /// <summary>5g override form title prefix.</summary>
+        public const string AnOverrideOn = "An override on";
+
+        /// <summary>5g section: what it writes.</summary>
+        public const string WhatItWrites = "What it writes";
+
+        /// <summary>5g checkbox: the value.</summary>
+        public const string TheValue = "the value";
+
+        /// <summary>5g checkbox: the suffix.</summary>
+        public const string TheSuffix = "the suffix";
+
+        /// <summary>5g trailing note when value is left unchecked.</summary>
+        public static string LeavesInPlace(string sourceName)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "leaves {0} in place",
+                sourceName ?? string.Empty);
+        }
+
+        /// <summary>5g align sub-row label.</summary>
+        public const string AlignLabel = "Align";
+
+        /// <summary>5g align segment: Left.</summary>
+        public const string AlignLeft = "Left";
+
+        /// <summary>5g align segment: Right.</summary>
+        public const string AlignRight = "Right";
+
+        /// <summary>"{n}-character region".</summary>
+        public static string AlignRegionWidth(int n)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}-character region",
+                n);
+        }
+
+        /// <summary>5g print-order note.</summary>
+        public const string ValueThenSuffixNote =
+            "Value first, then suffix — the order the wheel prints them.";
+
+        /// <summary>5g before/after section label.</summary>
+        public const string FieldBeforeAndAfter = "The field, before and after";
+
+        /// <summary>5g base face caption.</summary>
+        public const string BaseValueOnly = "base — value only";
+
+        /// <summary>5g override face caption.</summary>
+        public const string WhileThisOverrideHolds = "while this override holds";
+
+        /// <summary>5g bring-up explainer body.</summary>
+        public static string BringUpExplainer(string pageName, int rank)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "When it fires, its page is brought up as well. {0} holds priority {1}. This checkbox is the only place the flag is set or cleared — the ↑ on the field ladder opens this form.",
+                pageName ?? string.Empty,
+                rank);
+        }
+
+        /// <summary>5g bring-up lifetime: stays while active (pin).</summary>
+        public const string BringUpStaysWhileActive = "and stays while it's active";
+
+        /// <summary>5g bring-up lifetime: visit for N seconds.</summary>
+        public static string BringUpForSeconds(int n)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "for {0} s each time it fires",
+                n);
+        }
+
+        /// <summary>5p rotation dialog title.</summary>
+        public const string ReorderTheRotation = "Reorder the Rotation";
+
+        /// <summary>5p strip overflow menu item.</summary>
+        public const string ReorderTheRotationMenu = "Reorder the Rotation…";
+
+        /// <summary>5p dialog list header: in rotation.</summary>
+        public const string InTheRotation = "IN THE ROTATION";
+
+        /// <summary>5p dialog list header: not in rotation.</summary>
+        public const string NotInTheRotation = "NOT IN THE ROTATION";
+
+        /// <summary>5p dialog footer primary.</summary>
+        public const string SaveOrder = "Save order";
+
+        /// <summary>5p dialog interaction note (D17: up/down reorder + click membership).</summary>
+        public const string DragBetweenListsNote =
+            "Use ↑ ↓ to reorder within the Rotation. Click a page to move it between the two lists.";
+
+        /// <summary>5p why-line: the Base page.</summary>
+        public const string RotationWhyBasePage = "the Base page";
+
+        /// <summary>5p why-line: only route.</summary>
+        public const string RotationWhyOnlyRoute =
+            "no entrypoint — this is its only route";
+
+        /// <summary>5p why-line: has entrypoint at rank.</summary>
+        public static string RotationWhyHasEntrypoint(int rank)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "has an entrypoint too — priority {0}",
+                rank);
+        }
+
+        /// <summary>5p why-line for off-rotation pages.</summary>
+        public const string RotationWhyArrivesViaEntrypoints =
+            "arrives through its own entrypoints";
+
+        /// <summary>5p strip note in rotation-editing mode.</summary>
+        public const string RotationStripNote =
+            "Selection and order share the strip: the filled button is the page you are editing, the numeral is where the paddles find it, and a page past the divider has no step at all.";
+
+        /// <summary>5p right-click: move earlier (affordance only).</summary>
+        public const string MoveEarlier = "Move earlier";
+
+        /// <summary>5p right-click: move later.</summary>
+        public const string MoveLater = "Move later";
+
+        /// <summary>5p right-click: take out of rotation.</summary>
+        public const string TakeOutOfTheRotation = "Take out of the Rotation";
+
+        /// <summary>5p right-click: rename page.</summary>
+        public const string RenamePage = "Rename…";
+
+        /// <summary>5p right-click: delete page.</summary>
+        public const string DeleteThisPage = "Delete this page";
+
+        /// <summary>Value-kind noun for envelope sentences: numbers.</summary>
+        public const string ValueKindNumbers = "numbers";
+
+        /// <summary>Value-kind noun for envelope sentences: text.</summary>
+        public const string ValueKindText = "text";
+
+        /// <summary>No-suffix capability note (TC/ABS).</summary>
+        public const string NoSuffixRegion = "no suffix region";
+
+        /// <summary>Rotation step absent marker (—).</summary>
+        public const string RotationStepAbsent = "—";
+
+        /// <summary>Add-a-page strip tile (already in Priority; listed for Surface A).</summary>
+        // AddAPage exists above.
+
+        /// <summary>Field base noun (lowercase) — existing FieldBase member covers "base".</summary>
+        // FieldBase / BaseBlockLabel exist above.
     }
 }

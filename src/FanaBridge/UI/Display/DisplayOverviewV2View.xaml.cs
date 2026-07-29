@@ -121,10 +121,9 @@ namespace FanaBridge.UI.Display
             txtOnTheWheelNow.Text = DisplayCopy.OnTheWheelNow;
             txtModeProfileDivider.Text = DisplayCopy.ModeProfileDivider;
             SetHyperlinkText(linkPagesAndFields, DisplayCopy.PagesAndFieldsSpoke);
-            // N1 later phase: disabled spoke + tooltip; wiring point tagged above.
-            linkPagesAndFields.IsEnabled = false;
-            linkPagesAndFields.ToolTip = DisplayCopy.SpokeArrivingLater(DisplayCopy.PagesAndFields);
-            System.Windows.Controls.ToolTipService.SetShowOnDisabled(linkPagesAndFields, true);
+            // N1 Surface A: Pages & Fields is LIVE — enable the spoke.
+            linkPagesAndFields.IsEnabled = true;
+            linkPagesAndFields.ToolTip = null;
             txtPriorityHeader.Text = DisplayCopy.PrioritySection;
             txtLadderSubtitle.Text = DisplayCopy.LadderSubtitle;
             SetHyperlinkText(linkPriority, DisplayCopy.PrioritySpoke);
