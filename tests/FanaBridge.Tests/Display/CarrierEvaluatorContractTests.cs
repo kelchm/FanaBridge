@@ -8,11 +8,6 @@ using Xunit;
 namespace FanaBridge.Tests.Display
 {
     /// <summary>
-    /// Phase E3: evaluator-level v2 lifetime semantics (onChange + direction + then) and
-    /// migration-golden alignment with the v9 DisplayRule path. The live v9 engine still
-    /// consumes only the v1 subset via <see cref="DisplayRuleCarrierAdapter.ToCarrierSpec"/>.
-    /// </summary>
-    /// <summary>
     /// Keeper laws: pure v2 carrier evaluation pins (FromV2 / Derived / snapshots).
     /// </summary>
     public class CarrierEvaluatorContractTests
@@ -49,30 +44,6 @@ namespace FanaBridge.Tests.Display
             {
                 Source = new ValueSource { Kind = ValueSourceKind.BuiltIn, Name = name },
             };
-
-        /// <summary>
-        /// Event-family CarrierSpec via the v9 actionTriggered path (FA2: v2 Condition
-        /// no longer has an action source; Event stays until E8b via FromDisplayRule).
-        /// </summary>
-        private static CarrierSpec EventSpec(string id, string actionName, HoldSpec hold)
-        {
-            var rule = new DisplayRule
-            {
-                Id = id,
-                When = new RuleCondition
-                {
-                    Kind = ConditionKind.ActionTriggered,
-                    Source = new PropertySpec
-                    {
-                        Kind = PropertyKind.FanaBridgeAction,
-                        Name = actionName,
-                    },
-                },
-                Hold = hold,
-                Eligible = RuleEligibility.Always,
-            };
-            return DisplayRuleCarrierAdapter.ToCarrierSpec(rule);
-        }
 
         private static Condition LevelOp(ConditionOperator op, string name, double value,
             double? hyst = null)

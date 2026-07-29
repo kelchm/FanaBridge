@@ -177,15 +177,36 @@ namespace FanaBridge.Tests.Display
             throw new InvalidOperationException("page not on device 3: " + page);
         }
 
-        // basePage plus a never-firing rule so Rules.Count > 0: Phase 9a takes ITM page
-        // policy only when the document has ITM rule content (not stack existence alone).
-        private static JObject ConfigWithBase(string basePage)
-            => JObject.Parse(
-                "{ \"schemaVersion\": 1, \"itm\": { \"basePage\": \"" + basePage + "\", "
-                + "\"rules\": [ { \"id\": \"never\", "
-                + "\"when\": { \"kind\": \"isTrue\", \"source\": { \"kind\": \"builtIn\", \"name\": \"IsInPitLane\" } }, "
-                + "\"show\": { \"kind\": \"page\", \"page\": \"tyreTemps\" }, "
-                + "\"hold\": { \"kind\": \"whileActive\" } } ] } }");
+        // v2 document with ITM rest = catalogPageId (composition takes page policy).
+        private static JObject ConfigWithBase(string catalogPageId)
+            => JObject.Parse(@"
+{
+  ""schemaVersion"": 2,
+  ""pages"": [
+    {
+      ""kind"": ""hostedPage"",
+      ""id"": ""p-pit"",
+      ""name"": ""Pit"",
+      ""base"": { ""content"": { ""kind"": ""text"", ""text"": ""PIT"" } }
+    }
+  ],
+  ""priority"": {
+    ""rows"": [ { ""kind"": ""manual"" } ],
+    ""rest"": {
+      ""inSessionPage"": { ""kind"": ""itmPage"", ""catalogPageId"": """ + catalogPageId + @""" },
+      ""idle"": { ""kind"": ""blank"" }
+    }
+  },
+  ""settings"": { ""mode"": ""on"" }
+}");
+
+        private static JObject V2ModeOff()
+            => JObject.Parse(@"{
+  ""schemaVersion"": 2,
+  ""pages"": [],
+  ""priority"": { ""rows"": [], ""rest"": { ""inSessionPage"": { ""kind"": ""blank"" }, ""idle"": { ""kind"": ""blank"" } } },
+  ""settings"": { ""mode"": ""off"" }
+}");
 
         // Runs a session to push-confirmed sync: bring-up, one confirming push, judge.
         // With no config the sync lands on the setting page (wire 1, Lap Info).
@@ -223,7 +244,7 @@ namespace FanaBridge.Tests.Display
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = ConfigWithBase("fuelErsDrs"),
+                ["display"] = ConfigWithBase("fuelErsDrs"),
             });
             var running = Data(NewStatus());
             s.Frame(running);   // builds the driver, then the stack
@@ -281,7 +302,7 @@ namespace FanaBridge.Tests.Display
             var s = SyncedSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = ConfigWithBase("tyreTemps"),
+                ["display"] = ConfigWithBase("tyreTemps"),
             }, LapInfoPush, running);    // firmware confirms the bring-up page (1)
             RunSwitchWindow(s, running);
 
@@ -298,14 +319,17 @@ namespace FanaBridge.Tests.Display
             var s = SyncedSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = ConfigWithBase("tyreTemps"),
+                ["display"] = ConfigWithBase("tyreTemps"),
             }, TyrePush, running);
             Assert.Equal(ItmLifecycleState.Synced, s.Instance.ItmDisplayForTest!.Lifecycle.State);
             int before = PageSets(s.Transport.Sent).Count;
 
-            // The UI removes the customization: the stack tears down, policy returns
-            // to the ItmDefaultPage setting, and the display switches back live.
-            s.Instance.ApplyDisplayConfig(null);
+            // Mode Off drops composition page policy → built-in setting owns the page.
+            s.Instance.SetSettings(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["display"] = V2ModeOff(),
+            }, isDefault: false);
             s.Frame(running);            // teardown observed on the frame path
             s.Frame(running);            // policy edge reaches the driver
             RunSwitchWindow(s, running);
@@ -318,20 +342,23 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void BasePageChange_WithinALiveStack_SwitchesLive()
+        public void BasePageChange_WithinALiveComposition_SwitchesLive()
         {
             var running = Data(NewStatus());
             var s = SyncedSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = ConfigWithBase("tyreTemps"),
+                ["display"] = ConfigWithBase("tyreTemps"),
             }, TyrePush, running);
             int before = PageSets(s.Transport.Sent).Count;
 
-            // The UI edits the config's base page: the stack rebuilds and the new
-            // base is requested live; the stack keeps owning the revert throughout.
-            s.Instance.ApplyDisplayConfig(DisplayConfigSerializer.Load(
-                ConfigWithBase("fuelErsDrs").ToString(), _ => { }));
+            // Rest catalog page changes: composition rebuilds and the new rest is
+            // requested live; composition keeps owning the revert throughout.
+            s.Instance.SetSettings(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["display"] = ConfigWithBase("fuelErsDrs"),
+            }, isDefault: false);
             s.Frame(running);
             s.Frame(running);
             RunSwitchWindow(s, running);
@@ -382,7 +409,7 @@ namespace FanaBridge.Tests.Display
             var s = SyncedSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = ConfigWithBase("tyreTemps"),
+                ["display"] = ConfigWithBase("tyreTemps"),
             }, TyrePush, running);
             var driver = s.Instance.ItmDisplayForTest!;
             Assert.True(driver.HasExternalPagePolicy);
@@ -401,17 +428,19 @@ namespace FanaBridge.Tests.Display
             s.Clock.T += 250;
             Assert.True(s.Wheelbase.UpdateIdentity());
             // …and the customization is removed before the next frame, so BOTH land on
-            // one DataUpdate: the wheel-change block drops the stack while the driver
+            // one DataUpdate: the wheel-change block drops composition while the driver
             // deliberately keeps holding the external policy, and the teardown that
-            // same frame must hand policy back even though no stack exists any more.
-            // (Miss this corner and the driver rests on the dead stack's base with the
-            // game-start revert suppressed forever — the phantom-manual bug class.)
-            s.Instance.ApplyDisplayConfig(null);
+            // same frame must hand policy back even though no composition exists any more.
+            s.Instance.SetSettings(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["display"] = V2ModeOff(),
+            }, isDefault: false);
             s.Frame(running);
 
             Assert.Same(driver, s.Instance.ItmDisplayForTest);  // the driver survives a wheel change
             Assert.False(driver.HasExternalPagePolicy);
-            Assert.Null(s.Instance.DisplayStackForTest);
+            Assert.Null(s.Instance.CompositionForTest);
             // The dead stack's published rule rows go with it — the Display tab must
             // not keep rendering a customization that no longer exists.
             Assert.Null(s.Instance.DisplayRuleSnapshot);
@@ -433,7 +462,7 @@ namespace FanaBridge.Tests.Display
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = ConfigWithBase("fuelErsDrs"),
+                ["display"] = ConfigWithBase("fuelErsDrs"),
             });
             s.Frame(running);   // driver built (bring-up targets the setting), stack built
             s.Frame(running);   // the stack's base reaches the lifecycle
@@ -467,7 +496,7 @@ namespace FanaBridge.Tests.Display
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = ConfigWithBase("tyreTemps"),
+                ["display"] = ConfigWithBase("tyreTemps"),
             });
             s.Frame(running);   // driver + stack built on device 3
             s.Frame(running);   // the stack's base reaches the lifecycle
@@ -499,7 +528,7 @@ namespace FanaBridge.Tests.Display
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = ConfigWithBase("carSettings"),
+                ["display"] = ConfigWithBase("carSettings"),
             });
             s.Frame(running);   // driver + stack built on device 3 (base = Car Settings, wire 3)
             s.Frame(running);
@@ -532,7 +561,7 @@ namespace FanaBridge.Tests.Display
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = ConfigWithBase("tyreTemps"),
+                ["display"] = ConfigWithBase("tyreTemps"),
             });
             var bentley = WheelProfileStore.FindByWheelType("PSWBENT");
             Assert.NotNull(bentley);
@@ -567,7 +596,7 @@ namespace FanaBridge.Tests.Display
             var s = SyncedSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = ConfigWithBase("tyreTemps"),
+                ["display"] = ConfigWithBase("tyreTemps"),
             }, TyrePush, running);
             int before = PageSets(s.Transport.Sent).Count;
 
@@ -577,7 +606,7 @@ namespace FanaBridge.Tests.Display
             {
                 ["wheelType"] = "CSSWFORMV3",
                 ["itmDefaultPage"] = 3,
-                ["displayCustomization"] = ConfigWithBase("tyreTemps"),
+                ["display"] = ConfigWithBase("tyreTemps"),
             }, isDefault: false);
             s.Frame(running);
             s.Frame(running);

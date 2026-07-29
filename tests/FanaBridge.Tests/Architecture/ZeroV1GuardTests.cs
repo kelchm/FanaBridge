@@ -9,17 +9,43 @@ using Xunit.Abstractions;
 namespace FanaBridge.Tests.Architecture
 {
     /// <summary>
-    /// Zero-v1 guard (engine-replan-v2.md §E8b / DOD-007). Report-only until E8b exit:
-    /// inventory of retirement-manifest identifiers and v1-exclusive JSON parse targets
-    /// still present in src non-test C#. Flips to fail when <see cref="FailMode"/> is true.
+    /// Zero-v1 guard (engine-replan-v2.md §E8b / DOD-007). Two tiers:
+    /// <list type="bullet">
+    /// <item><b>DELETED-NOW</b> — engine/schema burn identifiers; FailMode=true (must be
+    /// absent from src after E8b).</item>
+    /// <item><b>UI-EXIT</b> — types the v1 views still reference until E9-exit; report-only
+    /// (FailMode=false) until that gate.</item>
+    /// </list>
     /// </summary>
     public class ZeroV1GuardTests
     {
-        // Flips to true at E8b exit — while false, tests emit inventory and PASS.
-        private const bool FailMode = false;
+        // DELETED-NOW tier: engine/schema burn-down — must be empty after E8b.
+        private const bool FailModeDeletedNow = true;
 
-        // RETIREMENT MANIFEST — engine-replan-v2.md §E8b "RETIREMENT MANIFEST".
-        private static readonly string[] ManifestIdentifiers =
+        // UI-EXIT tier: report-only until E9-exit.
+        private const bool FailModeUiExit = false;
+
+        /// <summary>
+        /// Engine/schema identifiers deleted at E8b. FailModeDeletedNow requires ABSENCE.
+        /// </summary>
+        private static readonly string[] DeletedNowIdentifiers =
+        {
+            "DisplayRuleEngine",
+            "RuleEngineInput",
+            "RuleEngineResult",
+            "RuleIntent",
+            "RuleLiveState",
+            "DisplayRuleStack",
+            "LegacyModeMigration",
+            "DisplayActionHub",
+            "DisplayRuleCarrierAdapter",
+        };
+
+        /// <summary>
+        /// UI-coupled retirement-manifest identifiers retained until E9-exit.
+        /// RuleStatus + DisplayRuleSnapshot stay with the v1 Overview/Triggers surface.
+        /// </summary>
+        private static readonly string[] UiExitIdentifiers =
         {
             "DisplayCustomizationConfig",
             "ItmRuleSet",
@@ -38,14 +64,7 @@ namespace FanaBridge.Tests.Architecture
             "LegacyEffect",
             "DisplayConfigSerializer",
             "DisplayConfigValidator",
-            "DisplayRuleEngine",
-            "RuleEngineInput",
-            "RuleEngineResult",
-            "RuleIntent",
             "RuleStatus",
-            "RuleLiveState",
-            "DisplayRuleStack",
-            "LegacyModeMigration",
             "DisplayTriggersView",
             "DisplayTriggersEditModel",
             "DisplayPagesView",
@@ -55,7 +74,7 @@ namespace FanaBridge.Tests.Architecture
             "TriggerRuleSet",
         };
 
-        // Keeper allowlist — must stay absent from the manifest.
+        // Keeper allowlist — must stay absent from both manifests.
         private static readonly string[] KeeperAllowlist =
         {
             "LegacyValueFormatter",
@@ -66,7 +85,7 @@ namespace FanaBridge.Tests.Architecture
             "id",
         };
 
-        // v1-exclusive JSON literals used as parse targets (string literals in src).
+        // v1-exclusive JSON literals — UI-EXIT / serializer-coupled until E9-exit.
         private static readonly string[] GlobalJsonLiterals =
         {
             "segmentDisplay",
@@ -77,7 +96,6 @@ namespace FanaBridge.Tests.Architecture
             "inRotation",
         };
 
-        // "show"/"when"/"hold" only in v1 rule-member parsing files.
         private static readonly string[] RuleMemberJsonLiterals = { "show", "when", "hold" };
 
         private static readonly HashSet<string> RuleMemberParseFiles =
@@ -94,7 +112,8 @@ namespace FanaBridge.Tests.Architecture
         [Fact]
         public void Manifest_DoesNotContainKeeperAllowlistNames()
         {
-            var set = new HashSet<string>(ManifestIdentifiers, StringComparer.Ordinal);
+            var set = new HashSet<string>(
+                DeletedNowIdentifiers.Concat(UiExitIdentifiers), StringComparer.Ordinal);
             var offenders = KeeperAllowlist.Where(k => set.Contains(k)).ToList();
             Assert.True(
                 offenders.Count == 0,
@@ -103,50 +122,35 @@ namespace FanaBridge.Tests.Architecture
         }
 
         [Fact]
-        public void IdentifierScan_ReportOnlyUntilE8b()
+        public void DeletedNow_IdentifierScan_MustBeEmpty()
         {
-            var hits = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
-            foreach (var file in EnumerateSourceFiles())
+            var hits = ScanIdentifiers(DeletedNowIdentifiers);
+            Report("DELETED-NOW identifier", hits, FailModeDeletedNow);
+            if (FailModeDeletedNow && hits.Count > 0)
             {
-                var rel = RepoRelative(file);
-                var code = StripCommentsAndStringsBestEffort(File.ReadAllText(file));
-                foreach (var id in ManifestIdentifiers)
-                {
-                    var rx = new Regex(@"\b" + Regex.Escape(id) + @"\b");
-                    if (rx.IsMatch(code))
-                    {
-                        if (!hits.TryGetValue(id, out var files))
-                        {
-                            files = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-                            hits[id] = files;
-                        }
-                        files.Add(rel);
-                    }
-                }
-            }
-
-            int fileCount = hits.Values.SelectMany(s => s).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            _output.WriteLine(
-                $"ZeroV1 identifier scan: {hits.Count} identifiers across {fileCount} files (FailMode={FailMode})");
-            foreach (var kv in hits)
-            {
-                _output.WriteLine($"  {kv.Key}: {kv.Value.Count} file(s)");
-                foreach (var f in kv.Value)
-                    _output.WriteLine($"    - {f}");
-            }
-
-            if (FailMode && hits.Count > 0)
-            {
-                Assert.True(
-                    false,
-                    "Retirement-manifest identifiers still present in src:\n"
+                Assert.Fail(
+                    "DELETED-NOW retirement-manifest identifiers still present in src:\n"
                         + string.Join("\n", hits.Select(kv =>
                             kv.Key + ": " + string.Join(", ", kv.Value))));
             }
         }
 
         [Fact]
-        public void JsonLiteralScan_ReportOnlyUntilE8b()
+        public void UiExit_IdentifierScan_ReportOnlyUntilE9()
+        {
+            var hits = ScanIdentifiers(UiExitIdentifiers);
+            Report("UI-EXIT identifier", hits, FailModeUiExit);
+            if (FailModeUiExit && hits.Count > 0)
+            {
+                Assert.Fail(
+                    "UI-EXIT retirement-manifest identifiers still present in src:\n"
+                        + string.Join("\n", hits.Select(kv =>
+                            kv.Key + ": " + string.Join(", ", kv.Value))));
+            }
+        }
+
+        [Fact]
+        public void JsonLiteralScan_ReportOnlyUntilE9()
         {
             var hits = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
             foreach (var file in EnumerateSourceFiles())
@@ -163,23 +167,55 @@ namespace FanaBridge.Tests.Architecture
                 }
             }
 
-            int fileCount = hits.Values.SelectMany(s => s).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            _output.WriteLine(
-                $"ZeroV1 JSON-literal scan: {hits.Count} literals across {fileCount} files (FailMode={FailMode})");
-            foreach (var kv in hits)
+            Report("UI-EXIT JSON-literal", hits, FailModeUiExit);
+            if (FailModeUiExit && hits.Count > 0)
             {
-                _output.WriteLine($"  \"{kv.Key}\": {kv.Value.Count} file(s)");
-                foreach (var f in kv.Value)
-                    _output.WriteLine($"    - {f}");
-            }
-
-            if (FailMode && hits.Count > 0)
-            {
-                Assert.True(
-                    false,
+                Assert.Fail(
                     "v1-exclusive JSON literals still present in src:\n"
                         + string.Join("\n", hits.Select(kv =>
                             "\"" + kv.Key + "\": " + string.Join(", ", kv.Value))));
+            }
+        }
+
+        private SortedDictionary<string, SortedSet<string>> ScanIdentifiers(string[] ids)
+        {
+            var hits = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+            foreach (var file in EnumerateSourceFiles())
+            {
+                var rel = RepoRelative(file);
+                var code = StripCommentsAndStringsBestEffort(File.ReadAllText(file));
+                foreach (var id in ids)
+                {
+                    var rx = new Regex(@"\b" + Regex.Escape(id) + @"\b");
+                    if (rx.IsMatch(code))
+                    {
+                        if (!hits.TryGetValue(id, out var files))
+                        {
+                            files = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                            hits[id] = files;
+                        }
+                        files.Add(rel);
+                    }
+                }
+            }
+            return hits;
+        }
+
+        private void Report(
+            string label, SortedDictionary<string, SortedSet<string>> hits, bool failMode)
+        {
+            int fileCount = hits.Values
+                .SelectMany(s => s)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            _output.WriteLine(
+                $"ZeroV1 {label} scan: {hits.Count} identifiers across {fileCount} files "
+                + $"(FailMode={failMode})");
+            foreach (var kv in hits)
+            {
+                _output.WriteLine($"  {kv.Key}: {kv.Value.Count} file(s)");
+                foreach (var f in kv.Value)
+                    _output.WriteLine($"    - {f}");
             }
         }
 
@@ -187,7 +223,6 @@ namespace FanaBridge.Tests.Architecture
             string text, string literal, string rel,
             SortedDictionary<string, SortedSet<string>> hits)
         {
-            // Match "literal" as a C# string token (best-effort).
             var rx = new Regex("\"" + Regex.Escape(literal) + "\"");
             if (!rx.IsMatch(text))
                 return;

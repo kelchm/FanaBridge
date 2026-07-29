@@ -71,11 +71,9 @@ namespace FanaBridge.Display.Runtime
         public string IntentDescription { get; }
 
         /// <summary>
-        /// The display name of the page the stack actually rests on — the stack's own
-        /// resolution (<see cref="DisplayRuleStack.BaseWirePage"/>): the config's base page
-        /// when set AND offered by this device, else the page at the device's default wire.
-        /// The UI's "Always →" row must show THIS while a stack is live, not re-derive it
-        /// from settings the stack captured at build time.
+        /// The display name of the page the (former) rule stack rested on. Retained for the
+        /// v1 UI envelope until E9-exit; after E8b the engine never publishes a non-null
+        /// <see cref="DisplayRuleSnapshot"/>.
         /// </summary>
         public string BasePageName { get; }
 

@@ -314,16 +314,14 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void PersistencePath_SetSettingsGetSettings_PreservesUnknownMembers()
+        public void PersistencePath_ApplyDisplayConfigGetSettings_PreservesUnknownMembers()
         {
+            // E8b: SetSettings no longer loads the v1 key; UI ApplyDisplayConfig is the
+            // remaining v1 bag store until E9-exit.
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;
 
-            inst.SetSettings(new JObject
-            {
-                ["wheelType"] = "PSWBMW",
-                ["displayCustomization"] = JObject.Parse(V2Document),
-            }, isDefault: false);
+            inst.ApplyDisplayConfig(DisplayConfigSerializer.Load(V2Document, _ => { }));
 
             var saved = (JObject)inst.GetSettings(false, false);
             var doc = saved["displayCustomization"] as JObject;

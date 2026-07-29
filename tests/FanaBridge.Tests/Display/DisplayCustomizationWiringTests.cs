@@ -14,6 +14,10 @@ using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using GameReaderCommon;
+using log4net;
+using log4net.Appender;
+using log4net.Core;
+using log4net.Repository.Hierarchy;
 using Newtonsoft.Json.Linq;
 using Xunit;
 
@@ -135,17 +139,15 @@ namespace FanaBridge.Tests.Display
                 + "\"hold\": { \"kind\": \"forDuration\", \"durationMs\": 5000 } } ] } }");
 
         [Fact]
-        public void SetSettings_ParsesTheKey_AndGetSettingsRoundTripsIt()
+        public void ApplyDisplayConfig_ParsesAndGetSettingsRoundTripsIt()
         {
+            // E8b: SetSettings ignores the v1 key; the UI write path (ApplyDisplayConfig)
+            // is the remaining store for the v1 bag until E9-exit.
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;   // before plugin Init — must still work
 
-            var payload = new JObject
-            {
-                ["wheelType"] = "PSWBMW",
-                ["displayCustomization"] = RuleDocument(),
-            };
-            inst.SetSettings(payload, isDefault: false);
+            inst.ApplyDisplayConfig(DisplayConfigSerializer.Load(
+                RuleDocument().ToString(), _ => { }));
 
             var saved = inst.GetSettings(false, false) as JObject;
             Assert.NotNull(saved);
@@ -161,19 +163,15 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void GetSettings_PreservesEnumText_AFutureVersionWrote()
+        public void ApplyDisplayConfig_PreservesEnumText_AFutureVersionWrote()
         {
-            // The piece-1 EnumText contract carried through the device settings
-            // surface: a condition kind only a future build knows survives
-            // SetSettings → GetSettings verbatim (the rule is degraded at runtime,
-            // never rewritten in the document).
+            // The piece-1 EnumText contract: a condition kind only a future build knows
+            // survives ApplyDisplayConfig → GetSettings verbatim.
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;
 
-            inst.SetSettings(new JObject
-            {
-                ["displayCustomization"] = RuleDocument(conditionKind: "sparkles"),
-            }, isDefault: false);
+            inst.ApplyDisplayConfig(DisplayConfigSerializer.Load(
+                RuleDocument(conditionKind: "sparkles").ToString(), _ => { }));
 
             var saved = (JObject)inst.GetSettings(false, false);
             string doc = saved["displayCustomization"]!.ToString();
@@ -392,23 +390,41 @@ namespace FanaBridge.Tests.Display
         [Fact]
         public void SetSettings_V1Document_DoesNotTriggerPreEpicBake()
         {
-            // v1-only bag leaves the LegacyModeMigration path unchanged this round.
+            // E8b: v1 key present = no engine, no bake (must not run §9b).
+            // Raw bag rides through GetSettings inertly until E9-exit; log-once on notice.
+            var hierarchy = (Hierarchy)LogManager.GetRepository();
+            var appender = new MemoryAppender();
+            hierarchy.Root.RemoveAllAppenders();
+            hierarchy.Root.AddAppender(appender);
+            hierarchy.Root.Level = Level.Info;
+            hierarchy.Configured = true;
+            SimHub.Logging.Reset();
+
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;
 
-            inst.SetSettings(new JObject
+            var bag = RuleDocument();
+            var settings = new JObject
             {
                 ["wheelType"] = "PSWBMW",
                 ["displayControl"] = DisplaySettings.ControlItm,
                 ["itmDefaultPage"] = 5,
-                ["displayCustomization"] = RuleDocument(),
-            }, false);
+                ["displayCustomization"] = bag,
+            };
+
+            inst.SetSettings(settings, false);
+            inst.SetSettings(settings, false); // second pass: notice must stay one-shot
 
             var saved = (JObject)inst.GetSettings(false, false);
             Assert.Null(saved["display"]);
-            Assert.NotNull(saved["displayCustomization"]);
+            Assert.True(JToken.DeepEquals(bag, saved["displayCustomization"])); // inert passthrough
             Assert.Null(inst.DisplayRuntimeForTest.CurrentConfigV2);
-            Assert.NotNull(inst.DisplayRuntimeForTest.CurrentConfig);
+            Assert.Null(inst.DisplayRuntimeForTest.CurrentConfig); // no engine ran
+
+            const string notice = "ignoring displayCustomization (v1)";
+            int noticeCount = appender.GetEvents()
+                .Count(e => e.RenderedMessage != null && e.RenderedMessage.IndexOf(notice, StringComparison.Ordinal) >= 0);
+            Assert.Equal(1, noticeCount);
         }
 
         // ── IsEmpty (the parity gate's switch) ───────────────────────────
@@ -641,12 +657,7 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(AsHex(baseline), AsHex(withEmptyMappings));
             // Absolute golden still holds for the migrated-default arm.
             Assert.Equal(GoldenFrames, AsHex(baseline));
-
-            // Legacy stack exists (Gear world); ITM page policy is NOT taken over.
-            Assert.NotNull(instA.DisplayStackForTest);
-            Assert.NotNull(instB.DisplayStackForTest);
-            Assert.NotNull(instC.DisplayStackForTest);
-            Assert.True(DisplayRuleStack.HasLegacyWorld(instA.DisplayStackForTest!.Config));
+            // E8b: v1 key builds no engine; ITM page policy is NOT taken over.
             Assert.False(instA.ItmDisplayForTest!.HasExternalPagePolicy);
             Assert.False(instB.ItmDisplayForTest!.HasExternalPagePolicy);
             Assert.False(instC.ItmDisplayForTest!.HasExternalPagePolicy);
@@ -667,9 +678,8 @@ namespace FanaBridge.Tests.Display
             s.Frame(running);
 
             Assert.True(((IDisplayPanelHost)s.Instance).DisplaySettings.ItmActive);
-            Assert.NotNull(s.Instance.DisplayStackForTest);
-            Assert.True(DisplayRuleStack.HasLegacyWorld(s.Instance.DisplayStackForTest!.Config));
-            Assert.Equal(0, s.Instance.DisplayStackForTest.Config.Itm?.Rules?.Count ?? 0);
+            // E8b: v1-only key builds no engine.
+            Assert.Null(s.Instance.CompositionForTest);
 
             var driver = s.Instance.ItmDisplayForTest;
             Assert.NotNull(driver);
@@ -678,163 +688,44 @@ namespace FanaBridge.Tests.Display
             Assert.True(driver.Lifecycle.GameStartPageRevert);
         }
 
-        [Fact]
-        public void FieldMappingOverride_ValueUpdateBytesDiffer_AndPinGolden()
-        {
-            // Baseline (no mappings) vs Lap remapped to a constant SimHub property.
-            // Pins the overridden ValueUpdate payload so a regression in the scalar
-            // encode path is visible even when empty-config parity still holds.
-            // Baseline uses the v1 empty-document path (Gear synthesis, no mappings)
-            // so it stays on the same engine as the fieldMappings arm.
-            var baseline = RunScriptedSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = new JObject(),
-            }, out _);
+        // FieldMappingOverride / BeginFrame ordering tests deleted with the v9 stack
+        // (v1 fieldMappings no longer drive the mapper).
 
-            var withMapping = RunScriptedSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = new JObject
-                {
-                    // Non-empty only via fieldMappings — still builds the property
-                    // source + mapper overrides; no rules.
-                    ["fieldMappings"] = new JObject
-                    {
-                        // Lap (505): built-in CurrentLap is 3 in the scripted session;
-                        // remap to MaxFuel (a readable built-in) is not useful here —
-                        // use a SimHub property name resolved via null PluginManager
-                        // (miss → built-in). For a real hit we need a built-in source
-                        // that differs: map Lap → Position (scripted Position=2).
-                        ["505"] = new JObject
-                        {
-                            ["source"] = new JObject
-                            {
-                                ["kind"] = "builtIn",
-                                ["name"] = "Position",
-                            },
-                        },
-                    },
-                },
-            }, out var inst);
-
-            // Customization ran (property source + stack built for non-empty config).
-            Assert.NotNull(inst.DisplayStackForTest);
-
-            // First ValueUpdate on page 1: baseline lap byte is CurrentLap=3;
-            // overridden lap byte is Position=2. Find the first ValueUpdate and
-            // compare the lap slot (handle 0x02, param 505).
-            static byte[] FirstValueUpdate(List<byte[]> frames)
-                => frames.First(f => f.Length > 2 && f[1] == 0x05 && f[2] == 0x01);
-
-            var baseVu = FirstValueUpdate(baseline);
-            var mapVu = FirstValueUpdate(withMapping);
-            Assert.NotEqual(AsHex(new List<byte[]> { baseVu }), AsHex(new List<byte[]> { mapVu }));
-
-            // Pin the overridden ValueUpdate frame (page-1 first paint). The lap
-            // slot carries Position=2 instead of CurrentLap=3; everything else
-            // matches the golden ladder's first value paint.
-            // Regenerate by dumping AsHex after a deliberate override-path change.
-            const string overriddenFirstPaint =
-                "FF-05-01-03-00-01-00-02-8E-00-03-01-04-00-01-04-03-02-F9-01-01-02-03-03-F5-01-01-02-03-04-FD-01-04-00-00-00-00-03-05-FE-01-04-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00";
-            Assert.Equal(overriddenFirstPaint, BitConverter.ToString(mapVu));
-        }
+        // ── Page-policy handoff (v2 composition owns the base page) ──────
 
         [Fact]
-        public void BeginFrame_RunsBeforeDriverUpdate_WhenCustomizationActive()
+        public void NonEmptyConfig_DriverPagePolicyFollowsComposition()
         {
-            // Ordering pin: the shared property source must be framed before the
-            // driver's Update so field-mapping overrides resolve on this frame's
-            // data. Verified by installing a mapping that only the framed reader
-            // can see (built-in from GameData) and asserting the override lands
-            // on the first synced paint — which only works if BeginFrame preceded
-            // TryEncodeParam inside Update.
+            // Live v2 document with ITM rest owns page policy: lifecycle default page
+            // follows rest, game-start revert suppressed.
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = new JObject
-                {
-                    ["fieldMappings"] = new JObject
-                    {
-                        ["505"] = new JObject
-                        {
-                            ["source"] = new JObject
-                            {
-                                ["kind"] = "builtIn",
-                                ["name"] = "Position",
-                            },
-                        },
-                    },
-                },
-            });
-
-            var status = NewStatus();
-            Set(status, "SpeedLocal", 142.0);
-            Set(status, "Gear", "4");
-            Set(status, "CurrentLap", 3);
-            Set(status, "Position", 2);
-            Set(status, "OpponentsCount", 16);
-            var running = Data(status);
-
-            byte[] lapInfoPush = HexToBytes(
-                "ff0501" + "0300010034" + "0301040012" + "0382f90132" + "0383f50132" + "0304fd012a" + "0305fe012a");
-
-            s.Frame(running);
-            s.Transport.Itm.Enqueue(lapInfoPush);
-            s.Frame(running);
-            s.Clock.T += 80;
-            s.Frame(running);   // Synced; first value paint with override
-
-            Assert.NotNull(s.Instance.ItmDisplayForTest);
-            // Shared source exists (non-empty config) and is the same instance the
-            // stack holds — the runtime injects it.
-            // (PropertySource seam is on the runtime; stack.Properties is the inject.)
-            Assert.NotNull(s.Instance.DisplayStackForTest);
-
-            var vu = s.Transport.Sent.First(f => f.Length > 2 && f[1] == 0x05 && f[2] == 0x01);
-            // Lap handle 0x02 entry: device 03, handle 02, param F9 01 (505 LE), size 01, value 02
-            // (Position) — proves BeginFrame+override ran before encode.
-            bool foundOverriddenLap = false;
-            for (int i = 3; i + 6 <= vu.Length && vu[i] == 0x03; )
-            {
-                byte handle = vu[i + 1];
-                ushort param = (ushort)(vu[i + 2] | (vu[i + 3] << 8));
-                byte size = vu[i + 4];
-                if (handle == 0x02 && param == ItmParam.Lap)
-                {
-                    Assert.Equal(1, size);
-                    Assert.Equal(2, vu[i + 5]);   // Position, not CurrentLap=3
-                    foundOverriddenLap = true;
-                    break;
-                }
-                i += 5 + size;
-            }
-            Assert.True(foundOverriddenLap, "overridden lap value not found in ValueUpdate");
-        }
-
-        // ── Page-policy handoff (rules own the base page) ────────────────
-
-        [Fact]
-        public void NonEmptyConfig_DriverPagePolicyFollowsTheStack()
-        {
-            // With a rule stack live, the stack owns page policy: the lifecycle's
-            // effective base page must be the STACK's base page (config base page wins
-            // over the ItmDefaultPage setting) and the lifecycle's own game-start
-            // revert must be suppressed — the rule engine performs that revert itself,
-            // and a controller-initiated switch would read upstream as wheel-button
-            // navigation the user never made, dismissing rules and adopting the wrong
-            // resting page.
-            var doc = RuleDocument();
-            doc["itm"]!["basePage"] = "fuelErsDrs";
-            var s = StartSession(new JObject
-            {
-                ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = doc,
+                ["display"] = JObject.Parse(@"
+{
+  ""schemaVersion"": 2,
+  ""pages"": [
+    {
+      ""kind"": ""hostedPage"",
+      ""id"": ""p-pit"",
+      ""name"": ""Pit"",
+      ""base"": { ""content"": { ""kind"": ""text"", ""text"": ""PIT"" } }
+    }
+  ],
+  ""priority"": {
+    ""rows"": [ { ""kind"": ""manual"" } ],
+    ""rest"": {
+      ""inSessionPage"": { ""kind"": ""itmPage"", ""catalogPageId"": ""fuelErsDrs"" },
+      ""idle"": { ""kind"": ""blank"" }
+    }
+  },
+  ""settings"": { ""mode"": ""on"" }
+}"),
             });
 
             var running = Data(NewStatus());
-            s.Frame(running);   // builds the driver, then the stack
-            s.Frame(running);   // the driver's settings sync now reads the stack
+            s.Frame(running);
+            s.Frame(running);
 
             byte fuelWire = 0;
             foreach (var p in ItmDeviceCatalog.PagesFor(3))
@@ -842,6 +733,7 @@ namespace FanaBridge.Tests.Display
                     fuelWire = p.Number;
             Assert.NotEqual(0, fuelWire);
 
+            Assert.NotNull(s.Instance.CompositionForTest);
             var driver = s.Instance.ItmDisplayForTest;
             Assert.NotNull(driver);
             Assert.True(driver!.HasExternalPagePolicy);
@@ -883,7 +775,7 @@ namespace FanaBridge.Tests.Display
             Assert.NotNull(s.Instance.DisplayRuntimeForTest.CurrentConfigV2);
             Assert.True(PreEpicSettingsMigrator.HasMarker(
                 s.Instance.DisplayRuntimeForTest.CurrentConfigV2));
-            Assert.Null(s.Instance.DisplayStackForTest);
+            Assert.NotNull(s.Instance.CompositionForTest);
 
             var driver = s.Instance.ItmDisplayForTest;
             Assert.NotNull(driver);
@@ -934,7 +826,10 @@ namespace FanaBridge.Tests.Display
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;
 
-            inst.SetSettings(new JObject { ["displayCustomization"] = RuleDocument() }, false);
+            // UI write path still stores the v1 bag for GetSettings / GetDisplayConfig
+            // (runtime engine does not consume it after E8b).
+            inst.ApplyDisplayConfig(
+                DisplayConfigSerializer.Load(RuleDocument().ToString(), _ => { }));
             Assert.NotNull(((JObject)inst.GetSettings(false, false))["displayCustomization"]);
 
             // Removing the last customization publishes null — the empty-config parity
@@ -942,16 +837,17 @@ namespace FanaBridge.Tests.Display
             inst.ApplyDisplayConfig(new DisplayCustomizationConfig());
             Assert.Null(((JObject)inst.GetSettings(false, false))["displayCustomization"]);
 
-            inst.SetSettings(new JObject { ["displayCustomization"] = RuleDocument() }, false);
+            inst.ApplyDisplayConfig(
+                DisplayConfigSerializer.Load(RuleDocument().ToString(), _ => { }));
             inst.ApplyDisplayConfig(null!);
             Assert.Null(((JObject)inst.GetSettings(false, false))["displayCustomization"]);
         }
 
         [Fact]
-        public void ApplyDisplayConfig_ReachesTheFramePath()
+        public void ApplyDisplayConfig_StoresForUi_NoRuntimeEngine()
         {
-            // v1 path: Gear-world stack present; apply a richer ITM config and confirm
-            // the frame path rebuilds, then empty tears it down.
+            // E8b: ApplyDisplayConfig still normalizes + publishes the v1 bag for the
+            // UI / GetSettings, but builds no runtime engine.
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
@@ -959,44 +855,48 @@ namespace FanaBridge.Tests.Display
             });
             var running = Data(NewStatus());
             s.Frame(running);
-            Assert.NotNull(s.Instance.DisplayStackForTest);
-            Assert.True(DisplayRuleStack.HasLegacyWorld(s.Instance.DisplayStackForTest!.Config));
+            Assert.Null(s.Instance.CompositionForTest);
+            Assert.Null(((IDisplayPanelHost)s.Instance).GetDisplayConfig());
 
-            // The UI applies a config: the frame path notices the reference swap and
-            // rebuilds the rule stack, no settings round-trip involved.
             s.Instance.ApplyDisplayConfig(
                 DisplayConfigSerializer.Load(RuleDocument().ToString(), _ => { }));
             s.Frame(running);
-            Assert.NotNull(s.Instance.DisplayStackForTest);
-            Assert.NotNull(s.Instance.DisplayRuleSnapshot);
-            Assert.NotEmpty(s.Instance.DisplayStackForTest!.Config.Itm.Rules);
+            Assert.Null(s.Instance.CompositionForTest);
+            Assert.Null(s.Instance.DisplayRuleSnapshot);
+            Assert.NotNull(((IDisplayPanelHost)s.Instance).GetDisplayConfig());
+            Assert.NotEmpty(((IDisplayPanelHost)s.Instance).GetDisplayConfig()!.Itm.Rules);
 
-            // Applying an empty document tears it back down.
             s.Instance.ApplyDisplayConfig(new DisplayCustomizationConfig());
             s.Frame(running);
-            Assert.Null(s.Instance.DisplayStackForTest);
+            Assert.Null(((IDisplayPanelHost)s.Instance).GetDisplayConfig());
             Assert.Null(s.Instance.DisplayRuleSnapshot);
         }
 
         [Fact]
         public void EmptiedWorldLive_BlanksCol01Once_ThenSilence()
         {
-            // Flag-on + empty world is silence — but a page the rule path painted this
-            // session must be blanked once when the world empties live (last virtual page
-            // deleted), not left frozen on its final frame.
+            // Classic mode paints Gear; switching to None blanks once then silence.
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = new JObject(),
+                ["displayControl"] = DisplaySettings.ControlLegacy,
+                ["displayMode"] = "Gear",
+                ["displayCustomization"] = new JObject(), // no engine, no bake
             });
             var status = NewStatus();
             Set(status, "Gear", "3");
             var running = Data(status);
 
             s.Frame(running);
-            Assert.NotEmpty(s.Transport.SentCol01);   // migrated Gear world painted
+            Assert.NotEmpty(s.Transport.SentCol01);   // mode driver painted Gear
 
-            s.Instance.ApplyDisplayConfig(new DisplayCustomizationConfig());
+            s.Instance.SetSettings(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayControl"] = DisplaySettings.ControlLegacy,
+                ["displayMode"] = "None",
+                ["displayCustomization"] = new JObject(),
+            }, isDefault: false);
             int before = s.Transport.SentCol01.Count;
             s.Frame(running);
             Assert.Equal(before + 1, s.Transport.SentCol01.Count);   // blank-once
@@ -1187,23 +1087,34 @@ namespace FanaBridge.Tests.Display
         // ── Display-type teardown ────────────────────────────────────────
 
         [Fact]
-        public void DisplayTypeSwitchAwayFromItm_ClearsItmSession_LegacyStackMayRemain()
+        public void DisplayTypeSwitchAwayFromItm_ClearsItmSession()
         {
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
-                ["displayCustomization"] = RuleDocument(),
+                ["display"] = new JObject
+                {
+                    ["schemaVersion"] = 2,
+                    ["settings"] = new JObject { ["mode"] = "on" },
+                    ["pages"] = new JArray
+                    {
+                        new JObject
+                        {
+                            ["id"] = "rest",
+                            ["kind"] = "hosted",
+                            ["catalogPageId"] = "lapInfo",
+                        },
+                    },
+                    ["rest"] = "rest",
+                },
             });
             var running = Data(NewStatus());
             s.Frame(running);
-            Assert.NotNull(s.Instance.DisplayStackForTest);
-            Assert.NotNull(s.Instance.DisplayRuleSnapshot);
+            Assert.NotNull(s.Instance.CompositionForTest);
             Assert.NotNull(s.Instance.ItmDisplayForTest);
 
             // A user profile override switching the device to a basic display takes
-            // effect on the frame path with no restart — the ITM driver goes. The
-            // legacy world (migrated Gear graft + any authored screens) may rebuild
-            // via TickLegacyRules on the basic path.
+            // effect on the frame path with no restart — the ITM driver goes.
             var basic = WheelProfileStore.FindByWheelType("PSWBMW");
             Assert.NotNull(basic);
             Assert.NotEqual(DisplayType.Itm, new WheelCapabilities(basic!).Display);
@@ -1213,9 +1124,6 @@ namespace FanaBridge.Tests.Display
             s.Frame(running);
             Assert.Null(s.Instance.ItmDisplayForTest);
             Assert.Null(s.Instance.DisplayValuesSnapshot);
-            // Migrated legacy world keeps a basic-path stack for col01.
-            Assert.NotNull(s.Instance.DisplayStackForTest);
-            Assert.True(DisplayRuleStack.HasLegacyWorld(s.Instance.DisplayStackForTest!.Config));
         }
     }
 }

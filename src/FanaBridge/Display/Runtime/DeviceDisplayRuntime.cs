@@ -68,23 +68,18 @@ namespace FanaBridge.Display.Runtime
         // plugin generation, see issue #37).
         private int _itmWheelChangeCount;
 
-        // Display customization: the parsed per-device config snapshot (volatile — written
-        // by SetConfig/ApplyDisplayConfig, read on the frame path; a reference swap is the
-        // rebuild signal), the rule stack built from it, and the stack's latest snapshot
-        // (a PART of the published envelope below — DataUpdate-thread only). All three stay
-        // null on the empty-config fast path.
+        // Display customization (v1 UI bag until E9-exit): the parsed per-device config
+        // snapshot (volatile — written by SetConfig/ApplyDisplayConfig). E8b: a v1 document
+        // no longer builds a runtime engine; the bag remains for the v1 UI + GetSettings
+        // round-trip only. Frame-latched so col01 arbitration never re-reads the volatile.
         private volatile DisplayCustomizationConfig _displayConfig;
-        // Config acquired at the top of this frame's Tick / TickLegacyRules. The device
-        // instance's col01 arbitration (UseLegacyRulePath / DriveLegacyCol01) must use THIS
-        // reference for the rest of the frame — never re-read the volatile — so a concurrent
-        // UI ApplyDisplayConfig cannot make the rule sink AND the mode Update both own col01
-        // in one frame.
         private DisplayCustomizationConfig _frameConfig;
-        private DisplayRuleStack _displayStack;
+        // Always null after E8b (v9 stack deleted); retained so the v1 UI envelope type
+        // stays reference-stable until E9-exit.
         private DisplayRuleSnapshot _displayRuleSnapshot;
 
-        // v2 world — mirrors the v1 trio above (volatile release / frame latch / engine).
-        // One document decides which engine exists per device (OQ-4); never both.
+        // v2 world — the sole runtime engine after E8b (volatile release / frame latch /
+        // composition). One document decides the engine for this device (OQ-4).
         private volatile DisplayConfigV2 _configV2;
         private DisplayConfigV2 _frameConfigV2;
         private DisplayCompositionV2 _compositionV2;
@@ -139,18 +134,15 @@ namespace FanaBridge.Display.Runtime
         /// through the published envelope, so it is safe to read from any thread.</summary>
         internal string ItmStatusDescription => _panelSnapshot?.ItmStatus;
 
-        /// <summary>Test seam: the rule part of the display envelope, or null while no
-        /// customization is active.</summary>
+        /// <summary>Test seam: the rule part of the display envelope. Always null after
+        /// E8b (v9 stack deleted); the v1 UI still types against this channel until E9.</summary>
         internal DisplayRuleSnapshot RuleSnapshot => _displayRuleSnapshot;
 
         /// <summary>Test seam: the values part of the display envelope (what the ITM
         /// display is showing, from the wire-driven twin), or null while not driving ITM.</summary>
         internal DisplayValuesSnapshot ValuesSnapshot => _itmTwin?.Snapshot;
 
-        /// <summary>Test seam: the rule stack, null when nothing is built.</summary>
-        internal DisplayRuleStack Stack => _displayStack;
-
-        /// <summary>Test seam: the v2 composition, null when a v1 doc (or none) is live.</summary>
+        /// <summary>Test seam: the v2 composition, null when no live v2 document.</summary>
         internal DisplayCompositionV2 Composition => _compositionV2;
 
         /// <summary>Test seam: last v2 composed-resolution record (also on the envelope).</summary>
@@ -305,38 +297,11 @@ namespace FanaBridge.Display.Runtime
                 _itmTwin = new VirtualItmDisplay(deviceId: _itmDeviceId, nowMs: _itmClock());
                 plugin.AttachItmObserver(_itmTwin);
                 // A display-id hot-swap rebuilds the driver UNDER a still-live rule stack
-                // (UpdateDisplayRules below replaces the stack after the driver's first
-                // Update this same frame). Keep page policy continuously external across the
-                // rebuild so that first Update's cold bring-up targets the stack's base — not
-                // the dormant ItmDefaultPage setting — and the lifecycle's game-start revert
-                // stays suppressed for the stack's uninterrupted tenure. Edge-triggered: this
-                // rebuild IS the edge. Every other path through this block (first build,
-                // reconnect, generation rebind) has already dropped the stack, so the fresh
-                // driver correctly starts under built-in policy.
-                //
-                // Re-RESOLVE the base against the NEW device's page table rather than carrying
-                // the old stack's BaseWirePage: a wire page number is valid only with the
-                // device id/table that produced it (invariant — never carry a raw wire across
-                // the device-id boundary). On a cross-catalog change the same wire is a
-                // different page (Tyre Temps is wire 5 on device 3 but wire 4 on device 4,
-                // where wire 5 is Legacy), so the old wire would cold-start the new driver on
-                // the wrong page. ResolveBase maps the configured base identity onto this
-                // device's wire (and falls to the default wire's identity when this device
-                // lacks the configured base). The rebuilt stack re-takes policy later this
-                // frame; this keeps the boundary coherent until it does.
-                // Same takeover condition as UpdateDisplayRules: only a stack/composition
-                // with ITM page content owns page policy. A migrated-legacy-only stack or
-                // LegacyOnly v2 doc must not pin the rebuilt driver's cold bring-up.
-                if (_displayStack != null && TakesItmPagePolicy(_displayStack.Config))
+                // Keep page policy continuous across an ITM display-id rebuild when a live
+                // v2 composition owns it. Re-resolve rest identity against the NEW device
+                // catalog (never carry a raw wire across the device-id boundary).
+                if (_compositionV2 != null && TakesItmPagePolicyV2(_compositionV2.Config))
                 {
-                    var resolved = ItmPageTable.ForDevice(_itmDeviceId)
-                        .ResolveBase(_displayStack.ConfiguredBase, _displayStack.DefaultWirePage);
-                    _itmDisplay.SetPagePolicy(resolved.Wire);
-                }
-                else if (_compositionV2 != null && TakesItmPagePolicyV2(_compositionV2.Config))
-                {
-                    // v2: re-resolve document rest identity against the new device catalog
-                    // only (no settings.ItmDefaultPage fallback — owner ruling).
                     var table = ItmPageTable.ForDevice(_itmDeviceId);
                     byte wire = 0;
                     if (_compositionV2.ConfiguredBase is ItmPage basePage
@@ -421,28 +386,19 @@ namespace FanaBridge.Display.Runtime
                 // wheel-button page changes (the OUT wire carries no PageSet for those).
                 plugin.Wheelbase?.DrainItmReports(FeedItmSubscriptionReport);
 
-                // ── Shared property source + field-mapping overrides ──────────
+                // ── Shared property source (v2 composition only after E8b) ────
                 // BeginFrame MUST run before the driver's Update: the mapper resolves
-                // FieldMappings / field plans through this same SimHubPropertySource
-                // instance during value encode. The stack/composition (UpdateDisplayRules
-                // below) reuses the source after the driver. Ordering pin — do not invert.
-                // Empty config keeps the parity fast path (no source, no mapper overrides).
+                // field plans through this same SimHubPropertySource instance during
+                // value encode. Composition reuses the source after the driver.
+                // Empty / v1-only keeps the parity fast path (no source, no overrides).
                 bool v2Live = IsLiveCompositionV2(configV2);
-                bool v1Live = !v2Live && config != null && !config.IsEmpty;
-                if (v2Live || v1Live)
+                if (v2Live)
                 {
                     if (_propertySource == null)
                         _propertySource = new SimHubPropertySource(
                             msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
                     _propertySource.BeginFrame(pluginManager, data);
-                    if (v1Live)
-                    {
-                        // v1 field mappings apply this frame. v2 plans apply at composition
-                        // tick END for the NEXT frame (lag-1; G2 ConfigureFromPlans).
-                        _itmDisplay.Mapper.ParamValueSink = null;
-                        _itmDisplay.Mapper.Configure(config.FieldMappings, _propertySource);
-                    }
-                    // v2: leave mapper plans as last composition tick installed them.
+                    // Leave mapper plans as last composition tick installed them (lag-1).
                 }
                 else
                 {
@@ -674,10 +630,9 @@ namespace FanaBridge.Display.Runtime
         }
 
         /// <summary>
-        /// Frame step for the display-rules runtime. Constructor switch (OQ-4): a live
-        /// v2 document builds <see cref="DisplayCompositionV2"/> and never touches the
-        /// v9 stack; a v1 document keeps the v9 path byte-identical. Empty / Off keeps
-        /// the parity fast path.
+        /// Frame step for the display runtime. Constructor switch (OQ-4, E8b): a live
+        /// v2 document builds <see cref="DisplayCompositionV2"/>; a v1 document (or none)
+        /// builds no engine. Empty / Off keeps the parity fast path.
         ///
         /// The config values are those the caller already volatile-acquired at the top of
         /// the frame's config-consuming path (Tick), and <paramref name="settings"/> was
@@ -690,68 +645,23 @@ namespace FanaBridge.Display.Runtime
             // v2 key wins: one document decides the engine for this device.
             if (IsLiveCompositionV2(configV2))
             {
-                DropV1StackOnly();
+                _displayRuleSnapshot = null;
                 UpdateCompositionV2(configV2, pluginManager, data, settings, itmPath: true);
                 return;
             }
 
-            // Leaving v2 → restore built-in policy if the composition held it.
+            // Leaving v2 (or never had it) → restore built-in policy if the composition held it.
+            // E8b: v1 documents route nowhere — no engine, clear the rule-envelope part.
             DropV2CompositionOnly();
-
-            bool needStack = config != null && !config.IsEmpty
-                && (settings.ItmActive || DisplayRuleStack.HasLegacyWorld(config));
-
-            if (!needStack)
-            {
-                // Customization removed, or neither ITM nor a legacy world needs the stack:
-                // drop it and hand page policy back to the built-in owner.
-                if (_displayStack != null || _itmDisplay.HasExternalPagePolicy)
-                {
-                    _displayStack = null;
-                    _displayRuleSnapshot = null;
-                    _itmDisplay.RestoreBuiltInPagePolicy();
-                }
-                return;
-            }
-
-            if (_displayStack == null || !ReferenceEquals(_displayStack.Config, config)
-                || !ReferenceEquals(_displayStack.Driver, _itmDisplay))
-            {
-                // Inject the shared property source (BeginFrame already ran above the
-                // driver Update this frame) so rules and field-mapping overrides read
-                // through one instance.
-                _displayStack = new DisplayRuleStack(config, _itmDisplay, _itmDeviceId,
-                    settings.ItmDefaultPage,
-                    msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
-                    properties: _propertySource,
-                    nowMs: _itmClock());
-                _log("FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                    "]: Display rules active (" + (config.Itm?.Rules?.Count ?? 0) + " ITM, " +
-                    (config.Legacy?.Rules?.Count ?? 0) + " legacy)");
-            }
-
-            // ITM page policy only while ITM is the active world AND the document has
-            // ITM rule content. A migrated-legacy-only stack must not pin the lifecycle
-            // to the stack's base (built-in page policy + live default-page stay).
-            if (settings.ItmActive && TakesItmPagePolicy(config))
-                _itmDisplay.SetPagePolicy(_displayStack.BaseWirePage);
-            else if (_itmDisplay.HasExternalPagePolicy)
+            if (_displayRuleSnapshot != null)
+                _displayRuleSnapshot = null;
+            if (_itmDisplay != null && _itmDisplay.HasExternalPagePolicy)
                 _itmDisplay.RestoreBuiltInPagePolicy();
-
-            BindStackWriters(_displayStack);
-            var snapshot = _displayStack.Tick(pluginManager, data);
-            if (snapshot != null)
-                _displayRuleSnapshot = snapshot;
         }
 
         /// <summary>
-        /// Basic (non-ITM) frame step for the display-rules runtime. Called every
-        /// LegacyPageActive basic frame (not only when the rule path owns col01): when the
-        /// legacy world is non-empty it builds a stack against a no-op page control and
-        /// ticks it once; when the world is empty / config gone it drops any prior stack
-        /// and republishes a cleared snapshot so the Overview 3-char face cannot keep
-        /// painting stale rule segments after the wire has fallen back to mode. v2 docs
-        /// take the composition path with a no-op page control.
+        /// Basic (non-ITM) frame step. v2 docs take the composition path with a no-op page
+        /// control; v1 / empty documents build no engine (E8b) and clear any stale envelope.
         /// </summary>
         internal void TickLegacyRules(PluginManager pluginManager, GameData data,
             DisplaySettings settings)
@@ -765,7 +675,7 @@ namespace FanaBridge.Display.Runtime
 
             if (IsLiveCompositionV2(configV2))
             {
-                DropV1StackOnly();
+                _displayRuleSnapshot = null;
                 if (_propertySource == null)
                     _propertySource = new SimHubPropertySource(
                         msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
@@ -777,45 +687,12 @@ namespace FanaBridge.Display.Runtime
             }
 
             DropV2CompositionOnly();
-
-            if (config == null || config.IsEmpty || !DisplayRuleStack.HasLegacyWorld(config))
+            if (_displayRuleSnapshot != null || _propertySource != null)
             {
-                if (_displayStack != null || _displayRuleSnapshot != null)
-                {
-                    _displayStack = null;
-                    _displayRuleSnapshot = null;
-                    _propertySource = null;
-                    MaybePublishPanelSnapshot();
-                }
-                AfterTickForTest?.Invoke();
-                return;
+                _displayRuleSnapshot = null;
+                _propertySource = null;
+                MaybePublishPanelSnapshot();
             }
-
-            if (_propertySource == null)
-                _propertySource = new SimHubPropertySource(
-                    msg => SimHub.Logging.Current.Info("FanaBridge: " + msg));
-            _propertySource.BeginFrame(pluginManager, data);
-
-            // Rebuild when the config swaps or when this stack was last bound to an
-            // ITM driver (left ITM / basic tenure) — Driver non-null means ITM-wired.
-            if (_displayStack == null || !ReferenceEquals(_displayStack.Config, config)
-                || _displayStack.Driver != null)
-            {
-                _displayStack = new DisplayRuleStack(config, NoOpPageControl.Instance,
-                    itmDeviceId: 0, defaultWirePage: settings?.ItmDefaultPage
-                        ?? DisplaySettings.DefaultItmDefaultPage,
-                    msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
-                    nowMs: _itmClock(), rawLookup: null, properties: _propertySource);
-                _log("FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                    "]: Display rules active (legacy-only, " +
-                    (config.Legacy?.Rules?.Count ?? 0) + " rules)");
-            }
-
-            BindStackWriters(_displayStack);
-            var snapshot = _displayStack.Tick(pluginManager, data);
-            if (snapshot != null)
-                _displayRuleSnapshot = snapshot;
-            MaybePublishPanelSnapshot();
             AfterTickForTest?.Invoke();
         }
 
@@ -867,8 +744,7 @@ namespace FanaBridge.Display.Runtime
                     hasEncoder = id => mapper.HasEncoder(id);
                 }
 
-                // Same late-bound clock G1 threaded into DisplayRuleStack (null → private
-                // stopwatch here only if the device instance has not injected one).
+                // Late-bound clock (null → private stopwatch if the device has not injected one).
                 Func<long> clock = _itmClock();
                 if (clock == null)
                 {
@@ -937,13 +813,6 @@ namespace FanaBridge.Display.Runtime
             });
         }
 
-        private void BindStackWriters(DisplayRuleStack stack)
-        {
-            stack.TryWriteLegacySegments = _legacySegmentWriter;
-            stack.TryShowSpecialScreen = _specialScreenWriter;
-            stack.OnSpecialReleased = _specialReleased;
-        }
-
         private void BindCompositionWriters(DisplayCompositionV2 composition)
         {
             composition.TryWriteLegacySegments = _legacySegmentWriter;
@@ -984,10 +853,9 @@ namespace FanaBridge.Display.Runtime
             };
         }
 
-        /// <summary>Drop both engines and their published parts (lifecycle edges).</summary>
+        /// <summary>Drop the composition engine and its published parts (lifecycle edges).</summary>
         private void DropEngines()
         {
-            _displayStack = null;
             _displayRuleSnapshot = null;
             _compositionV2 = null;
             _composedResolution = null;
@@ -998,14 +866,6 @@ namespace FanaBridge.Display.Runtime
             _compositionCatalog = null;
             if (_itmDisplay != null)
                 _itmDisplay.Mapper.ParamValueSink = null;
-        }
-
-        private void DropV1StackOnly()
-        {
-            if (_displayStack == null && _displayRuleSnapshot == null)
-                return;
-            _displayStack = null;
-            _displayRuleSnapshot = null;
         }
 
         private void DropV2CompositionOnly()
@@ -1032,13 +892,6 @@ namespace FanaBridge.Display.Runtime
                     _itmDisplay.RestoreBuiltInPagePolicy();
             }
         }
-
-        /// <summary>The one page-policy takeover condition (both the steady-state grant in
-        /// UpdateDisplayRules and the display-id hot-swap carry-over): the document must
-        /// have ITM rule content. Migrated-legacy-only / fieldMappings-only stacks leave
-        /// built-in policy and live default-page semantics untouched.</summary>
-        private static bool TakesItmPagePolicy(DisplayCustomizationConfig config)
-            => (config?.Itm?.Rules?.Count ?? 0) > 0;
 
         /// <summary>
         /// v2 page-policy takeover (RISK-5): settings.mode != LegacyOnly AND the document

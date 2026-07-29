@@ -23,18 +23,8 @@ namespace FanaBridge.Tests.Display
     /// E8 round 2: DeviceDisplayRuntime + FanatecWheelDeviceInstance wiring for
     /// DisplayCompositionV2. RISK-4/5/8 + lifecycle reload named tests. No replay harness.
     /// </summary>
-    public class DisplayCompositionV2WiringTests : IDisposable
+    public class DisplayCompositionV2WiringTests
     {
-        private readonly bool _priorFlag;
-
-        public DisplayCompositionV2WiringTests()
-        {
-            _priorFlag = DisplayRuleStack.LegacyRuleWrites;
-            DisplayRuleStack.LegacyRuleWrites = true;
-        }
-
-        public void Dispose() => DisplayRuleStack.LegacyRuleWrites = _priorFlag;
-
         // ── Harness (mirrors DisplayCustomizationWiringTests) ─────────────
 
         private sealed class RecordingConnectableTransport : IConnectableTransport
@@ -240,36 +230,11 @@ namespace FanaBridge.Tests.Display
         // ── RISK-4: col01 ownership ───────────────────────────────────────
 
         /// <summary>
-        /// Same shape as <c>RuleWorldActive_ModeUpdateNeverCalled_OnLiveFrames</c>
-        /// (LegacyRuleCol01Tests): when a v2 document is live, the frame-latched gate
-        /// owns col01 so LegacyDisplayDriver.Update is never entered — flag ON arm.
+        /// When a v2 document is live, the frame-latched gate owns col01 so
+        /// <see cref="LegacyDisplayDriver.Update"/> is never entered.
         /// </summary>
         [Fact]
         public void V2DocumentLive_ModeUpdateNeverCalled_OnLiveFrames()
-        {
-            AssertV2LiveGatesOutModeUpdate(legacyRuleWrites: true);
-        }
-
-        /// <summary>
-        /// RISK-4 flag-off arm: a live v2 document still owns col01 when
-        /// <see cref="DisplayRuleStack.LegacyRuleWrites"/> is false — no dual writer.
-        /// </summary>
-        [Fact]
-        public void V2DocumentLive_FlagOff_ModeUpdateNeverCalled_OnLiveFrames()
-        {
-            bool prior = DisplayRuleStack.LegacyRuleWrites;
-            DisplayRuleStack.LegacyRuleWrites = false;
-            try
-            {
-                AssertV2LiveGatesOutModeUpdate(legacyRuleWrites: false);
-            }
-            finally
-            {
-                DisplayRuleStack.LegacyRuleWrites = prior;
-            }
-        }
-
-        private static void AssertV2LiveGatesOutModeUpdate(bool legacyRuleWrites)
         {
             var runtime = new DeviceDisplayRuntime(
                 new DeviceConfig
@@ -300,14 +265,8 @@ namespace FanaBridge.Tests.Display
             for (int i = 0; i < 5; i++)
             {
                 runtime.TickLegacyRules(null, Live(gear: "7"), settings);
-                // Production UseLegacyRulePath expression (shared predicates; FR-2).
-                bool useRulePath = DeviceDisplayRuntime.IsLiveCompositionV2(runtime.FrameConfigV2)
-                    || (DisplayRuleStack.LegacyRuleWrites
-                        && DisplayRuleStack.HasLegacyWorld(runtime.FrameConfig));
-                Assert.True(useRulePath,
-                    "v2 live frame must own col01 via the rule path (LegacyRuleWrites="
-                    + legacyRuleWrites + ")");
-                Assert.True(DeviceDisplayRuntime.IsLiveCompositionV2(runtime.FrameConfigV2));
+                bool useRulePath = DeviceDisplayRuntime.IsLiveCompositionV2(runtime.FrameConfigV2);
+                Assert.True(useRulePath, "v2 live frame must own col01 via composition");
                 if (!useRulePath)
                 {
                     updateCalls++;
@@ -389,12 +348,11 @@ namespace FanaBridge.Tests.Display
             s.Frame(running);
 
             Assert.NotNull(s.Instance.CompositionForTest);
-            Assert.Null(s.Instance.DisplayStackForTest);
 
             var driver = s.Instance.ItmDisplayForTest;
             Assert.NotNull(driver);
             Assert.True(driver!.HasExternalPagePolicy);
-            // Stack/composition tenure suppresses the lifecycle's own game-start revert.
+            // Composition tenure suppresses the lifecycle's own game-start revert.
             Assert.False(driver.Lifecycle.GameStartPageRevert);
         }
 
@@ -412,7 +370,6 @@ namespace FanaBridge.Tests.Display
             s.Frame(running);
 
             Assert.NotNull(s.Instance.CompositionForTest);
-            Assert.Null(s.Instance.DisplayStackForTest);
 
             var driver = s.Instance.ItmDisplayForTest;
             Assert.NotNull(driver);
@@ -456,8 +413,9 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Snapshot_V1Frame_Unchanged_RulesPresent_ComposedNull()
+        public void Snapshot_V1KeyOnly_NoEngine_ComposedNull()
         {
+            // E8b: a v1-only key builds no runtime engine (no bake, no composition).
             var s = StartSession(new JObject
             {
                 ["wheelType"] = "CSSWFORMV3",
@@ -467,20 +425,22 @@ namespace FanaBridge.Tests.Display
             s.Frame(Data(NewStatus()));
             s.Frame(Data(NewStatus()));
 
-            Assert.NotNull(s.Instance.DisplayStackForTest);
             Assert.Null(s.Instance.CompositionForTest);
 
             var snap = ((IDisplayPanelHost)s.Instance).Snapshot;
-            Assert.NotNull(snap);
-            // v1 path may or may not have published a rules snapshot yet depending on
-            // change-gating; ComposedResolution must stay null on v1 tenure.
-            Assert.Null(snap!.ComposedResolution);
+            // No v2 composition → no composed-resolution part; rules part also null
+            // (v9 stack deleted).
+            if (snap != null)
+            {
+                Assert.Null(snap.ComposedResolution);
+                Assert.Null(snap.Rules);
+            }
         }
 
         // ── Lifecycle: v1 → v2 reload ─────────────────────────────────────
 
         [Fact]
-        public void Reload_V1ToV2_SwapsEngine_OldStackReceivesNoFurtherTicks()
+        public void Reload_V1ToV2_BuildsComposition()
         {
             var s = StartSession(new JObject
             {
@@ -491,8 +451,6 @@ namespace FanaBridge.Tests.Display
             s.Frame(Data(NewStatus()));
             s.Frame(Data(NewStatus()));
 
-            var stack = s.Instance.DisplayStackForTest;
-            Assert.NotNull(stack);
             Assert.Null(s.Instance.CompositionForTest);
 
             // Swap to v2 document (persistence key wins path).
@@ -505,10 +463,7 @@ namespace FanaBridge.Tests.Display
             s.Frame(Data(NewStatus()));
             s.Frame(Data(NewStatus()));
 
-            Assert.Null(s.Instance.DisplayStackForTest);
             Assert.NotNull(s.Instance.CompositionForTest);
-            // Old stack instance is no longer the runtime's engine (no further ticks).
-            Assert.NotSame(stack, s.Instance.DisplayStackForTest);
 
             var snap = ((IDisplayPanelHost)s.Instance).Snapshot;
             Assert.NotNull(snap);
@@ -529,7 +484,7 @@ namespace FanaBridge.Tests.Display
             });
             inst.PluginResolver = () => null;
 
-            // Both keys present — v2 wins, v1 is not loaded.
+            // Both keys present — v2 wins the engine; v1 bag rides inert (not loaded).
             inst.SetSettings(new JObject
             {
                 ["wheelType"] = "PSWBMW",
@@ -543,12 +498,13 @@ namespace FanaBridge.Tests.Display
             var saved = inst.GetSettings(false, false) as JObject;
             Assert.NotNull(saved);
             Assert.NotNull(saved!["display"]);
-            Assert.Null(saved["displayCustomization"]);
+            Assert.NotNull(saved["displayCustomization"]); // inert passthrough, no engine
         }
 
         [Fact]
-        public void Persistence_V1Fallback_WhenNoDisplayKey()
+        public void Persistence_V1KeyOnly_NoEngineNoBake()
         {
+            // E8b: v1-only key routes nowhere — no composition, no pre-epic bake.
             var inst = new FanatecWheelDeviceInstance(new DeviceConfig
             {
                 Profile = WheelProfileStore.FindByWheelType("PSWBMW"),
@@ -564,7 +520,7 @@ namespace FanaBridge.Tests.Display
             }, isDefault: false);
 
             Assert.Null(inst.DisplayRuntimeForTest.CurrentConfigV2);
-            Assert.NotNull(inst.DisplayRuntimeForTest.CurrentConfig);
+            Assert.Null(inst.DisplayRuntimeForTest.CurrentConfig);
         }
     }
 }

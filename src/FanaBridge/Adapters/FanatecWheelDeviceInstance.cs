@@ -92,6 +92,8 @@ namespace FanaBridge.Adapters
         // (real wheel match / live override — never registration-fallback caps).
         // A written v2 document (marked or not) is user-owned; the migrator never touches it.
         private bool _pendingPreEpicBake;
+        // One-shot log when SetSettings sees a v1 displayCustomization key (E8b: no engine).
+        private bool _loggedIgnoredV1Key;
         // One-shot guard for the legacy col01 drive: this instance-side drive used to sit
         // inside the runtime's ITM try/catch (sharing its _itmErrorLogged latch) and must
         // keep the same contract now that it runs on the instance — a firmware/transport
@@ -144,10 +146,7 @@ namespace FanaBridge.Adapters
         /// envelope (what the ITM display is showing), or null while not driving ITM.</summary>
         internal DisplayValuesSnapshot DisplayValuesSnapshot => _displayRuntime.ValuesSnapshot;
 
-        /// <summary>Test hook (parity gate): the rule stack, null when nothing is built.</summary>
-        internal DisplayRuleStack DisplayStackForTest => _displayRuntime.Stack;
-
-        /// <summary>Test hook: the v2 composition, null when a v1 doc (or none) is live.</summary>
+        /// <summary>Test hook: the v2 composition, null when no live v2 document.</summary>
         internal DisplayCompositionV2 CompositionForTest => _displayRuntime.Composition;
 
         /// <summary>Test hook: the ITM driver, null until an ITM display is driven.</summary>
@@ -412,8 +411,10 @@ namespace FanaBridge.Adapters
 
             // Display customization: serialize the CURRENT snapshot (not the raw
             // payload) — the EnumText model keeps values a future version wrote
-            // intact through the load/save round-trip. v2 key "display" wins; v1
-            // "displayCustomization" is only written when no v2 document is live.
+            // intact through the load/save round-trip. v2 key "display" wins.
+            // A live v1 runtime snapshot still re-serializes here (UI path via
+            // ApplyDisplayConfig). An inert raw v1 bag already copied from
+            // _customSettings above rides through unchanged until E9-exit.
             var displayConfigV2 = _displayRuntime.CurrentConfigV2;
             if (displayConfigV2 != null)
             {
@@ -442,7 +443,11 @@ namespace FanaBridge.Adapters
             _customSettings = new JObject();
             foreach (var key in new[] { "wheelType", "moduleType", "displayMode", "displayControl", "itmEnabled",
                                         "itmShowLapTotal", "itmShowPositionTotal", "itmDefaultPage",
-                                        "legacyModeMigrated" })
+                                        "legacyModeMigrated",
+                                        // E8b: inert raw passthrough until E9-exit — no reader,
+                                        // no engine (cleared below). Disposal of the bag is
+                                        // ruled then; saves must never destroy the stored key.
+                                        "displayCustomization" })
             {
                 if (obj[key] != null)
                     _customSettings[key] = obj[key].DeepClone();
@@ -478,13 +483,13 @@ namespace FanaBridge.Adapters
             _migratedItmCapable = _customSettings["displayControl"] == null ? itmCapable : (bool?)null;
 
             // Display customization document (whitelisted nested keys; absent = none).
-            // OQ-3: the v2 key "display" wins unconditionally; the v1 key is read only
-            // when no v2 key exists. §9b: when NEITHER key exists, leave pending for the
-            // first live-resolved DataUpdate bake (never bake here from registration
-            // fallback or pre-connection caps). A written v2 document is user-owned;
-            // a v1-only bag leaves the v1 fallback path unchanged this round.
-            // Released AFTER the plain _displaySettings write above, paired with the
-            // runtime's acquire-before-settings read order.
+            // OQ-3 / E8b: the v2 key "display" is the sole runtime document. §9b: when
+            // NEITHER key exists, leave pending for the first live-resolved DataUpdate
+            // bake. A v1-only "displayCustomization" key routes NOWHERE — no engine, no
+            // bake (must not trigger the pre-epic migrator), log once; the raw JToken
+            // already rides in _customSettings above (inert until E9-exit). Released
+            // AFTER the plain _displaySettings write above, paired with the runtime's
+            // acquire-before-settings read order.
             Action<string> warn = msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg);
             var displayV2 = obj["display"];
             var displayCustomization = obj["displayCustomization"];
@@ -509,14 +514,18 @@ namespace FanaBridge.Adapters
             }
             else
             {
-                // E8b deletion item: v1 fallback when a v1 key exists and no v2 key.
-                // Scaffolding — remove with the v1 path. Unchanged this round.
+                // E8b: v1 key present = no engine, no bake. v2 key or nothing at runtime.
                 _pendingPreEpicBake = false;
-                var parsedConfig = DisplayConfigSerializer.Load(
-                    displayCustomization.ToString(), warn);
-                parsedConfig = LegacyModeMigration.Apply(_displaySettings, parsedConfig);
-                _displayRuntime.SetConfig(parsedConfig);
+                _displayRuntime.ClearConfig();
                 _displayRuntime.ClearConfigV2();
+                if (!_loggedIgnoredV1Key)
+                {
+                    _loggedIgnoredV1Key = true;
+                    SimHub.Logging.Current.Info(
+                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                        "]: ignoring displayCustomization (v1) — no runtime engine; " +
+                        "use the v2 display key or clear both keys for pre-epic bake");
+                }
             }
             // Bake the marker into the settings bag so GetSettings persists it (without
             // this, a save would re-run synthesis after the user emptied the world).
@@ -761,19 +770,14 @@ namespace FanaBridge.Adapters
         // ── Legacy col01 arbitration (single writer: LegacyDisplayDriver) ─
 
         /// <summary>
-        /// True when the rule/composition path owns col01. A live v2 document always owns
-        /// col01 (RISK-4 — no flag combination may produce two col01 writers). Otherwise
-        /// flag-on + non-empty v1 legacy world. Uses frame-latched
-        /// <see cref="DeviceDisplayRuntime.FrameConfig"/> /
+        /// True when the composition path owns col01. A live v2 document always owns
+        /// col01 (RISK-4 — no dual writer). Uses frame-latched
         /// <see cref="DeviceDisplayRuntime.FrameConfigV2"/> (the acquire Tick /
-        /// TickLegacyRules already made) — never re-reads the volatiles. Flag-off without
-        /// a live v2 document keeps the mode-based
-        /// <see cref="LegacyDisplayDriver.Update"/> fallback; flag-on empty world is silence.
+        /// TickLegacyRules already made) — never re-reads the volatiles. Without a live
+        /// v2 document the mode-based <see cref="LegacyDisplayDriver.Update"/> fallback runs.
         /// </summary>
         private bool UseLegacyRulePath
-            => DeviceDisplayRuntime.IsLiveCompositionV2(_displayRuntime.FrameConfigV2)
-                || (DisplayRuleStack.LegacyRuleWrites
-                    && DisplayRuleStack.HasLegacyWorld(_displayRuntime.FrameConfig));
+            => DeviceDisplayRuntime.IsLiveCompositionV2(_displayRuntime.FrameConfigV2);
 
         private void EnsureLegacyDriver(FanatecPlugin plugin, bool logCreate = false)
         {
@@ -853,28 +857,17 @@ namespace FanaBridge.Adapters
                 {
                     if (UseLegacyRulePath)
                     {
-                        // The stack resolved this frame — idle included — and wrote
-                        // through the sink (in-game gates content per kind and rule
-                        // eligibility, never the wire; dynamic kinds blank while no
-                        // game runs, so the game-exit blank emerges from resolution).
-                        // Nothing to drive here.
+                        // Composition resolved this frame — idle included — and wrote
+                        // through the sink. Nothing to drive here.
                     }
-                    else if (!DisplayRuleStack.LegacyRuleWrites
-                        && _displaySettings.DisplayMode != DisplaySettings.ModeNone)
+                    else if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
                     {
-                        // Flag-off classic fallback: mode driver from the frozen displayMode.
-                        // The mode != None gate lives here because LegacyPageActive no longer
-                        // carries it.
+                        // No live v2 composition: classic mode driver from displayMode.
                         _legacyDriver.Update(data);
                     }
-                    else if (DisplayRuleStack.LegacyRuleWrites && _legacyDriver.NeedsExitBlank)
+                    else if (_legacyDriver.NeedsExitBlank)
                     {
-                        // Flag-on + empty world is silence — but a page still holding this
-                        // session's content (driver latch: any paint not yet successfully
-                        // blanked) is blanked once when the world empties live, so deleting
-                        // the last virtual page cannot leave col01 frozen. Declined sends
-                        // retry via the latch; a page already blanked at game exit is never
-                        // re-blanked, and fresh empty-world sessions never write.
+                        // Mode None: blank once if the page still holds session content.
                         _legacyDriver.Clear();
                     }
                 }

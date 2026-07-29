@@ -93,15 +93,14 @@ namespace FanaBridge.Display.Rules
         public string Id { get; }
         public CarrierTrigger Trigger { get; }
         public CarrierLifetime Lifetime { get; }
-        public RuleEligibility Eligibility { get; internal set; }
+        public RuleEligibility Eligibility { get; private set; }
 
         /// <summary>
         /// Adapt a v2 <see cref="Condition"/> + <see cref="Lifetime"/> onto the same
         /// evaluator machine. <b>Precondition:</b> the document has been through
         /// <c>DisplayConfigV2Validator.Normalize</c> (see contract §1). Dispatch is on
         /// lifetime kind: onChange → Edge; otherwise Level. (FA2: v2 Condition vocabulary
-        /// no longer has an <c>action</c> source; Event family remains via the scaffolding
-        /// rule adapter for the v9 actionTriggered path until E8b.)
+        /// has no <c>action</c> source.)
         /// <paramref name="owningFieldParamId"/> bakes itmField <c>self</c> to the owning
         /// field's param id at spec-build time.
         /// </summary>
@@ -246,7 +245,7 @@ namespace FanaBridge.Display.Rules
 
         /// <summary>whileTrue is a level-only lifetime; edge/event carriers coerce to
         /// forDuration (mirrors v1 DisplayConfigValidator non-level/WhileActive law).</summary>
-        internal static void CoerceNonLevelWhileTrue(CarrierTrigger trigger, CarrierLifetime life)
+        private static void CoerceNonLevelWhileTrue(CarrierTrigger trigger, CarrierLifetime life)
         {
             if (life.Kind != CarrierLifetimeKind.WhileTrue)
                 return;

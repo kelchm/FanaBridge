@@ -33,6 +33,12 @@
     <Reference Include="SimHub.Plugins">
       <HintPath>$(SimHubDir)SimHub.Plugins.dll</HintPath>
     </Reference>
+    <Reference Include="SimHub.Logging">
+      <HintPath>$(SimHubDir)SimHub.Logging.dll</HintPath>
+    </Reference>
+    <Reference Include="log4net">
+      <HintPath>$(SimHubDir)log4net.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
@@ -53,9 +59,6 @@
     </AssemblyAttribute>
     <None Include="Snapshots\SimHub.FanatecManaged.enums.txt" CopyToOutputDirectory="PreserveNewest" />
     <!-- Canonical catalogs live in FanaBridge.Core (CatalogLoader.LoadShipped). -->
-    <EmbeddedResource Include="Display\Fixtures\evaluator-differential-traces.golden.txt" />
-    <!-- FA2: frozen v2 counterparts for the FrameComposer parity battery (v1 stays inline). -->
-    <EmbeddedResource Include="Display\Fixtures\parity-pairs\*.v2.json" />
   </ItemGroup>
 
 </Project>

@@ -36,9 +36,9 @@ namespace FanaBridge.Display.Rules
         }
 
         /// <summary>A wheel-button page change detected this tick — feed it into the ITM
-        /// engine's NEXT tick (<see cref="RuleEngineInput.Manual"/>). The one-frame latency
-        /// is deliberate and harmless at frame cadence: the lifecycle already adopted the
-        /// page, so nothing is waiting on the engine's reaction.</summary>
+        /// composition's NEXT tick. The one-frame latency is deliberate and harmless at
+        /// frame cadence: the lifecycle already adopted the page, so nothing is waiting
+        /// on the reaction.</summary>
         public ManualNavigation? Manual { get; }
 
         /// <summary>The legacy screen the current intent wants shown (set every tick the

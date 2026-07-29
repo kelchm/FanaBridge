@@ -16,8 +16,7 @@ namespace FanaBridge.Display.Rules
     }
 
     /// <summary>
-    /// Frozen per-carrier snapshot after one evaluator tick. E4/E5/E6 consume this shape;
-    /// the v9 engine does not yet emit it (selection still builds <see cref="RuleLiveState"/>).
+    /// Frozen per-carrier snapshot after one evaluator tick. E4/E5/E6 consume this shape.
     /// See scratch/plans/display-customization/evaluated-carrier-contract.md.
     /// </summary>
     public readonly struct CarrierTickSnapshot
@@ -177,7 +176,7 @@ namespace FanaBridge.Display.Rules
 
     /// <summary>
     /// Per-carrier v2 status for the composed-resolution record (D10 vocabulary).
-    /// <see cref="RuleStatus"/> remains v9-engine-only on <see cref="RuleLiveState"/>.
+    /// <see cref="RuleStatus"/> remains the v1-UI status enum until E9-exit.
     /// </summary>
     public readonly struct CarrierResolutionStatus
     {
