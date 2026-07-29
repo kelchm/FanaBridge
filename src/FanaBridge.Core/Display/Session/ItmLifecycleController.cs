@@ -542,6 +542,15 @@ namespace FanaBridge.Display.Session
 
         // ── Procedures ───────────────────────────────────────────────────
 
+        /// <summary>
+        /// Optional cold-entry page override. When non-null and returns a device-valid
+        /// wire page, <see cref="ColdEntry"/> targets that page instead of
+        /// <see cref="EffectiveDefaultPage"/>. The runtime derives this from the live
+        /// document at command time (playlist entry step); non-playlist documents
+        /// return null so the H5 cold burst stays byte-identical to EffectiveDefaultPage.
+        /// </summary>
+        public Func<byte?> ColdEntryPageProvider { get; set; }
+
         // Cold entry (start, restart, wheel change, power cycle): gate + enable + PageSet, each
         // latched on transport accept; confirmation only ever comes from the push. The enable is
         // kept for official-software parity — it has never been observed to do anything, and no
@@ -562,7 +571,7 @@ namespace FanaBridge.Display.Session
             _pendingRequest = 0;
             _lastPageSetMs = -1_000_000_000;
 
-            byte page = EffectiveDefaultPage();
+            byte page = ResolveColdEntryPage();
             _targetPage = page;
             State = ItmLifecycleState.BringUp;
             QueueStep(Cmd.Reset);       // clear the firmware's stale field cache first, so the
@@ -573,6 +582,22 @@ namespace FanaBridge.Display.Session
             QueueStep(Cmd.PageSet, page);
             ArmOnDrain(page);
             _log("ITM: bring-up (" + why + ") — reset + gate + enable + PageSet(" + page + ")");
+        }
+
+        /// <summary>
+        /// Cold-entry target: provider override when it names a real page on this device;
+        /// otherwise <see cref="EffectiveDefaultPage"/> (non-playlist byte-identical path).
+        /// </summary>
+        private byte ResolveColdEntryPage()
+        {
+            byte fallback = EffectiveDefaultPage();
+            var provider = ColdEntryPageProvider;
+            if (provider == null)
+                return fallback;
+            byte? overridePage = provider();
+            if (overridePage is byte page && page != 0 && PageInfoFor(page) != null)
+                return page;
+            return fallback;
         }
 
         private void BeginSwitch(byte page)

@@ -126,13 +126,15 @@ namespace FanaBridge.Tests.Display
 
         private static FieldOverride Ov(
             string id, FieldWrites writes, ContentObject content,
-            ContentEffect effect = ContentEffect.None)
+            ContentEffect effect = ContentEffect.None,
+            FieldAlignment align = FieldAlignment.Left)
             => new FieldOverride
             {
                 Id = id,
                 Writes = writes,
                 Content = content,
                 Effect = effect,
+                Alignment = align,
                 Condition = new Condition
                 {
                     Source = new ValueSource
@@ -309,9 +311,57 @@ namespace FanaBridge.Tests.Display
             Assert.True(mapper.TryEncodeParam(ItmParam.Fuel, 2, Wrap(s), out var v));
             Assert.Equal(12.3f, AsF32(v), 3);
 
-            // Coercion: bare clears the total even though base was withTotal.
+            // Property-sourced suffix: resolve via the property reader, then the same
+            // left-align + catalog-width pad static suffixes use (Cap default width 5).
             Assert.True(mapper.TryResolveTotalSuffix(ItmParam.Fuel, Wrap(s), out var suffix));
-            Assert.Equal(" ", suffix);
+            Assert.Equal("12.3 ", suffix);
+            Assert.Equal("12.3 ", plan.AlignedSuffixText);
+        }
+
+        [Fact]
+        public void PropertySuffix_RightAlign_And_OverflowClamp_MatchStaticPath()
+        {
+            // Multi-char property value, right-aligned into width 5 → observable pad.
+            var rightDoc = FieldDoc(ItmParam.TyreFlTemp,
+                new FieldBase(),
+                Ov("o-right", FieldWrites.Suffix, Prop("Custom.Tag"),
+                    align: FieldAlignment.Right));
+            var rightCaps = new Dictionary<ushort, FieldCapability>
+            {
+                [ItmParam.TyreFlTemp] = Cap(ItmParam.TyreFlTemp, suffixWidth: 5),
+            };
+            var rightPlan = PlanAt(Composer(rightDoc, rightCaps), 0, "tyreTemps",
+                Snap("o-right", true));
+            Assert.Equal(FieldAlignment.Right, rightPlan.Alignment);
+            Assert.Equal(5, rightPlan.SuffixWidth);
+
+            var reader = new FakeReader { Numbers = { ["Custom.Tag"] = 42 } };
+            var mapper = new ItmTelemetryMapper();
+            mapper.ConfigureFromPlans(new[] { rightPlan }, reader);
+            Assert.Equal("   42", rightPlan.AlignedSuffixText);
+
+            var s = NewStatus();
+            Set(s, "TemperatureUnit", "C");
+            Assert.True(mapper.TryResolveSuffix(ItmParam.TyreFlTemp, Wrap(s), out var rightSuf));
+            Assert.Equal("   42", rightSuf);
+
+            // Overflow: rendered "123456" clamped to catalog width 5 before align.
+            var overDoc = FieldDoc(ItmParam.TyreFlTemp,
+                new FieldBase(),
+                Ov("o-over", FieldWrites.Suffix, Prop("Custom.Big"),
+                    align: FieldAlignment.Left));
+            var overCaps = new Dictionary<ushort, FieldCapability>
+            {
+                [ItmParam.TyreFlTemp] = Cap(ItmParam.TyreFlTemp, suffixWidth: 5),
+            };
+            var overPlan = PlanAt(Composer(overDoc, overCaps), 0, "tyreTemps",
+                Snap("o-over", true));
+            reader.Numbers["Custom.Big"] = 123456;
+            mapper.ConfigureFromPlans(new[] { overPlan }, reader);
+            Assert.Equal("12345", overPlan.AlignedSuffixText);
+            Assert.Equal("12345", overPlan.SuffixText);
+            Assert.True(mapper.TryResolveSuffix(ItmParam.TyreFlTemp, Wrap(s), out var overSuf));
+            Assert.Equal("12345", overSuf);
         }
 
         [Fact]
@@ -346,6 +396,76 @@ namespace FanaBridge.Tests.Display
             mapper.ConfigureFromPlans(new[] { offPlan }, null);
             Assert.True(mapper.TryResolveSuffix(ItmParam.TyreFlTemp, Wrap(s), out var offSuf));
             Assert.Equal(" ", offSuf);
+        }
+
+        [Fact]
+        public void PropertySuffix_RendersViaReader_BlinkBlanks_ValueOnlyAndStaticWireSafe()
+        {
+            // Property-sourced suffix + blink: on → rendered text; off → width blank.
+            var prop = Prop("Custom.Tag");
+            var doc = FieldDoc(ItmParam.TyreFlTemp,
+                new FieldBase(),
+                Ov("o-prop", FieldWrites.Suffix, prop, ContentEffect.Blink));
+            var caps = new Dictionary<ushort, FieldCapability>
+            {
+                [ItmParam.TyreFlTemp] = Cap(ItmParam.TyreFlTemp, suffixWidth: 1),
+            };
+            var c = Composer(doc, caps);
+            var reader = new FakeReader { Numbers = { ["Custom.Tag"] = 7 } };
+
+            var onPlan = PlanAt(c, 0, "tyreTemps", Snap("o-prop", true));
+            Assert.True(onPlan.EffectVisible);
+            Assert.NotNull(onPlan.SuffixSource);
+            Assert.Equal("Custom.Tag", onPlan.SuffixSource.Name);
+
+            var mapper = new ItmTelemetryMapper();
+            mapper.ConfigureFromPlans(new[] { onPlan }, reader);
+            Assert.Equal("7", onPlan.AlignedSuffixText);
+            var s = NewStatus();
+            Set(s, "TemperatureUnit", "C");
+            Assert.True(mapper.TryResolveSuffix(ItmParam.TyreFlTemp, Wrap(s), out var onSuf));
+            Assert.Equal("7", onSuf);
+
+            var offPlan = PlanAt(c, LegacyEffectClock.BlinkHalfPeriodMs, "tyreTemps",
+                Snap("o-prop", true));
+            Assert.False(offPlan.EffectVisible);
+            mapper.ConfigureFromPlans(new[] { offPlan }, reader);
+            Assert.Equal(" ", offPlan.AlignedSuffixText);
+            Assert.True(mapper.TryResolveSuffix(ItmParam.TyreFlTemp, Wrap(s), out var offSuf));
+            Assert.Equal(" ", offSuf);
+
+            // Wire-safety: value-only and static-suffix plans stay byte-identical.
+            var valueOnly = FieldDoc(ItmParam.Fuel,
+                new FieldBase { Format = FieldFormats.WithTotal },
+                Ov("o-val", FieldWrites.Value, Prop("Custom.Fuel", format: FieldFormats.WithTotal)));
+            var staticSuf = FieldDoc(ItmParam.TyreFlTemp,
+                new FieldBase(),
+                Ov("o-bang", FieldWrites.Suffix, Text("!")));
+            var fuelCaps = new Dictionary<ushort, FieldCapability>
+            {
+                [ItmParam.Fuel] = Cap(ItmParam.Fuel, primaryHost: "fuelErsDrs"),
+            };
+            var tyreCaps = new Dictionary<ushort, FieldCapability>
+            {
+                [ItmParam.TyreFlTemp] = Cap(ItmParam.TyreFlTemp, suffixWidth: 1),
+            };
+            var valPlan = PlanAt(Composer(valueOnly, fuelCaps), 0, "fuelErsDrs", Snap("o-val", true));
+            var statPlan = PlanAt(Composer(staticSuf, tyreCaps), 0, "tyreTemps", Snap("o-bang", true));
+            var valMapper = new ItmTelemetryMapper();
+            valMapper.ConfigureFromPlans(new[] { valPlan },
+                new FakeReader { Numbers = { ["Custom.Fuel"] = 16.9692 } });
+            var statMapper = new ItmTelemetryMapper();
+            statMapper.ConfigureFromPlans(new[] { statPlan }, null);
+
+            Set(s, "Fuel", 5.0);
+            Set(s, "MaxFuel", 90.0);
+            Assert.True(valMapper.TryEncodeParam(ItmParam.Fuel, 2, Wrap(s), out var v));
+            Assert.Equal(17.0f, AsF32(v), 3);
+            Assert.True(valMapper.TryResolveTotalSuffix(ItmParam.Fuel, Wrap(s), out var baseSuf));
+            Assert.Equal("/90", baseSuf);
+
+            Assert.True(statMapper.TryResolveSuffix(ItmParam.TyreFlTemp, Wrap(s), out var stSuf));
+            Assert.Equal("!", stSuf);
         }
 
         [Fact]

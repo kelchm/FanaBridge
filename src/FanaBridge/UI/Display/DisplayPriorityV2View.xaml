@@ -271,8 +271,7 @@
                                   DockPanel.Dock="Left" />
                         <TextBox x:Name="txtEpUnit" Width="48" Margin="8,0,0,0" Padding="6,5"
                                  DockPanel.Dock="Right"
-                                 Background="#1E1E20" Foreground="#C8C8C8" BorderBrush="#545456"
-                                 ToolTip="unit" />
+                                 Background="#1E1E20" Foreground="#C8C8C8" BorderBrush="#545456" />
                         <TextBox x:Name="txtEpValue" Padding="6,5"
                                  Background="#1E1E20" Foreground="#E6E6E6" BorderBrush="#545456" />
                     </DockPanel>

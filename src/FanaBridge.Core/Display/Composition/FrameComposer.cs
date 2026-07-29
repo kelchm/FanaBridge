@@ -508,6 +508,8 @@ namespace FanaBridge.Display.Composition
                 ParamId = paramId,
                 WinnerCarrierId = winnerId,
                 DegradedChildren = degraded,
+                // Catalog width for property-sourced re-align at E7 application time.
+                SuffixWidth = cap?.SuffixWidth,
             };
 
             FieldBase bas = field.Base;
@@ -584,12 +586,8 @@ namespace FanaBridge.Display.Composition
                 }
                 else
                 {
-                    string raw = AuthoredText(content);
-                    // Runtime clamp to catalog width (not inert).
-                    if (cap?.SuffixWidth is int w && w >= 0 && raw != null && raw.Length > w)
-                        plan.SuffixText = raw.Substring(0, w);
-                    else
-                        plan.SuffixText = raw;
+                    // Static text: clamp then align through the single shared path.
+                    plan.SuffixText = ClampSuffixToWidth(AuthoredText(content), cap?.SuffixWidth);
                 }
 
                 // Per-tick resolved text: width-blank on blink off phase.
@@ -600,7 +598,7 @@ namespace FanaBridge.Display.Composition
                 }
                 else
                 {
-                    plan.AlignedSuffixText = AlignSuffix(
+                    plan.AlignedSuffixText = ResolveAlignedSuffix(
                         plan.SuffixText, alignForSuffix, cap?.SuffixWidth);
                 }
             }
@@ -610,7 +608,7 @@ namespace FanaBridge.Display.Composition
                 plan.SuffixOwner = SuffixOwner.BaseComputed;
                 plan.Alignment = FieldAlignment.Left;
                 plan.SuffixText = bas?.BaseSuffix;
-                plan.AlignedSuffixText = AlignSuffix(
+                plan.AlignedSuffixText = ResolveAlignedSuffix(
                     plan.SuffixText, FieldAlignment.Left, cap?.SuffixWidth);
             }
 
@@ -1172,7 +1170,34 @@ namespace FanaBridge.Display.Composition
             return content.Kind == ContentKind.Text || content.Kind == ContentKind.Message;
         }
 
-        private static string AlignSuffix(string text, FieldAlignment alignment, int? width)
+        /// <summary>
+        /// Catalog-width clamp then alignment pad — the single path static and
+        /// property-sourced suffixes share for <see cref="FieldRegionPlan.AlignedSuffixText"/>.
+        /// Null text stays null (property not yet resolved). Already-clamped text is
+        /// left-padded / right-padded to <paramref name="width"/> when shorter.
+        /// </summary>
+        public static string ResolveAlignedSuffix(
+            string text, FieldAlignment alignment, int? width)
+        {
+            string clamped = ClampSuffixToWidth(text, width);
+            return AlignSuffix(clamped, alignment, width);
+        }
+
+        /// <summary>Runtime clamp to catalog width (not inert). Null text stays null.</summary>
+        public static string ClampSuffixToWidth(string text, int? width)
+        {
+            if (text == null)
+                return null;
+            if (width is int w && w >= 0 && text.Length > w)
+                return text.Substring(0, w);
+            return text;
+        }
+
+        /// <summary>
+        /// Pad suffix to catalog width (left default / right when requested).
+        /// Does not clamp — call <see cref="ClampSuffixToWidth"/> first when needed.
+        /// </summary>
+        public static string AlignSuffix(string text, FieldAlignment alignment, int? width)
         {
             if (text == null)
                 return null;

@@ -87,8 +87,17 @@ namespace FanaBridge.UI.Display
         /// <summary>Badge on hosted pages (ITM wheels where kinds mix).</summary>
         public const string LegacyBadge = "LEGACY";
 
-        /// <summary>Hosted pages live on the Legacy slot — preposition form.</summary>
+        /// <summary>
+        /// Hosted pages live on the Legacy slot — preposition form (NAMING PASS ruled
+        /// vocabulary; presence-pinned for CopyLayerGuard even when no board paints it yet).
+        /// </summary>
         public const string OnLegacy = "on Legacy";
+
+        /// <summary>
+        /// UI for pages not in the walk order (NAMING PASS ruled vocabulary;
+        /// presence-pinned for CopyLayerGuard).
+        /// </summary>
+        public const string OffRotation = "off-rotation";
 
         // ── Entrypoint ───────────────────────────────────────────────────
 
@@ -128,9 +137,6 @@ namespace FanaBridge.UI.Display
 
         /// <summary>UI for the frozen pageOrder key — in-rotation pages.</summary>
         public const string Rotation = "Rotation";
-
-        /// <summary>UI for pages not in the walk order.</summary>
-        public const string OffRotation = "off-rotation";
 
         /// <summary>Standing manual row title.</summary>
         public const string ManualPaging = "Manual paging";
@@ -178,8 +184,10 @@ namespace FanaBridge.UI.Display
                 total);
         }
 
+        // 8c Pages & Fields (boards 5c/5d) — blocked phase; keep copy ready.
         /// <summary>
         /// Sticky filter state line: "Showing &lt;name&gt; (n of m) — Show all fields".
+        /// 8c Pages&amp;Fields charter — phase-gated until 5c/5d render.
         /// </summary>
         /// <param name="name">Focused field display name.</param>
         /// <param name="index">1-based index among the filtered set.</param>
@@ -195,9 +203,11 @@ namespace FanaBridge.UI.Display
                 ShowAllFields);
         }
 
+        // 8c Pages & Fields (boards 5c/5d) — blocked phase; keep copy ready.
         /// <summary>
         /// Filter state line when the focused field is shared — reach restated mid-line.
         /// Example: "Showing Speed — shared across all 5 ITM pages — Show all fields".
+        /// 8c Pages&amp;Fields charter — phase-gated until 5c/5d render.
         /// </summary>
         public static string FilterStateLineShared(string name, int totalItmPages)
         {
@@ -449,7 +459,9 @@ namespace FanaBridge.UI.Display
         public const string DiagnosticsLatchClear = "clear";
 
         /// <summary>Dismissal latch: id-list row label.</summary>
-        public const string DiagnosticsDismissalLatchIds = "Latched carriers";
+        // "carrier" is engine vocabulary, not ruled user copy (closing-panel
+        // finding): the user-facing noun is the entrypoint being dismissed.
+        public const string DiagnosticsDismissalLatchIds = "Dismissed entrypoints";
 
         /// <summary>Capability tri-state: supported.</summary>
         public const string DiagnosticsCapSupported = "yes";
@@ -1031,10 +1043,7 @@ namespace FanaBridge.UI.Display
                 case LifetimeKind.WhileTrue:
                     return "While the condition is true";
                 case LifetimeKind.ForDuration:
-                    return string.Format(
-                        CultureInfo.InvariantCulture,
-                        "For a duration ({0} s)",
-                        SecondsFromMs(durationMs));
+                    return LifetimeForDurationLabel(SecondsFromMs(durationMs));
                 case LifetimeKind.UntilDismissed:
                     return "Until dismissed";
                 case LifetimeKind.OnChange:
@@ -1045,23 +1054,32 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>
-        /// OnChange form label with direction: "When the value changes" + rises/falls.
+        /// Editable for-duration row prefix (before the seconds field): "For a duration (".
+        /// Paired with <see cref="LifetimeForDurationSuffix"/>; composed form is
+        /// <see cref="LifetimeForDurationLabel"/>.
         /// </summary>
-        public static string LifetimeFormLabelOnChange(ChangeDirection direction)
+        public const string LifetimeForDurationPrefix = "For a duration (";
+
+        /// <summary>
+        /// Editable for-duration row suffix (after the seconds field): " s)".
+        /// </summary>
+        public const string LifetimeForDurationSuffix = " s)";
+
+        /// <summary>Composed for-duration form label: "For a duration ({N} s)".</summary>
+        public static string LifetimeForDurationLabel(int seconds)
         {
-            string baseLabel = LifetimeFormLabel(LifetimeKind.OnChange);
-            switch (direction)
-            {
-                case ChangeDirection.Up:
-                    return string.Format(
-                        CultureInfo.InvariantCulture, "{0} (rises)", baseLabel);
-                case ChangeDirection.Down:
-                    return string.Format(
-                        CultureInfo.InvariantCulture, "{0} (falls)", baseLabel);
-                default:
-                    return baseLabel;
-            }
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}{1}{2}",
+                LifetimeForDurationPrefix,
+                seconds,
+                LifetimeForDurationSuffix);
         }
+
+        /// <summary>
+        /// Entrypoint form unit-field tooltip (condition value unit, e.g. L / s).
+        /// </summary>
+        public const string ConditionUnitTooltip = "unit";
 
         /// <summary>
         /// Cycle period composed with the selected summon's primary lifetime (Q8):
@@ -1098,12 +1116,6 @@ namespace FanaBridge.UI.Display
 
         /// <summary>Derived flagged-children aggregate pin: " · while one is active".</summary>
         public const string LifetimeWhileOneActive = " · while one is active";
-
-        /// <summary>
-        /// Aggregate membership when each child carries its own lifetime:
-        /// " · each with its own lifetime".
-        /// </summary>
-        public const string LifetimeEachOwn = " · each with its own lifetime";
 
         private static int SecondsFromMs(int durationMs)
         {
@@ -1262,9 +1274,6 @@ namespace FanaBridge.UI.Display
         public const string ManualUnmappedAmber =
             "Next and previous aren't mapped on this wheel, so this row can never fire.";
 
-        /// <summary>Link on the amber unmapped line.</summary>
-        public const string MapThemInControls = "Map them in Controls";
-
         // ── Overflow menu (seat; Q3 flagged — seats only this phase) ─────
 
         /// <summary>Menu: navigate to page fields (not a write).</summary>
@@ -1406,17 +1415,6 @@ namespace FanaBridge.UI.Display
         /// <summary>Picker footer provenance.</summary>
         public const string PlaylistsWrittenBySetups =
             "Playlists are written by setups — there is no playlist editor in v1.";
-
-        /// <summary>5n THREE CLAIMS card label.</summary>
-        public const string ThreeClaimsNotTwo = "THREE CLAIMS, NOT TWO";
-
-        /// <summary>5n THREE CLAIMS body (first sentence).</summary>
-        public const string ThreeClaimsBody =
-            "A built-in screen is marked supported only where we have driven it on this device. Untested on this wheel stays selectable with the risk said out loud, and anything the catalog says this rim cannot do is listed greyed with the reason — nothing is greyed on this one.";
-
-        /// <summary>5n THREE CLAIMS body (second sentence).</summary>
-        public const string ThreeClaimsBodyCycles =
-            "Cycles are not offered here: a cycle is an entrypoint, and outside a session there is nothing to rank. A playlist is the honest way to alternate while idle.";
 
         // ── Entrypoint form (5f) ─────────────────────────────────────────
 

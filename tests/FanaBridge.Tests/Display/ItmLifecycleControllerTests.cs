@@ -1203,6 +1203,49 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void ColdEntry_ProviderOverride_TargetsPromotedPage_InBurst()
+        {
+            // H5 + playlist: when the runtime provider returns the current effective
+            // (playlist-promoted) wire, cold entry PageSets THAT page — not DefaultPage.
+            var c = Make(out var t, out _);
+            c.DefaultPage = 1; // LapInfo
+            byte promoted = 2; // FuelErsDrs
+            c.ColdEntryPageProvider = () => promoted;
+
+            c.Start();
+            c.Tick(true);
+
+            int reset = t.Sent.FindIndex(IsReset);
+            int gate = t.Sent.FindIndex(IsGateOn);
+            int enable = t.Sent.FindIndex(IsEnable);
+            int page = t.Sent.FindIndex(IsPageSetTo(promoted));
+            Assert.True(reset >= 0 && gate >= 0 && enable >= 0 && page >= 0,
+                "bring-up burst must include PageSet to the promoted page");
+            Assert.True(reset < gate && gate < enable && enable < page,
+                "order: Reset → GateOn → Enable → PageSet(promoted)");
+            Assert.DoesNotContain(t.Sent, IsPageSetTo(1));
+        }
+
+        [Fact]
+        public void ColdEntry_NullProvider_TargetsEffectiveDefaultPage_ByteIdentical()
+        {
+            // Non-playlist path: provider null → EffectiveDefaultPage (byte-identical H5).
+            var c = Make(out var t, out _);
+            c.DefaultPage = 5;
+            c.ColdEntryPageProvider = null;
+
+            c.Start();
+            c.Tick(true);
+
+            Assert.Contains(t.Sent, IsPageSetTo(5));
+            int reset = t.Sent.FindIndex(IsReset);
+            int gate = t.Sent.FindIndex(IsGateOn);
+            int enable = t.Sent.FindIndex(IsEnable);
+            int page = t.Sent.FindIndex(IsPageSet);
+            Assert.True(reset < gate && gate < enable && enable < page);
+        }
+
+        [Fact]
         public void WheelChanged_WhileIdle_DoesNothing()
         {
             var c = Make(out var t, out var clock);

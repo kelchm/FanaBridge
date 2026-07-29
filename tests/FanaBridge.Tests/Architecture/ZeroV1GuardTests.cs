@@ -184,10 +184,15 @@ namespace FanaBridge.Tests.Architecture
             {
                 var rel = RepoRelative(file);
                 var code = StripCommentsAndStringsBestEffort(File.ReadAllText(file));
+                string fileName = Path.GetFileNameWithoutExtension(file);
                 foreach (var id in ids)
                 {
                     var rx = new Regex(@"\b" + Regex.Escape(id) + @"\b");
-                    if (rx.IsMatch(code))
+                    bool codeHit = rx.IsMatch(code);
+                    // Filename scan: burn-down fossils like RuleEngineResult.cs stay
+                    // visible even when the type inside was renamed.
+                    bool nameHit = string.Equals(fileName, id, StringComparison.Ordinal);
+                    if (codeHit || nameHit)
                     {
                         if (!hits.TryGetValue(id, out var files))
                         {

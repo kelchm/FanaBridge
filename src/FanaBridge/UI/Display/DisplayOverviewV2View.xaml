@@ -14,6 +14,14 @@
     <!-- Digest §2: Overview hub. Copy strings are applied in code-behind from DisplayCopy. -->
     <DockPanel LastChildFill="True">
 
+        <!-- Conflict banner (ConfigEditConflict) — same CAS contract as Priority. -->
+        <Border x:Name="bannerConflict" DockPanel.Dock="Top" Background="#3A2A1A"
+                BorderBrush="#C9A95F" BorderThickness="1" Padding="10,8" Margin="0,0,0,8"
+                Visibility="Collapsed">
+            <TextBlock x:Name="txtConflict" FontSize="12.5" Foreground="#E8D5A0"
+                       TextWrapping="Wrap" />
+        </Border>
+
         <!-- OverviewHeaderRow [5a-D] — profile chrome is SimHub-owned; FanaBridge shows title + mode/situation. -->
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
             <TextBlock x:Name="txtOverviewTitle" FontSize="17" FontWeight="SemiBold"

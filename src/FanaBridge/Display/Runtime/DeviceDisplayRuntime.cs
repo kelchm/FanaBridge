@@ -269,15 +269,9 @@ namespace FanaBridge.Display.Runtime
             return ReferenceEquals(prior, expected);
         }
 
-        /// <summary>Test seam: invoked at the end of <see cref="Tick"/> /
-        /// <see cref="TickLegacyRules"/> after the frame config is latched and the stack
-        /// has run — so a test can swap the volatile mid-frame before the device instance
-        /// runs DriveLegacyCol01 arbitration.</summary>
-        internal Action AfterTickForTest { get; set; }
-
         // Segment / special-screen sinks for the rule-driven col01 path — set by the
         // device instance from its sole LegacyDisplayDriver each frame before Tick /
-        // TickLegacyRules. The stack never constructs a driver or encoder.
+        // TickLegacyRules. The composition never constructs a driver or encoder.
         private Func<byte, byte, byte, bool> _legacySegmentWriter;
         private Func<byte, bool> _specialScreenWriter;
         private Action _specialReleased;
@@ -359,6 +353,10 @@ namespace FanaBridge.Display.Runtime
                     nowMs: _itmClock(),
                     log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
                     deviceId: _itmDeviceId);
+                // H5: ColdEntry derives playlist entry destination from the live document
+                // at command time (no stored playlist state). Non-playlist → null →
+                // EffectiveDefaultPage (byte-identical).
+                _itmDisplay.Lifecycle.ColdEntryPageProvider = ResolvePlaylistColdEntryWire;
                 // The wire-driven twin for the same display device, on the same clock as
                 // the driver so their snapshot throttles stay in step. Attached to the
                 // shared ITM outbound tap the instant it exists — bootstrap by construction:
@@ -531,7 +529,6 @@ namespace FanaBridge.Display.Runtime
             // whatever the parts say now). Change-gated: composes nothing when no part moved
             // this frame. This subsumes the old standalone per-frame publish.
             MaybePublishPanelSnapshot();
-            AfterTickForTest?.Invoke();
             return ok;
         }
 
@@ -777,7 +774,6 @@ namespace FanaBridge.Display.Runtime
                 _propertySource.BeginFrame(pluginManager, data);
                 UpdateCompositionV2(configV2, pluginManager, data, settings, itmPath: false);
                 MaybePublishPanelSnapshot();
-                AfterTickForTest?.Invoke();
                 return;
             }
 
@@ -788,7 +784,6 @@ namespace FanaBridge.Display.Runtime
                 _propertySource = null;
                 MaybePublishPanelSnapshot();
             }
-            AfterTickForTest?.Invoke();
         }
 
         /// <summary>
@@ -907,6 +902,117 @@ namespace FanaBridge.Display.Runtime
                 GameId = gameId,
                 Content = content,
             });
+        }
+
+        /// <summary>
+        /// ColdEntry provider: derive playlist entry destination from the <b>live</b>
+        /// document at command time — no stored playlist state. Volatile-acquires
+        /// <c>_configV2</c>; playlist idle → <see cref="IdleCompile.ResolveAtEntry"/>
+        /// (ONE selector with arbiter ticks) → page identity → wire on the current
+        /// device table. Non-playlist / non-page entry / unresolvable → null so
+        /// <see cref="ItmLifecycleController"/> falls back to EffectiveDefaultPage.
+        /// Device-id hot-swap cannot carry a foreign wire.
+        /// </summary>
+        private byte? ResolvePlaylistColdEntryWire()
+        {
+            // Volatile acquire: only the current document decides cold entry.
+            var config = _configV2;
+            if (config == null)
+                return null;
+
+            var idle = config.Priority?.Rest?.Idle;
+            if (idle == null || idle.Kind != IdleKind.Playlist || idle.DegradedAtLoad)
+                return null;
+
+            var map = BuildPlaylistMap(config);
+            // Capability envelope when catalog is live; null = untested (filter does not drop).
+            var sc = _compositionCatalog?.ScreenCommands;
+            var compiled = IdleCompile.ResolveAtEntry(idle, sc, map);
+            if (compiled.Kind != IdleCompileKind.Page)
+                return null;
+
+            return ResolveWireForDestination(compiled.PageDestinationId);
+        }
+
+        /// <summary>
+        /// Id → entry map matching SeatArbiter / WheelScreenArbiter construction
+        /// (case-insensitive; degraded entries omitted).
+        /// </summary>
+        private static IReadOnlyDictionary<string, PlaylistEntry> BuildPlaylistMap(
+            DisplayConfigV2 config)
+        {
+            if (config?.Playlists == null || config.Playlists.Count == 0)
+                return null;
+
+            var map = new Dictionary<string, PlaylistEntry>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < config.Playlists.Count; i++)
+            {
+                var pl = config.Playlists[i];
+                if (pl?.Id != null && !pl.DegradedAtLoad)
+                    map[pl.Id] = pl;
+            }
+            return map.Count == 0 ? null : map;
+        }
+
+        private byte? ResolveWireForDestination(string destinationId)
+        {
+            if (string.IsNullOrEmpty(destinationId))
+                return null;
+            var table = ItmPageTable.ForDevice(_itmDeviceId);
+            if (destinationId.StartsWith("itm:", StringComparison.Ordinal))
+            {
+                string catalogId = destinationId.Substring("itm:".Length);
+                if (TryCatalogIdToItmPage(catalogId, out ItmPage page)
+                    && table.TryGetWire(page, out byte wire)
+                    && wire != 0)
+                    return wire;
+                return null;
+            }
+            if (destinationId.StartsWith("hosted:", StringComparison.Ordinal))
+            {
+                // Hosted faces park on Legacy wire when the device has one.
+                return table.LegacyWire != 0 ? table.LegacyWire : (byte?)null;
+            }
+            return null;
+        }
+
+        /// <summary>Inverse of <see cref="CatalogPageIdAdapter.FromItmPage"/> (explicit pair).</summary>
+        private static bool TryCatalogIdToItmPage(string catalogPageId, out ItmPage page)
+        {
+            page = default;
+            if (string.IsNullOrEmpty(catalogPageId))
+                return false;
+            if (string.Equals(catalogPageId, "lapInfo", StringComparison.Ordinal))
+            {
+                page = ItmPage.LapInfo;
+                return true;
+            }
+            if (string.Equals(catalogPageId, "fuelErsDrs", StringComparison.Ordinal))
+            {
+                page = ItmPage.FuelErsDrs;
+                return true;
+            }
+            if (string.Equals(catalogPageId, "carSettings", StringComparison.Ordinal))
+            {
+                page = ItmPage.CarSettings;
+                return true;
+            }
+            if (string.Equals(catalogPageId, "lapTimes", StringComparison.Ordinal))
+            {
+                page = ItmPage.LapTimes;
+                return true;
+            }
+            if (string.Equals(catalogPageId, "tyreTemps", StringComparison.Ordinal))
+            {
+                page = ItmPage.TyreTemps;
+                return true;
+            }
+            if (string.Equals(catalogPageId, "legacy", StringComparison.Ordinal))
+            {
+                page = ItmPage.Legacy;
+                return true;
+            }
+            return false;
         }
 
         private void BindCompositionWriters(DisplayCompositionV2 composition)

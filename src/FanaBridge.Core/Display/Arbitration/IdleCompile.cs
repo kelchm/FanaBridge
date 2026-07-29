@@ -70,6 +70,18 @@ namespace FanaBridge.Display.Arbitration
         }
 
         /// <summary>
+        /// Compile idle as at playlist <b>entry</b> (elapsed 0). Same selection
+        /// <see cref="Resolve"/> makes on the first idle tick — the ONE step selector
+        /// (<see cref="SelectActiveStepIndex"/>). Cold-entry wiring uses this so no
+        /// playlist state is stored outside the document.
+        /// </summary>
+        public static IdleCompileResult ResolveAtEntry(
+            IdleSpec idle,
+            ScreenCommandsCapability screenCommands = null,
+            IReadOnlyDictionary<string, PlaylistEntry> playlists = null)
+            => Resolve(idle, screenCommands, playlists, nowMs: 0, anchorMs: 0);
+
+        /// <summary>
         /// Expand a playlist idle: capability-filter first, then pick the active step
         /// from elapsed time, then compile that step's destination. All-skipped → idle
         /// floor (CompileBlank), never Silence (P6 rider a).
@@ -113,6 +125,7 @@ namespace FanaBridge.Display.Arbitration
             if (terminal == PlaylistTerminal.Unknown)
                 terminal = PlaylistTerminal.Hold; // runtime coerce; raw preserved on entry
 
+            // ONE selector — shared with ResolveAtEntry (elapsed 0 → entry step).
             int activeIndex = SelectActiveStepIndex(survivors, elapsed, terminal);
             var active = survivors[activeIndex];
             return CompileStepDestination(active.Destination, screenCommands);

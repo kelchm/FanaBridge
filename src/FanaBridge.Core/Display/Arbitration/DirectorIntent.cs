@@ -4,9 +4,7 @@ namespace FanaBridge.Display.Arbitration
 {
     /// <summary>
     /// Director input kind — content-plane identity the page director resolves to a wire
-    /// page. Mirrors the v9 RuleIntent kind subset the director actually branches on
-    /// (Page / SegmentScreen / Special); scaffolding through E8b still constructs this
-    /// from RuleIntent at the composition edge.
+    /// page (Page / SegmentScreen / Special). Composition builds this at the director edge.
     /// </summary>
     public enum DirectorIntentKind
     {

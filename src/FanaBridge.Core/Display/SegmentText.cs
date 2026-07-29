@@ -3,8 +3,8 @@ using FanaBridge.Protocol;
 namespace FanaBridge.Display
 {
     /// <summary>
-    /// Schema-neutral segment-display text helpers. Shared by the v2 validator and the
-    /// v9 LegacyScreen path (scaffolding through E8b).
+    /// Schema-neutral segment-display text helpers. Shared by the v2 validator and
+    /// segment-plane render paths.
     /// </summary>
     public static class SegmentText
     {

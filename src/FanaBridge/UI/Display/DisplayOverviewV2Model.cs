@@ -164,7 +164,7 @@ namespace FanaBridge.UI.Display
 
         /// <summary>
         /// Apply a mode change to a document clone. Caller publishes via
-        /// <c>ApplyDisplayConfigV2</c>. Does not write DisplayControl (view host does
+        /// <c>TryApplyDisplayConfigV2</c> (expected = the projected document). Does not write DisplayControl (view host does
         /// write-through while the v1 tab lives — E9-exit).
         /// </summary>
         public static DisplayConfigV2 WithMode(DisplayConfigV2 config, SettingsMode mode)

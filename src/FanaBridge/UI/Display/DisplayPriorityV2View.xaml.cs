@@ -238,6 +238,9 @@ namespace FanaBridge.UI.Display
             cmbEpOperator.Items.Add(DisplayCopy.OpIsOn);
             cmbEpOperator.Items.Add(DisplayCopy.OpIsOff);
             cmbEpOperator.SelectedIndex = 0;
+
+            if (txtEpUnit != null)
+                txtEpUnit.ToolTip = DisplayCopy.ConditionUnitTooltip;
         }
 
         private void ApplyModel(DisplayPriorityV2Model model, DisplayValuesSnapshot values)
@@ -1635,7 +1638,7 @@ namespace FanaBridge.UI.Display
             };
             label.Children.Add(new TextBlock
             {
-                Text = "For a duration (",
+                Text = DisplayCopy.LifetimeForDurationPrefix,
                 FontSize = 12.5,
                 Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xE6, 0xE6)),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1643,7 +1646,7 @@ namespace FanaBridge.UI.Display
             label.Children.Add(secondsBox);
             label.Children.Add(new TextBlock
             {
-                Text = " s)",
+                Text = DisplayCopy.LifetimeForDurationSuffix,
                 FontSize = 12.5,
                 Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xE6, 0xE6)),
                 VerticalAlignment = VerticalAlignment.Center,

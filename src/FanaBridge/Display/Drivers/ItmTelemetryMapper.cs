@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using GameReaderCommon;
 using FanaBridge.Display.Composition;
 using FanaBridge.Display.Rules;
@@ -142,6 +143,10 @@ namespace FanaBridge.Display.Drivers
                 var plan = plans[i];
                 if (plan == null)
                     continue;
+                // Property-sourced suffix: resolve at application time through the same
+                // IPropertyReader path values use, format via SuffixFormat, feed
+                // AlignedSuffixText. Static-text and value-only plans leave text alone.
+                ResolvePropertySuffix(plan, properties);
                 planMap[plan.ParamId] = plan;
 
                 var mapping = MappingFromPlan(plan);
@@ -150,6 +155,81 @@ namespace FanaBridge.Display.Drivers
             }
             _fieldPlans = planMap;
             _fieldMappings = mappings.Count > 0 ? mappings : EmptyMappings;
+        }
+
+        /// <summary>
+        /// When a plan paints a property-sourced suffix, resolve the property through
+        /// <paramref name="properties"/> (same reader as value overrides), format via
+        /// <see cref="FieldRegionPlan.SuffixFormat"/>, then feed the same
+        /// clamp + alignment path static suffixes use
+        /// (<see cref="FrameComposer.ResolveAlignedSuffix"/>) into
+        /// <see cref="FieldRegionPlan.AlignedSuffixText"/>. Blink-off
+        /// (<see cref="FieldRegionPlan.EffectVisible"/> false) already carries a
+        /// width-blank from the composer — leave it. Static-text overrides and
+        /// BaseComputed plans are no-ops (wire-identical).
+        /// </summary>
+        private static void ResolvePropertySuffix(FieldRegionPlan plan, IPropertyReader properties)
+        {
+            if (plan == null
+                || plan.SuffixOwner != SuffixOwner.Override
+                || plan.SuffixSource == null)
+                return;
+
+            // Composer already folded blink-off into a width blank.
+            if (!plan.EffectVisible)
+                return;
+
+            string rendered = RenderPropertySuffixText(plan.SuffixSource, plan.SuffixFormat, properties);
+            if (rendered == null)
+            {
+                // Miss this frame → actively blank the region (same wire convention as bare).
+                string blank = FrameComposer.ResolveAlignedSuffix(
+                    " ", plan.Alignment, plan.SuffixWidth) ?? " ";
+                if (string.IsNullOrEmpty(blank))
+                    blank = " ";
+                plan.AlignedSuffixText = blank;
+                plan.SuffixText = blank;
+                return;
+            }
+
+            // Same clamp + align path as static suffixes (FrameComposer contract).
+            string aligned = FrameComposer.ResolveAlignedSuffix(
+                rendered, plan.Alignment, plan.SuffixWidth) ?? rendered;
+            plan.SuffixText = FrameComposer.ClampSuffixToWidth(rendered, plan.SuffixWidth)
+                ?? rendered;
+            plan.AlignedSuffixText = aligned;
+        }
+
+        /// <summary>
+        /// Property → suffix text through the value-override reader path
+        /// (<see cref="IPropertyReader.TryGetNumber"/> + value-format transforms).
+        /// </summary>
+        private static string RenderPropertySuffixText(
+            ValueSource source, string format, IPropertyReader properties)
+        {
+            if (properties == null || source == null)
+                return null;
+            var spec = ToPropertySpec(source);
+            if (spec == null)
+                return null;
+            if (!properties.TryGetNumber(spec, out double n))
+                return null;
+            n = ApplyValueFormat(n, format);
+            return FormatSuffixScalar(n, format);
+        }
+
+        private static string FormatSuffixScalar(double n, string format)
+        {
+            if (string.Equals(format, FormatOneDecimal, StringComparison.Ordinal)
+                || string.Equals(format, FieldFormats.OneDecimal, StringComparison.Ordinal))
+            {
+                return n.ToString("0.0", CultureInfo.InvariantCulture);
+            }
+
+            // Whole numbers without a trailing ".0"; otherwise trim to a few decimals.
+            if (Math.Abs(n - Math.Round(n)) < 1e-9)
+                return Math.Round(n).ToString("0", CultureInfo.InvariantCulture);
+            return n.ToString("0.###", CultureInfo.InvariantCulture);
         }
 
         /// <summary>
@@ -377,8 +457,9 @@ namespace FanaBridge.Display.Drivers
 
         /// <summary>
         /// When a plan paints the suffix region, return its resolved text (already
-        /// alignment-clamped / blink-blanked by the composer). BaseComputed is not plan-
-        /// owned — the mapper's unit/total path remains the single dynamic owner.
+        /// alignment-clamped / blink-blanked by the composer, or property-resolved at
+        /// application). BaseComputed is not plan-owned — the mapper's unit/total path
+        /// remains the single dynamic owner.
         /// </summary>
         private bool TryGetPlanOwnedSuffix(ushort paramId, out string suffix)
         {
@@ -393,6 +474,30 @@ namespace FanaBridge.Display.Drivers
                 suffix = null;
                 return false;
             }
+
+            // Property-sourced: re-resolve live through the same reader path values use
+            // when the blink phase is on, then the same clamp + align path static text uses.
+            // Off-phase keeps the composer's width blank.
+            if (plan.SuffixOwner == SuffixOwner.Override
+                && plan.SuffixSource != null
+                && plan.EffectVisible)
+            {
+                string rendered = RenderPropertySuffixText(
+                    plan.SuffixSource, plan.SuffixFormat, _properties);
+                if (rendered == null)
+                {
+                    suffix = FrameComposer.ResolveAlignedSuffix(
+                        " ", plan.Alignment, plan.SuffixWidth) ?? " ";
+                    if (string.IsNullOrEmpty(suffix))
+                        suffix = " ";
+                    return true;
+                }
+
+                suffix = FrameComposer.ResolveAlignedSuffix(
+                    rendered, plan.Alignment, plan.SuffixWidth) ?? rendered;
+                return true;
+            }
+
             // EffectVisible false already folded into AlignedSuffixText as width-blank.
             suffix = plan.AlignedSuffixText
                 ?? (plan.SuffixOwner == SuffixOwner.Blank ? " " : plan.SuffixText);

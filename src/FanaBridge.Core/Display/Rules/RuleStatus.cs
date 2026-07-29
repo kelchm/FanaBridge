@@ -2,8 +2,7 @@ namespace FanaBridge.Display.Rules
 {
     /// <summary>
     /// A rule's live state as shown in the v1 UI priority list.
-    /// UI-coupled until E9-exit (DisplayTriggersView / Overview render); the v9 engine
-    /// types that used to live beside this enum are deleted at E8b.
+    /// UI-coupled until E9-exit (DisplayTriggersView / Overview render).
     /// </summary>
     public enum RuleStatus
     {

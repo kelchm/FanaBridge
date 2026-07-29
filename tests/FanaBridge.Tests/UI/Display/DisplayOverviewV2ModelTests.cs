@@ -1,7 +1,10 @@
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge;
 using FanaBridge.Display.Arbitration;
+using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Schema2;
 using FanaBridge.Profiles;
 using FanaBridge.UI.Display;
@@ -26,6 +29,79 @@ namespace FanaBridge.Tests.UI.Display
 
             Assert.Equal(SettingsMode.LegacyOnly, next.Settings.Mode);
             Assert.Equal(SettingsMode.On, doc.Settings.Mode); // original untouched
+        }
+
+        /// <summary>
+        /// Closing MAJOR: Overview mode/reject publish via CAS against the projected
+        /// document. Concurrent edit between projection and write → conflict, no overwrite.
+        /// </summary>
+        [Fact]
+        public void ModeWrite_Cas_CompetingPublish_YieldsConflict_NeverOverwrite()
+        {
+            var runtime = new DeviceDisplayRuntime(
+                new DeviceConfig
+                {
+                    Profile = WheelProfileStore.FindByWheelType("PSWBMW"),
+                    Capabilities = new WheelCapabilities(
+                        WheelProfileStore.FindByWheelType("PSWBMW")!),
+                },
+                itmClock: () => null,
+                log: _ => { });
+
+            var projected = MinimalDoc();
+            projected.Settings.Mode = SettingsMode.On;
+            projected.Settings.RejectUncommandedChanges = false;
+            projected = DisplayConfigV2Validator.Normalize(projected, _ => { });
+            runtime.SetConfigV2(projected);
+
+            // Overview path: expected = the document the view projected from.
+            var expected = runtime.CurrentConfigV2;
+            var modeNext = DisplayOverviewV2Model.WithMode(expected, SettingsMode.Off);
+
+            // Competing writer between projection and mode write (Priority / bake shape).
+            var competitor = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(expected), _ => { });
+            competitor.Settings.RejectUncommandedChanges = true;
+            runtime.SetConfigV2(competitor);
+
+            Assert.False(runtime.TryApplyDisplayConfigV2(expected, modeNext));
+            // Competitor preserved — mode Off never landed.
+            Assert.Same(competitor, runtime.CurrentConfigV2);
+            Assert.True(runtime.CurrentConfigV2.Settings.RejectUncommandedChanges);
+            Assert.Equal(SettingsMode.On, runtime.CurrentConfigV2.Settings.Mode);
+        }
+
+        [Fact]
+        public void RejectWrite_Cas_CompetingPublish_YieldsConflict_NeverOverwrite()
+        {
+            var runtime = new DeviceDisplayRuntime(
+                new DeviceConfig
+                {
+                    Profile = WheelProfileStore.FindByWheelType("PSWBMW"),
+                    Capabilities = new WheelCapabilities(
+                        WheelProfileStore.FindByWheelType("PSWBMW")!),
+                },
+                itmClock: () => null,
+                log: _ => { });
+
+            var projected = MinimalDoc();
+            projected.Settings.Mode = SettingsMode.On;
+            projected.Settings.RejectUncommandedChanges = false;
+            projected = DisplayConfigV2Validator.Normalize(projected, _ => { });
+            runtime.SetConfigV2(projected);
+
+            var expected = runtime.CurrentConfigV2;
+            var rejectNext = DisplayOverviewV2Model.WithRejectUncommanded(expected, true);
+
+            var competitor = DisplayConfigV2Validator.Normalize(
+                DisplayConfigV2Serializer.Clone(expected), _ => { });
+            competitor.Settings.Mode = SettingsMode.LegacyOnly;
+            runtime.SetConfigV2(competitor);
+
+            Assert.False(runtime.TryApplyDisplayConfigV2(expected, rejectNext));
+            Assert.Same(competitor, runtime.CurrentConfigV2);
+            Assert.Equal(SettingsMode.LegacyOnly, runtime.CurrentConfigV2.Settings.Mode);
+            Assert.False(runtime.CurrentConfigV2.Settings.RejectUncommandedChanges);
         }
 
         [Theory]

@@ -256,10 +256,20 @@ namespace FanaBridge.UI.Display
             if (_suppressEvents || _host == null)
                 return;
 
+            // CAS against the document this view projected from — same contract as
+            // Priority / DisplayConfigV2EditSession. Concurrent writers conflict; no overwrite.
+            var expected = _config;
             var mode = ModeForSegment(segmentId);
-            var next = DisplayOverviewV2Model.WithMode(_config, mode);
-            _host.ApplyDisplayConfigV2(next);
+            var next = DisplayOverviewV2Model.WithMode(expected, mode);
+            if (!_host.TryApplyDisplayConfigV2(expected, next))
+            {
+                SurfaceConflict();
+                Poll(force: true);
+                return;
+            }
+
             _config = _host.GetDisplayConfigV2() ?? next;
+            ClearConflict();
 
             // E9-exit: write-through to DisplayControl while the v1 tab lives.
             // Dies at E9-exit with the codec trim.
@@ -284,12 +294,36 @@ namespace FanaBridge.UI.Display
             if (_suppressEvents || _host == null)
                 return;
 
+            // CAS against the document this view projected from (expected identity).
+            var expected = _config;
             bool reject = chkReject.IsChecked == true;
-            var next = DisplayOverviewV2Model.WithRejectUncommanded(_config, reject);
-            _host.ApplyDisplayConfigV2(next);
+            var next = DisplayOverviewV2Model.WithRejectUncommanded(expected, reject);
+            if (!_host.TryApplyDisplayConfigV2(expected, next))
+            {
+                SurfaceConflict();
+                Poll(force: true);
+                return;
+            }
+
             _config = _host.GetDisplayConfigV2() ?? next;
+            ClearConflict();
             ConfigApplied?.Invoke(this, EventArgs.Empty);
             Poll(force: true);
+        }
+
+        private void SurfaceConflict()
+        {
+            if (bannerConflict == null || txtConflict == null)
+                return;
+            bannerConflict.Visibility = Visibility.Visible;
+            txtConflict.Text = DisplayCopy.ConfigEditConflict;
+        }
+
+        private void ClearConflict()
+        {
+            if (bannerConflict == null)
+                return;
+            bannerConflict.Visibility = Visibility.Collapsed;
         }
 
         private void PagesAndFields_Click(object sender, RoutedEventArgs e)

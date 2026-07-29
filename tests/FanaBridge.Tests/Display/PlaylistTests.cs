@@ -1,15 +1,22 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.Serialization;
+using FanaBridge;
+using FanaBridge.Adapters;
 using FanaBridge.Display.Arbitration;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Composition;
+using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
+using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Schema2;
 using FanaBridge.Display.Session;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
+using FanaBridge.Transport;
 using FanaBridge.UI.Display;
+using GameReaderCommon;
 using Newtonsoft.Json.Linq;
 using Xunit;
 
@@ -1210,6 +1217,411 @@ namespace FanaBridge.Tests.Display
                 CurrentWirePage = wirePage;
                 SyncGeneration++;
             }
+        }
+
+        // ── DeviceDisplayRuntime H5 reconnect harness ───────────────────
+
+        private sealed class RecordingConnectableTransport : IConnectableTransport
+        {
+            public bool Connected;
+            public FakeReportStream Identity { get; } = new FakeReportStream();
+            public FakeReportStream Itm { get; } = new FakeReportStream();
+            public List<byte[]> Sent { get; } = new List<byte[]>();
+            public List<byte[]> SentCol01 { get; } = new List<byte[]>();
+
+            public bool Connect(int productId) { Connected = true; return true; }
+            public void Disconnect() => Connected = false;
+            public void Dispose() => Disconnect();
+            public bool IsConnected => Connected;
+            public bool IsDevicePresent => Connected;
+            public FanatecTransport.TransportConnectStatus LastConnectStatus =>
+                FanatecTransport.TransportConnectStatus.Connected;
+
+            public bool SendCol03(byte[] data)
+            {
+                var copy = new byte[data.Length];
+                Array.Copy(data, copy, data.Length);
+                Sent.Add(copy);
+                return true;
+            }
+
+            public bool SendCol01(byte[] data)
+            {
+                var copy = new byte[data.Length];
+                Array.Copy(data, copy, data.Length);
+                SentCol01.Add(copy);
+                return true;
+            }
+
+            public IReportStream IdentityReports => Identity;
+            public IReportStream ItmReports => Itm;
+            public IReportStream SrmReports => FakeReportStream.Empty;
+            public IReportStream TuningReports => FakeReportStream.Empty;
+            public int ReadCol01(byte[] buffer, int timeoutMs) => -1;
+            public int Col03MaxInputReportLength => 64;
+            public int Col01MaxInputReportLength => 34;
+            public IDisposable BeginBatch() => new NoOp();
+            private sealed class NoOp : IDisposable { public void Dispose() { } }
+        }
+
+        private sealed class FakeBus : IHidBusEnumerator
+        {
+            public IReadOnlyList<HidDeviceInfo> GetDevices(ushort vendorId) =>
+                new[] { new HidDeviceInfo(0x0020, 64, 64, "Base") };
+        }
+
+        private sealed class Clock { public long T; public long Now() => T; }
+
+        private static byte WheelWire(string code) =>
+            FanatecDeviceTables.Wheels.First(kv => kv.Value == code).Key;
+
+        private static byte[] Ff08(byte baseType, byte wire)
+        {
+            var b = new byte[64];
+            b[0] = 0xFF; b[1] = 0x08;
+            b[FanatecIdentity.OffBaseType] = baseType;
+            b[FanatecIdentity.OffWireCode] = wire;
+            return b;
+        }
+
+        private static readonly Type StatusDataType =
+            typeof(GameData).Assembly.GetType("GameReaderCommon.StatusData`1")!
+                .MakeGenericType(typeof(object));
+
+        private static object NewStatus() =>
+            FormatterServices.GetUninitializedObject(StatusDataType);
+
+        private static GameData IdleFrame()
+        {
+            var d = new GameData { NewData = (StatusDataBase)NewStatus() };
+            typeof(GameData).GetProperty("GameRunning")!.GetSetMethod(true)!
+                .Invoke(d, new object[] { false });
+            return d;
+        }
+
+        private static bool IsReset(byte[] r) => r.Length > 3 && r[1] == 0x05 && r[2] == 0x05 && r[3] == 0x01;
+        private static bool IsGateOn(byte[] r) => r.Length > 3 && r[1] == 0x05 && r[2] == 0x02 && r[3] == 0x01;
+        private static bool IsEnable(byte[] r) => r.Length > 2 && r[1] == 0x02 && r[2] == 0x02;
+        private static bool IsPageSet(byte[] r) => r.Length > 2 && r[1] == 0x05 && r[2] == 0x04;
+        private static bool IsPageSetTo(byte[] r, byte page) =>
+            IsPageSet(r) && r.Length > 4 && r[4] == page;
+
+        private sealed class RuntimeSession
+        {
+            public RecordingConnectableTransport Transport = null!;
+            public Clock Clock = null!;
+            public FanatecWheelbase Wheelbase = null!;
+            public FanatecPlugin Plugin = null!;
+            public FanatecWheelDeviceInstance Instance = null!;
+            public DeviceDisplayRuntime Runtime => Instance.DisplayRuntimeForTest;
+
+            public void Frame(GameData d)
+            {
+                Clock.T += 16;
+                Wheelbase.UpdateIdentity();
+                var frame = d;
+                Instance.DataUpdate(null, ref frame);
+            }
+        }
+
+        private static RuntimeSession StartRuntimeSession(JObject settings)
+        {
+            const string wheelCode = "CSSWFORMV3";
+            var s = new RuntimeSession
+            {
+                Transport = new RecordingConnectableTransport(),
+                Clock = new Clock(),
+            };
+            s.Wheelbase = new FanatecWheelbase(s.Transport, new FakeBus(), s.Clock.Now);
+            Assert.True(s.Wheelbase.AutoConnect());
+
+            s.Transport.Identity.Enqueue(Ff08(0x0C, WheelWire(wheelCode)));
+            s.Clock.T += 10;
+            s.Wheelbase.UpdateIdentity();
+            s.Clock.T += 250;
+            Assert.True(s.Wheelbase.UpdateIdentity());
+
+            s.Plugin = new FanatecPlugin();
+            s.Plugin.InstallWheelbaseForTest(s.Wheelbase);
+
+            var profile = WheelProfileStore.FindByWheelType(wheelCode);
+            Assert.NotNull(profile);
+            s.Instance = new FanatecWheelDeviceInstance(new DeviceConfig
+            {
+                Profile = profile,
+                Capabilities = new WheelCapabilities(profile!),
+            });
+            s.Instance.PluginResolver = () => s.Plugin;
+            s.Instance.ItmClockForTest = s.Clock.Now;
+            if (settings != null)
+                s.Instance.SetSettings(settings, isDefault: false);
+            return s;
+        }
+
+        private static JObject PlaylistIdleDisplayDoc() => JObject.Parse(@"
+{
+  ""schemaVersion"": 2,
+  ""pages"": [
+    { ""kind"": ""itmPage"", ""catalogPageId"": ""fuelErsDrs"" },
+    { ""kind"": ""itmPage"", ""catalogPageId"": ""lapInfo"" }
+  ],
+  ""playlists"": [
+    {
+      ""id"": ""pl-fuel"",
+      ""terminal"": ""hold"",
+      ""steps"": [
+        {
+          ""destination"": {
+            ""kind"": ""page"",
+            ""page"": { ""kind"": ""itmPage"", ""catalogPageId"": ""fuelErsDrs"" }
+          },
+          ""durationMs"": 60000
+        }
+      ]
+    }
+  ],
+  ""priority"": {
+    ""rest"": {
+      ""inSessionPage"": { ""kind"": ""itmPage"", ""catalogPageId"": ""lapInfo"" },
+      ""idle"": { ""kind"": ""playlist"", ""playlist"": ""pl-fuel"" }
+    }
+  },
+  ""settings"": { ""mode"": ""on"" }
+}");
+
+        private static JObject NonPlaylistIdleDisplayDoc() => JObject.Parse(@"
+{
+  ""schemaVersion"": 2,
+  ""pages"": [
+    { ""kind"": ""itmPage"", ""catalogPageId"": ""lapInfo"" }
+  ],
+  ""priority"": {
+    ""rest"": {
+      ""inSessionPage"": { ""kind"": ""itmPage"", ""catalogPageId"": ""lapInfo"" },
+      ""idle"": { ""kind"": ""blank"" }
+    }
+  },
+  ""settings"": { ""mode"": ""on"" }
+}");
+
+        // Device-3 LapInfo push (wire 1) — byte-identical to DisplayCustomizationWiringTests.
+        private static byte[] LapInfoPush => HexToBytes(
+            "ff0501" + "0300010034" + "0301040012" + "0382f90132" + "0383f50132"
+            + "0304fd012a" + "0305fe012a");
+
+        private static byte[] HexToBytes(string hex)
+        {
+            var b = new byte[hex.Length / 2];
+            for (int i = 0; i < b.Length; i++)
+                b[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+            return b;
+        }
+
+        /// <summary>
+        /// H5 reconnect: playlist idle entry step is derived from the live document at
+        /// command time (store nothing). Disconnect → reconnect cold-PageSets the entry
+        /// step's wire, not EffectiveDefaultPage.
+        /// </summary>
+        [Fact]
+        public void Runtime_PlaylistIdle_DisconnectReconnect_ColdEntryTargetsEntryStep()
+        {
+            // fuelErsDrs = wire 2 on device 3; DefaultPage left at 1 (LapInfo).
+            byte defaultPage = 1;
+            byte entryWire = 2;
+
+            var s = StartRuntimeSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayControl"] = DisplaySettings.ControlItm,
+                ["itmDefaultPage"] = defaultPage,
+                ["display"] = PlaylistIdleDisplayDoc(),
+            });
+
+            var idle = IdleFrame();
+
+            s.Frame(idle);
+            s.Transport.Itm.Enqueue(LapInfoPush);
+            s.Frame(idle);
+            s.Clock.T += 80;
+            s.Frame(idle); // accumulate → Synced
+            s.Frame(idle);
+            s.Frame(idle);
+
+            s.Runtime.OnDisconnected();
+            s.Transport.Sent.Clear();
+            s.Frame(idle); // Start → ColdEntry via document-derived provider
+
+            int reset = s.Transport.Sent.FindIndex(IsReset);
+            int gate = s.Transport.Sent.FindIndex(IsGateOn);
+            int enable = s.Transport.Sent.FindIndex(IsEnable);
+            int page = s.Transport.Sent.FindIndex(r => IsPageSetTo(r, entryWire));
+            Assert.True(reset >= 0 && gate >= 0 && enable >= 0 && page >= 0,
+                "cold reconnect burst must PageSet the playlist entry step");
+            Assert.True(reset < gate && gate < enable && enable < page,
+                "H5 order: Reset → GateOn → Enable → PageSet(entry)");
+            Assert.DoesNotContain(s.Transport.Sent, r => IsPageSetTo(r, defaultPage));
+        }
+
+        /// <summary>
+        /// Killer interleaving: playlist A → disconnect → publish non-playlist B while
+        /// disconnected → reconnect cold burst uses B's default (never A's entry). Store
+        /// nothing: only the live document decides.
+        /// </summary>
+        [Fact]
+        public void Runtime_PlaylistA_Disconnect_PublishNonPlaylistB_ReconnectUsesBDefault()
+        {
+            byte defaultPage = 1;
+            byte playlistAEntryWire = 2; // fuelErsDrs
+
+            var s = StartRuntimeSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayControl"] = DisplaySettings.ControlItm,
+                ["itmDefaultPage"] = defaultPage,
+                ["display"] = PlaylistIdleDisplayDoc(),
+            });
+
+            var idle = IdleFrame();
+            s.Frame(idle);
+            s.Transport.Itm.Enqueue(LapInfoPush);
+            s.Frame(idle);
+            s.Clock.T += 80;
+            s.Frame(idle);
+            s.Frame(idle);
+
+            // Disconnect while playlist A was live; engines drop.
+            s.Runtime.OnDisconnected();
+
+            // Publish non-playlist B while disconnected — only document state, no tenure store.
+            var nonPlaylist = DisplayConfigV2Serializer.Load(
+                NonPlaylistIdleDisplayDoc().ToString(), _ => { });
+            nonPlaylist = DisplayConfigV2Validator.Normalize(nonPlaylist, _ => { });
+            ((IDisplayPanelHost)s.Instance).ApplyDisplayConfigV2(nonPlaylist);
+
+            s.Transport.Sent.Clear();
+            s.Frame(idle); // reconnect cold entry against B
+
+            Assert.Contains(s.Transport.Sent, r => IsPageSetTo(r, defaultPage));
+            Assert.DoesNotContain(s.Transport.Sent, r => IsPageSetTo(r, playlistAEntryWire));
+        }
+
+        /// <summary>
+        /// Reverse interleaving: non-playlist → disconnect → publish playlist C while
+        /// disconnected → reconnect uses C's entry step (never the prior default alone).
+        /// </summary>
+        [Fact]
+        public void Runtime_NonPlaylist_Disconnect_PublishPlaylistC_ReconnectUsesCEntryStep()
+        {
+            byte defaultPage = 1;
+            byte playlistCEntryWire = 2; // fuelErsDrs entry of C
+
+            var s = StartRuntimeSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayControl"] = DisplaySettings.ControlItm,
+                ["itmDefaultPage"] = defaultPage,
+                ["display"] = NonPlaylistIdleDisplayDoc(),
+            });
+
+            var idle = IdleFrame();
+            s.Frame(idle);
+            s.Transport.Itm.Enqueue(LapInfoPush);
+            s.Frame(idle);
+            s.Clock.T += 80;
+            s.Frame(idle);
+
+            s.Runtime.OnDisconnected();
+
+            // Publish playlist C while disconnected.
+            var playlistC = DisplayConfigV2Serializer.Load(
+                PlaylistIdleDisplayDoc().ToString(), _ => { });
+            playlistC = DisplayConfigV2Validator.Normalize(playlistC, _ => { });
+            ((IDisplayPanelHost)s.Instance).ApplyDisplayConfigV2(playlistC);
+
+            s.Transport.Sent.Clear();
+            s.Frame(idle);
+
+            int page = s.Transport.Sent.FindIndex(r => IsPageSetTo(r, playlistCEntryWire));
+            Assert.True(page >= 0, "cold reconnect must PageSet playlist C entry step");
+            Assert.DoesNotContain(s.Transport.Sent, r => IsPageSetTo(r, defaultPage));
+        }
+
+        private static JObject PlaylistIdleTyreTempsDoc() => JObject.Parse(@"
+{
+  ""schemaVersion"": 2,
+  ""pages"": [
+    { ""kind"": ""itmPage"", ""catalogPageId"": ""tyreTemps"" },
+    { ""kind"": ""itmPage"", ""catalogPageId"": ""lapInfo"" }
+  ],
+  ""playlists"": [
+    {
+      ""id"": ""pl-tyre"",
+      ""terminal"": ""hold"",
+      ""steps"": [
+        {
+          ""destination"": {
+            ""kind"": ""page"",
+            ""page"": { ""kind"": ""itmPage"", ""catalogPageId"": ""tyreTemps"" }
+          },
+          ""durationMs"": 60000
+        }
+      ]
+    }
+  ],
+  ""priority"": {
+    ""rest"": {
+      ""inSessionPage"": { ""kind"": ""itmPage"", ""catalogPageId"": ""lapInfo"" },
+      ""idle"": { ""kind"": ""playlist"", ""playlist"": ""pl-tyre"" }
+    }
+  },
+  ""settings"": { ""mode"": ""on"" }
+}");
+
+        /// <summary>
+        /// Playlist cold-entry derives destination from the document and resolves wire
+        /// on the <b>current</b> device table. Standard TyreTemps (wire 5) then hot-swap
+        /// to Bentley (device 4) must cold-burst TyreTemps wire 4 — never raw 5 (Legacy).
+        /// </summary>
+        [Fact]
+        public void Runtime_PlaylistIdle_DeviceHotSwap_ColdEntryResolvesIdentityOnNewDevice()
+        {
+            // Standard: TyreTemps = wire 5; Bentley: TyreTemps = wire 4, Legacy = wire 5.
+            byte standardTyreWire = 5;
+            byte bentleyTyreWire = 4;
+            byte bentleyLegacyWire = 5;
+
+            var s = StartRuntimeSession(new JObject
+            {
+                ["wheelType"] = "CSSWFORMV3",
+                ["displayControl"] = DisplaySettings.ControlItm,
+                ["itmDefaultPage"] = (byte)1,
+                ["display"] = PlaylistIdleTyreTempsDoc(),
+            });
+
+            var idle = IdleFrame();
+
+            s.Frame(idle);
+            s.Transport.Itm.Enqueue(LapInfoPush);
+            s.Frame(idle);
+            s.Clock.T += 80;
+            s.Frame(idle);
+            s.Frame(idle);
+            s.Frame(idle);
+
+            int before = s.Transport.Sent.Count;
+            var bentley = WheelProfileStore.FindByWheelType("PSWBENT");
+            Assert.NotNull(bentley);
+            s.Wheelbase.ProfileOverrideResolver = _ => bentley!.Id;
+            s.Wheelbase.RefreshCapabilities();
+            s.Frame(idle); // rebuild driver + ColdEntry on device 4
+
+            var pageSets = s.Transport.Sent.Skip(before)
+                .Where(r => IsPageSet(r) && r.Length > 4 && r[3] == 4)
+                .ToList();
+            Assert.NotEmpty(pageSets);
+            Assert.Equal(bentleyTyreWire, pageSets[0][4]);
+            Assert.DoesNotContain(pageSets, r => r[4] == bentleyLegacyWire);
+            Assert.DoesNotContain(pageSets, r => r[4] == standardTyreWire && r[3] == 4);
         }
 
         private sealed class B2FakeProps : IPropertyReader

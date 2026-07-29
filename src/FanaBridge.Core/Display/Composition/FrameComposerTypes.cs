@@ -209,6 +209,13 @@ namespace FanaBridge.Display.Composition
         public FieldAlignment Alignment { get; set; } = FieldAlignment.Left;
 
         /// <summary>
+        /// Catalog suffix region width for this param (null when unknown / unsupported).
+        /// Property-sourced suffixes re-align/clamp through the same path as static
+        /// text using this width (see <see cref="FrameComposer.ResolveAlignedSuffix"/>).
+        /// </summary>
+        public int? SuffixWidth { get; set; }
+
+        /// <summary>
         /// Suffix text after alignment / clamp / effect resolution for THIS tick.
         /// Off-phase blink → width-blank. E7 writes exactly this string for the
         /// override-owned region. When BaseComputed, may be null (mapper owns).
