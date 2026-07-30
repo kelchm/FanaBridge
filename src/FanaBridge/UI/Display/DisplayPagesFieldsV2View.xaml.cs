@@ -67,6 +67,14 @@ namespace FanaBridge.UI.Display
         private string _ovHomeRowId;
         /// <summary>Prior Enabled (not on the form) — preserved across open→save.</summary>
         private bool _ovEnabled = true;
+        /// <summary>§7f rows: the override's own lifetime (durations only) + effect.
+        /// Byte-identity law: authored into the patch ONLY when the user touched
+        /// them this open (edge triggers always author — OnChange lives on the
+        /// lifetime).</summary>
+        private LifetimeKind _ovLifetimeKind = LifetimeKind.WhileTrue;
+        private int _ovDurationMs = Lifetime.DefaultDurationMs;
+        private bool _ovLifetimeDirty;
+        private bool _ovEffectDirty;
 
         // 5i layer form state
         private string _layerPageId;
@@ -78,8 +86,10 @@ namespace FanaBridge.UI.Display
         private ValueSourceKind _layerCondSourceKind = ValueSourceKind.SimHubProperty;
         private LifetimeKind _layerLifetimeKind = LifetimeKind.WhileTrue;
         private int _layerDurationMs = Lifetime.DefaultDurationMs;
-        /// <summary>True only after the user edits the seconds field this open.</summary>
-        private bool _layerDurationDirty;
+        /// <summary>Byte-identity law: lifetime/effect author into the patch only
+        /// when touched this open (edge triggers always author).</summary>
+        private bool _layerLifetimeDirty;
+        private bool _layerEffectDirty;
 
         // 5p dialog working order (page keys) + dirty / tri-state tracking
         private List<string> _rotationWorkingOrder;
@@ -382,6 +392,13 @@ namespace FanaBridge.UI.Display
                 _ovBringUpSeconds = PresentationSeconds(_ovBringUpDurationMs);
                 chkOvValue.IsChecked = false;
                 chkOvSuffix.IsChecked = true;
+                _ovLifetimeKind = LifetimeKind.WhileTrue;
+                _ovDurationMs = Lifetime.DefaultDurationMs;
+                _ovLifetimeDirty = false;
+                _ovEffectDirty = false;
+                segOvEffect.SelectedId = "none";
+                txtOvSeconds.Text = PresentationSeconds(_ovDurationMs)
+                    .ToString(CultureInfo.InvariantCulture);
                 txtOvSuffixContent.Text = string.Empty;
                 radAlignLeft.IsChecked = true;
                 chkOvEntrypoint.IsChecked = false;
@@ -414,6 +431,8 @@ namespace FanaBridge.UI.Display
                     _ovHomeRank = _model.Entrypoints[0].Rank;
                     _ovHomeRowId = _model.Entrypoints[0].RowId;
                 }
+                BuildOvLifetimeSegments();
+
                 // Restore bring-up lifetime from the home seat when present.
                 // Exact DurationMs is preserved; seconds field is presentation-only.
                 if (!string.IsNullOrEmpty(_ovHomeRowId))
@@ -506,6 +525,31 @@ namespace FanaBridge.UI.Display
 
             chkOvEntrypoint.IsChecked = ov.ActsAsEntrypoint;
 
+            segOvEffect.SelectedId = ov.Effect == ContentEffect.Blink
+                ? "blink"
+                : (ov.Effect == ContentEffect.Scroll ? "scroll" : "none");
+
+            if (ov.Lifetime?.Kind == LifetimeKind.OnChange)
+            {
+                // Edge override: the verb holds the operator slot; the stored
+                // lifetime maps onto the duration options.
+                SelectOvEdgeVerb(ov.Lifetime.Direction);
+                _ovLifetimeKind = ov.Lifetime.Then == LifetimeThen.UntilDismissed
+                    ? LifetimeKind.UntilDismissed
+                    : LifetimeKind.ForDuration;
+            }
+            else if (ov.Lifetime != null && ov.Lifetime.Kind != LifetimeKind.Unknown)
+            {
+                _ovLifetimeKind = ov.Lifetime.Kind;
+            }
+            if (ov.Lifetime != null && ov.Lifetime.DurationMsPresent
+                && ov.Lifetime.DurationMs > 0)
+            {
+                _ovDurationMs = ov.Lifetime.DurationMs;
+                txtOvSeconds.Text = PresentationSeconds(_ovDurationMs)
+                    .ToString(CultureInfo.InvariantCulture);
+            }
+
             var src = ov.Condition?.Source;
             if (src != null)
             {
@@ -522,6 +566,21 @@ namespace FanaBridge.UI.Display
             }
 
             SelectOverrideOperator(ov.Condition?.Operator ?? ConditionOperator.LessThan);
+        }
+
+        /// <summary>Select the operator-slot edge verb for a stored direction.</summary>
+        private void SelectOvEdgeVerb(ChangeDirection direction)
+        {
+            string phrase = DisplayCopy.ChangeDirectionPhrase(direction);
+            for (int i = 0; i < cmbOvOperator.Items.Count; i++)
+            {
+                if (string.Equals(cmbOvOperator.Items[i] as string, phrase,
+                        StringComparison.Ordinal))
+                {
+                    cmbOvOperator.SelectedIndex = i;
+                    return;
+                }
+            }
         }
 
         private void SelectOverrideOperator(ConditionOperator op)
@@ -560,16 +619,61 @@ namespace FanaBridge.UI.Display
         private void OvOperator_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_suppressEvents) return;
+            // Trigger-kind flips (level ↔ edge verb) change the stored lifetime.
+            _ovLifetimeDirty = true;
+            BuildOvLifetimeSegments();
             UpdateOverrideValueVisibility();
         }
 
-        /// <summary>Boolean operators hide the value input; level ops show it.</summary>
+        /// <summary>Boolean operators and edge verbs hide the value input.</summary>
         private void UpdateOverrideValueVisibility()
         {
             if (txtOvValue == null || cmbOvOperator == null) return;
+            if (OvTriggerIsEdge())
+            {
+                txtOvValue.Visibility = Visibility.Collapsed;
+                return;
+            }
             var op = OperatorFromFormLabel(cmbOvOperator.SelectedItem as string);
             bool isBool = op == ConditionOperator.IsTrue || op == ConditionOperator.IsFalse;
             txtOvValue.Visibility = isBool ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        /// <summary>The override operator slot holds an edge verb.</summary>
+        private bool OvTriggerIsEdge()
+            => TryParseLayerEdgeVerb(cmbOvOperator?.SelectedItem as string, out _);
+
+        /// <summary>§7f grammar: edge verbs drop while-true from For-how-long.</summary>
+        private void BuildOvLifetimeSegments()
+        {
+            bool edge = OvTriggerIsEdge();
+            if (edge && _ovLifetimeKind == LifetimeKind.WhileTrue)
+                _ovLifetimeKind = LifetimeKind.ForDuration;
+            var items = edge
+                ? new (string, string)[]
+                {
+                    ("for", DisplayCopy.LifetimeFormLabel(LifetimeKind.ForDuration, 0)),
+                    ("dismiss", DisplayCopy.LifetimeFormLabel(LifetimeKind.UntilDismissed, 0)),
+                }
+                : new (string, string)[]
+                {
+                    ("while", DisplayCopy.LifetimeFormLabel(LifetimeKind.WhileTrue, 0)),
+                    ("for", DisplayCopy.LifetimeFormLabel(LifetimeKind.ForDuration, 0)),
+                    ("dismiss", DisplayCopy.LifetimeFormLabel(LifetimeKind.UntilDismissed, 0)),
+                };
+            segOvLifetime.SetItems(items);
+            segOvLifetime.SelectedId =
+                _ovLifetimeKind == LifetimeKind.ForDuration
+                    ? "for"
+                    : (_ovLifetimeKind == LifetimeKind.UntilDismissed ? "dismiss" : "while");
+            UpdateOvSecondsVisibility();
+        }
+
+        private void UpdateOvSecondsVisibility()
+        {
+            bool timed = _ovLifetimeKind == LifetimeKind.ForDuration;
+            txtOvSeconds.Visibility = timed ? Visibility.Visible : Visibility.Collapsed;
+            txtOvSecondsUnit.Visibility = timed ? Visibility.Visible : Visibility.Collapsed;
         }
 
         /// <summary>Test seam: select an override operator by schema enum.</summary>
@@ -683,8 +787,48 @@ namespace FanaBridge.UI.Display
                     continue;
                 cmbOvOperator.Items.Add(phrase);
             }
+            // Edge verbs in the operator slot (§7f trigger grammar).
+            cmbOvOperator.Items.Add(DisplayCopy.OpChanges);
+            cmbOvOperator.Items.Add(DisplayCopy.OpIncreases);
+            cmbOvOperator.Items.Add(DisplayCopy.OpDecreases);
             cmbOvOperator.SelectedIndex = 0;
             cmbOvOperator.SelectionChanged += OvOperator_SelectionChanged;
+
+            txtOvForHowLong.Text = DisplayCopy.ForHowLong;
+            txtOvSecondsUnit.Text = DisplayCopy.SecondsUnit;
+            txtOvEffectLabel.Text = DisplayCopy.EffectLabel;
+            segOvEffect.SetItems(new (string, string)[]
+            {
+                ("none", DisplayCopy.EffectSteady),
+                ("blink", DisplayCopy.EffectBlink),
+                ("scroll", DisplayCopy.EffectScroll),
+            });
+            segOvEffect.SelectedId = "none";
+            segOvEffect.SelectionChanged += (s, id) =>
+            {
+                if (_suppressEvents) return;
+                _ovEffectDirty = true;
+            };
+            BuildOvLifetimeSegments();
+            segOvLifetime.SelectionChanged += (s, id) =>
+            {
+                if (_suppressEvents) return;
+                _ovLifetimeKind = id == "for"
+                    ? LifetimeKind.ForDuration
+                    : (id == "dismiss" ? LifetimeKind.UntilDismissed : LifetimeKind.WhileTrue);
+                _ovLifetimeDirty = true;
+                UpdateOvSecondsVisibility();
+            };
+            txtOvSeconds.TextChanged += (s, e) =>
+            {
+                if (_suppressEvents) return;
+                if (int.TryParse(txtOvSeconds.Text, NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out int sec) && sec > 0)
+                {
+                    _ovDurationMs = sec * 1000;
+                    _ovLifetimeDirty = true;
+                }
+            };
             UpdateOverrideValueVisibility();
 
             // ── 5i layer form ─────────────────────────────────────────────
@@ -722,25 +866,21 @@ namespace FanaBridge.UI.Display
                 ("scroll", DisplayCopy.EffectScroll),
             });
             segLayerEffect.SelectedId = "none";
-
-            segLayerLifetime.SetItems(new (string, string)[]
+            segLayerEffect.SelectionChanged += (s, id) =>
             {
-                ("while", DisplayCopy.LifetimeFormLabel(LifetimeKind.WhileTrue, 0)),
-                ("for", DisplayCopy.LifetimeFormLabel(LifetimeKind.ForDuration, 0)),
-                ("dismiss", DisplayCopy.LifetimeFormLabel(LifetimeKind.UntilDismissed, 0)),
-                ("change", DisplayCopy.LifetimeFormLabel(LifetimeKind.OnChange, 0)),
-            });
-            segLayerLifetime.SelectedId = "while";
+                if (_suppressEvents) return;
+                _layerEffectDirty = true;
+            };
+
+            BuildLayerLifetimeSegments();
             segLayerLifetime.SelectionChanged += (s, id) =>
             {
                 if (_suppressEvents) return;
                 _layerLifetimeKind = id == "for"
                     ? LifetimeKind.ForDuration
-                    : (id == "dismiss"
-                        ? LifetimeKind.UntilDismissed
-                        : (id == "change" ? LifetimeKind.OnChange : LifetimeKind.WhileTrue));
+                    : (id == "dismiss" ? LifetimeKind.UntilDismissed : LifetimeKind.WhileTrue);
+                _layerLifetimeDirty = true;
                 UpdateLayerSecondsVisibility();
-                UpdateLayerCondValueVisibility();
             };
             txtLayerSeconds.TextChanged += (s, e) =>
             {
@@ -748,7 +888,7 @@ namespace FanaBridge.UI.Display
                 if (int.TryParse(txtLayerSeconds.Text, NumberStyles.Integer,
                         CultureInfo.InvariantCulture, out int sec) && sec > 0)
                 {
-                    _layerDurationDirty = true;
+                    _layerLifetimeDirty = true;
                     _layerDurationMs = sec * 1000;
                 }
             };
@@ -763,10 +903,18 @@ namespace FanaBridge.UI.Display
                     continue;
                 cmbLayerOperator.Items.Add(phrase);
             }
+            // Edge verbs in the operator slot (§7f trigger grammar) — same language
+            // as the 5f entrypoint form.
+            cmbLayerOperator.Items.Add(DisplayCopy.OpChanges);
+            cmbLayerOperator.Items.Add(DisplayCopy.OpIncreases);
+            cmbLayerOperator.Items.Add(DisplayCopy.OpDecreases);
             cmbLayerOperator.SelectedIndex = 0;
             cmbLayerOperator.SelectionChanged += (s, e) =>
             {
                 if (_suppressEvents) return;
+                // Trigger-kind flips (level ↔ edge verb) change the stored lifetime.
+                _layerLifetimeDirty = true;
+                BuildLayerLifetimeSegments();
                 UpdateLayerCondValueVisibility();
             };
         }
@@ -778,26 +926,71 @@ namespace FanaBridge.UI.Display
             panelLayerProperty.Visibility = text ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        /// <summary>§7f grammar: For-how-long lists only what the trigger allows —
+        /// an edge verb in the operator slot drops while-true (no state to hold).</summary>
+        private void BuildLayerLifetimeSegments()
+        {
+            bool edge = LayerTriggerIsEdge();
+            if (edge && _layerLifetimeKind == LifetimeKind.WhileTrue)
+                _layerLifetimeKind = LifetimeKind.ForDuration;
+            var items = edge
+                ? new (string, string)[]
+                {
+                    ("for", DisplayCopy.LifetimeFormLabel(LifetimeKind.ForDuration, 0)),
+                    ("dismiss", DisplayCopy.LifetimeFormLabel(LifetimeKind.UntilDismissed, 0)),
+                }
+                : new (string, string)[]
+                {
+                    ("while", DisplayCopy.LifetimeFormLabel(LifetimeKind.WhileTrue, 0)),
+                    ("for", DisplayCopy.LifetimeFormLabel(LifetimeKind.ForDuration, 0)),
+                    ("dismiss", DisplayCopy.LifetimeFormLabel(LifetimeKind.UntilDismissed, 0)),
+                };
+            segLayerLifetime.SetItems(items);
+            segLayerLifetime.SelectedId =
+                _layerLifetimeKind == LifetimeKind.ForDuration
+                    ? "for"
+                    : (_layerLifetimeKind == LifetimeKind.UntilDismissed ? "dismiss" : "while");
+            UpdateLayerSecondsVisibility();
+        }
+
+        /// <summary>The layer operator slot holds an edge verb.</summary>
+        private bool LayerTriggerIsEdge()
+            => TryParseLayerEdgeVerb(cmbLayerOperator?.SelectedItem as string, out _);
+
+        private static bool TryParseLayerEdgeVerb(string label, out ChangeDirection direction)
+        {
+            direction = ChangeDirection.Any;
+            if (string.Equals(label, DisplayCopy.OpChanges, StringComparison.Ordinal))
+                return true;
+            if (string.Equals(label, DisplayCopy.OpIncreases, StringComparison.Ordinal))
+            {
+                direction = ChangeDirection.Up;
+                return true;
+            }
+            if (string.Equals(label, DisplayCopy.OpDecreases, StringComparison.Ordinal))
+            {
+                direction = ChangeDirection.Down;
+                return true;
+            }
+            return false;
+        }
+
         private void UpdateLayerSecondsVisibility()
         {
-            // OnChange takes the shown window too (for N s each change).
-            bool timed = _layerLifetimeKind == LifetimeKind.ForDuration
-                || _layerLifetimeKind == LifetimeKind.OnChange;
+            bool timed = _layerLifetimeKind == LifetimeKind.ForDuration;
             txtLayerSeconds.Visibility = timed ? Visibility.Visible : Visibility.Collapsed;
             txtLayerSecondsUnit.Visibility = timed ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void UpdateLayerCondValueVisibility()
         {
-            // Edge layers compare nothing: operator + value hide with OnChange
-            // (the validator degrades onChange + operator).
-            if (_layerLifetimeKind == LifetimeKind.OnChange)
+            // Edge triggers compare nothing: the value hides while a verb holds the
+            // operator slot (the slot stays — it IS the verb).
+            if (LayerTriggerIsEdge())
             {
-                cmbLayerOperator.Visibility = Visibility.Collapsed;
                 txtLayerCondValue.Visibility = Visibility.Collapsed;
                 return;
             }
-            cmbLayerOperator.Visibility = Visibility.Visible;
             var op = OperatorFromFormLabel(cmbLayerOperator.SelectedItem as string);
             bool isBool = op == ConditionOperator.IsTrue || op == ConditionOperator.IsFalse;
             txtLayerCondValue.Visibility = isBool ? Visibility.Collapsed : Visibility.Visible;
@@ -1627,10 +1820,10 @@ namespace FanaBridge.UI.Display
                 _layerCondSourceKind = ValueSourceKind.SimHubProperty;
                 _layerLifetimeKind = LifetimeKind.WhileTrue;
                 _layerDurationMs = Lifetime.DefaultDurationMs;
-                _layerDurationDirty = false;
+                _layerLifetimeDirty = false;
+                _layerEffectDirty = false;
                 segLayerContentKind.SelectedId = "text";
                 segLayerEffect.SelectedId = "none";
-                segLayerLifetime.SelectedId = "while";
                 txtLayerContent.Text = string.Empty;
                 txtLayerPropPath.Text = string.Empty;
                 txtLayerCondPath.Text = string.Empty;
@@ -1642,6 +1835,8 @@ namespace FanaBridge.UI.Display
 
                 if (!isNew && !string.IsNullOrEmpty(layerId))
                     HydrateLayerForm(pageId, layerId);
+                else
+                    BuildLayerLifetimeSegments();
 
                 UpdateLayerContentKindVisibility();
                 UpdateLayerSecondsVisibility();
@@ -1725,27 +1920,47 @@ namespace FanaBridge.UI.Display
             var life = existing.Lifetime;
             if (life != null)
             {
-                _layerLifetimeKind = life.Kind == LifetimeKind.Unknown
-                    ? LifetimeKind.WhileTrue
-                    : life.Kind;
-                if ((life.Kind == LifetimeKind.ForDuration
-                        || life.Kind == LifetimeKind.OnChange)
-                    && life.DurationMs > 0)
+                if (life.Kind == LifetimeKind.OnChange)
+                {
+                    // Edge layer: the verb holds the operator slot; the stored
+                    // lifetime maps onto the duration options.
+                    SelectLayerEdgeVerb(life.Direction);
+                    _layerLifetimeKind = life.Then == LifetimeThen.UntilDismissed
+                        ? LifetimeKind.UntilDismissed
+                        : LifetimeKind.ForDuration;
+                }
+                else
+                {
+                    _layerLifetimeKind = life.Kind == LifetimeKind.Unknown
+                        ? LifetimeKind.WhileTrue
+                        : life.Kind;
+                }
+                if (life.DurationMsPresent && life.DurationMs > 0)
                 {
                     _layerDurationMs = life.DurationMs;
                     txtLayerSeconds.Text = PresentationSeconds(_layerDurationMs)
                         .ToString(CultureInfo.InvariantCulture);
                 }
             }
-            segLayerLifetime.SelectedId =
-                _layerLifetimeKind == LifetimeKind.ForDuration
-                    ? "for"
-                    : (_layerLifetimeKind == LifetimeKind.UntilDismissed
-                        ? "dismiss"
-                        : (_layerLifetimeKind == LifetimeKind.OnChange ? "change" : "while"));
+            BuildLayerLifetimeSegments();
 
             chkLayerEntrypoint.IsChecked =
                 existing.ActsAsEntrypoint && !existing.ActsAsEntrypointIgnored;
+        }
+
+        /// <summary>Select the operator-slot edge verb for a stored direction.</summary>
+        private void SelectLayerEdgeVerb(ChangeDirection direction)
+        {
+            string phrase = DisplayCopy.ChangeDirectionPhrase(direction);
+            for (int i = 0; i < cmbLayerOperator.Items.Count; i++)
+            {
+                if (string.Equals(cmbLayerOperator.Items[i] as string, phrase,
+                        StringComparison.Ordinal))
+                {
+                    cmbLayerOperator.SelectedIndex = i;
+                    return;
+                }
+            }
         }
 
         private void SelectLayerOperator(ConditionOperator op)
@@ -1783,11 +1998,14 @@ namespace FanaBridge.UI.Display
                     Text = txtLayerContent.Text ?? string.Empty,
                 };
 
-            // Edge layers compare nothing — operator/value stay absent (the validator
-            // degrades onChange + operator).
+            // Edge layers (a verb in the operator slot) compare nothing —
+            // operator/value stay absent (the validator degrades onChange + operator);
+            // the chosen duration option maps onto the onChange lifetime.
+            bool edgeTrigger = TryParseLayerEdgeVerb(
+                cmbLayerOperator.SelectedItem as string, out ChangeDirection edgeDir);
             ConditionOperator? op = null;
             double? value = null;
-            if (_layerLifetimeKind != LifetimeKind.OnChange)
+            if (!edgeTrigger)
             {
                 op = OperatorFromFormLabel(cmbLayerOperator.SelectedItem as string);
                 if (op != ConditionOperator.IsTrue && op != ConditionOperator.IsFalse
@@ -1796,10 +2014,29 @@ namespace FanaBridge.UI.Display
                     value = v;
             }
 
-            var lifetime = new Lifetime { Kind = _layerLifetimeKind };
-            if (_layerLifetimeKind == LifetimeKind.ForDuration
-                || _layerLifetimeKind == LifetimeKind.OnChange)
-                lifetime.DurationMs = _layerDurationMs;
+            // Byte-identity law: lifetime authors only when touched (or edge — the
+            // trigger IS the lifetime; or a non-default create).
+            Lifetime lifetime = null;
+            if (edgeTrigger)
+            {
+                lifetime = new Lifetime
+                {
+                    Kind = LifetimeKind.OnChange,
+                    Direction = edgeDir,
+                };
+                if (_layerLifetimeKind == LifetimeKind.UntilDismissed)
+                    lifetime.Then = LifetimeThen.UntilDismissed;
+                else
+                    lifetime.DurationMs = _layerDurationMs;
+            }
+            else if (_layerIsNew
+                ? _layerLifetimeKind != LifetimeKind.WhileTrue
+                : _layerLifetimeDirty)
+            {
+                lifetime = new Lifetime { Kind = _layerLifetimeKind };
+                if (_layerLifetimeKind == LifetimeKind.ForDuration)
+                    lifetime.DurationMs = _layerDurationMs;
+            }
 
             var patch = new LayerEntry
             {
@@ -1820,12 +2057,16 @@ namespace FanaBridge.UI.Display
                 Enabled = _layerIsNew || _layerEnabled,
                 ActsAsEntrypoint = chkLayerEntrypoint.IsChecked == true,
             };
-            // Effect always authored by the form (segmented control forces a choice).
-            patch.Effect = segLayerEffect.SelectedId == "blink"
-                ? ContentEffect.Blink
-                : (segLayerEffect.SelectedId == "scroll"
-                    ? ContentEffect.Scroll
-                    : ContentEffect.None);
+            // Effect authors only when touched (or a non-default create) — the
+            // byte-identity law again; "none" still clears a stale blink when chosen.
+            if (_layerIsNew ? segLayerEffect.SelectedId != "none" : _layerEffectDirty)
+            {
+                patch.Effect = segLayerEffect.SelectedId == "blink"
+                    ? ContentEffect.Blink
+                    : (segLayerEffect.SelectedId == "scroll"
+                        ? ContentEffect.Scroll
+                        : ContentEffect.None);
+            }
             return patch;
         }
 
@@ -2876,18 +3117,46 @@ namespace FanaBridge.UI.Display
             else if (writeValue) writes = FieldWrites.Value;
             else if (writeSuffix) writes = FieldWrites.Suffix;
 
-            string opText = cmbOvOperator.SelectedItem as string ?? DisplayCopy.OpBelow;
-            ConditionOperator op = OperatorFromFormLabel(opText);
-
+            // Edge overrides (a verb in the operator slot) compare nothing —
+            // operator/value stay absent (the validator degrades onChange + operator).
+            bool edgeTrigger = TryParseLayerEdgeVerb(
+                cmbOvOperator.SelectedItem as string, out ChangeDirection edgeDir);
+            ConditionOperator? op = null;
             double? value = null;
-            if (op != ConditionOperator.IsTrue && op != ConditionOperator.IsFalse
-                && double.TryParse(txtOvValue.Text, NumberStyles.Float,
-                    CultureInfo.InvariantCulture, out double v))
-                value = v;
+            if (!edgeTrigger)
+            {
+                op = OperatorFromFormLabel(
+                    cmbOvOperator.SelectedItem as string ?? DisplayCopy.OpBelow);
+                if (op != ConditionOperator.IsTrue && op != ConditionOperator.IsFalse
+                    && double.TryParse(txtOvValue.Text, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out double v))
+                    value = v;
+            }
 
-            // Form authors only the members it shows. Lifetime is NOT on the form
-            // (bring-up lives on the seat) — leave null on edit so clone-merge keeps it.
-            // Enabled is not on the form — preserve prior (_ovEnabled).
+            // §7f: the form shows the override's own lifetime + effect, but authors
+            // them ONLY when touched (byte-identity law: an unchanged open→save must
+            // not grow members). Edge triggers always author — OnChange IS the
+            // lifetime. Enabled is not on the form — preserve prior (_ovEnabled).
+            Lifetime lifetime = null;
+            if (edgeTrigger)
+            {
+                lifetime = new Lifetime
+                {
+                    Kind = LifetimeKind.OnChange,
+                    Direction = edgeDir,
+                };
+                if (_ovLifetimeKind == LifetimeKind.UntilDismissed)
+                    lifetime.Then = LifetimeThen.UntilDismissed;
+                else
+                    lifetime.DurationMs = _ovDurationMs;
+            }
+            else if (_ovIsNew ? _ovLifetimeKind != LifetimeKind.WhileTrue : _ovLifetimeDirty)
+            {
+                lifetime = new Lifetime { Kind = _ovLifetimeKind };
+                if (_ovLifetimeKind == LifetimeKind.ForDuration)
+                    lifetime.DurationMs = _ovDurationMs;
+            }
+
             var ov = new FieldOverride
             {
                 Id = _ovIsNew ? null : _ovOverrideId,
@@ -2909,12 +3178,18 @@ namespace FanaBridge.UI.Display
                     Operator = op,
                     Value = value,
                 },
-                Lifetime = _ovIsNew
-                    ? new Lifetime { Kind = LifetimeKind.WhileTrue }
-                    : null,
+                Lifetime = lifetime,
                 Enabled = _ovIsNew ? true : _ovEnabled,
                 ActsAsEntrypoint = chkOvEntrypoint.IsChecked == true,
             };
+            if (_ovIsNew ? segOvEffect.SelectedId != "none" : _ovEffectDirty)
+            {
+                ov.Effect = segOvEffect.SelectedId == "blink"
+                    ? ContentEffect.Blink
+                    : (segOvEffect.SelectedId == "scroll"
+                        ? ContentEffect.Scroll
+                        : ContentEffect.None);
+            }
             // Force AlignmentRaw so left is authored (clone-merge authorship signal).
             ov.AlignmentRaw = radAlignRight.IsChecked == true ? "right" : "left";
             return ov;

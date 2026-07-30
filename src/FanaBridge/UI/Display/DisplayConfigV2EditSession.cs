@@ -1802,11 +1802,13 @@ namespace FanaBridge.UI.Display
                     var pCond = patch.Condition;
                     if (pCond.Source != null)
                         MergeValueSource(tCond, pCond.Source);
-                    if (pCond.Operator.HasValue
-                        && pCond.Operator.Value != ConditionOperator.Unknown)
-                        tCond.Operator = pCond.Operator;
-                    if (pCond.Value.HasValue)
-                        tCond.Value = pCond.Value;
+                    // Operator/Value copy UNCONDITIONALLY (ApplySummonEdits law): the
+                    // 5g form authors the whole condition, and a null must CLEAR —
+                    // switching a level override to an edge verb would otherwise
+                    // leave the stale operator behind and the validator degrades
+                    // onChange + operator.
+                    tCond.Operator = pCond.Operator;
+                    tCond.Value = pCond.Value;
                     // Hysteresis: only overwrite when the patch authors one.
                     if (pCond.Hysteresis != null)
                         tCond.Hysteresis = pCond.Hysteresis;
@@ -1920,14 +1922,26 @@ namespace FanaBridge.UI.Display
             }
             if (patchLife.DurationMsPresent)
                 existing.DurationMs = patchLife.DurationMs;
-            if (!string.IsNullOrEmpty(patchLife.DirectionRaw)
-                || (patchLife.Direction != ChangeDirection.Any
-                    && patchLife.Direction != ChangeDirection.Unknown))
+            // An OnChange patch always authors Direction AND Then (§7f forms): Any
+            // must clear a stale up/down, and a null Then must clear a stale
+            // untilDismissed — surviving alongside a fresh durationMs would trip the
+            // validator's then+durationMs degrade.
+            if (patchLife.Kind == LifetimeKind.OnChange)
             {
                 existing.Direction = patchLife.Direction;
-            }
-            if (patchLife.Then != null || !string.IsNullOrEmpty(patchLife.ThenRaw))
                 existing.Then = patchLife.Then;
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(patchLife.DirectionRaw)
+                    || (patchLife.Direction != ChangeDirection.Any
+                        && patchLife.Direction != ChangeDirection.Unknown))
+                {
+                    existing.Direction = patchLife.Direction;
+                }
+                if (patchLife.Then != null || !string.IsNullOrEmpty(patchLife.ThenRaw))
+                    existing.Then = patchLife.Then;
+            }
             if (patchLife.ExtensionData != null && patchLife.ExtensionData.Count > 0)
             {
                 if (existing.ExtensionData == null)
@@ -2312,12 +2326,14 @@ namespace FanaBridge.UI.Display
             }
             if (patchLife.DurationMsPresent)
                 existing.DurationMs = patchLife.DurationMs;
-            // Direction: an OnChange patch ALWAYS authors it (the 5f form has a
-            // direction choice — Any must be able to clear a stale up/down). Other
-            // kinds keep the sparse rule: only overwrite when supplied.
+            // Direction + Then: an OnChange patch ALWAYS authors both (§7f forms) —
+            // Any must clear a stale up/down, and a null Then must clear a stale
+            // untilDismissed (surviving alongside a fresh durationMs would trip the
+            // validator's then+durationMs degrade). Other kinds keep the sparse rule.
             if (patchLife.Kind == LifetimeKind.OnChange)
             {
                 existing.Direction = patchLife.Direction;
+                existing.Then = patchLife.Then;
             }
             else if (!string.IsNullOrEmpty(patchLife.DirectionRaw)
                 || (patchLife.Direction != ChangeDirection.Any

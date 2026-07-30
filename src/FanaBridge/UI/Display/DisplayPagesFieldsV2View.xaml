@@ -306,6 +306,24 @@
                                           FontSize="12.5" />
                             </StackPanel>
 
+                            <!-- §7f: For-how-long (durations only) + Effect — the two
+                                 rows the board omitted; owner-sanctioned extension. -->
+                            <TextBlock x:Name="txtOvForHowLong" FontSize="9.5"
+                                       FontFamily="Consolas" Foreground="#7C7C7E"
+                                       Margin="0,0,0,6" />
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                <shared:SegmentedControl x:Name="segOvLifetime" />
+                                <TextBox x:Name="txtOvSeconds" Width="44" FontSize="12.5"
+                                         Margin="8,0,4,0" Background="#1A1A1C"
+                                         Foreground="#F0F0F0" BorderBrush="#454547"
+                                         Padding="4,2" VerticalAlignment="Center" />
+                                <TextBlock x:Name="txtOvSecondsUnit" FontSize="12"
+                                           Foreground="#9A9A9C" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <TextBlock x:Name="txtOvEffectLabel" FontSize="12"
+                                       Foreground="#9A9A9C" Margin="0,0,0,4" />
+                            <shared:SegmentedControl x:Name="segOvEffect" Margin="0,0,0,12" />
+
                             <Border Background="#2B3138" CornerRadius="3" Padding="10,8"
                                     Margin="0,0,0,8">
                                 <StackPanel>

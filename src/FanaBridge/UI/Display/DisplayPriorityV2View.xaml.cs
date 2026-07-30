@@ -45,9 +45,8 @@ namespace FanaBridge.UI.Display
         private ValueSourceKind _epSourceKind = ValueSourceKind.SimHubProperty;
         private LifetimeKind _epLifetimeKind = LifetimeKind.WhileTrue;
         private int _epDurationMs = Lifetime.DefaultDurationMs;
-        /// <summary>OnChange edge direction (5f detail row; Any = any change).</summary>
+        /// <summary>Edge direction from the operator-slot verb (Any = "changes").</summary>
         private ChangeDirection _epChangeDirection = ChangeDirection.Any;
-        private StackPanel _panelEpOnChange;
         /// <summary>Q10: last Manual timer seconds shown — survives uncheck across Poll rebuilds.</summary>
         private int _rememberedManualSeconds = 30;
         private PriorityRowModel _dragRow;
@@ -262,7 +261,15 @@ namespace FanaBridge.UI.Display
             cmbEpOperator.Items.Add(DisplayCopy.OpNotEquals);
             cmbEpOperator.Items.Add(DisplayCopy.OpIsOn);
             cmbEpOperator.Items.Add(DisplayCopy.OpIsOff);
+            // Edge VERBS live in the operator slot (§7f trigger grammar): picking one
+            // switches the trigger to a value edge — no value to compare, and the
+            // For-how-long list drops to the options grammatical for an event.
+            cmbEpOperator.Items.Add(DisplayCopy.OpChanges);
+            cmbEpOperator.Items.Add(DisplayCopy.OpIncreases);
+            cmbEpOperator.Items.Add(DisplayCopy.OpDecreases);
             cmbEpOperator.SelectedIndex = 0;
+            cmbEpOperator.SelectionChanged -= EpOperator_SelectionChanged;
+            cmbEpOperator.SelectionChanged += EpOperator_SelectionChanged;
 
             if (txtEpUnit != null)
                 txtEpUnit.ToolTip = DisplayCopy.ConditionUnitTooltip;
@@ -1822,15 +1829,28 @@ namespace FanaBridge.UI.Display
                         if (sum.Condition?.Value != null)
                             txtEpValue.Text = sum.Condition.Value.Value.ToString(
                                 CultureInfo.InvariantCulture);
-                        SelectOperator(sum.Condition?.Operator ?? ConditionOperator.LessThan);
-                        if (sum.Lifetime != null)
+                        if (sum.Lifetime?.Kind == LifetimeKind.OnChange)
                         {
-                            _epLifetimeKind = sum.Lifetime.Kind;
+                            // Edge summon: the verb holds the operator slot; the
+                            // stored lifetime maps to the duration options.
+                            _epChangeDirection = sum.Lifetime.Direction;
+                            SelectEdgeVerb(sum.Lifetime.Direction);
+                            _epLifetimeKind =
+                                sum.Lifetime.Then == LifetimeThen.UntilDismissed
+                                    ? LifetimeKind.UntilDismissed
+                                    : LifetimeKind.ForDuration;
                             if (sum.Lifetime.DurationMsPresent)
                                 _epDurationMs = sum.Lifetime.DurationMs;
-                            if (sum.Lifetime.Direction == ChangeDirection.Up
-                                || sum.Lifetime.Direction == ChangeDirection.Down)
-                                _epChangeDirection = sum.Lifetime.Direction;
+                        }
+                        else
+                        {
+                            SelectOperator(sum.Condition?.Operator ?? ConditionOperator.LessThan);
+                            if (sum.Lifetime != null)
+                            {
+                                _epLifetimeKind = sum.Lifetime.Kind;
+                                if (sum.Lifetime.DurationMsPresent)
+                                    _epDurationMs = sum.Lifetime.DurationMs;
+                            }
                         }
                         break;
                     }
@@ -1891,6 +1911,20 @@ namespace FanaBridge.UI.Display
                 _epLifetimeKind == LifetimeKind.UntilDismissed
                     ? Visibility.Visible
                     : Visibility.Collapsed;
+        }
+
+        /// <summary>Select the operator-slot edge verb for a stored direction.</summary>
+        private void SelectEdgeVerb(ChangeDirection direction)
+        {
+            string phrase = DisplayCopy.ChangeDirectionPhrase(direction);
+            for (int i = 0; i < cmbEpOperator.Items.Count; i++)
+            {
+                if (string.Equals(cmbEpOperator.Items[i] as string, phrase, StringComparison.Ordinal))
+                {
+                    cmbEpOperator.SelectedIndex = i;
+                    return;
+                }
+            }
         }
 
         private void SelectOperator(ConditionOperator op)
@@ -2006,115 +2040,65 @@ namespace FanaBridge.UI.Display
 
         private void BuildLifetimeRadios()
         {
+            // §7f grammar: the For-how-long list carries only options grammatical for
+            // the chosen trigger. Edge (a verb in the operator slot) has no state to
+            // hold, so while-true never appears — the engine's silent edge+whileTrue
+            // coercion must be unreachable from the form.
             panelEpLifetime.Children.Clear();
-            AddLifetimeRadio(LifetimeKind.WhileTrue, 0);
+            bool edge = EpTriggerIsEdge();
+            if (edge && (_epLifetimeKind == LifetimeKind.WhileTrue
+                || _epLifetimeKind == LifetimeKind.OnChange))
+                _epLifetimeKind = LifetimeKind.ForDuration;
+            if (!edge)
+                AddLifetimeRadio(LifetimeKind.WhileTrue, 0);
             AddLifetimeRadioForDuration(
                 _epDurationMs > 0 ? _epDurationMs : Lifetime.DefaultDurationMs);
             AddLifetimeRadio(LifetimeKind.UntilDismissed, 0);
-            AddLifetimeRadio(LifetimeKind.OnChange, 0);
-            BuildOnChangeDetail();
             UpdateUntilDismissedCard();
-            UpdateConditionInputsForLifetime();
+            UpdateConditionInputsForTrigger();
+        }
+
+        /// <summary>The operator slot holds an edge verb (changes/increases/decreases).</summary>
+        private bool EpTriggerIsEdge()
+            => TryParseEdgeVerb(cmbEpOperator?.SelectedItem as string, out _);
+
+        /// <summary>Map an operator-slot label to an edge direction verb.</summary>
+        private static bool TryParseEdgeVerb(string label, out ChangeDirection direction)
+        {
+            direction = ChangeDirection.Any;
+            if (string.Equals(label, DisplayCopy.OpChanges, StringComparison.Ordinal))
+                return true;
+            if (string.Equals(label, DisplayCopy.OpIncreases, StringComparison.Ordinal))
+            {
+                direction = ChangeDirection.Up;
+                return true;
+            }
+            if (string.Equals(label, DisplayCopy.OpDecreases, StringComparison.Ordinal))
+            {
+                direction = ChangeDirection.Down;
+                return true;
+            }
+            return false;
+        }
+
+        private void EpOperator_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            if (TryParseEdgeVerb(cmbEpOperator.SelectedItem as string, out var dir))
+                _epChangeDirection = dir;
+            BuildLifetimeRadios();
+            RefreshEntrypointSentence();
         }
 
         /// <summary>
-        /// OnChange detail (shown while selected): edge direction + the shown window.
-        /// Edge summons compare NOTHING — the operator/value inputs hide; only the
-        /// subject, the direction, and how long the page shows per change remain.
+        /// Edge triggers compare nothing: the value/unit inputs hide while a verb
+        /// holds the operator slot (the slot itself stays — it IS the verb).
         /// </summary>
-        private void BuildOnChangeDetail()
+        private void UpdateConditionInputsForTrigger()
         {
-            _panelEpOnChange = new StackPanel
-            {
-                Margin = new Thickness(24, 2, 0, 4),
-                Visibility = Visibility.Collapsed,
-            };
-
-            var direction = new SegmentedControl
-            {
-                SegmentPadding = new Thickness(10, 4, 10, 4),
-                SegmentFontSize = 11.5,
-                OuterCornerRadius = 4,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Margin = new Thickness(0, 0, 0, 6),
-            };
-            direction.SetItems(new (string, string)[]
-            {
-                ("any", DisplayCopy.OpChanges),
-                ("up", DisplayCopy.OpIncreases),
-                ("down", DisplayCopy.OpDecreases),
-            });
-            direction.SelectedId = _epChangeDirection == ChangeDirection.Up
-                ? "up"
-                : (_epChangeDirection == ChangeDirection.Down ? "down" : "any");
-            direction.SelectionChanged += (s, id) =>
-            {
-                if (_suppressEvents) return;
-                _epChangeDirection = id == "up"
-                    ? ChangeDirection.Up
-                    : (id == "down" ? ChangeDirection.Down : ChangeDirection.Any);
-                RefreshEntrypointSentence();
-            };
-            _panelEpOnChange.Children.Add(direction);
-
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(new TextBlock
-            {
-                Text = DisplayCopy.OnChangeShowsForPrefix,
-                FontSize = 12.5,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xC8, 0xC8)),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            var seconds = new TextBox
-            {
-                Text = Math.Max(1, (_epDurationMs + 500) / 1000)
-                    .ToString(CultureInfo.InvariantCulture),
-                Width = 40,
-                Padding = new Thickness(4, 2, 4, 2),
-                Margin = new Thickness(6, 0, 6, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                Background = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x20)),
-                Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xE6, 0xE6)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0x54, 0x54, 0x56)),
-            };
-            seconds.TextChanged += (s, e) =>
-            {
-                if (_suppressEvents) return;
-                if (int.TryParse(seconds.Text, NumberStyles.Integer,
-                        CultureInfo.InvariantCulture, out int sec) && sec > 0)
-                {
-                    _epDurationMs = sec * 1000;
-                    RefreshEntrypointSentence();
-                }
-            };
-            row.Children.Add(seconds);
-            row.Children.Add(new TextBlock
-            {
-                Text = DisplayCopy.OnChangeShowsForSuffix,
-                FontSize = 12.5,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xC8, 0xC8)),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            _panelEpOnChange.Children.Add(row);
-            panelEpLifetime.Children.Add(_panelEpOnChange);
-        }
-
-        /// <summary>
-        /// Edge summons compare nothing: hide the operator/value/unit inputs while
-        /// OnChange is selected (the validator DEGRADES onChange + operator; the
-        /// form must not even suggest one).
-        /// </summary>
-        private void UpdateConditionInputsForLifetime()
-        {
-            bool edge = _epLifetimeKind == LifetimeKind.OnChange;
-            var vis = edge ? Visibility.Collapsed : Visibility.Visible;
-            if (cmbEpOperator != null) cmbEpOperator.Visibility = vis;
+            var vis = EpTriggerIsEdge() ? Visibility.Collapsed : Visibility.Visible;
             if (txtEpValue != null) txtEpValue.Visibility = vis;
             if (txtEpUnit != null) txtEpUnit.Visibility = vis;
-            if (_panelEpOnChange != null)
-                _panelEpOnChange.Visibility = edge
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
         }
 
         private void AddLifetimeRadio(LifetimeKind kind, int durationMs)
@@ -2135,7 +2119,6 @@ namespace FanaBridge.UI.Display
             {
                 _epLifetimeKind = kind;
                 UpdateUntilDismissedCard();
-                UpdateConditionInputsForLifetime();
                 RefreshEntrypointSentence();
             };
             panelEpLifetime.Children.Add(rb);
@@ -2197,7 +2180,6 @@ namespace FanaBridge.UI.Display
                         CultureInfo.InvariantCulture, out int sec) && sec > 0)
                     _epDurationMs = sec * 1000;
                 UpdateUntilDismissedCard();
-                UpdateConditionInputsForLifetime();
                 RefreshEntrypointSentence();
             };
             secondsBox.LostFocus += (s, e) =>
@@ -2230,13 +2212,17 @@ namespace FanaBridge.UI.Display
                 && !string.IsNullOrWhiteSpace(txtEpSourcePath?.Text))
                 source = txtEpSourcePath.Text.Trim();
             string core;
-            if (_epLifetimeKind == LifetimeKind.OnChange)
+            if (TryParseEdgeVerb(cmbEpOperator.SelectedItem as string, out var sentenceDir))
             {
-                // Edge grammar: "<subject> changes/increases/decreases · for N s".
+                // Edge grammar: "<subject> changes/increases/decreases · for N s"
+                // (or " · until dismissed").
                 core = DisplayCopy.ConditionChangeSentence(
-                        source, DisplayCopy.ChangeDirectionPhrase(_epChangeDirection))
+                        source, DisplayCopy.ChangeDirectionPhrase(sentenceDir))
                     + DisplayCopy.LifetimeLadderSuffix(
-                        LifetimeKind.ForDuration, _epDurationMs);
+                        _epLifetimeKind == LifetimeKind.UntilDismissed
+                            ? LifetimeKind.UntilDismissed
+                            : LifetimeKind.ForDuration,
+                        _epDurationMs);
                 txtEpSentence.Text = core;
                 return;
             }
@@ -2333,17 +2319,21 @@ namespace FanaBridge.UI.Display
 
         private Summon BuildSummonFromForm()
         {
-            // Edge summon: condition = the SUBJECT alone. Operator/value must be
-            // absent (the validator degrades onChange + operator); direction and the
-            // shown window live on the lifetime.
-            if (_epLifetimeKind == LifetimeKind.OnChange)
+            // Edge summon (a verb in the operator slot): condition = the SUBJECT
+            // alone. Operator/value must be absent (the validator degrades
+            // onChange + operator); direction and the shown window / dismissal live
+            // on the lifetime (then + durationMs are mutually exclusive).
+            if (TryParseEdgeVerb(cmbEpOperator.SelectedItem as string, out var edgeDir))
             {
                 var edgeLifetime = new Lifetime
                 {
                     Kind = LifetimeKind.OnChange,
-                    DurationMs = _epDurationMs,
-                    Direction = _epChangeDirection,
+                    Direction = edgeDir,
                 };
+                if (_epLifetimeKind == LifetimeKind.UntilDismissed)
+                    edgeLifetime.Then = LifetimeThen.UntilDismissed;
+                else
+                    edgeLifetime.DurationMs = _epDurationMs;
                 return new Summon
                 {
                     Id = _epIsNew ? null : _epSummonId,

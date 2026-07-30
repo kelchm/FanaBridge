@@ -476,6 +476,73 @@ namespace FanaBridge.Tests.UI.Display
         }
 
         [Fact]
+        public void UpdateOverride_SwitchToOnChange_ClearsOperator_AndStaleThen()
+        {
+            // §7f: 5g authors the whole condition — the merge must clear op/value on
+            // a level→edge switch, and an OnChange patch clears a stale then when a
+            // fresh durationMs arrives (then+durationMs together would degrade).
+            var live = SeedLive();
+            live.Fields = live.Fields ?? new Dictionary<ushort, FieldEntry>();
+            live.Fields[42] = new FieldEntry
+            {
+                Overrides = new List<FieldOverride>
+                {
+                    new FieldOverride
+                    {
+                        Id = "ov-1",
+                        Writes = FieldWrites.Suffix,
+                        Content = new ContentObject { Kind = ContentKind.Text, Text = "!" },
+                        Condition = new Condition
+                        {
+                            Source = new ValueSource
+                            {
+                                Kind = ValueSourceKind.BuiltIn,
+                                Name = BuiltInProperties.TyreTempFrontLeft,
+                            },
+                            Operator = ConditionOperator.GreaterThan,
+                            Value = 90,
+                        },
+                        Lifetime = new Lifetime
+                        {
+                            Kind = LifetimeKind.OnChange,
+                            Then = LifetimeThen.UntilDismissed,
+                        },
+                    },
+                },
+            };
+            var session = DisplayConfigV2EditSession.Open(live);
+
+            session.UpdateOverride(42, "ov-1", new FieldOverride
+            {
+                Writes = FieldWrites.Suffix,
+                Condition = new Condition
+                {
+                    Source = new ValueSource
+                    {
+                        Kind = ValueSourceKind.BuiltIn,
+                        Name = BuiltInProperties.TyreTempFrontLeft,
+                    },
+                    Operator = null,
+                    Value = null,
+                },
+                Lifetime = new Lifetime
+                {
+                    Kind = LifetimeKind.OnChange,
+                    DurationMs = 3000,
+                    Direction = ChangeDirection.Any,
+                },
+                Enabled = true,
+            });
+
+            var updated = session.Document.Fields[42].Overrides[0];
+            Assert.Null(updated.Condition.Operator);
+            Assert.Null(updated.Condition.Value);
+            Assert.Equal(LifetimeKind.OnChange, updated.Lifetime.Kind);
+            Assert.Equal(3000, updated.Lifetime.DurationMs);
+            Assert.Null(updated.Lifetime.Then);
+        }
+
+        [Fact]
         public void UpdateLayer_SwitchToOnChange_ClearsTheOperator()
         {
             var live = SeedLive();
