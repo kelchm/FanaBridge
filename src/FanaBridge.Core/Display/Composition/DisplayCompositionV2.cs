@@ -333,6 +333,11 @@ namespace FanaBridge.Display.Composition
                 CarrierSnapshots = snapshots,
                 DismissedCarrierIds = _wsLatches.Ids,
                 PreviousSendAccepted = _lastSendAccepted,
+                // The idle floor yields to a parked manual page (E4 ticks first).
+                SeatManualOwnsDisplay = string.Equals(
+                    seatResult.Intent?.WinnerCarrierId,
+                    SeatArbiter.ManualCarrierId,
+                    StringComparison.Ordinal),
             });
 
             // RISK-2 probe hook: mutation between E6 and E5 must be same-tick visible.

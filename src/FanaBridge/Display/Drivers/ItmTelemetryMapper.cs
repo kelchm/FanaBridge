@@ -451,13 +451,26 @@ namespace FanaBridge.Display.Drivers
         /// <summary>
         /// When a plan paints the suffix region, return its resolved text (already
         /// alignment-clamped / blink-blanked by the composer, or property-resolved at
-        /// application). BaseComputed is not plan-owned — the mapper's unit/total path
-        /// remains the single dynamic owner.
+        /// application). BaseComputed with an AUTHORED base suffix is plan-owned too —
+        /// base.baseSuffix must reach the wire ("printed after the value whenever no
+        /// override writes the suffix"); an empty/absent one falls through to the
+        /// mapper's computed unit/total path, which stays the dynamic owner.
         /// </summary>
         private bool TryGetPlanOwnedSuffix(ushort paramId, out string suffix)
         {
             if (!_fieldPlans.TryGetValue(paramId, out var plan) || plan == null)
             {
+                suffix = null;
+                return false;
+            }
+            if (plan.SuffixOwner == SuffixOwner.BaseComputed)
+            {
+                string authored = plan.AlignedSuffixText ?? plan.SuffixText;
+                if (!string.IsNullOrEmpty(authored))
+                {
+                    suffix = authored;
+                    return true;
+                }
                 suffix = null;
                 return false;
             }
@@ -492,12 +505,20 @@ namespace FanaBridge.Display.Drivers
             }
 
             // EffectVisible false already folded into AlignedSuffixText as width-blank.
+            // Empty resolves to the single-space ACTIVE CLEAR — a zero-length suffix
+            // does not overwrite the firmware's decoration, so an empty override
+            // would leave stale text and block the computed total from returning.
             suffix = plan.AlignedSuffixText
                 ?? (plan.SuffixOwner == SuffixOwner.Blank ? " " : plan.SuffixText);
-            if (suffix == null)
+            if (string.IsNullOrEmpty(suffix))
                 suffix = " ";
             return true;
         }
+
+        /// <summary>Whether the suffix region for this param is plan-owned this tick
+        /// (authored override/base content — data-independent, safe to send at idle).</summary>
+        public bool HasPlanOwnedSuffix(ushort paramId)
+            => TryGetPlanOwnedSuffix(paramId, out _);
 
         /// <summary>The fuel unit as a single-char label (e.g. "L"/"G"), from the frame's
         /// <c>FuelUnit</c>. Used only as a fallback when no tank capacity is available.</summary>

@@ -61,6 +61,14 @@ namespace FanaBridge.Display.Arbitration
         /// (do not latch; win-edge retries). <c>null</c> = no prior send / no feedback yet.
         /// </summary>
         public bool? PreviousSendAccepted { get; set; }
+
+        /// <summary>
+        /// True while the seat plane's manual row owns the display (parked page).
+        /// The idle FLOOR yields to it — a manual press must page even over a
+        /// blank/logo idle choice — while ranked wheel-screen RULES still compete
+        /// (rules-over-rest, unchanged).
+        /// </summary>
+        public bool SeatManualOwnsDisplay { get; set; }
     }
 
     /// <summary>What the wheel-screen plane should show after one tick.</summary>

@@ -562,6 +562,33 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void Idle_NeverClearsTotals_TheFirmwareStillShows()
+        {
+            // Game exit must not actively blank the "/34"-style totals: the idle
+            // ParamDefs pass skips telemetry-derived suffixes (authored plan-owned
+            // ones stay idle-live) — the firmware keeps its decoration.
+            var driver = MakeDriver(out var t, out var clock);
+            var s = NewStatus();
+            Set(s, "TotalLaps", 34);
+            Set(s, "CurrentLap", 5);
+            Set(s, "OpponentsCount", 20);
+            Set(s, "Position", 7);
+            Sync(driver, clock, LapInfoPush, Data(s));   // totals "/34", "/20" sent
+            clock.T += 100;
+            driver.Update(Data(s));                      // flush the defs double-tap
+            t.Sent.Clear();
+
+            clock.T += 40;
+            driver.Update(NotRunningData());             // game exits
+            clock.T += 500;
+            driver.Update(NotRunningData());
+            clock.T += 500;
+            driver.Update(NotRunningData());
+
+            Assert.DoesNotContain(t.Sent, IsParamDefs);
+        }
+
+        [Fact]
         public void Total_ClearedWithBlankSuffix_WhenItBecomesImplausible()
         {
             var driver = MakeDriver(out var t, out var clock);

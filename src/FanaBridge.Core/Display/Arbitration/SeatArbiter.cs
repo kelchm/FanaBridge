@@ -978,7 +978,16 @@ namespace FanaBridge.Display.Arbitration
             else if (manual.WalkStep.HasValue)
             {
                 _adoptedUnknownPage = false;
+                // First press (not yet parked): step from the page actually showing
+                // (last emitted effective page — e.g. the idle rest page), not the
+                // strip seed; once parked the remembered target is the origin.
+                string shown = !_manualParked
+                    && _prevEmittedEffectivePageId != null
+                    && !DestinationIds.IsRest(_prevEmittedEffectivePageId)
+                        ? _prevEmittedEffectivePageId
+                        : null;
                 string from = ResolvePageAdopt(manual.AdoptedDestinationId)
+                    ?? shown
                     ?? EffectiveManualDestination();
                 result.WalkResolved = StepWalk(from, manual.WalkStep.Value, compiledWalk);
                 if (result.WalkResolved != null
@@ -1263,8 +1272,10 @@ namespace FanaBridge.Display.Arbitration
                 return bestAbove;
 
             // Standing entrypoint: when parked (and claim allowed), manual owns at its
-            // rank (remembered page). Rows below cannot interrupt while parked.
-            if (manualClaimAllowed && inGame && manual != null)
+            // rank (remembered page). Rows below cannot interrupt while parked. No
+            // session scoping — manual paging works at idle too (idle parity; the
+            // idle-page promotion self-disarms once manual owns, IsRest(dest) false).
+            if (manualClaimAllowed && manual != null)
                 return manual;
 
             if (bestBelow != null)
@@ -1496,8 +1507,12 @@ namespace FanaBridge.Display.Arbitration
                         presence = CarrierPresence.OnScreen;
                     else if (neverNavigated)
                         presence = CarrierPresence.Waiting;
-                    else
+                    else if (_selectionRank < _manualRank)
                         presence = CarrierPresence.Outranked;
+                    else
+                        // The floor (or a row below) is showing — nothing outranks
+                        // manual from beneath it; the row is simply not claiming.
+                        presence = CarrierPresence.Waiting;
 
                     // Null destination while never-navigated so UI does not invent a page.
                     string manualDest = neverNavigated

@@ -239,6 +239,51 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void AuthoredBaseSuffix_IsPlanOwned_BeatsTheComputedTotal()
+        {
+            // base.baseSuffix must reach the wire ("printed after the value whenever
+            // no override writes the suffix") — it beats the computed total; empty
+            // stays with the mapper's dynamic owner (pinned by the sibling test).
+            var doc = FieldDoc(ItmParam.Lap, new FieldBase { BaseSuffix = "/50" });
+            var caps = new Dictionary<ushort, FieldCapability>
+            {
+                [ItmParam.Lap] = Cap(ItmParam.Lap, suffixWidth: null, primaryHost: "lapInfo"),
+            };
+            var plan = PlanAt(Composer(doc, caps), 0, "lapInfo");
+            Assert.Equal(SuffixOwner.BaseComputed, plan.SuffixOwner);
+
+            var mapper = new ItmTelemetryMapper();
+            mapper.ConfigureFromPlans(new[] { plan }, new FakeReader());
+            Assert.True(mapper.HasPlanOwnedSuffix(ItmParam.Lap));
+
+            var s = NewStatus();
+            Set(s, "TotalLaps", 73);
+            Assert.True(mapper.TryResolveTotalSuffix(ItmParam.Lap, Wrap(s), out var suffix));
+            Assert.Equal("/50", suffix);
+        }
+
+        [Fact]
+        public void EmptyOverrideSuffix_ResolvesToActiveClear_NeverZeroLength()
+        {
+            // A zero-length suffix does not overwrite the firmware's decoration —
+            // an empty plan-owned suffix must resolve to the single-space clear.
+            var doc = FieldDoc(ItmParam.TyreFlTemp, null,
+                Ov("o-blank", FieldWrites.Suffix, Text("")));
+            var caps = new Dictionary<ushort, FieldCapability>
+            {
+                [ItmParam.TyreFlTemp] = Cap(ItmParam.TyreFlTemp, suffixWidth: null),
+            };
+            var plan = PlanAt(Composer(doc, caps), 0, "tyreTemps", Snap("o-blank", true));
+            Assert.Equal(SuffixOwner.Override, plan.SuffixOwner);
+
+            var mapper = new ItmTelemetryMapper();
+            mapper.ConfigureFromPlans(new[] { plan }, new FakeReader());
+            var s = NewStatus();
+            Assert.True(mapper.TryResolveSuffix(ItmParam.TyreFlTemp, Wrap(s), out var suffix));
+            Assert.Equal(" ", suffix);
+        }
+
+        [Fact]
         public void ValueOnlyWrite_EncodesOverride_BaseSuffixComputed()
         {
             // Value-only: source override defaults format to bare (suffix stays mapper-

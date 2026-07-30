@@ -331,7 +331,7 @@ namespace FanaBridge.Display.Drivers
                 if (now - _lastIdleDefsMs >= ValueIntervalMs)
                 {
                     _lastIdleDefsMs = now;
-                    UpdateSlotDefs(data, now);
+                    UpdateSlotDefs(data, now, telemetryLive: false);
                 }
                 return;
             }
@@ -370,7 +370,7 @@ namespace FanaBridge.Display.Drivers
             // ParamDefs go out after the post-sync value double-tap completes (values-then-defs,
             // matching the official software's post-switch ordering), then on every suffix change.
             if (_paint == Paint.None)
-                UpdateSlotDefs(data, now);
+                UpdateSlotDefs(data, now, telemetryLive: true);
         }
 
         // Sends ParamDefs declaring each subscribed param's display suffix — a static
@@ -378,7 +378,7 @@ namespace FanaBridge.Display.Drivers
         // the value renders from ValueUpdate regardless. Slot ID = 0x80 | handle, per
         // the capture. Only writes when the suffix set actually changes (subscription
         // change or a moving total), so it does not flood the bus.
-        private void UpdateSlotDefs(GameData data, long now)
+        private void UpdateSlotDefs(GameData data, long now, bool telemetryLive)
         {
             // Tight double-tap: re-send the just-sent defs once, ~DefDoubleTapMs later.
             // ParamDefs is unacked and a single send is occasionally dropped by the firmware;
@@ -414,11 +414,22 @@ namespace FanaBridge.Display.Drivers
                 else if (_mapper.TryResolveTotalSuffix(paramId, data, out suffix))
                 {
                     // Lap/position/fuel total (or blank / fuel unit-label fallback).
+                    // Telemetry-derived: at idle a send would actively CLEAR (or paint
+                    // stale) the decoration the firmware still shows — skip the entry
+                    // entirely; authored (plan-owned) suffixes stay idle-live.
+                    if (!telemetryLive && !_mapper.HasPlanOwnedSuffix(paramId))
+                        continue;
                 }
                 else
                 {
                     continue;
                 }
+
+                // Wire ceiling: one over-long suffix would reject the WHOLE ParamDefs
+                // batch (SetParamDefs pre-validates) and blank every field's
+                // decoration — clamp at the single wire seam instead.
+                if (suffix != null && suffix.Length > ItmEncoder.MaxSuffixLength)
+                    suffix = suffix.Substring(0, ItmEncoder.MaxSuffixLength);
 
                 sig.Append(kv.Key).Append('=').Append(suffix).Append(';');
                 if (defs == null) defs = new List<ItmParamDef>();

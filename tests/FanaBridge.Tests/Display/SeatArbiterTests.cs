@@ -304,6 +304,71 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void ManualPress_AtIdle_ClaimsTheDisplay()
+        {
+            // Idle parity: manual paging works out of session — the parked page owns
+            // the display over the idle floor (the standing entrypoint has no
+            // session scoping).
+            var arb = new SeatArbiter(MinimalLadder(
+                (PriorityRowKind.Seat, "s-hi", "hosted", "p-b", new[] { "e-hi" }, null)));
+            var r = arb.Tick(new SeatArbiterTickInput
+            {
+                NowMs = 0,
+                InGame = false,
+                Manual = SeatManualInput.Navigate(DestinationIds.Hosted("p-b")),
+            });
+
+            Assert.Equal(SeatArbiter.ManualCarrierId, r.Intent.WinnerCarrierId);
+            Assert.Equal(
+                DestinationIds.Hosted("p-b"), r.Intent.EffectivePageDestinationId);
+            var manualStatus = r.Resolution.CarrierStatuses
+                .Single(c => c.CarrierId == SeatArbiter.ManualCarrierId);
+            Assert.Equal(CarrierPresence.OnScreen, manualStatus.Presence);
+        }
+
+        [Fact]
+        public void ManualRow_NotOutrankedByTheFloor()
+        {
+            // "Outranked" needs an actual row above winning. Pre-press at idle the
+            // manual row waits; it never reads as beaten by the rest floor beneath it.
+            var arb = new SeatArbiter(MinimalLadder(
+                (PriorityRowKind.Seat, "s-hi", "hosted", "p-b", new[] { "e-hi" }, null)));
+            var r = arb.Tick(new SeatArbiterTickInput { NowMs = 0, InGame = false });
+
+            Assert.Equal(SeatArbiter.RestCarrierId, r.Intent.WinnerCarrierId);
+            var manualStatus = r.Resolution.CarrierStatuses
+                .Single(c => c.CarrierId == SeatArbiter.ManualCarrierId);
+            Assert.Equal(CarrierPresence.Waiting, manualStatus.Presence);
+        }
+
+        [Fact]
+        public void ManualRow_OutrankedOnlyByARowAboveIt()
+        {
+            // Parked manual beaten by a live higher-ranked entrypoint → outranked.
+            var arb = new SeatArbiter(MinimalLadder(
+                (PriorityRowKind.Seat, "s-hi", "hosted", "p-b", new[] { "e-hi" }, null)));
+            var park = new SeatArbiterTickInput
+            {
+                NowMs = 0,
+                InGame = false,
+                Manual = SeatManualInput.Navigate(DestinationIds.Hosted("p-c")),
+            };
+            arb.Tick(park);
+
+            var r = arb.Tick(new SeatArbiterTickInput
+            {
+                NowMs = 600,   // past the preempt floor
+                InGame = false,
+                CarrierSnapshots = new[] { Snap("e-hi", true, fired: true, fresh: true) },
+            });
+
+            Assert.Equal("e-hi", r.Intent.WinnerCarrierId);
+            var manualStatus = r.Resolution.CarrierStatuses
+                .Single(c => c.CarrierId == SeatArbiter.ManualCarrierId);
+            Assert.Equal(CarrierPresence.Outranked, manualStatus.Presence);
+        }
+
+        [Fact]
         public void AdoptedUnknownPage_RestWithNoIntent()
         {
             // E7-OPUS-06: uncataloged adopt → ManualRowState.AdoptedUnknownPage, no remembered dest.

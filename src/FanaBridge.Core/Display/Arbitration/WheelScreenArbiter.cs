@@ -99,7 +99,8 @@ namespace FanaBridge.Display.Arbitration
             ApplySendFeedback(input.PreviousSendAccepted);
 
             // 2. Ranked rules over idle floor → desired winner.
-            var winner = SelectWinner(inGame, snapshots, dismissed, now);
+            var winner = SelectWinner(
+                inGame, snapshots, dismissed, now, input.SeatManualOwnsDisplay);
 
             // 3. Release edge: latched screen and plane no longer holds a screen.
             bool surfaceHeld = winner.Kind == WheelScreenOutcomeKind.Screen;
@@ -278,7 +279,8 @@ namespace FanaBridge.Display.Arbitration
             bool inGame,
             Dictionary<string, CarrierTickSnapshot> snapshots,
             HashSet<string> dismissed,
-            long nowMs)
+            long nowMs,
+            bool seatManualOwnsDisplay = false)
         {
             // Rules rank by array order over the idle floor.
             foreach (var plan in _rules)
@@ -301,6 +303,12 @@ namespace FanaBridge.Display.Arbitration
             // Idle floor only out of session; in-session silence unless a rule won.
             if (inGame)
                 return Winner.Silence();
+
+            // The FLOOR yields while the seat's manual row owns the display — a
+            // manual press must page even over a blank/logo idle choice. Ranked
+            // rules above already had their chance (rules-over-rest unchanged).
+            if (seatManualOwnsDisplay)
+                return Winner.Deferred(WheelScreenDeferReason.PageIdle);
 
             return SelectIdleFloor(nowMs);
         }
