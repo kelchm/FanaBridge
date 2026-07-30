@@ -31,6 +31,24 @@ namespace FanaBridge.Display.Arbitration
         }
 
         /// <summary>
+        /// Inverse mapping: catalog page id (EnumText camelCase) → <see cref="ItmPage"/>.
+        /// Null for unknown ids.
+        /// </summary>
+        public static ItmPage? ToItmPage(string catalogPageId)
+        {
+            switch (catalogPageId)
+            {
+                case "lapInfo": return ItmPage.LapInfo;
+                case "fuelErsDrs": return ItmPage.FuelErsDrs;
+                case "carSettings": return ItmPage.CarSettings;
+                case "lapTimes": return ItmPage.LapTimes;
+                case "tyreTemps": return ItmPage.TyreTemps;
+                case "legacy": return ItmPage.Legacy;
+                default: return null;
+            }
+        }
+
+        /// <summary>
         /// Destination id for a cataloged manual adopt: <c>itm:{catalogPageId}</c>.
         /// Null when the page has no catalog spelling.
         /// </summary>

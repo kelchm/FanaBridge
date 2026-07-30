@@ -1853,6 +1853,22 @@ namespace FanaBridge.UI.Display
         /// <summary>Value-kind noun for envelope sentences: text.</summary>
         public const string ValueKindText = "text";
 
+        /// <summary>Preview caption for a hosted page on an ITM wheel: names the real
+        /// surface and the Legacy parking consequence.</summary>
+        public static string HostedPreviewCaptionOnItm(int? legacyPageIndex)
+        {
+            return legacyPageIndex.HasValue
+                ? string.Format(
+                    CultureInfo.InvariantCulture,
+                    "This page writes the 3-character segment display; the ITM display parks on its Legacy page (page {0}) while this page is up.",
+                    legacyPageIndex.Value)
+                : "This page writes the 3-character segment display; the ITM display parks on its Legacy page while this page is up.";
+        }
+
+        /// <summary>Preview caption for a hosted page on a segment-only wheel.</summary>
+        public const string HostedPreviewCaptionSegment =
+            "This page writes the 3-character segment display.";
+
         /// <summary>No-suffix capability note (TC/ABS).</summary>
         public const string NoSuffixRegion = "no suffix region";
 

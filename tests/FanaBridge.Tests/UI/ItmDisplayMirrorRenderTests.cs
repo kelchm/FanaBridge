@@ -125,7 +125,28 @@ namespace FanaBridge.Tests.UI
             var fuel = model.Slots.SelectMany(s => s.Fields)
                 .Single(f => f.ParamId == ItmParam.Fuel);
             Assert.Equal(SlotVisualState.Selected, fuel.VisualState);
-            Assert.Equal("", fuel.Value);   // layout-only — no live values
+            // Layout-only shows the hardware dash placeholder, never live values.
+            Assert.Equal(ItmValueRenderer.Placeholder(ItmParam.Fuel), fuel.Value);
+        }
+
+        [Fact]
+        public void BuildLayout_AuthoredSuffix_RidesThePlaceholder()
+        {
+            var suffixes = new System.Collections.Generic.Dictionary<ushort, string>
+            {
+                { ItmParam.Fuel, "/106L" },
+            };
+            var model = ItmDisplayMirrorRender.BuildLayout(
+                ItmPage.FuelErsDrs, selectedParamId: null, interactive: true,
+                authoredSuffixes: suffixes);
+
+            var fields = model.Slots.SelectMany(s => s.Fields).ToList();
+            var fuel = fields.Single(f => f.ParamId == ItmParam.Fuel);
+            Assert.Equal(
+                ItmValueRenderer.Placeholder(ItmParam.Fuel) + " /106L", fuel.Value);
+            // DRS dots stay dots — a suffix never turns them into text.
+            var drs = fields.Where(f => f.IsDot).ToList();
+            Assert.All(drs, f => Assert.False(f.DotFilled));
         }
 
         [Fact]

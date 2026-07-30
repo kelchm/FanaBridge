@@ -12,8 +12,10 @@ using FanaBridge.Display.Host;
 using FanaBridge.Display.Rules;
 using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Schema2;
+using FanaBridge.Display.Session;
 using FanaBridge.Display.Twin;
 using FanaBridge.Profiles;
+using FanaBridge.Protocol;
 using FanaBridge.UI.Display.Shared;
 
 namespace FanaBridge.UI.Display
@@ -87,10 +89,15 @@ namespace FanaBridge.UI.Display
         /// <summary>+ Add a page → Surface B (A-N5). Destination may be inert this phase.</summary>
         public event EventHandler AddPageRequested;
 
+        private readonly SevenSegmentFace _segmentPreviewFace = new SevenSegmentFace();
+
         public DisplayPagesFieldsV2View()
         {
             InitializeComponent();
             ApplyStaticCopy();
+            hostSegmentPreview.Content = _segmentPreviewFace;
+            displayMirror.IsInteractive = true;
+            displayMirror.SlotClicked += paramId => SelectFieldCore(paramId);
             // Card layout derives from the pane width. Polls no longer re-measure
             // (structure-gated), so window resizes must re-lay out themselves.
             dockFieldRegion.SizeChanged += (s, e) =>
@@ -814,6 +821,10 @@ namespace FanaBridge.UI.Display
                 barFilterState.Visibility = Visibility.Collapsed;
             }
 
+            // The preview face renders every poll — live values must flow — while
+            // the structural rebuilds below stay signature-gated.
+            UpdatePreviewFace(model);
+
             // Rebuilds tear down every child (buttons mid-click, the focused suffix
             // box) — gate them on what they actually draw, not on poll cadence.
             string sig = BuildStructureSignature(model);
@@ -822,9 +833,85 @@ namespace FanaBridge.UI.Display
             _lastStructureSignature = sig;
 
             RebuildPageStrip(model);
-            RebuildPreviewHits(model);
             RebuildEntrypoints(model);
             RebuildFieldCollection(model);
+        }
+
+        /// <summary>
+        /// The preview face for the selected page. ITM pages render on the digital
+        /// twin: live values while the wheel is synced on that very page, otherwise
+        /// the page layout with hardware placeholders + authored base suffixes.
+        /// Hosted pages render the 3-character segment face — the surface their
+        /// content actually writes (the ITM screen parks on Legacy meanwhile;
+        /// the caption states it).
+        /// </summary>
+        private void UpdatePreviewFace(DisplayPagesFieldsV2Model model)
+        {
+            bool segment = model.SelectedPage != null && !model.SelectedPage.IsItm;
+            hostSegmentPreview.Visibility = segment
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            displayMirror.Visibility = segment
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            if (segment)
+            {
+                // Live face bytes are not published on the snapshot (pre-existing
+                // gap, same as Priority's 5j face) — blank frame, honest empty.
+                _segmentPreviewFace.Render(null);
+                return;
+            }
+
+            ItmPage? page = model.SelectedPage != null
+                ? FanaBridge.Display.Arbitration.CatalogPageIdAdapter.ToItmPage(
+                    model.SelectedPage.CatalogPageId)
+                : null;
+            var values = model.Values;
+            bool liveMatch = page.HasValue
+                && values != null
+                && values.State == ItmLifecycleState.Synced
+                && values.Page == page.Value;
+            if (liveMatch)
+            {
+                displayMirror.Render(ItmDisplayMirrorRender.Build(
+                    values, model.FocusedParamId, interactive: true));
+            }
+            else if (page.HasValue)
+            {
+                displayMirror.Render(ItmDisplayMirrorRender.BuildLayout(
+                    page.Value, model.FocusedParamId, interactive: true,
+                    authoredSuffixes: AuthoredSuffixMap(model)));
+            }
+            else
+            {
+                displayMirror.Render((DisplayValuesSnapshot)null);
+            }
+        }
+
+        /// <summary>Authored base suffix per param for the selected page's sections.</summary>
+        private static Dictionary<ushort, string> AuthoredSuffixMap(
+            DisplayPagesFieldsV2Model model)
+        {
+            var map = new Dictionary<ushort, string>();
+            for (int g = 0; g < model.ScopeGroups.Count; g++)
+                CollectSuffixes(map, model.ScopeGroups[g].Sections);
+            CollectSuffixes(map, model.FlatSections);
+            return map;
+        }
+
+        private static void CollectSuffixes(
+            Dictionary<ushort, string> map,
+            IReadOnlyList<PagesFieldsFieldSectionModel> sections)
+        {
+            for (int i = 0; i < sections.Count; i++)
+            {
+                var section = sections[i];
+                if (section?.BaseBlock == null)
+                    continue;
+                string suffix = section.BaseBlock.BaseSuffix;
+                if (!string.IsNullOrWhiteSpace(suffix))
+                    map[section.ParamId] = suffix;
+            }
         }
 
         private string _lastStructureSignature;
@@ -854,17 +941,6 @@ namespace FanaBridge.UI.Display
                     .Append(p.IsItm ? '1' : '0')
                     .Append(p.IsSelected ? '1' : '0')
                     .Append(p.IsDimmed ? '1' : '0').Append(S);
-            }
-            sb.Append('#');
-
-            var hits = model.PreviewHits;
-            for (int i = 0; i < hits.Count; i++)
-            {
-                var h = hits[i];
-                if (h == null) continue;
-                sb.Append(h.ParamId).Append(S).Append(h.Row).Append(S)
-                    .Append(h.Column).Append(S).Append(h.DisplayName).Append(S)
-                    .Append(h.IsPicked ? '1' : '0').Append(S);
             }
             sb.Append('#');
 
@@ -1013,84 +1089,6 @@ namespace FanaBridge.UI.Display
             };
             add.Click += (s, e) => AddPageRequested?.Invoke(this, EventArgs.Empty);
             panelPageStrip.Children.Add(add);
-        }
-
-        private void RebuildPreviewHits(DisplayPagesFieldsV2Model model)
-        {
-            canvasPreviewHits.Children.Clear();
-            // Layout: 496×124 grid — map row/column to rects.
-            // top-left, top-right, bottom-left, bottom-right, center (gear/speed).
-            // Hit regions are Rectangles tagged "hit" so clear-route-3 can hit-test them.
-            for (int i = 0; i < model.PreviewHits.Count; i++)
-            {
-                var hit = model.PreviewHits[i];
-                if (hit == null) continue;
-                Rect r = MapRegion(hit.Row, hit.Column);
-
-                // A-O6 / D7: solid 2 px accent when picked; dashed 1 px when not.
-                var outline = new Rectangle
-                {
-                    Width = r.Width,
-                    Height = r.Height,
-                    Stroke = hit.IsPicked ? AccentBrush : OutlineBrush,
-                    StrokeThickness = hit.IsPicked ? 2 : 1,
-                    StrokeDashArray = hit.IsPicked ? null : new DoubleCollection { 3, 2 },
-                    Fill = Brushes.Transparent,
-                    Cursor = Cursors.Hand,
-                    Tag = "hit:" + hit.ParamId.ToString(CultureInfo.InvariantCulture),
-                    ToolTip = hit.DisplayName,
-                };
-                Canvas.SetLeft(outline, r.X);
-                Canvas.SetTop(outline, r.Y);
-                ushort paramId = hit.ParamId;
-                outline.MouseLeftButtonDown += (s, e) =>
-                {
-                    e.Handled = true;
-                    SelectFieldCore(paramId);
-                };
-                canvasPreviewHits.Children.Add(outline);
-
-                var label = new TextBlock
-                {
-                    Text = hit.DisplayName,
-                    FontSize = hit.Column == "center" ? 14 : 11,
-                    FontFamily = new FontFamily("Consolas"),
-                    Foreground = Freeze(new SolidColorBrush(Color.FromRgb(0x8A, 0x8A, 0x8C))),
-                    IsHitTestVisible = false,
-                };
-                Canvas.SetLeft(label, r.X + 6);
-                Canvas.SetTop(label, r.Y + 4);
-                canvasPreviewHits.Children.Add(label);
-            }
-        }
-
-        private static Rect MapRegion(string row, string column)
-        {
-            // 496×124 face; columns 198 / 100 / 198; rows split at mid for corners.
-            double col0 = 0, col1 = 198, col2 = 298;
-            double w0 = 198, w1 = 100, w2 = 198;
-            double topH = 62, botH = 62;
-            bool top = string.Equals(row, "top", StringComparison.OrdinalIgnoreCase)
-                || string.IsNullOrEmpty(row);
-            bool bottom = string.Equals(row, "bottom", StringComparison.OrdinalIgnoreCase);
-            string col = column ?? string.Empty;
-
-            if (string.Equals(col, "center", StringComparison.OrdinalIgnoreCase))
-            {
-                // D6: gear + speed are separate hit regions — split center vertically
-                // when row distinguishes; otherwise full center column.
-                if (top && !bottom)
-                    return new Rect(col1 + 3, 3, w1 - 6, topH - 6);
-                if (bottom)
-                    return new Rect(col1 + 3, topH + 3, w1 - 6, botH - 6);
-                return new Rect(col1 + 3, 3, w1 - 6, 118);
-            }
-
-            double x = string.Equals(col, "right", StringComparison.OrdinalIgnoreCase) ? col2 : col0;
-            double w = string.Equals(col, "right", StringComparison.OrdinalIgnoreCase) ? w2 : w0;
-            double y = bottom ? topH : 0;
-            double h = topH;
-            return new Rect(x + 3, y + 3, w - 6, h - 6);
         }
 
         private void RebuildEntrypoints(DisplayPagesFieldsV2Model model)

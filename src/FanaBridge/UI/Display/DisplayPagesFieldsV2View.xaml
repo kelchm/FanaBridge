@@ -96,24 +96,22 @@
                         <!-- PreviewCard -->
                         <Border Background="#2B2B2D" CornerRadius="4" Padding="12" Margin="0,0,0,12">
                             <StackPanel>
-                                <Grid Width="496" Height="124" Background="#000000"
+                                <Grid Width="496" MinHeight="124" Background="#000000"
                                       MouseLeftButtonDown="PreviewChrome_Click">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="198" />
-                                        <ColumnDefinition Width="100" />
-                                        <ColumnDefinition Width="198" />
-                                    </Grid.ColumnDefinitions>
-                                    <Rectangle Grid.Column="0" Fill="Transparent"
-                                               Stroke="#1A1A1A" StrokeThickness="0" />
-                                    <Rectangle Grid.Column="1" Width="1" HorizontalAlignment="Left"
-                                               Fill="#FFFFFF" Opacity="0.15" />
-                                    <Rectangle Grid.Column="1" Width="1" HorizontalAlignment="Right"
-                                               Fill="#FFFFFF" Opacity="0.15" />
-                                    <Canvas x:Name="canvasPreviewHits" Grid.ColumnSpan="3" />
-                                    <TextBlock x:Name="txtPreviewWatermark" Grid.Column="2"
+                                    <!-- ITM pages: the digital twin (values + suffixes,
+                                         interactive field selection). Hosted pages: the
+                                         3-character segment face — the surface their
+                                         content actually writes. -->
+                                    <ui:ItmDisplayMirror x:Name="displayMirror" />
+                                    <ContentControl x:Name="hostSegmentPreview"
+                                                    Visibility="Collapsed"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    Margin="0,16" />
+                                    <TextBlock x:Name="txtPreviewWatermark"
                                                HorizontalAlignment="Right" VerticalAlignment="Top"
                                                Margin="0,4,6,0" FontSize="8" FontFamily="Consolas"
-                                               Foreground="#4A4A4C" />
+                                               Foreground="#4A4A4C" IsHitTestVisible="False" />
                                 </Grid>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                     <TextBlock x:Name="txtPreviewCaption" FontSize="12"

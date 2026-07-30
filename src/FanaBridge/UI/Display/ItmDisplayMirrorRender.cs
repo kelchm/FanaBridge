@@ -148,10 +148,12 @@ namespace FanaBridge.UI.Display
 
         /// <summary>
         /// Layout-only model for a page the live snapshot is not currently on (Pages
-        /// editor pill navigation). Empty values, selection chrome when interactive.
+        /// editor pill navigation). Fields show their hardware dash placeholders —
+        /// plus the authored base suffix when <paramref name="authoredSuffixes"/>
+        /// carries one — with selection chrome when interactive.
         /// </summary>
         public static MirrorModel BuildLayout(ItmPage page, ushort? selectedParamId,
-            bool interactive)
+            bool interactive, IReadOnlyDictionary<ushort, string> authoredSuffixes = null)
         {
             var model = new MirrorModel();
             if (page == ItmPage.Legacy)
@@ -164,12 +166,12 @@ namespace FanaBridge.UI.Display
                 return model;
 
             model.PanelState = MirrorPanelState.Live;
-            AddLayoutSlot(model, ItmSlotPosition.LeftTop, layout.LeftTop, selectedParamId, interactive);
-            AddLayoutSlot(model, ItmSlotPosition.LeftBottom, layout.LeftBottom, selectedParamId, interactive);
-            AddLayoutSlot(model, ItmSlotPosition.RightTop, layout.RightTop, selectedParamId, interactive);
-            AddLayoutSlot(model, ItmSlotPosition.RightBottom, layout.RightBottom, selectedParamId, interactive);
-            model.GearText = "";
-            model.SpeedText = "";
+            AddLayoutSlot(model, ItmSlotPosition.LeftTop, layout.LeftTop, selectedParamId, interactive, authoredSuffixes);
+            AddLayoutSlot(model, ItmSlotPosition.LeftBottom, layout.LeftBottom, selectedParamId, interactive, authoredSuffixes);
+            AddLayoutSlot(model, ItmSlotPosition.RightTop, layout.RightTop, selectedParamId, interactive, authoredSuffixes);
+            AddLayoutSlot(model, ItmSlotPosition.RightBottom, layout.RightBottom, selectedParamId, interactive, authoredSuffixes);
+            model.GearText = ItmValueRenderer.Placeholder(ItmParam.Gear);
+            model.SpeedText = ItmValueRenderer.Placeholder(ItmParam.Speed);
             return model;
         }
 
@@ -197,19 +199,32 @@ namespace FanaBridge.UI.Display
         }
 
         private static void AddLayoutSlot(MirrorModel model, ItmSlotPosition position,
-            ItmDisplaySlot slot, ushort? selectedParamId, bool interactive)
+            ItmDisplaySlot slot, ushort? selectedParamId, bool interactive,
+            IReadOnlyDictionary<ushort, string> authoredSuffixes)
         {
             if (slot == null)
                 return;
             var slotModel = new MirrorSlotModel { Position = position, Label = slot.Label };
             foreach (var field in slot.Fields)
             {
+                string value = ItmValueRenderer.Placeholder(field.ParamId);
+                bool isDot = value == ItmValueRenderer.DrsDotOn
+                    || value == ItmValueRenderer.DrsDotOff;
+                // Spaced-suffix convention ("15 /73") — the authored suffix rides the
+                // placeholder so the preview shows what the field will write.
+                if (!isDot
+                    && authoredSuffixes != null
+                    && authoredSuffixes.TryGetValue(field.ParamId, out string suffix)
+                    && !string.IsNullOrWhiteSpace(suffix))
+                {
+                    value = value + " " + suffix.Trim();
+                }
                 slotModel.Fields.Add(new MirrorFieldModel
                 {
                     ParamId = field.ParamId,
                     Label = field.Label,
-                    Value = "",
-                    IsDot = false,
+                    Value = value,
+                    IsDot = isDot,
                     DotFilled = false,
                     VisualState = FieldVisualState(field.ParamId, selectedParamId, interactive),
                 });

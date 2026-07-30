@@ -180,7 +180,13 @@ namespace FanaBridge.UI.Display
                 selectedPage: selectedPage,
                 stripNote: DisplayCopy.StripHostedNote,
                 previewHits: previewHits,
-                previewCaption: DisplayCopy.PreviewLayoutFixedHint,
+                // Hosted pages preview the 3-char segment surface, and on an ITM
+                // wheel the caption states the Legacy parking consequence.
+                previewCaption: selectedPage != null && !selectedPage.IsItm
+                    ? (isItm
+                        ? DisplayCopy.HostedPreviewCaptionOnItm(catalog?.Itm?.LegacyPageIndex)
+                        : DisplayCopy.HostedPreviewCaptionSegment)
+                    : DisplayCopy.PreviewLayoutFixedHint,
                 previewWatermark: DisplayCopy.PreviewWatermark,
                 focusedParamId: effectiveFocus,
                 filterStateLine: filterStateLine,

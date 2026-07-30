@@ -320,6 +320,9 @@ namespace FanaBridge.UI.Display
                     Height = CanvasHeight / 2,
                     Fill = Brushes.Transparent,
                     Cursor = Cursors.Hand,
+                    // "hit:" tag = the Pages editor's clear-route-3 marker (a click
+                    // here selects a field, never clears focus).
+                    Tag = "hit:" + paramId,
                 };
                 region.MouseLeftButtonUp += (s, e) => SlotClicked?.Invoke(paramId);
                 Canvas.SetLeft(region, left);
