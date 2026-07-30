@@ -132,10 +132,12 @@ namespace FanaBridge.UI.Display
                 return;
 
             // Same law for typing: a non-forced repaint must never yank the manual
-            // seconds box / an open form control out from under the user.
+            // seconds box / an open form control / an open overflow menu's anchor
+            // out from under the user.
             if (!force
                 && (popupEntrypoint.IsOpen
                     || popupPicker.IsOpen
+                    || _overflowMenuOpen
                     || InlineEditGuard.IsEditingWithin(this)))
             {
                 return;
@@ -1139,9 +1141,16 @@ namespace FanaBridge.UI.Display
             Poll(force: true);
         }
 
+        /// <summary>An overflow ContextMenu is open — its popup root is outside the
+        /// view's trees, so the typing guard can't see it; polls must not rebuild
+        /// the anchor button out from under it.</summary>
+        private bool _overflowMenuOpen;
+
         private void OpenOverflowMenu(PriorityRowModel row, Button anchor)
         {
             var menu = new ContextMenu();
+            menu.Opened += (s, e) => _overflowMenuOpen = true;
+            menu.Closed += (s, e) => _overflowMenuOpen = false;
 
             if (row.IsBaseRow)
             {

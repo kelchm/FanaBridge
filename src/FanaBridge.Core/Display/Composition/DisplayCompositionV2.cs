@@ -323,8 +323,19 @@ namespace FanaBridge.Display.Composition
             });
             _lastSeatResult = seatResult;
             // O12 publish: keep aggregates + manual for the UI envelope.
-            _lastAggregates = seatResult.Aggregates ?? Array.Empty<AggregateMembership>();
-            _lastManual = seatResult.Manual;
+            // Reference-stabilized publication: the arbiter allocates these fresh
+            // every tick; consumers (snapshot recompose, UI poll gates) compare by
+            // reference, and an always-new reference is a 10 Hz UI rebuild storm.
+            // Keep the previous instance while the CONTENT is unchanged
+            // (MsSinceLastPress compares at second granularity — the UI shows
+            // seconds; a per-ms 'change' is the same storm through a side door).
+            _lastAggregates = SameAggregatesContent(
+                _lastAggregates, seatResult.Aggregates)
+                    ? _lastAggregates
+                    : seatResult.Aggregates ?? Array.Empty<AggregateMembership>();
+            _lastManual = SameManualContent(_lastManual, seatResult.Manual)
+                ? _lastManual
+                : seatResult.Manual;
 
             // ── 3. Wheel-screen dismissal latch (same press carrier as E4) ─
             bool pressThisTick = manual.HasValue || _pendingPressLastTick;
@@ -584,6 +595,61 @@ namespace FanaBridge.Display.Composition
 
             // Uncataloged adopt (ManualNavigation(null)).
             return SeatManualInput.NavigateUnknownPage();
+        }
+
+        private static bool SameManualContent(ManualRowState a, ManualRowState b)
+        {
+            if (ReferenceEquals(a, b))
+                return true;
+            if (a == null || b == null)
+                return false;
+            return string.Equals(a.RememberedDestinationId, b.RememberedDestinationId, StringComparison.Ordinal)
+                && a.HasRememberedTarget == b.HasRememberedTarget
+                && string.Equals(a.LandingDestinationId, b.LandingDestinationId, StringComparison.Ordinal)
+                && a.OwnsDisplay == b.OwnsDisplay
+                && a.ReturnedToRest == b.ReturnedToRest
+                && a.AdoptedUnknownPage == b.AdoptedUnknownPage
+                // Second granularity — the UI renders seconds.
+                && (a.MsSinceLastPress / 1000) == (b.MsSinceLastPress / 1000);
+        }
+
+        private static bool SameAggregatesContent(
+            IReadOnlyList<AggregateMembership> a,
+            IReadOnlyList<AggregateMembership> b)
+        {
+            if (ReferenceEquals(a, b))
+                return true;
+            int countA = a?.Count ?? 0;
+            int countB = b?.Count ?? 0;
+            if (countA != countB)
+                return false;
+            for (int i = 0; i < countA; i++)
+            {
+                var x = a[i];
+                var y = b[i];
+                if (ReferenceEquals(x, y))
+                    continue;
+                if (x == null || y == null)
+                    return false;
+                if (!string.Equals(x.SeatId, y.SeatId, StringComparison.Ordinal)
+                    || !string.Equals(x.DestinationId, y.DestinationId, StringComparison.Ordinal)
+                    || !string.Equals(x.DerivedCarrierId, y.DerivedCarrierId, StringComparison.Ordinal)
+                    || x.ActiveCount != y.ActiveCount
+                    || x.TotalCount != y.TotalCount
+                    || x.MembershipDegraded != y.MembershipDegraded)
+                    return false;
+                var mx = x.MemberCarrierIds;
+                var my = y.MemberCarrierIds;
+                int mc = mx?.Count ?? 0;
+                if (mc != (my?.Count ?? 0))
+                    return false;
+                for (int m = 0; m < mc; m++)
+                {
+                    if (!string.Equals(mx[m], my[m], StringComparison.Ordinal))
+                        return false;
+                }
+            }
+            return true;
         }
 
         private string ResolveSegmentHostedPageId(string displayedDestinationId)

@@ -255,12 +255,11 @@ namespace FanaBridge.UI.Display
             // steal focus) 10×/s. Content comparison — ignoring the tick stamp —
             // passes only real arbitration changes through.
             // Manual / Aggregates / InGame are envelope facts the views render too —
-            // the runtime keeps their references stable while unchanged, so reference
-            // compares are exact (they were invisible behind the old always-new
-            // snapshot reference; the content gate must carry them explicitly).
-            bool changed = force
-                || !ReferenceEquals(values, _lastValues)
-                || !SameComposedContent(composed, _lastComposed)
+            // the runtime keeps their references CONTENT-stable (composition
+            // stabilizes them; a fresh-per-tick reference here is the rebuild storm).
+            bool valuesChanged = !ReferenceEquals(values, _lastValues);
+            bool otherChanged =
+                !SameComposedContent(composed, _lastComposed)
                 || !ReferenceEquals(config, _lastConfig)
                 || _lastDisplayType != displayType
                 || !string.Equals(status, _lastStatus, StringComparison.Ordinal)
@@ -276,22 +275,29 @@ namespace FanaBridge.UI.Display
             _lastManual = envelope?.Manual;
             _lastAggregates = envelope?.Aggregates;
             _lastInGame = envelope?.InGame ?? false;
-            if (!changed)
+            if (!force && !valuesChanged && !otherChanged)
                 return;
 
+            // Live VALUES tick ~10 Hz in game but only the mirror-bearing views
+            // render them (Overview / Pages & Fields). Values-only ticks must not
+            // rebuild the interaction-heavy views — that resets hovers, swallows
+            // clicks, and closes dropdowns mid-press.
             switch (_currentView)
             {
                 case TabView.Diagnostics:
-                    viewDiagnostics.Poll(force: force);
+                    if (force || otherChanged)
+                        viewDiagnostics.Poll(force: force);
                     break;
                 case TabView.Priority:
-                    viewPriorityV2.Poll(force: force);
+                    if (force || otherChanged)
+                        viewPriorityV2.Poll(force: force);
                     break;
                 case TabView.PagesFields:
                     viewPagesFieldsV2.Poll(force: force);
                     break;
                 case TabView.AddPage:
-                    viewAddPageV2.Poll(force: force);
+                    if (force || otherChanged)
+                        viewAddPageV2.Poll(force: force);
                     break;
                 default:
                     viewOverviewV2.Poll(force: force);
