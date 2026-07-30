@@ -313,11 +313,13 @@ namespace FanaBridge.UI.Display
                     var pCond = patch.Condition;
                     if (pCond.Source != null)
                         MergeValueSource(tCond, pCond.Source);
-                    if (pCond.Operator.HasValue
-                        && pCond.Operator.Value != ConditionOperator.Unknown)
-                        tCond.Operator = pCond.Operator;
-                    if (pCond.Value.HasValue)
-                        tCond.Value = pCond.Value;
+                    // Operator/Value copy UNCONDITIONALLY (ApplySummonEdits law):
+                    // the layer form always authors the whole condition, and a null
+                    // must CLEAR — switching a level layer to onChange would
+                    // otherwise leave the stale operator behind and the validator
+                    // degrades onChange + operator.
+                    tCond.Operator = pCond.Operator;
+                    tCond.Value = pCond.Value;
                     if (pCond.Hysteresis != null)
                         tCond.Hysteresis = pCond.Hysteresis;
                 }
@@ -2310,9 +2312,14 @@ namespace FanaBridge.UI.Display
             }
             if (patchLife.DurationMsPresent)
                 existing.DurationMs = patchLife.DurationMs;
-            // Direction / Then / ExtensionData: leave existing when patch is sparse
-            // (form never authors them). Only overwrite when the patch supplies them.
-            if (!string.IsNullOrEmpty(patchLife.DirectionRaw)
+            // Direction: an OnChange patch ALWAYS authors it (the 5f form has a
+            // direction choice — Any must be able to clear a stale up/down). Other
+            // kinds keep the sparse rule: only overwrite when supplied.
+            if (patchLife.Kind == LifetimeKind.OnChange)
+            {
+                existing.Direction = patchLife.Direction;
+            }
+            else if (!string.IsNullOrEmpty(patchLife.DirectionRaw)
                 || (patchLife.Direction != ChangeDirection.Any
                     && patchLife.Direction != ChangeDirection.Unknown))
             {

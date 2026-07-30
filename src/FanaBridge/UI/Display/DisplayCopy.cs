@@ -1866,6 +1866,12 @@ namespace FanaBridge.UI.Display
         public const string RotationStripNote =
             "Selection and order share the strip: the filled button is the page you are editing, the numeral is where the paddles find it, and a page past the divider has no step at all.";
 
+        /// <summary>OnChange detail row: shown-window prefix ("shows for [N] s each change").</summary>
+        public const string OnChangeShowsForPrefix = "shows for";
+
+        /// <summary>OnChange detail row: shown-window suffix.</summary>
+        public const string OnChangeShowsForSuffix = "s each change";
+
         /// <summary>Priority row overflow: move one rank up the ladder.</summary>
         public const string MoveUpTheLadder = "Move up";
 

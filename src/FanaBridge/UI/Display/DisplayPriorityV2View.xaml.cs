@@ -45,6 +45,9 @@ namespace FanaBridge.UI.Display
         private ValueSourceKind _epSourceKind = ValueSourceKind.SimHubProperty;
         private LifetimeKind _epLifetimeKind = LifetimeKind.WhileTrue;
         private int _epDurationMs = Lifetime.DefaultDurationMs;
+        /// <summary>OnChange edge direction (5f detail row; Any = any change).</summary>
+        private ChangeDirection _epChangeDirection = ChangeDirection.Any;
+        private StackPanel _panelEpOnChange;
         /// <summary>Q10: last Manual timer seconds shown — survives uncheck across Poll rebuilds.</summary>
         private int _rememberedManualSeconds = 30;
         private PriorityRowModel _dragRow;
@@ -1775,6 +1778,7 @@ namespace FanaBridge.UI.Display
             _epSourceKind = ValueSourceKind.SimHubProperty;
             _epLifetimeKind = LifetimeKind.WhileTrue;
             _epDurationMs = Lifetime.DefaultDurationMs;
+            _epChangeDirection = ChangeDirection.Any;
 
             string pageLabel = row.PageName;
             if (row.Destination.Badges.Count > 0)
@@ -1824,6 +1828,9 @@ namespace FanaBridge.UI.Display
                             _epLifetimeKind = sum.Lifetime.Kind;
                             if (sum.Lifetime.DurationMsPresent)
                                 _epDurationMs = sum.Lifetime.DurationMs;
+                            if (sum.Lifetime.Direction == ChangeDirection.Up
+                                || sum.Lifetime.Direction == ChangeDirection.Down)
+                                _epChangeDirection = sum.Lifetime.Direction;
                         }
                         break;
                     }
@@ -2005,7 +2012,109 @@ namespace FanaBridge.UI.Display
                 _epDurationMs > 0 ? _epDurationMs : Lifetime.DefaultDurationMs);
             AddLifetimeRadio(LifetimeKind.UntilDismissed, 0);
             AddLifetimeRadio(LifetimeKind.OnChange, 0);
+            BuildOnChangeDetail();
             UpdateUntilDismissedCard();
+            UpdateConditionInputsForLifetime();
+        }
+
+        /// <summary>
+        /// OnChange detail (shown while selected): edge direction + the shown window.
+        /// Edge summons compare NOTHING — the operator/value inputs hide; only the
+        /// subject, the direction, and how long the page shows per change remain.
+        /// </summary>
+        private void BuildOnChangeDetail()
+        {
+            _panelEpOnChange = new StackPanel
+            {
+                Margin = new Thickness(24, 2, 0, 4),
+                Visibility = Visibility.Collapsed,
+            };
+
+            var direction = new SegmentedControl
+            {
+                SegmentPadding = new Thickness(10, 4, 10, 4),
+                SegmentFontSize = 11.5,
+                OuterCornerRadius = 4,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 0, 0, 6),
+            };
+            direction.SetItems(new (string, string)[]
+            {
+                ("any", DisplayCopy.OpChanges),
+                ("up", DisplayCopy.OpIncreases),
+                ("down", DisplayCopy.OpDecreases),
+            });
+            direction.SelectedId = _epChangeDirection == ChangeDirection.Up
+                ? "up"
+                : (_epChangeDirection == ChangeDirection.Down ? "down" : "any");
+            direction.SelectionChanged += (s, id) =>
+            {
+                if (_suppressEvents) return;
+                _epChangeDirection = id == "up"
+                    ? ChangeDirection.Up
+                    : (id == "down" ? ChangeDirection.Down : ChangeDirection.Any);
+                RefreshEntrypointSentence();
+            };
+            _panelEpOnChange.Children.Add(direction);
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(new TextBlock
+            {
+                Text = DisplayCopy.OnChangeShowsForPrefix,
+                FontSize = 12.5,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xC8, 0xC8)),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            var seconds = new TextBox
+            {
+                Text = Math.Max(1, (_epDurationMs + 500) / 1000)
+                    .ToString(CultureInfo.InvariantCulture),
+                Width = 40,
+                Padding = new Thickness(4, 2, 4, 2),
+                Margin = new Thickness(6, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Background = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x20)),
+                Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xE6, 0xE6)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x54, 0x54, 0x56)),
+            };
+            seconds.TextChanged += (s, e) =>
+            {
+                if (_suppressEvents) return;
+                if (int.TryParse(seconds.Text, NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out int sec) && sec > 0)
+                {
+                    _epDurationMs = sec * 1000;
+                    RefreshEntrypointSentence();
+                }
+            };
+            row.Children.Add(seconds);
+            row.Children.Add(new TextBlock
+            {
+                Text = DisplayCopy.OnChangeShowsForSuffix,
+                FontSize = 12.5,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xC8, 0xC8)),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            _panelEpOnChange.Children.Add(row);
+            panelEpLifetime.Children.Add(_panelEpOnChange);
+        }
+
+        /// <summary>
+        /// Edge summons compare nothing: hide the operator/value/unit inputs while
+        /// OnChange is selected (the validator DEGRADES onChange + operator; the
+        /// form must not even suggest one).
+        /// </summary>
+        private void UpdateConditionInputsForLifetime()
+        {
+            bool edge = _epLifetimeKind == LifetimeKind.OnChange;
+            var vis = edge ? Visibility.Collapsed : Visibility.Visible;
+            if (cmbEpOperator != null) cmbEpOperator.Visibility = vis;
+            if (txtEpValue != null) txtEpValue.Visibility = vis;
+            if (txtEpUnit != null) txtEpUnit.Visibility = vis;
+            if (_panelEpOnChange != null)
+                _panelEpOnChange.Visibility = edge
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
         }
 
         private void AddLifetimeRadio(LifetimeKind kind, int durationMs)
@@ -2026,6 +2135,7 @@ namespace FanaBridge.UI.Display
             {
                 _epLifetimeKind = kind;
                 UpdateUntilDismissedCard();
+                UpdateConditionInputsForLifetime();
                 RefreshEntrypointSentence();
             };
             panelEpLifetime.Children.Add(rb);
@@ -2087,6 +2197,7 @@ namespace FanaBridge.UI.Display
                         CultureInfo.InvariantCulture, out int sec) && sec > 0)
                     _epDurationMs = sec * 1000;
                 UpdateUntilDismissedCard();
+                UpdateConditionInputsForLifetime();
                 RefreshEntrypointSentence();
             };
             secondsBox.LostFocus += (s, e) =>
@@ -2118,11 +2229,22 @@ namespace FanaBridge.UI.Display
             if (string.IsNullOrEmpty(source)
                 && !string.IsNullOrWhiteSpace(txtEpSourcePath?.Text))
                 source = txtEpSourcePath.Text.Trim();
+            string core;
+            if (_epLifetimeKind == LifetimeKind.OnChange)
+            {
+                // Edge grammar: "<subject> changes/increases/decreases · for N s".
+                core = DisplayCopy.ConditionChangeSentence(
+                        source, DisplayCopy.ChangeDirectionPhrase(_epChangeDirection))
+                    + DisplayCopy.LifetimeLadderSuffix(
+                        LifetimeKind.ForDuration, _epDurationMs);
+                txtEpSentence.Text = core;
+                return;
+            }
+
             string op = cmbEpOperator.SelectedItem as string ?? DisplayCopy.OpBelow;
             string val = txtEpValue.Text?.Trim() ?? string.Empty;
             if (!string.IsNullOrEmpty(txtEpUnit?.Text))
                 val = (val + " " + txtEpUnit.Text.Trim()).Trim();
-            string core;
             if (op == DisplayCopy.OpIsOn || op == DisplayCopy.OpIsOff)
                 core = DisplayCopy.ConditionBoolSentence(source, op);
             else
@@ -2211,6 +2333,37 @@ namespace FanaBridge.UI.Display
 
         private Summon BuildSummonFromForm()
         {
+            // Edge summon: condition = the SUBJECT alone. Operator/value must be
+            // absent (the validator degrades onChange + operator); direction and the
+            // shown window live on the lifetime.
+            if (_epLifetimeKind == LifetimeKind.OnChange)
+            {
+                var edgeLifetime = new Lifetime
+                {
+                    Kind = LifetimeKind.OnChange,
+                    DurationMs = _epDurationMs,
+                    Direction = _epChangeDirection,
+                };
+                return new Summon
+                {
+                    Id = _epIsNew ? null : _epSummonId,
+                    Condition = new FanaBridge.Display.Schema2.Condition
+                    {
+                        Source = new FanaBridge.Display.Schema2.ValueSource
+                        {
+                            Kind = _epSourceKind == ValueSourceKind.Unknown
+                                ? ValueSourceKind.SimHubProperty
+                                : _epSourceKind,
+                            Name = txtEpSourcePath?.Text?.Trim() ?? string.Empty,
+                        },
+                        Operator = null,
+                        Value = null,
+                    },
+                    Lifetime = edgeLifetime,
+                    Enabled = _epEnabled,
+                };
+            }
+
             string opText = cmbEpOperator.SelectedItem as string ?? DisplayCopy.OpBelow;
             ConditionOperator op = ConditionOperator.LessThan;
             if (opText == DisplayCopy.OpAtOrBelow) op = ConditionOperator.LessOrEqual;

@@ -419,6 +419,121 @@ namespace FanaBridge.Tests.UI.Display
         }
 
         [Fact]
+        public void UpdateSummon_SwitchToOnChange_ClearsTheOperator()
+        {
+            // The validator degrades onChange + operator; switching a level summon
+            // to edge must clear the operator/value through the merge (and the
+            // OnChange lifetime always authors direction — Any clears a stale up).
+            var session = DisplayConfigV2EditSession.Open(SeedLive());
+            session.AddSummon("seat-2", new Summon
+            {
+                Condition = new Condition
+                {
+                    Source = new ValueSource
+                    {
+                        Kind = ValueSourceKind.BuiltIn,
+                        Name = BuiltInProperties.BrakeBias,
+                    },
+                    Operator = ConditionOperator.LessThan,
+                    Value = 50,
+                },
+                Lifetime = new Lifetime
+                {
+                    Kind = LifetimeKind.OnChange,
+                    Direction = ChangeDirection.Up,
+                },
+            });
+            var added = session.Document.Priority.Rows
+                .First(r => r.Id == "seat-2").Summons[0];
+
+            session.UpdateSummon("seat-2", added.Id, new Summon
+            {
+                Condition = new Condition
+                {
+                    Source = new ValueSource
+                    {
+                        Kind = ValueSourceKind.BuiltIn,
+                        Name = BuiltInProperties.BrakeBias,
+                    },
+                    Operator = null,
+                    Value = null,
+                },
+                Lifetime = new Lifetime
+                {
+                    Kind = LifetimeKind.OnChange,
+                    DurationMs = 4000,
+                    Direction = ChangeDirection.Any,
+                },
+            });
+
+            var updated = session.Document.Priority.Rows
+                .First(r => r.Id == "seat-2").Summons[0];
+            Assert.Null(updated.Condition.Operator);
+            Assert.Null(updated.Condition.Value);
+            Assert.Equal(LifetimeKind.OnChange, updated.Lifetime.Kind);
+            Assert.Equal(4000, updated.Lifetime.DurationMs);
+            Assert.Equal(ChangeDirection.Any, updated.Lifetime.Direction);
+        }
+
+        [Fact]
+        public void UpdateLayer_SwitchToOnChange_ClearsTheOperator()
+        {
+            var live = SeedLive();
+            live.Pages.Add(new PageEntry
+            {
+                Kind = PageEntryKind.HostedPage,
+                Id = "alerts",
+                Name = "Alerts",
+                Layers = new List<LayerEntry>
+                {
+                    new LayerEntry
+                    {
+                        Id = "l1",
+                        Condition = new Condition
+                        {
+                            Source = new ValueSource
+                            {
+                                Kind = ValueSourceKind.BuiltIn,
+                                Name = BuiltInProperties.Gear,
+                            },
+                            Operator = ConditionOperator.Equals,
+                            Value = 3,
+                        },
+                        Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                    },
+                },
+            });
+            var session = DisplayConfigV2EditSession.Open(live);
+
+            session.UpdateLayer("alerts", "l1", new LayerEntry
+            {
+                Condition = new Condition
+                {
+                    Source = new ValueSource
+                    {
+                        Kind = ValueSourceKind.BuiltIn,
+                        Name = BuiltInProperties.Gear,
+                    },
+                    Operator = null,
+                    Value = null,
+                },
+                Lifetime = new Lifetime
+                {
+                    Kind = LifetimeKind.OnChange,
+                    DurationMs = 2000,
+                },
+                Enabled = true,
+            });
+
+            var layer = session.Document.Pages
+                .First(p => p.Kind == PageEntryKind.HostedPage && p.Id == "alerts")
+                .Layers[0];
+            Assert.Null(layer.Condition.Operator);
+            Assert.Null(layer.Condition.Value);
+            Assert.Equal(LifetimeKind.OnChange, layer.Lifetime.Kind);
+        }
+
+        [Fact]
         public void AddSummon_AppendsWithGeneratedId()
         {
             var session = DisplayConfigV2EditSession.Open(SeedLive());

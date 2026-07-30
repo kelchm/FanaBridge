@@ -728,6 +728,7 @@ namespace FanaBridge.UI.Display
                 ("while", DisplayCopy.LifetimeFormLabel(LifetimeKind.WhileTrue, 0)),
                 ("for", DisplayCopy.LifetimeFormLabel(LifetimeKind.ForDuration, 0)),
                 ("dismiss", DisplayCopy.LifetimeFormLabel(LifetimeKind.UntilDismissed, 0)),
+                ("change", DisplayCopy.LifetimeFormLabel(LifetimeKind.OnChange, 0)),
             });
             segLayerLifetime.SelectedId = "while";
             segLayerLifetime.SelectionChanged += (s, id) =>
@@ -735,8 +736,11 @@ namespace FanaBridge.UI.Display
                 if (_suppressEvents) return;
                 _layerLifetimeKind = id == "for"
                     ? LifetimeKind.ForDuration
-                    : (id == "dismiss" ? LifetimeKind.UntilDismissed : LifetimeKind.WhileTrue);
+                    : (id == "dismiss"
+                        ? LifetimeKind.UntilDismissed
+                        : (id == "change" ? LifetimeKind.OnChange : LifetimeKind.WhileTrue));
                 UpdateLayerSecondsVisibility();
+                UpdateLayerCondValueVisibility();
             };
             txtLayerSeconds.TextChanged += (s, e) =>
             {
@@ -776,13 +780,24 @@ namespace FanaBridge.UI.Display
 
         private void UpdateLayerSecondsVisibility()
         {
-            bool timed = _layerLifetimeKind == LifetimeKind.ForDuration;
+            // OnChange takes the shown window too (for N s each change).
+            bool timed = _layerLifetimeKind == LifetimeKind.ForDuration
+                || _layerLifetimeKind == LifetimeKind.OnChange;
             txtLayerSeconds.Visibility = timed ? Visibility.Visible : Visibility.Collapsed;
             txtLayerSecondsUnit.Visibility = timed ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void UpdateLayerCondValueVisibility()
         {
+            // Edge layers compare nothing: operator + value hide with OnChange
+            // (the validator degrades onChange + operator).
+            if (_layerLifetimeKind == LifetimeKind.OnChange)
+            {
+                cmbLayerOperator.Visibility = Visibility.Collapsed;
+                txtLayerCondValue.Visibility = Visibility.Collapsed;
+                return;
+            }
+            cmbLayerOperator.Visibility = Visibility.Visible;
             var op = OperatorFromFormLabel(cmbLayerOperator.SelectedItem as string);
             bool isBool = op == ConditionOperator.IsTrue || op == ConditionOperator.IsFalse;
             txtLayerCondValue.Visibility = isBool ? Visibility.Collapsed : Visibility.Visible;
@@ -1713,7 +1728,9 @@ namespace FanaBridge.UI.Display
                 _layerLifetimeKind = life.Kind == LifetimeKind.Unknown
                     ? LifetimeKind.WhileTrue
                     : life.Kind;
-                if (life.Kind == LifetimeKind.ForDuration && life.DurationMs > 0)
+                if ((life.Kind == LifetimeKind.ForDuration
+                        || life.Kind == LifetimeKind.OnChange)
+                    && life.DurationMs > 0)
                 {
                     _layerDurationMs = life.DurationMs;
                     txtLayerSeconds.Text = PresentationSeconds(_layerDurationMs)
@@ -1723,7 +1740,9 @@ namespace FanaBridge.UI.Display
             segLayerLifetime.SelectedId =
                 _layerLifetimeKind == LifetimeKind.ForDuration
                     ? "for"
-                    : (_layerLifetimeKind == LifetimeKind.UntilDismissed ? "dismiss" : "while");
+                    : (_layerLifetimeKind == LifetimeKind.UntilDismissed
+                        ? "dismiss"
+                        : (_layerLifetimeKind == LifetimeKind.OnChange ? "change" : "while"));
 
             chkLayerEntrypoint.IsChecked =
                 existing.ActsAsEntrypoint && !existing.ActsAsEntrypointIgnored;
@@ -1764,15 +1783,22 @@ namespace FanaBridge.UI.Display
                     Text = txtLayerContent.Text ?? string.Empty,
                 };
 
-            var op = OperatorFromFormLabel(cmbLayerOperator.SelectedItem as string);
+            // Edge layers compare nothing — operator/value stay absent (the validator
+            // degrades onChange + operator).
+            ConditionOperator? op = null;
             double? value = null;
-            if (op != ConditionOperator.IsTrue && op != ConditionOperator.IsFalse
-                && double.TryParse(txtLayerCondValue.Text, NumberStyles.Float,
-                    CultureInfo.InvariantCulture, out double v))
-                value = v;
+            if (_layerLifetimeKind != LifetimeKind.OnChange)
+            {
+                op = OperatorFromFormLabel(cmbLayerOperator.SelectedItem as string);
+                if (op != ConditionOperator.IsTrue && op != ConditionOperator.IsFalse
+                    && double.TryParse(txtLayerCondValue.Text, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out double v))
+                    value = v;
+            }
 
             var lifetime = new Lifetime { Kind = _layerLifetimeKind };
-            if (_layerLifetimeKind == LifetimeKind.ForDuration)
+            if (_layerLifetimeKind == LifetimeKind.ForDuration
+                || _layerLifetimeKind == LifetimeKind.OnChange)
                 lifetime.DurationMs = _layerDurationMs;
 
             var patch = new LayerEntry
