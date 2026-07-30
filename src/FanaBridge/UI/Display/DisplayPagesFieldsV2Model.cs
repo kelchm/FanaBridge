@@ -904,7 +904,8 @@ namespace FanaBridge.UI.Display
                 baseBlock: baseModel,
                 offeredFormats: offered == null || offered.Count == 0
                     ? NoFormats
-                    : offered);
+                    : offered,
+                suffixWidth: def?.Suffix?.Supported == false ? 0 : def?.Suffix?.Width);
         }
 
         private static PagesFieldsOverrideRowModel ProjectOverrideRow(
@@ -978,6 +979,10 @@ namespace FanaBridge.UI.Display
                             "{0} suffix chars",
                             def.Suffix.Width.Value));
                 }
+                else if (def.Suffix.Supported == true)
+                {
+                    parts.Add(DisplayCopy.SuffixWidthUntested);
+                }
             }
             if (def.Value != null)
             {
@@ -995,16 +1000,15 @@ namespace FanaBridge.UI.Display
         {
             var def = CatalogFields.FindDefinitionByParam(catalog, paramId);
             if (def == null) return null;
-            int suffixChars = def.Suffix?.Width ?? 0;
-            if (def.Suffix?.Supported == false)
-                suffixChars = 0;
             string valueKind = def.Value?.Numeric == true
                 ? DisplayCopy.ValueKindNumbers
                 : (def.Value?.Ascii == true
                     ? DisplayCopy.ValueKindText
                     : DisplayCopy.ValueKindNumbers);
             string name = FieldDisplayNameFromDef(def);
-            if (suffixChars == 0)
+
+            // Honest tri-state: no region / measured width / supported-but-unmeasured.
+            if (def.Suffix?.Supported == false)
             {
                 return string.Format(
                     CultureInfo.InvariantCulture,
@@ -1013,7 +1017,28 @@ namespace FanaBridge.UI.Display
                     DisplayCopy.NoSuffixRegion,
                     valueKind);
             }
-            return DisplayCopy.ThisWheelEnvelope(name, suffixChars, valueKind);
+            int? suffixChars = def.Suffix?.Width;
+            if (!suffixChars.HasValue)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}: {1}; its value region takes {2}.",
+                    name,
+                    def.Suffix?.Supported == true
+                        ? DisplayCopy.SuffixWidthUntested
+                        : DisplayCopy.SuffixRegionUntested,
+                    valueKind);
+            }
+            if (suffixChars.Value == 0)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}: {1}; its value region takes {2}.",
+                    name,
+                    DisplayCopy.NoSuffixRegion,
+                    valueKind);
+            }
+            return DisplayCopy.ThisWheelEnvelope(name, suffixChars.Value, valueKind);
         }
 
         // ── Entrypoints to this page ─────────────────────────────────────
@@ -1402,8 +1427,10 @@ namespace FanaBridge.UI.Display
             string inertReason,
             IReadOnlyList<PagesFieldsOverrideRowModel> overrides,
             PagesFieldsBaseBlockModel baseBlock,
-            IReadOnlyList<string> offeredFormats)
+            IReadOnlyList<string> offeredFormats,
+            int? suffixWidth = null)
         {
+            SuffixWidth = suffixWidth;
             ParamId = paramId;
             LogicalId = logicalId;
             DisplayName = displayName;
@@ -1439,6 +1466,13 @@ namespace FanaBridge.UI.Display
         public IReadOnlyList<PagesFieldsOverrideRowModel> Overrides { get; }
         public PagesFieldsBaseBlockModel BaseBlock { get; }
         public IReadOnlyList<string> OfferedFormats { get; }
+
+        /// <summary>
+        /// Measured suffix width from the catalog: 0 = no region, positive = clamp
+        /// inputs to it (law 10), null = untested — inputs stay unclamped and the
+        /// wire ceiling applies.
+        /// </summary>
+        public int? SuffixWidth { get; }
     }
 
     public sealed class PagesFieldsOverrideRowModel

@@ -50,7 +50,6 @@
         "firmwareLabel": "LAPS:",
         "suffix": {
           "supported": true,
-          "width": 5,
           "provisional": true
         },
         "value": {
@@ -67,7 +66,6 @@
         "firmwareLabel": "POSITION:",
         "suffix": {
           "supported": true,
-          "width": 5,
           "provisional": true
         },
         "value": {
@@ -116,7 +114,6 @@
         "firmwareLabel": "FUEL:",
         "suffix": {
           "supported": true,
-          "width": 5,
           "provisional": true
         },
         "value": {

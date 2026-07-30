@@ -1856,6 +1856,12 @@ namespace FanaBridge.UI.Display
         /// <summary>No-suffix capability note (TC/ABS).</summary>
         public const string NoSuffixRegion = "no suffix region";
 
+        /// <summary>Capability note: suffix confirmed, width not yet measured.</summary>
+        public const string SuffixWidthUntested = "suffix supported (width untested)";
+
+        /// <summary>Capability note: suffix region itself untested on this wheel.</summary>
+        public const string SuffixRegionUntested = "suffix untested";
+
         /// <summary>Rotation step absent marker (—).</summary>
         public const string RotationStepAbsent = "—";
 

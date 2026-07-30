@@ -335,6 +335,8 @@ namespace FanaBridge.UI.Display
             PagesFieldsFieldSectionModel section = FindSection(paramId);
             if (section != null)
                 fieldName = section.DisplayName;
+            // Law 10: the form's suffix input clamps like the base-block one.
+            txtOvSuffixContent.MaxLength = SuffixInputMaxLength(section?.SuffixWidth);
 
             txtOvFieldName.Text = fieldName.ToUpperInvariant();
             txtOvPageBadge.Text = _model.SelectedPage?.Badge ?? string.Empty;
@@ -1459,6 +1461,15 @@ namespace FanaBridge.UI.Display
             return border;
         }
 
+        /// <summary>
+        /// Suffix input clamp: measured width when known, wire ceiling otherwise.
+        /// Width 0 (no region) keeps the ceiling — the composer gates it anyway.
+        /// </summary>
+        private static int SuffixInputMaxLength(int? suffixWidth)
+            => suffixWidth.HasValue && suffixWidth.Value > 0
+                ? suffixWidth.Value
+                : FanaBridge.Protocol.ItmEncoder.MaxSuffixLength;
+
         private Button MakeTinyButton(string label, Action onClick)
         {
             var btn = new Button
@@ -1619,6 +1630,9 @@ namespace FanaBridge.UI.Display
                     BorderBrush = Freeze(new SolidColorBrush(Color.FromRgb(0x45, 0x45, 0x47))),
                     Padding = new Thickness(4, 2, 4, 2),
                     Margin = new Thickness(0, 2, 0, 2),
+                    // Law 10: over-length content cannot exist — the input clamps to
+                    // the measured width, else the wire ceiling.
+                    MaxLength = SuffixInputMaxLength(section.SuffixWidth),
                 };
                 suffixBox.LostKeyboardFocus += (s, e) =>
                 {
