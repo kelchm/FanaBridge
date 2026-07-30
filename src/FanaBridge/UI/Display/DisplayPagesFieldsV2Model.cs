@@ -923,7 +923,7 @@ namespace FanaBridge.UI.Display
                 }
             }
 
-            var baseModel = ProjectBase(entry?.Base, offered);
+            var baseModel = ProjectBase(entry?.Base, offered, paramId, aliases);
 
             return new PagesFieldsFieldSectionModel(
                 paramId: paramId,
@@ -990,14 +990,32 @@ namespace FanaBridge.UI.Display
         }
 
         private static PagesFieldsBaseBlockModel ProjectBase(
-            FieldBase bas, IReadOnlyList<string> offeredFormats)
+            FieldBase bas, IReadOnlyList<string> offeredFormats,
+            ushort paramId, AliasTable aliases)
         {
+            // Unmodified base: state the built-in default the engine actually reads
+            // (humanized through the alias table) — never a bare dash.
+            string defaultLabel = null;
+            if (bas?.Source == null
+                && FanaBridge.Display.Rules.FieldDefaults.TryGetBuiltInDefault(
+                    paramId, out string builtInName))
+            {
+                defaultLabel = ConditionSentence.ResolveSource(
+                    new ValueSource
+                    {
+                        Kind = ValueSourceKind.BuiltIn,
+                        Name = builtInName,
+                    },
+                    aliases);
+            }
+
             return new PagesFieldsBaseBlockModel(
                 sourceName: bas?.Source?.Name,
                 sourceKind: bas?.Source?.Kind ?? ValueSourceKind.Unknown,
                 format: bas?.Format,
                 baseSuffix: bas?.BaseSuffix,
-                offeredFormats: offeredFormats ?? NoFormats);
+                offeredFormats: offeredFormats ?? NoFormats,
+                defaultSourceLabel: defaultLabel);
         }
 
         private static string BuildCapabilityHint(CatalogFieldDefinition def)
@@ -1638,7 +1656,8 @@ namespace FanaBridge.UI.Display
     {
         public PagesFieldsBaseBlockModel(
             string sourceName, ValueSourceKind sourceKind, string format,
-            string baseSuffix, IReadOnlyList<string> offeredFormats)
+            string baseSuffix, IReadOnlyList<string> offeredFormats,
+            string defaultSourceLabel = null)
         {
             SourceName = sourceName;
             SourceKind = sourceKind;
@@ -1646,6 +1665,7 @@ namespace FanaBridge.UI.Display
             BaseSuffix = baseSuffix;
             OfferedFormats = offeredFormats
                 ?? new ReadOnlyCollection<string>(Array.Empty<string>());
+            DefaultSourceLabel = defaultSourceLabel;
         }
 
         public string SourceName { get; }
@@ -1653,6 +1673,17 @@ namespace FanaBridge.UI.Display
         public string Format { get; }
         public string BaseSuffix { get; }
         public IReadOnlyList<string> OfferedFormats { get; }
+
+        /// <summary>
+        /// Humanized built-in default the field reads when no Base is authored
+        /// (display-only — never round-trips into an authored Source). Null when a
+        /// Base exists or the param has no built-in encoder.
+        /// </summary>
+        public string DefaultSourceLabel { get; }
+
+        /// <summary>True when the What-it-reads row shows the built-in default.</summary>
+        public bool IsDefaultSource =>
+            string.IsNullOrEmpty(SourceName) && !string.IsNullOrEmpty(DefaultSourceLabel);
     }
 
     public sealed class PagesFieldsEntrypointRowModel

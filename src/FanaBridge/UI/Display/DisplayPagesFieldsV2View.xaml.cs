@@ -1015,7 +1015,8 @@ namespace FanaBridge.UI.Display
                     sb.Append(bas.SourceName).Append(s)
                         .Append((int)bas.SourceKind).Append(s)
                         .Append(bas.Format).Append(s)
-                        .Append(bas.BaseSuffix).Append(s);
+                        .Append(bas.BaseSuffix).Append(s)
+                        .Append(bas.DefaultSourceLabel).Append(s);
                 }
                 var ovs = sec.Overrides;
                 for (int o = 0; o < ovs.Count; o++)
@@ -1757,7 +1758,11 @@ namespace FanaBridge.UI.Display
             {
                 stack.Children.Add(new TextBlock
                 {
-                    Text = section.BaseBlock?.SourceName ?? string.Empty,
+                    Text = string.IsNullOrEmpty(section.BaseBlock?.SourceName)
+                        ? (section.BaseBlock?.DefaultSourceLabel != null
+                            ? DisplayCopy.BuiltInDefaultSource(section.BaseBlock.DefaultSourceLabel)
+                            : string.Empty)
+                        : section.BaseBlock.SourceName,
                     FontSize = 12,
                     Foreground = BodyFg,
                 });
@@ -1779,12 +1784,20 @@ namespace FanaBridge.UI.Display
                     FontSize = 11,
                     Foreground = MutedFg,
                 });
+                // Unauthored base states the built-in default it actually reads
+                // (display-only; never fed back into the picker as an authored name).
+                bool showsDefault = string.IsNullOrEmpty(basSource);
+                string defaultLabel = section.BaseBlock?.DefaultSourceLabel;
                 var sourcePath = new TextBlock
                 {
-                    Text = string.IsNullOrEmpty(basSource) ? "—" : basSource,
+                    Text = !showsDefault
+                        ? basSource
+                        : (defaultLabel != null
+                            ? DisplayCopy.BuiltInDefaultSource(defaultLabel)
+                            : PropertyGrammar.Placeholder),
                     FontFamily = new FontFamily("Consolas"),
                     FontSize = 12,
-                    Foreground = BodyFg,
+                    Foreground = showsDefault ? MutedFg : BodyFg,
                     TextTrimming = TextTrimming.CharacterEllipsis,
                 };
                 var chevron = new TextBlock
@@ -1810,11 +1823,14 @@ namespace FanaBridge.UI.Display
                 sourceRow.MouseLeftButtonDown += (s, e) =>
                 {
                     e.Handled = true;
-                    if (TryPickProperty(sourcePath.Text == "—" ? string.Empty : sourcePath.Text,
+                    // basSource is the authored name only — the default label shown
+                    // for an unauthored base never seeds the picker.
+                    if (TryPickProperty(basSource,
                             out string picked, out PropertyKind pickedKind)
                         && !string.IsNullOrEmpty(picked))
                     {
                         sourcePath.Text = picked;
+                        sourcePath.Foreground = BodyFg;
                         basSource = picked;
                         sourceKind = ToValueSourceKind(pickedKind);
                         CommitFieldBase(basParam, sourceKind, basSource, basFormat, basSuffix);

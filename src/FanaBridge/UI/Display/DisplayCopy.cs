@@ -1880,6 +1880,14 @@ namespace FanaBridge.UI.Display
         public const string HostedPreviewCaptionSegment =
             "This page writes the 3-character segment display.";
 
+        /// <summary>What-it-reads row for an unauthored base: the built-in default
+        /// the engine actually reads (alias-table humanized name).</summary>
+        public static string BuiltInDefaultSource(string aliasName)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture, "built-in · {0}", aliasName ?? string.Empty);
+        }
+
         /// <summary>No-suffix capability note (TC/ABS).</summary>
         public const string NoSuffixRegion = "no suffix region";
 
