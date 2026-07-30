@@ -1410,10 +1410,11 @@ namespace FanaBridge.Display.Arbitration
             // Shared IdleCompile helper (E7) — same reader as WheelScreenArbiter floor.
             // ALWAYS take PublishedIdleKind / Screen / Page from the compile result so a
             // playlist idle never leaks IdleKind.Playlist (amendment A1 §7 item 5).
-            // Playlist PAGE steps promote into EffectivePageDestinationId so E5 + director
-            // compose/navigate them (not metadata-only). Ordinary rest.idle page keeps
-            // EffectivePageDestinationId = rest:idle (pre-playlist byte-identical path);
-            // its page lives only on IdlePageDestinationId.
+            // EVERY idle PAGE promotes into EffectivePageDestinationId so E5 + the
+            // director compose/navigate it — playlist steps and the ordinary rest.idle
+            // page alike. (The ordinary page used to stay metadata-only on
+            // IdlePageDestinationId — a byte-pin kept from the E8 swap — so "Outside a
+            // session = <page>" never navigated until a game start.)
             IdleCompileResult? compiledIdle = null;
             if (!inGame)
             {
@@ -1423,12 +1424,9 @@ namespace FanaBridge.Display.Arbitration
                     playlists: _playlists,
                     nowMs: now,
                     anchorMs: _playlistAnchorMs);
-                if (_idle != null
-                    && _idle.Kind == Schema2.IdleKind.Playlist
-                    && compiledIdle.Value.PublishedIdleKind == Schema2.IdleKind.Page
+                if (compiledIdle.Value.PublishedIdleKind == Schema2.IdleKind.Page
                     && !string.IsNullOrEmpty(compiledIdle.Value.PageDestinationId)
-                    && (string.Equals(dest, DestinationIds.RestIdle, StringComparison.Ordinal)
-                        || DestinationIds.IsRest(dest)))
+                    && DestinationIds.IsRest(dest))
                 {
                     effectivePage = compiledIdle.Value.PageDestinationId;
                 }

@@ -315,11 +315,18 @@ namespace FanaBridge.Display.Drivers
             if (!_lifecycle.ValuesAllowed)
                 return;
 
-            // ...and only while a game is feeding telemetry: SimHub keeps the last telemetry
-            // values around after a game exits, and painting from stale data would resurrect
-            // exactly the frozen frame the exit DisplayReset just cleared to placeholders.
+            // Values flow only while a game is feeding telemetry: SimHub keeps the last
+            // telemetry values around after a game exits, and painting from stale data
+            // would resurrect exactly the frozen frame the exit DisplayReset just cleared
+            // to placeholders. ParamDefs are different: suffixes/decorations are authored
+            // content, not telemetry — change-gated by signature, they must land at idle
+            // too or a config edit stays invisible until the next game start (idle parity;
+            // dynamic totals resolve bare without live data).
             if (!telemetryLive)
+            {
+                UpdateSlotDefs(data, now);
                 return;
+            }
 
             switch (_paint)
             {

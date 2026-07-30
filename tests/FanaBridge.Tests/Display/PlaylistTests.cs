@@ -586,14 +586,16 @@ namespace FanaBridge.Tests.Display
             Assert.Equal(100, pl.Steps[0].DurationMs); // document unchanged
         }
 
-        // ── Ordinary page idle: pre-playlist EffectivePage path (no promotion) ─
+        // ── Ordinary page idle: promotes like playlist steps ────────────────
 
         [Fact]
-        public void Engine_OrdinaryPageIdle_EffectivePageStaysRestIdle_ByteIdenticalPrePlaylistPath()
+        public void Engine_OrdinaryPageIdle_EffectivePagePromotes_SoTheFaceFollowsAtIdle()
         {
-            // BEFORE playlist promotion: ordinary rest.idle page keeps
-            // EffectivePageDestinationId = rest:idle. Page is metadata on
-            // IdlePageDestinationId only — E5 + director use the rest path.
+            // "Outside a session = <page>" must show that page while idle: the
+            // ordinary rest.idle page promotes into EffectivePageDestinationId so
+            // E5 composes it and the director navigates — same path as playlist
+            // page steps. (It used to stay metadata-only on IdlePageDestinationId,
+            // an E8-swap byte-pin, so the choice only took effect at game start.)
             var doc = new DisplayConfigV2
             {
                 Pages = new List<PageEntry>
@@ -653,28 +655,24 @@ namespace FanaBridge.Tests.Display
 
             composition.Tick(new DisplayCompositionV2TickInput { InGame = false });
 
-            // Seat: effective stays rest:idle; page is IdlePage only.
+            // Seat: destination identity stays the rest floor; the page promotes
+            // into the effective page and stays published as IdlePage metadata.
             Assert.Equal(
                 DestinationIds.RestIdle,
                 composition.LastSeatResult.Intent.DestinationId);
             Assert.Equal(
-                DestinationIds.RestIdle,
+                DestinationIds.Hosted("p-a"),
                 composition.LastSeatResult.Intent.EffectivePageDestinationId);
             Assert.Equal(IdleKind.Page, composition.LastSeatResult.Intent.IdleKind);
             Assert.Equal(
                 DestinationIds.Hosted("p-a"),
                 composition.LastSeatResult.Intent.IdlePageDestinationId);
 
-            // E5 input: pre-change DisplayedDestinationId is rest:idle (not hosted:p-a).
+            // E5 input: the displayed destination IS the idle page — the segment
+            // face composes its content at idle.
             Assert.Equal(
-                DestinationIds.RestIdle,
+                DestinationIds.Hosted("p-a"),
                 composition.LastFrameInput.DisplayedDestinationId);
-
-            // Director: rest/unknown path — Page kind, no concrete page/screen.
-            Assert.Equal(DirectorIntentKind.Page, composition.LastDirectorIntent.Kind);
-            Assert.Null(composition.LastDirectorIntent.Page);
-            Assert.Null(composition.LastDirectorIntent.ScreenId);
-            Assert.Null(composition.LastDirectorIntent.SourceRuleId);
         }
 
         // ── B2: step-boundary release / reclaim end-to-end via composition ─

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.Serialization;
 using FanaBridge.Adapters;
+using FanaBridge.Display.Composition;
 using FanaBridge.Display.Drivers;
 using FanaBridge.Display.Runtime;
 using FanaBridge.Display.Host;
@@ -874,6 +875,39 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void Idle_ConfigSuffixEdit_SendsParamDefs_WithoutTelemetry()
+        {
+            // Idle parity: an authored suffix edit (field plans) must land on the
+            // wire while no game is running — values stay gated, defs do not.
+            var driver = MakeDriver(out var t, out var clock);
+            driver.Start();
+            driver.Update(NotRunningData());
+            driver.OnSubscriptionReport(TyrePush);
+            clock.T += 50;
+            driver.Update(NotRunningData());   // synced at idle
+            clock.T += 200;
+            driver.Update(NotRunningData());   // initial defs settle
+            clock.T += 200;
+            driver.Update(NotRunningData());
+            t.Sent.Clear();
+
+            driver.Mapper.ConfigureFromPlans(new[]
+            {
+                new FieldRegionPlan
+                {
+                    ParamId = ItmParam.TyreFlTemp,
+                    SuffixOwner = SuffixOwner.Override,
+                    AlignedSuffixText = "!",
+                },
+            }, properties: null);
+            clock.T += 100;
+            driver.Update(NotRunningData());
+
+            Assert.Contains(t.Sent, IsParamDefs);
+            Assert.DoesNotContain(t.Sent, IsValueUpdate);
+        }
+
+        [Fact]
         public void GameExit_ClearsFieldsToPlaceholders_StaysVisible()
         {
             // Game exit clears the fields to --- (DisplayReset) and keeps the ITM page visible.
@@ -889,7 +923,21 @@ namespace FanaBridge.Tests.Display
             Assert.DoesNotContain(t.Sent, IsItmModeOff);     // no gate-off (no legacy)
             Assert.True(driver.IsRunning);                   // stays Synced, page visible
 
-            // Idle afterwards: no repeated resets, no values from stale telemetry.
+            // Idle afterwards: no values from stale telemetry, no repeated resets.
+            // ParamDefs MAY re-declare once (idle parity: suffixes are authored
+            // content, and telemetry-derived totals actively clear) — but they are
+            // signature-latched, so the idle steady state goes quiet.
+            t.Sent.Clear();
+            clock.T += 500;
+            driver.Update(NotRunningData());
+            Assert.DoesNotContain(t.Sent, IsValueUpdate);
+            Assert.DoesNotContain(t.Sent, IsDisplayReset);
+            Assert.All(t.Sent, r => Assert.True(IsParamDefs(r)));
+
+            // Steady state: nothing left to send (defs signature latched; the tight
+            // second tap included).
+            clock.T += 500;
+            driver.Update(NotRunningData());
             t.Sent.Clear();
             clock.T += 500;
             driver.Update(NotRunningData());
