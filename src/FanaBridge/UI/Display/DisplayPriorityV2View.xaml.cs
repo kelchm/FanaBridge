@@ -441,14 +441,19 @@ namespace FanaBridge.UI.Display
                 };
                 grip.PreviewMouseLeftButtonUp += (s, e) =>
                 {
-                    ((UIElement)s).ReleaseMouseCapture();
-                    if (_dragging && _dragRow != null)
-                    {
-                        // Drop: find nearest ranked row under cursor and reorder.
-                        TryDropReorder(_dragRow, e.GetPosition(listRows));
-                    }
+                    // Snapshot BEFORE releasing capture: ReleaseMouseCapture raises
+                    // LostMouseCapture synchronously and that handler clears the
+                    // drag state (it must, for torn-away captures).
+                    var dropRow = _dragRow;
+                    bool wasDragging = _dragging;
                     _dragRow = null;
                     _dragging = false;
+                    ((UIElement)s).ReleaseMouseCapture();
+                    if (wasDragging && dropRow != null)
+                    {
+                        // Drop: find nearest ranked row under cursor and reorder.
+                        TryDropReorder(dropRow, e.GetPosition(listRows));
+                    }
                     e.Handled = true;
                 };
                 // Capture can be torn away (window switch, tree change) without a

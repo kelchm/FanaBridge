@@ -342,8 +342,14 @@ namespace FanaBridge.UI.Display
             PagesFieldsFieldSectionModel section = FindSection(paramId);
             if (section != null)
                 fieldName = section.DisplayName;
-            // Law 10: the form's suffix input clamps like the base-block one.
+            // Law 10: the form's suffix input clamps like the base-block one; no
+            // region = disabled input, never a silent discard.
             txtOvSuffixContent.MaxLength = SuffixInputMaxLength(section?.SuffixWidth);
+            txtOvSuffixContent.IsEnabled = section?.SuffixWidth != 0;
+            txtOvSuffixContent.ToolTip = section?.SuffixWidth == 0
+                ? DisplayCopy.NoSuffixRegion
+                : null;
+            ToolTipService.SetShowOnDisabled(txtOvSuffixContent, true);
 
             txtOvFieldName.Text = fieldName.ToUpperInvariant();
             txtOvPageBadge.Text = _model.SelectedPage?.Badge ?? string.Empty;
@@ -998,7 +1004,8 @@ namespace FanaBridge.UI.Display
                     .Append(sec.IsProvisional ? '1' : '0')
                     .Append(sec.IsLocked ? '1' : '0')
                     .Append(sec.IsInertCollision ? '1' : '0').Append(s)
-                    .Append(sec.InertReason).Append(s);
+                    .Append(sec.InertReason).Append(s)
+                    .Append(sec.SuffixWidth).Append(s);
                 var formats = sec.OfferedFormats;
                 for (int f = 0; f < formats.Count; f++)
                     sb.Append(formats[f]).Append(s);
@@ -1277,7 +1284,7 @@ namespace FanaBridge.UI.Display
             {
                 var row = rows[i];
                 if (row == null) continue;
-                panelFieldCollection.Children.Add(BuildLayerRow(pageId, row, rows.Count));
+                panelFieldCollection.Children.Add(BuildLayerRow(pageId, rows, i));
             }
 
             // Pinned BASE row — condition-"always" floor, fixed last, no grip.
@@ -1320,8 +1327,9 @@ namespace FanaBridge.UI.Display
         }
 
         private UIElement BuildLayerRow(
-            string pageId, PagesFieldsLayerRowModel row, int rowCount)
+            string pageId, IReadOnlyList<PagesFieldsLayerRowModel> rows, int index)
         {
+            var row = rows[index];
             var border = new Border
             {
                 Background = CardBg,
@@ -1337,7 +1345,8 @@ namespace FanaBridge.UI.Display
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(88) });
 
-            int rankIndex = row.Rank - 1;
+            // Document indices, not ranks: the projection skips null layer entries,
+            // so rank−1 can diverge from the document array MoveLayer indexes.
             var reorder = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -1353,13 +1362,13 @@ namespace FanaBridge.UI.Display
             });
             var up = MakeTinyButton("↑", () =>
             {
-                if (rankIndex > 0)
-                    MoveLayerCore(pageId, rankIndex, rankIndex - 1);
+                if (index > 0)
+                    MoveLayerCore(pageId, row.DocumentIndex, rows[index - 1].DocumentIndex);
             });
             var down = MakeTinyButton("↓", () =>
             {
-                if (rankIndex < rowCount - 1)
-                    MoveLayerCore(pageId, rankIndex, rankIndex + 1);
+                if (index < rows.Count - 1)
+                    MoveLayerCore(pageId, row.DocumentIndex, rows[index + 1].DocumentIndex);
             });
             reorder.Children.Add(up);
             reorder.Children.Add(down);
@@ -1857,9 +1866,16 @@ namespace FanaBridge.UI.Display
                     Padding = new Thickness(4, 2, 4, 2),
                     Margin = new Thickness(0, 2, 0, 2),
                     // Law 10: over-length content cannot exist — the input clamps to
-                    // the measured width, else the wire ceiling.
+                    // the measured width, else the wire ceiling. No region = no input
+                    // (a saved suffix would be silently discarded by the composer).
                     MaxLength = SuffixInputMaxLength(section.SuffixWidth),
+                    IsEnabled = section.SuffixWidth != 0,
                 };
+                if (section.SuffixWidth == 0)
+                {
+                    suffixBox.ToolTip = DisplayCopy.NoSuffixRegion;
+                    ToolTipService.SetShowOnDisabled(suffixBox, true);
+                }
                 suffixBox.LostKeyboardFocus += (s, e) =>
                 {
                     if (_suppressEvents) return;

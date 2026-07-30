@@ -36,10 +36,14 @@ namespace FanaBridge.UI.Display.Shared
             {
                 if (ReferenceEquals(node, view))
                     return true;
-                DependencyObject parent = node is Visual || node is System.Windows.Media.Media3D.Visual3D
-                    ? VisualTreeHelper.GetParent(node)
-                    : null;
-                node = parent ?? LogicalTreeHelper.GetParent(node);
+                // Logical tree FIRST: it is what crosses popup boundaries — a
+                // ComboBoxItem in an open dropdown chains logically to its ComboBox,
+                // while its visual chain dead-ends at the PopupRoot.
+                DependencyObject parent = LogicalTreeHelper.GetParent(node);
+                if (parent == null
+                    && (node is Visual || node is System.Windows.Media.Media3D.Visual3D))
+                    parent = VisualTreeHelper.GetParent(node);
+                node = parent;
             }
             return false;
         }

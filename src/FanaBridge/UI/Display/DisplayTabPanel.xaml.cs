@@ -41,6 +41,9 @@ namespace FanaBridge.UI.Display
         private DisplayConfigV2 _lastConfig;
         private DisplayType? _lastDisplayType;
         private string _lastStatus;
+        private object _lastManual;
+        private object _lastAggregates;
+        private bool _lastInGame;
 
         public DisplayTabPanel()
         {
@@ -251,18 +254,28 @@ namespace FanaBridge.UI.Display
             // gate would fire on all of them and the child views would rebuild (and
             // steal focus) 10×/s. Content comparison — ignoring the tick stamp —
             // passes only real arbitration changes through.
+            // Manual / Aggregates / InGame are envelope facts the views render too —
+            // the runtime keeps their references stable while unchanged, so reference
+            // compares are exact (they were invisible behind the old always-new
+            // snapshot reference; the content gate must carry them explicitly).
             bool changed = force
                 || !ReferenceEquals(values, _lastValues)
                 || !SameComposedContent(composed, _lastComposed)
                 || !ReferenceEquals(config, _lastConfig)
                 || _lastDisplayType != displayType
-                || !string.Equals(status, _lastStatus, StringComparison.Ordinal);
+                || !string.Equals(status, _lastStatus, StringComparison.Ordinal)
+                || !ReferenceEquals(envelope?.Manual, _lastManual)
+                || !ReferenceEquals(envelope?.Aggregates, _lastAggregates)
+                || (envelope?.InGame ?? false) != _lastInGame;
 
             _lastValues = values;
             _lastComposed = composed;
             _lastConfig = config;
             _lastDisplayType = displayType;
             _lastStatus = status;
+            _lastManual = envelope?.Manual;
+            _lastAggregates = envelope?.Aggregates;
+            _lastInGame = envelope?.InGame ?? false;
             if (!changed)
                 return;
 

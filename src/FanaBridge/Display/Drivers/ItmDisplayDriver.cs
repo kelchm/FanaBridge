@@ -153,6 +153,7 @@ namespace FanaBridge.Display.Drivers
         // ── State ────────────────────────────────────────────────────────
         private long _lastValuesMs;
         private long _lastSendOkMs;    // last accepted value send — drives the periodic re-assert
+        private long _lastIdleDefsMs;  // paces the idle ParamDefs path (signature-gated besides)
         // Edge-detects a default-page settings change; null = re-baseline on the next Update
         // (fresh driver or post-Stop), so the first frame never reads as a change.
         private byte? _lastRequestedPage;
@@ -324,7 +325,14 @@ namespace FanaBridge.Display.Drivers
             // dynamic totals resolve bare without live data).
             if (!telemetryLive)
             {
-                UpdateSlotDefs(data, now);
+                // Signature-gated like the in-game path, plus interval-paced: a
+                // blinking authored suffix must not turn idle into a ParamDefs
+                // firehose (values pacing does this job in game).
+                if (now - _lastIdleDefsMs >= ValueIntervalMs)
+                {
+                    _lastIdleDefsMs = now;
+                    UpdateSlotDefs(data, now);
+                }
                 return;
             }
 

@@ -1122,7 +1122,8 @@ namespace FanaBridge.UI.Display
                     actsAsEntrypoint: layer.ActsAsEntrypoint && !layer.ActsAsEntrypointIgnored,
                     enabled: layer.Enabled,
                     degraded: layer.DegradedAtLoad,
-                    statusCopy: status));
+                    statusCopy: status,
+                    documentIndex: i));
             }
             return list.Count == 0
                 ? NoLayerRows
@@ -1678,8 +1679,10 @@ namespace FanaBridge.UI.Display
     {
         public PagesFieldsLayerRowModel(
             string layerId, int rank, string contentChip, string conditionSentence,
-            bool actsAsEntrypoint, bool enabled, bool degraded, string statusCopy)
+            bool actsAsEntrypoint, bool enabled, bool degraded, string statusCopy,
+            int documentIndex = -1)
         {
+            DocumentIndex = documentIndex;
             LayerId = layerId;
             Rank = rank;
             ContentChip = contentChip;
@@ -1692,6 +1695,11 @@ namespace FanaBridge.UI.Display
 
         public string LayerId { get; }
         public int Rank { get; }
+
+        /// <summary>Index in the document's Layers array (projection skips nulls, so
+        /// this — not <see cref="Rank"/> − 1 — is what MoveLayer must receive).</summary>
+        public int DocumentIndex { get; }
+
         public string ContentChip { get; }
         public string ConditionSentence { get; }
         public bool ActsAsEntrypoint { get; }
