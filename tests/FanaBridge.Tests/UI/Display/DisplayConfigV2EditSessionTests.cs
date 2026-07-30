@@ -356,6 +356,69 @@ namespace FanaBridge.Tests.UI.Display
         }
 
         [Fact]
+        public void LayerCrud_AddUpdateRemove_PatchLawHolds()
+        {
+            var live = SeedLive();
+            live.Pages.Add(new PageEntry
+            {
+                Kind = PageEntryKind.HostedPage,
+                Id = "alerts",
+                Name = "Alerts",
+            });
+            var session = DisplayConfigV2EditSession.Open(live);
+
+            // Add: GUID id assigned, appended bottom-rank.
+            session.AddLayer("alerts", new LayerEntry
+            {
+                Name = "pit call",
+                Content = new ContentObject { Kind = ContentKind.Text, Text = "PIT" },
+                Condition = new Condition
+                {
+                    Source = new ValueSource
+                    {
+                        Kind = ValueSourceKind.BuiltIn,
+                        Name = BuiltInProperties.IsInPitLane,
+                    },
+                    Operator = ConditionOperator.IsTrue,
+                },
+                Lifetime = new Lifetime { Kind = LifetimeKind.WhileTrue },
+                ActsAsEntrypoint = true,
+            });
+            var page = session.Document.Pages
+                .First(p => p.Kind == PageEntryKind.HostedPage && p.Id == "alerts");
+            var added = Assert.Single(page.Layers);
+            Assert.False(string.IsNullOrWhiteSpace(added.Id));
+            Assert.True(added.ActsAsEntrypoint);
+
+            // Update: form patch replaces authored fields; NAME (not on the form's
+            // patch) survives the clone-merge.
+            session.UpdateLayer("alerts", added.Id, new LayerEntry
+            {
+                Content = new ContentObject { Kind = ContentKind.Text, Text = "LOW" },
+                Effect = ContentEffect.Blink,
+                Enabled = true,
+                ActsAsEntrypoint = false,
+            });
+            page = session.Document.Pages
+                .First(p => p.Kind == PageEntryKind.HostedPage && p.Id == "alerts");
+            var updated = Assert.Single(page.Layers);
+            Assert.Equal("pit call", updated.Name);
+            Assert.Equal("LOW", updated.Content.Text);
+            Assert.Equal(ContentEffect.Blink, updated.Effect);
+            Assert.False(updated.ActsAsEntrypoint);
+            Assert.Equal(ConditionOperator.IsTrue, updated.Condition.Operator);
+
+            // Remove: gone; unknown ids are no-ops.
+            int generation = session.Generation;
+            session.RemoveLayer("alerts", "missing");
+            Assert.Equal(generation, session.Generation);
+            session.RemoveLayer("alerts", updated.Id);
+            page = session.Document.Pages
+                .First(p => p.Kind == PageEntryKind.HostedPage && p.Id == "alerts");
+            Assert.Empty(page.Layers);
+        }
+
+        [Fact]
         public void AddSummon_AppendsWithGeneratedId()
         {
             var session = DisplayConfigV2EditSession.Open(SeedLive());

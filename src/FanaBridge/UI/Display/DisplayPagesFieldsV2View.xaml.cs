@@ -68,6 +68,19 @@ namespace FanaBridge.UI.Display
         /// <summary>Prior Enabled (not on the form) — preserved across open→save.</summary>
         private bool _ovEnabled = true;
 
+        // 5i layer form state
+        private string _layerPageId;
+        private string _layerId;
+        private bool _layerIsNew;
+        private bool _layerEnabled = true;
+        private ContentKind _layerContentKind = ContentKind.Text;
+        private ValueSourceKind _layerContentSourceKind = ValueSourceKind.SimHubProperty;
+        private ValueSourceKind _layerCondSourceKind = ValueSourceKind.SimHubProperty;
+        private LifetimeKind _layerLifetimeKind = LifetimeKind.WhileTrue;
+        private int _layerDurationMs = Lifetime.DefaultDurationMs;
+        /// <summary>True only after the user edits the seconds field this open.</summary>
+        private bool _layerDurationDirty;
+
         // 5p dialog working order (page keys) + dirty / tri-state tracking
         private List<string> _rotationWorkingOrder;
         /// <summary>True when pageOrder was null at dialog open (absent = compiled default).</summary>
@@ -135,6 +148,7 @@ namespace FanaBridge.UI.Display
             if (!force
                 && (popupOverride.IsOpen
                     || popupRotation.IsOpen
+                    || popupLayer.IsOpen
                     || InlineEditGuard.IsEditingWithin(this)))
             {
                 return;
@@ -672,6 +686,106 @@ namespace FanaBridge.UI.Display
             cmbOvOperator.SelectedIndex = 0;
             cmbOvOperator.SelectionChanged += OvOperator_SelectionChanged;
             UpdateOverrideValueVisibility();
+
+            // ── 5i layer form ─────────────────────────────────────────────
+            txtLayerTitlePrefix.Text = DisplayCopy.ALayerOn;
+            txtLayerWrites.Text = DisplayCopy.WhatItShows;
+            txtLayerContentHint.Text = DisplayCopy.LayerContentHint;
+            txtLayerEffectLabel.Text = DisplayCopy.EffectLabel;
+            txtLayerWhen.Text = DisplayCopy.When;
+            txtLayerForHowLong.Text = DisplayCopy.ForHowLong;
+            txtLayerSecondsUnit.Text = DisplayCopy.SecondsUnit;
+            chkLayerEntrypoint.Content = DisplayCopy.EntrypointFlag;
+            btnLayerDelete.Content = DisplayCopy.Delete;
+            btnLayerCancel.Content = DisplayCopy.Cancel;
+            btnLayerSave.Content = DisplayCopy.Save;
+            txtLayerPropChevron.Text = DisplayCopy.PropertyRowChevron;
+            txtLayerCondChevron.Text = DisplayCopy.PropertyRowChevron;
+
+            segLayerContentKind.SetItems(new (string, string)[]
+            {
+                ("text", DisplayCopy.ContentKindTextLabel),
+                ("property", DisplayCopy.ContentKindPropertyLabel),
+            });
+            segLayerContentKind.SelectedId = "text";
+            segLayerContentKind.SelectionChanged += (s, id) =>
+            {
+                if (_suppressEvents) return;
+                _layerContentKind = id == "property" ? ContentKind.Property : ContentKind.Text;
+                UpdateLayerContentKindVisibility();
+            };
+
+            segLayerEffect.SetItems(new (string, string)[]
+            {
+                ("none", DisplayCopy.EffectSteady),
+                ("blink", DisplayCopy.EffectBlink),
+                ("scroll", DisplayCopy.EffectScroll),
+            });
+            segLayerEffect.SelectedId = "none";
+
+            segLayerLifetime.SetItems(new (string, string)[]
+            {
+                ("while", DisplayCopy.LifetimeFormLabel(LifetimeKind.WhileTrue, 0)),
+                ("for", DisplayCopy.LifetimeFormLabel(LifetimeKind.ForDuration, 0)),
+                ("dismiss", DisplayCopy.LifetimeFormLabel(LifetimeKind.UntilDismissed, 0)),
+            });
+            segLayerLifetime.SelectedId = "while";
+            segLayerLifetime.SelectionChanged += (s, id) =>
+            {
+                if (_suppressEvents) return;
+                _layerLifetimeKind = id == "for"
+                    ? LifetimeKind.ForDuration
+                    : (id == "dismiss" ? LifetimeKind.UntilDismissed : LifetimeKind.WhileTrue);
+                UpdateLayerSecondsVisibility();
+            };
+            txtLayerSeconds.TextChanged += (s, e) =>
+            {
+                if (_suppressEvents) return;
+                if (int.TryParse(txtLayerSeconds.Text, NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out int sec) && sec > 0)
+                {
+                    _layerDurationDirty = true;
+                    _layerDurationMs = sec * 1000;
+                }
+            };
+
+            cmbLayerOperator.Items.Clear();
+            foreach (ConditionOperator op in Enum.GetValues(typeof(ConditionOperator)))
+            {
+                if (op == ConditionOperator.Unknown)
+                    continue;
+                string phrase = DisplayCopy.OperatorPhrase(op);
+                if (string.IsNullOrEmpty(phrase))
+                    continue;
+                cmbLayerOperator.Items.Add(phrase);
+            }
+            cmbLayerOperator.SelectedIndex = 0;
+            cmbLayerOperator.SelectionChanged += (s, e) =>
+            {
+                if (_suppressEvents) return;
+                UpdateLayerCondValueVisibility();
+            };
+        }
+
+        private void UpdateLayerContentKindVisibility()
+        {
+            bool text = _layerContentKind != ContentKind.Property;
+            panelLayerText.Visibility = text ? Visibility.Visible : Visibility.Collapsed;
+            panelLayerProperty.Visibility = text ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private void UpdateLayerSecondsVisibility()
+        {
+            bool timed = _layerLifetimeKind == LifetimeKind.ForDuration;
+            txtLayerSeconds.Visibility = timed ? Visibility.Visible : Visibility.Collapsed;
+            txtLayerSecondsUnit.Visibility = timed ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void UpdateLayerCondValueVisibility()
+        {
+            var op = OperatorFromFormLabel(cmbLayerOperator.SelectedItem as string);
+            bool isBool = op == ConditionOperator.IsTrue || op == ConditionOperator.IsFalse;
+            txtLayerCondValue.Visibility = isBool ? Visibility.Collapsed : Visibility.Visible;
         }
 
         /// <summary>
@@ -1315,16 +1429,24 @@ namespace FanaBridge.UI.Display
             baseBorder.Child = baseStack;
             panelFieldCollection.Children.Add(baseBorder);
 
-            if (rows.Count > 0)
+            // + Add a layer — same plain-door idiom as + Add an entrypoint.
+            var addLayer = new Button
             {
-                panelFieldCollection.Children.Add(new TextBlock
-                {
-                    Text = DisplayCopy.LayerFormArrivingLater,
-                    FontSize = 11,
-                    Foreground = MutedFg,
-                    Margin = new Thickness(0, 8, 0, 0),
-                });
-            }
+                Content = DisplayCopy.AddALayer,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Foreground = MutedFg,
+                FontSize = 12,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(0, 6, 0, 6),
+                Cursor = Cursors.Hand,
+            };
+            addLayer.Click += (s, e) =>
+            {
+                e.Handled = true;
+                OpenLayerFormCore(pageId, null, isNew: true);
+            };
+            panelFieldCollection.Children.Add(addLayer);
         }
 
         private UIElement BuildLayerRow(
@@ -1337,6 +1459,16 @@ namespace FanaBridge.UI.Display
                 Padding = new Thickness(8, 6, 8, 6),
                 Margin = new Thickness(0, 0, 0, 2),
                 Opacity = row.Enabled && !row.Degraded ? 1.0 : 0.55,
+                Cursor = Cursors.Hand,
+                ToolTip = DisplayCopy.OpenThisLayersForm,
+            };
+            string layerId = row.LayerId;
+            border.MouseLeftButtonDown += (s, e) =>
+            {
+                // Reorder buttons set Handled; row click opens the form.
+                if (e.Handled) return;
+                e.Handled = true;
+                OpenLayerFormCore(pageId, layerId, isNew: false);
             };
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
@@ -1452,6 +1584,279 @@ namespace FanaBridge.UI.Display
                 return false;
             ApplyEdit(session => session.MoveLayer(pageId, fromIndex, toIndex));
             return true;
+        }
+
+        // ── 5i layer form (create = edit; one plain form per object) ─────
+
+        /// <summary>Open the layer form for create (<paramref name="layerId"/> null)
+        /// or edit — hydrated from the live document, not the projected row.</summary>
+        internal bool OpenLayerFormCore(string pageId, string layerId, bool isNew)
+        {
+            if (_model?.SelectedPage == null || string.IsNullOrEmpty(pageId))
+                return false;
+
+            _layerPageId = pageId;
+            _layerId = layerId;
+            _layerIsNew = isNew;
+            _layerEnabled = true;
+
+            txtLayerPageBadge.Text = _model.SelectedPage.Badge ?? string.Empty;
+            txtLayerPageName.Text = _model.SelectedPage.Name ?? string.Empty;
+
+            _suppressEvents = true;
+            try
+            {
+                // Create defaults; the edit path overwrites from the live document.
+                _layerContentKind = ContentKind.Text;
+                _layerContentSourceKind = ValueSourceKind.SimHubProperty;
+                _layerCondSourceKind = ValueSourceKind.SimHubProperty;
+                _layerLifetimeKind = LifetimeKind.WhileTrue;
+                _layerDurationMs = Lifetime.DefaultDurationMs;
+                _layerDurationDirty = false;
+                segLayerContentKind.SelectedId = "text";
+                segLayerEffect.SelectedId = "none";
+                segLayerLifetime.SelectedId = "while";
+                txtLayerContent.Text = string.Empty;
+                txtLayerPropPath.Text = string.Empty;
+                txtLayerCondPath.Text = string.Empty;
+                txtLayerCondValue.Text = string.Empty;
+                txtLayerSeconds.Text = PresentationSeconds(_layerDurationMs)
+                    .ToString(CultureInfo.InvariantCulture);
+                cmbLayerOperator.SelectedIndex = 0;
+                chkLayerEntrypoint.IsChecked = false;
+
+                if (!isNew && !string.IsNullOrEmpty(layerId))
+                    HydrateLayerForm(pageId, layerId);
+
+                UpdateLayerContentKindVisibility();
+                UpdateLayerSecondsVisibility();
+                UpdateLayerCondValueVisibility();
+            }
+            finally
+            {
+                _suppressEvents = false;
+            }
+
+            btnLayerDelete.Visibility = isNew ? Visibility.Collapsed : Visibility.Visible;
+            popupLayer.IsOpen = true;
+            return true;
+        }
+
+        private void HydrateLayerForm(string pageId, string layerId)
+        {
+            var live = _host?.GetDisplayConfigV2();
+            LayerEntry existing = null;
+            if (live?.Pages != null)
+            {
+                for (int p = 0; p < live.Pages.Count && existing == null; p++)
+                {
+                    var page = live.Pages[p];
+                    if (page == null
+                        || page.Kind != PageEntryKind.HostedPage
+                        || !string.Equals(page.Id, pageId, StringComparison.Ordinal)
+                        || page.Layers == null)
+                        continue;
+                    for (int i = 0; i < page.Layers.Count; i++)
+                    {
+                        var layer = page.Layers[i];
+                        if (layer != null
+                            && string.Equals(layer.Id, layerId, StringComparison.Ordinal))
+                        {
+                            existing = layer;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (existing == null)
+                return;
+
+            _layerEnabled = existing.Enabled;
+
+            var content = existing.Content;
+            if (content?.Kind == ContentKind.Property)
+            {
+                _layerContentKind = ContentKind.Property;
+                _layerContentSourceKind = content.Source?.Kind ?? ValueSourceKind.SimHubProperty;
+                segLayerContentKind.SelectedId = "property";
+                txtLayerPropPath.Text = content.Source?.Name ?? string.Empty;
+            }
+            else
+            {
+                _layerContentKind = ContentKind.Text;
+                segLayerContentKind.SelectedId = "text";
+                txtLayerContent.Text = content?.Text ?? string.Empty;
+            }
+
+            segLayerEffect.SelectedId = existing.Effect == ContentEffect.Blink
+                ? "blink"
+                : (existing.Effect == ContentEffect.Scroll ? "scroll" : "none");
+
+            var src = existing.Condition?.Source;
+            if (src != null)
+            {
+                _layerCondSourceKind = src.Kind == ValueSourceKind.Unknown
+                    ? ValueSourceKind.SimHubProperty
+                    : src.Kind;
+                txtLayerCondPath.Text = src.Name ?? string.Empty;
+            }
+            if (existing.Condition?.Value != null)
+            {
+                txtLayerCondValue.Text = existing.Condition.Value.Value.ToString(
+                    CultureInfo.InvariantCulture);
+            }
+            SelectLayerOperator(existing.Condition?.Operator ?? ConditionOperator.IsTrue);
+
+            var life = existing.Lifetime;
+            if (life != null)
+            {
+                _layerLifetimeKind = life.Kind == LifetimeKind.Unknown
+                    ? LifetimeKind.WhileTrue
+                    : life.Kind;
+                if (life.Kind == LifetimeKind.ForDuration && life.DurationMs > 0)
+                {
+                    _layerDurationMs = life.DurationMs;
+                    txtLayerSeconds.Text = PresentationSeconds(_layerDurationMs)
+                        .ToString(CultureInfo.InvariantCulture);
+                }
+            }
+            segLayerLifetime.SelectedId =
+                _layerLifetimeKind == LifetimeKind.ForDuration
+                    ? "for"
+                    : (_layerLifetimeKind == LifetimeKind.UntilDismissed ? "dismiss" : "while");
+
+            chkLayerEntrypoint.IsChecked =
+                existing.ActsAsEntrypoint && !existing.ActsAsEntrypointIgnored;
+        }
+
+        private void SelectLayerOperator(ConditionOperator op)
+        {
+            string phrase = DisplayCopy.OperatorPhrase(op);
+            for (int i = 0; i < cmbLayerOperator.Items.Count; i++)
+            {
+                if (string.Equals(cmbLayerOperator.Items[i] as string, phrase,
+                        StringComparison.Ordinal))
+                {
+                    cmbLayerOperator.SelectedIndex = i;
+                    return;
+                }
+            }
+        }
+
+        /// <summary>Only the form-edited fields — UpdateLayer's clone-merge keeps the rest.</summary>
+        private LayerEntry BuildLayerPatch()
+        {
+            var content = _layerContentKind == ContentKind.Property
+                ? new ContentObject
+                {
+                    Kind = ContentKind.Property,
+                    Source = new FanaBridge.Display.Schema2.ValueSource
+                    {
+                        Kind = _layerContentSourceKind == ValueSourceKind.Unknown
+                            ? ValueSourceKind.SimHubProperty
+                            : _layerContentSourceKind,
+                        Name = txtLayerPropPath.Text?.Trim() ?? string.Empty,
+                    },
+                }
+                : new ContentObject
+                {
+                    Kind = ContentKind.Text,
+                    Text = txtLayerContent.Text ?? string.Empty,
+                };
+
+            var op = OperatorFromFormLabel(cmbLayerOperator.SelectedItem as string);
+            double? value = null;
+            if (op != ConditionOperator.IsTrue && op != ConditionOperator.IsFalse
+                && double.TryParse(txtLayerCondValue.Text, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out double v))
+                value = v;
+
+            var lifetime = new Lifetime { Kind = _layerLifetimeKind };
+            if (_layerLifetimeKind == LifetimeKind.ForDuration)
+                lifetime.DurationMs = _layerDurationMs;
+
+            var patch = new LayerEntry
+            {
+                Content = content,
+                Condition = new FanaBridge.Display.Schema2.Condition
+                {
+                    Source = new FanaBridge.Display.Schema2.ValueSource
+                    {
+                        Kind = _layerCondSourceKind == ValueSourceKind.Unknown
+                            ? ValueSourceKind.SimHubProperty
+                            : _layerCondSourceKind,
+                        Name = txtLayerCondPath.Text?.Trim() ?? string.Empty,
+                    },
+                    Operator = op,
+                    Value = value,
+                },
+                Lifetime = lifetime,
+                Enabled = _layerIsNew || _layerEnabled,
+                ActsAsEntrypoint = chkLayerEntrypoint.IsChecked == true,
+            };
+            // Effect always authored by the form (segmented control forces a choice).
+            patch.Effect = segLayerEffect.SelectedId == "blink"
+                ? ContentEffect.Blink
+                : (segLayerEffect.SelectedId == "scroll"
+                    ? ContentEffect.Scroll
+                    : ContentEffect.None);
+            return patch;
+        }
+
+        private void LayerSave_Click(object sender, RoutedEventArgs e)
+        {
+            string pageId = _layerPageId;
+            var patch = BuildLayerPatch();
+            if (_layerIsNew)
+            {
+                ApplyEdit(session => session.AddLayer(pageId, patch));
+            }
+            else
+            {
+                string id = _layerId;
+                ApplyEdit(session => session.UpdateLayer(pageId, id, patch));
+            }
+            popupLayer.IsOpen = false;
+        }
+
+        private void LayerDelete_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_layerIsNew && !string.IsNullOrEmpty(_layerId))
+            {
+                string pageId = _layerPageId;
+                string id = _layerId;
+                ApplyEdit(session => session.RemoveLayer(pageId, id));
+            }
+            popupLayer.IsOpen = false;
+        }
+
+        private void LayerCancel_Click(object sender, RoutedEventArgs e)
+        {
+            popupLayer.IsOpen = false;
+        }
+
+        private void LayerContentProperty_Click(object sender, MouseButtonEventArgs e)
+        {
+            e.Handled = true;
+            if (TryPickProperty(txtLayerPropPath.Text,
+                    out string picked, out PropertyKind kind)
+                && !string.IsNullOrEmpty(picked))
+            {
+                txtLayerPropPath.Text = picked;
+                _layerContentSourceKind = ToValueSourceKind(kind);
+            }
+        }
+
+        private void LayerConditionProperty_Click(object sender, MouseButtonEventArgs e)
+        {
+            e.Handled = true;
+            if (TryPickProperty(txtLayerCondPath.Text,
+                    out string picked, out PropertyKind kind)
+                && !string.IsNullOrEmpty(picked))
+            {
+                txtLayerCondPath.Text = picked;
+                _layerCondSourceKind = ToValueSourceKind(kind);
+            }
         }
 
         private Border BuildFieldSection(PagesFieldsFieldSectionModel section)
@@ -2128,6 +2533,12 @@ namespace FanaBridge.UI.Display
                 if (popupRotation.IsOpen)
                 {
                     popupRotation.IsOpen = false;
+                    e.Handled = true;
+                    return;
+                }
+                if (popupLayer.IsOpen)
+                {
+                    popupLayer.IsOpen = false;
                     e.Handled = true;
                     return;
                 }

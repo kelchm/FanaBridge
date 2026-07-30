@@ -1286,16 +1286,45 @@ namespace FanaBridge.UI.Display
         public const string BaseBlockBlank =
             "blank — this page is only up when one of its layers fires";
 
+        /// <summary>Layer form title prefix (mirror of AnOverrideOn).</summary>
+        public const string ALayerOn = "A layer on";
+
+        /// <summary>Layer form: + Add a layer (ladder footer button).</summary>
+        public const string AddALayer = "+ Add a layer";
+
+        /// <summary>Layer form content section label.</summary>
+        public const string WhatItShows = "WHAT IT SHOWS";
+
+        /// <summary>Layer content kind segment: static text.</summary>
+        public const string ContentKindTextLabel = "Text";
+
+        /// <summary>Layer content kind segment: property value.</summary>
+        public const string ContentKindPropertyLabel = "Property";
+
+        /// <summary>Layer content text hint (3-char face).</summary>
+        public const string LayerContentHint = "3 characters — the page's whole face";
+
+        /// <summary>Layer effect row label.</summary>
+        public const string EffectLabel = "Effect";
+
+        /// <summary>Effect segment: steady (none).</summary>
+        public const string EffectSteady = "Steady";
+
+        /// <summary>Effect segment: blink.</summary>
+        public const string EffectBlink = "Blink";
+
+        /// <summary>Effect segment: scroll.</summary>
+        public const string EffectScroll = "Scroll";
+
+        /// <summary>Seconds unit suffix beside the lifetime seconds box.</summary>
+        public const string SecondsUnit = "s";
+
         /// <summary>Layer ladder law line (Pages &amp; Fields hosted-page pane).</summary>
         public const string LayerLadderHint =
             "The top active layer owns the page's 3 characters; the Base content shows when none is.";
 
         /// <summary>Hosted page with no layers yet (empty-state line, never a blank pane).</summary>
         public const string NoLayersOnThisPage = "No layers on this page yet.";
-
-        /// <summary>Hosted-page ladder scope note: what is live vs later.</summary>
-        public const string LayerFormArrivingLater =
-            "Reorder is live; the layer form arrives with a later phase.";
 
         /// <summary>Field-override writes chip: suffix.</summary>
         public const string WritesSuffix = "suffix";

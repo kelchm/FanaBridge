@@ -194,6 +194,158 @@ namespace FanaBridge.UI.Display
             });
         }
 
+        /// <summary>
+        /// Append a layer to a hosted page's ladder (bottom rank). Assigns a GUID id
+        /// when blank; clones first — the caller's instance is never retained. No-op
+        /// when the page is missing.
+        /// </summary>
+        public DisplayConfigV2 AddLayer(string hostedPageId, LayerEntry layer)
+        {
+            if (layer == null)
+                return _document;
+
+            var owned = DisplayConfigV2Serializer.CloneNode(layer);
+            if (string.IsNullOrWhiteSpace(owned.Id))
+                owned.Id = Guid.NewGuid().ToString("N");
+
+            return Mutate(doc =>
+            {
+                var page = FindHostedPage(doc, hostedPageId);
+                if (page == null)
+                    return false;
+                if (page.Layers == null)
+                    page.Layers = new List<LayerEntry>();
+                page.Layers.Add(owned);
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// Clone-existing-then-mutate a layer (the UpdateOverride idiom): the existing
+        /// node is fully cloned, only form-authored patch fields replace theirs —
+        /// name/runs/extension data survive. No-op when missing.
+        /// </summary>
+        public DisplayConfigV2 UpdateLayer(
+            string hostedPageId, string layerId, LayerEntry patch)
+        {
+            if (patch == null || string.IsNullOrEmpty(layerId))
+                return _document;
+
+            return Mutate(doc =>
+            {
+                var layers = FindHostedPage(doc, hostedPageId)?.Layers;
+                if (layers == null)
+                    return false;
+                for (int i = 0; i < layers.Count; i++)
+                {
+                    var existing = layers[i];
+                    if (existing == null
+                        || !string.Equals(existing.Id, layerId, StringComparison.Ordinal))
+                        continue;
+                    var owned = DisplayConfigV2Serializer.CloneNode(existing);
+                    owned.Id = layerId;
+                    ApplyLayerEdits(owned, patch);
+                    layers[i] = owned;
+                    return true;
+                }
+                return false;
+            });
+        }
+
+        /// <summary>Remove a layer from a hosted page's ladder. No-op when missing.</summary>
+        public DisplayConfigV2 RemoveLayer(string hostedPageId, string layerId)
+        {
+            if (string.IsNullOrEmpty(layerId))
+                return _document;
+
+            return Mutate(doc =>
+            {
+                var layers = FindHostedPage(doc, hostedPageId)?.Layers;
+                if (layers == null)
+                    return false;
+                for (int i = 0; i < layers.Count; i++)
+                {
+                    if (layers[i] != null
+                        && string.Equals(layers[i].Id, layerId, StringComparison.Ordinal))
+                    {
+                        layers.RemoveAt(i);
+                        return true;
+                    }
+                }
+                return false;
+            });
+        }
+
+        /// <summary>
+        /// Overlay form-edited fields onto a cloned existing layer (the
+        /// <see cref="ApplyOverrideEdits"/> idiom — same laws, layer shape).
+        /// </summary>
+        private static void ApplyLayerEdits(LayerEntry target, LayerEntry patch)
+        {
+            if (target == null || patch == null)
+                return;
+
+            if (patch.Name != null)
+                target.Name = patch.Name;
+
+            if (patch.Content != null)
+                target.Content = MergeContentObject(target.Content, patch.Content);
+
+            if (!string.IsNullOrEmpty(patch.EffectRaw)
+                || (patch.Effect != ContentEffect.None
+                    && patch.Effect != ContentEffect.Unknown))
+            {
+                if (!string.IsNullOrEmpty(patch.EffectRaw))
+                    target.EffectRaw = patch.EffectRaw;
+                else
+                    target.Effect = patch.Effect;
+            }
+
+            if (patch.Condition != null)
+            {
+                if (target.Condition == null)
+                {
+                    target.Condition = DisplayConfigV2Serializer.CloneNode(patch.Condition);
+                }
+                else
+                {
+                    var tCond = target.Condition;
+                    var pCond = patch.Condition;
+                    if (pCond.Source != null)
+                        MergeValueSource(tCond, pCond.Source);
+                    if (pCond.Operator.HasValue
+                        && pCond.Operator.Value != ConditionOperator.Unknown)
+                        tCond.Operator = pCond.Operator;
+                    if (pCond.Value.HasValue)
+                        tCond.Value = pCond.Value;
+                    if (pCond.Hysteresis != null)
+                        tCond.Hysteresis = pCond.Hysteresis;
+                }
+            }
+
+            if (patch.Lifetime != null)
+            {
+                if (target.Lifetime == null)
+                    target.Lifetime = DisplayConfigV2Serializer.CloneNode(patch.Lifetime);
+                else
+                    MergeLifetimeFields(target.Lifetime, patch.Lifetime);
+            }
+
+            if (!string.IsNullOrEmpty(patch.RunsRaw)
+                || (patch.Runs != RunsWhen.InGame && patch.Runs != RunsWhen.Unknown))
+            {
+                if (!string.IsNullOrEmpty(patch.RunsRaw))
+                    target.RunsRaw = patch.RunsRaw;
+                else
+                    target.Runs = patch.Runs;
+            }
+
+            // Bools have no null — form paths that preserve prior Enabled must copy
+            // it onto the patch first (same law as ApplyOverrideEdits).
+            target.Enabled = patch.Enabled;
+            target.ActsAsEntrypoint = patch.ActsAsEntrypoint;
+        }
+
         private static PageEntry FindHostedPage(DisplayConfigV2 doc, string hostedPageId)
         {
             if (doc?.Pages == null || string.IsNullOrEmpty(hostedPageId))
@@ -1691,14 +1843,21 @@ namespace FanaBridge.UI.Display
         {
             if (target == null || patchContent == null)
                 return;
+            target.Content = MergeContentObject(target.Content, patchContent);
+        }
 
-            if (target.Content == null)
-            {
-                target.Content = DisplayConfigV2Serializer.CloneNode(patchContent);
-                return;
-            }
+        /// <summary>Member-wise ContentObject merge shared by override and layer
+        /// patches; returns the merged node (a clone when nothing existed).</summary>
+        private static ContentObject MergeContentObject(
+            ContentObject existingContent, ContentObject patchContent)
+        {
+            if (patchContent == null)
+                return existingContent;
 
-            var existing = target.Content;
+            if (existingContent == null)
+                return DisplayConfigV2Serializer.CloneNode(patchContent);
+
+            var existing = existingContent;
             if (patchContent.Kind != ContentKind.Unknown
                 || !string.IsNullOrEmpty(patchContent.KindRaw))
             {
@@ -1740,6 +1899,7 @@ namespace FanaBridge.UI.Display
                 foreach (var kv in patchContent.ExtensionData)
                     existing.ExtensionData[kv.Key] = kv.Value;
             }
+            return existing;
         }
 
         /// <summary>

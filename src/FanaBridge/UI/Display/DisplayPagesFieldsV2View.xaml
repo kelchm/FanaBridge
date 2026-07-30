@@ -326,6 +326,132 @@
             </Border>
         </Popup>
 
+        <!-- 5i layer form (create = edit; the override form's idioms, layer shape) -->
+        <Popup x:Name="popupLayer" AllowsTransparency="True" StaysOpen="True"
+               Placement="Center" PopupAnimation="Fade">
+            <Border Background="#252525" BorderBrush="#545456" BorderThickness="1"
+                    Width="560" Padding="0" MaxHeight="640">
+                <DockPanel>
+                    <Border DockPanel.Dock="Top" Background="#2B2B2D" Padding="14,10">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="✕" FontSize="14"
+                                    Background="Transparent" BorderThickness="0"
+                                    Foreground="#A0A0A0" Padding="8,2"
+                                    Click="LayerCancel_Click" Cursor="Hand" />
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="txtLayerTitlePrefix" FontSize="14"
+                                           Foreground="#C8C8C8" VerticalAlignment="Center" />
+                                <Border Background="#1E2F3D" CornerRadius="2" Padding="6,2"
+                                        Margin="8,0,6,0" VerticalAlignment="Center">
+                                    <TextBlock x:Name="txtLayerPageBadge" FontSize="11"
+                                               FontFamily="Consolas" Foreground="#9FBDD4" />
+                                </Border>
+                                <TextBlock x:Name="txtLayerPageName" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="#F0F0F0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <Border DockPanel.Dock="Bottom" Padding="14,10" BorderBrush="#3A3A3C"
+                            BorderThickness="0,1,0,0">
+                        <DockPanel>
+                            <Button x:Name="btnLayerDelete" DockPanel.Dock="Left"
+                                    Padding="12,6" Background="Transparent"
+                                    BorderBrush="#8B3A3A" BorderThickness="1"
+                                    Foreground="#E07070" Click="LayerDelete_Click" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button x:Name="btnLayerCancel" Padding="12,6" Margin="0,0,8,0"
+                                        Background="#232325" BorderBrush="#454547"
+                                        BorderThickness="1" Foreground="#C8C8C8"
+                                        Click="LayerCancel_Click" />
+                                <Button x:Name="btnLayerSave" Padding="14,6"
+                                        Background="#187FAD" BorderThickness="0"
+                                        Foreground="#FFFFFF" FontWeight="SemiBold"
+                                        Click="LayerSave_Click" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  Padding="14,12">
+                        <StackPanel>
+                            <TextBlock x:Name="txtLayerWrites" FontSize="9.5" FontFamily="Consolas"
+                                       Foreground="#7C7C7E" Margin="0,0,0,6" />
+                            <shared:SegmentedControl x:Name="segLayerContentKind" Margin="0,0,0,8" />
+                            <StackPanel x:Name="panelLayerText" Orientation="Horizontal"
+                                        Margin="0,0,0,8">
+                                <TextBox x:Name="txtLayerContent" Width="98"
+                                         FontFamily="Consolas" FontSize="13" MaxLength="3"
+                                         CharacterCasing="Upper"
+                                         Background="#1A1A1C" Foreground="#F0F0F0"
+                                         BorderBrush="#454547" Padding="4,2" />
+                                <TextBlock x:Name="txtLayerContentHint" FontSize="11.5"
+                                           Foreground="#7A7A7A" Margin="10,0,0,0"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                            <Border x:Name="panelLayerProperty" Background="#1A1A1C"
+                                    BorderBrush="#454547" BorderThickness="1"
+                                    Padding="8,6" Margin="0,0,0,8" Cursor="Hand"
+                                    Visibility="Collapsed"
+                                    MouseLeftButtonDown="LayerContentProperty_Click">
+                                <DockPanel>
+                                    <TextBlock x:Name="txtLayerPropChevron" DockPanel.Dock="Right"
+                                               Foreground="#7A7A7A" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="txtLayerPropPath" FontFamily="Consolas"
+                                               FontSize="12.5" Foreground="#C8C8C8"
+                                               TextTrimming="CharacterEllipsis" />
+                                </DockPanel>
+                            </Border>
+                            <TextBlock x:Name="txtLayerEffectLabel" FontSize="12"
+                                       Foreground="#9A9A9C" Margin="0,0,0,4" />
+                            <shared:SegmentedControl x:Name="segLayerEffect" Margin="0,0,0,12" />
+
+                            <TextBlock x:Name="txtLayerWhen" FontSize="9.5" FontFamily="Consolas"
+                                       Foreground="#7C7C7E" Margin="0,0,0,6" />
+                            <Border Background="#1A1A1C" BorderBrush="#454547" BorderThickness="1"
+                                    Padding="8,6" Margin="0,0,0,8" Cursor="Hand"
+                                    MouseLeftButtonDown="LayerConditionProperty_Click">
+                                <DockPanel>
+                                    <TextBlock x:Name="txtLayerCondChevron" DockPanel.Dock="Right"
+                                               Foreground="#7A7A7A" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="txtLayerCondPath" FontFamily="Consolas"
+                                               FontSize="12.5" Foreground="#C8C8C8"
+                                               TextTrimming="CharacterEllipsis" />
+                                </DockPanel>
+                            </Border>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                <TextBox x:Name="txtLayerCondValue" Width="80" FontSize="12.5"
+                                         Background="#1A1A1C" Foreground="#F0F0F0"
+                                         BorderBrush="#454547" Padding="4,2" />
+                                <ComboBox x:Name="cmbLayerOperator" Width="120" Margin="8,0,0,0"
+                                          FontSize="12.5" />
+                            </StackPanel>
+
+                            <TextBlock x:Name="txtLayerForHowLong" FontSize="9.5"
+                                       FontFamily="Consolas" Foreground="#7C7C7E"
+                                       Margin="0,0,0,6" />
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                <shared:SegmentedControl x:Name="segLayerLifetime" />
+                                <TextBox x:Name="txtLayerSeconds" Width="44" FontSize="12.5"
+                                         Margin="8,0,4,0" Background="#1A1A1C"
+                                         Foreground="#F0F0F0" BorderBrush="#454547"
+                                         Padding="4,2" VerticalAlignment="Center" />
+                                <TextBlock x:Name="txtLayerSecondsUnit" FontSize="12"
+                                           Foreground="#9A9A9C" VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <Border Background="#2B3138" CornerRadius="3" Padding="10,8"
+                                    Margin="0,0,0,8">
+                                <StackPanel>
+                                    <CheckBox x:Name="chkLayerEntrypoint" Foreground="#C8C8C8"
+                                              FontSize="12.5" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Popup>
+
         <!-- 5p Rotation dialog (D17: dialog primary) -->
         <Popup x:Name="popupRotation" AllowsTransparency="True" StaysOpen="True"
                Placement="Center" PopupAnimation="Fade">
