@@ -549,13 +549,34 @@ namespace FanaBridge.Display.Composition
 
         private string ResolveSegmentHostedPageId(string displayedDestinationId)
         {
-            if (TryHostedId(displayedDestinationId, out string hosted))
+            // Resolve-then-fallback, never trust the prefix alone: a promoted idle
+            // page (or any stale ref) that names no known hosted page must keep the
+            // continuity seed, not hand the composer an id it will blank on.
+            if (TryHostedId(displayedDestinationId, out string hosted)
+                && IsKnownHostedPage(hosted))
                 return hosted;
             // Segment-plane continuity face while an ITM page owns the display (FA3 engine
             // law / evaluated-carrier-contract §6.2 law 2): reuse the strip-order seed
             // (LegacySeedResolver) so col01 stays a continuous stream. This is not the
             // bare-Legacy remembered-page seed path — same resolver, second use.
             return _landingHostedPageId;
+        }
+
+        private bool IsKnownHostedPage(string hostedId)
+        {
+            var pages = _config?.Pages;
+            if (pages == null || string.IsNullOrEmpty(hostedId))
+                return false;
+            for (int i = 0; i < pages.Count; i++)
+            {
+                var page = pages[i];
+                if (page != null
+                    && page.Kind == PageEntryKind.HostedPage
+                    && !page.DegradedAtLoad
+                    && string.Equals(page.Id, hostedId, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
 
         private ItmPage? ResolveConfiguredBaseItm()

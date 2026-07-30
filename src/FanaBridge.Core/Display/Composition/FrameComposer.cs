@@ -35,8 +35,11 @@ namespace FanaBridge.Display.Composition
         private readonly Action<string> _warn;
         private readonly HashSet<string> _warnedKeys = new HashSet<string>(StringComparer.Ordinal);
 
+        // OrdinalIgnoreCase to match the validator's and WalkCompiler's id sets —
+        // an Ordinal mismatch here let a case-differing hosted ref validate clean
+        // and then silently blank at the landing-missing branch.
         private readonly Dictionary<string, PageEntry> _hostedById =
-            new Dictionary<string, PageEntry>(StringComparer.Ordinal);
+            new Dictionary<string, PageEntry>(StringComparer.OrdinalIgnoreCase);
         private readonly List<PageEntry> _hostedPages = new List<PageEntry>();
         private readonly List<PageEntry> _degradedHostedPages = new List<PageEntry>();
         private readonly List<KeyValuePair<ushort, FieldEntry>> _fields =
