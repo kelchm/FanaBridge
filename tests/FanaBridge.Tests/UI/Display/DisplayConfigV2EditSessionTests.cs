@@ -321,6 +321,41 @@ namespace FanaBridge.Tests.UI.Display
         }
 
         [Fact]
+        public void MoveLayer_ReordersHostedPageLadder()
+        {
+            var live = SeedLive();
+            live.Pages.Add(new PageEntry
+            {
+                Kind = PageEntryKind.HostedPage,
+                Id = "alerts",
+                Name = "Alerts",
+                Layers = new List<LayerEntry>
+                {
+                    new LayerEntry { Id = "l1" },
+                    new LayerEntry { Id = "l2" },
+                    new LayerEntry { Id = "l3" },
+                },
+            });
+            var session = DisplayConfigV2EditSession.Open(live);
+
+            session.MoveLayer("alerts", 0, 2);
+
+            var layers = session.Document.Pages
+                .First(p => p.Kind == PageEntryKind.HostedPage && p.Id == "alerts")
+                .Layers;
+            Assert.Equal(new[] { "l2", "l3", "l1" },
+                layers.Select(l => l.Id).ToArray());
+            // Live document untouched; bad indices / unknown page are no-ops.
+            Assert.Equal("l1", live.Pages
+                .First(p => p.Kind == PageEntryKind.HostedPage && p.Id == "alerts")
+                .Layers[0].Id);
+            int generation = session.Generation;
+            session.MoveLayer("alerts", 0, 9);
+            session.MoveLayer("missing", 0, 1);
+            Assert.Equal(generation, session.Generation);
+        }
+
+        [Fact]
         public void AddSummon_AppendsWithGeneratedId()
         {
             var session = DisplayConfigV2EditSession.Open(SeedLive());

@@ -1286,6 +1286,17 @@ namespace FanaBridge.UI.Display
         public const string BaseBlockBlank =
             "blank — this page is only up when one of its layers fires";
 
+        /// <summary>Layer ladder law line (Pages &amp; Fields hosted-page pane).</summary>
+        public const string LayerLadderHint =
+            "The top active layer owns the page's 3 characters; the Base content shows when none is.";
+
+        /// <summary>Hosted page with no layers yet (empty-state line, never a blank pane).</summary>
+        public const string NoLayersOnThisPage = "No layers on this page yet.";
+
+        /// <summary>Hosted-page ladder scope note: what is live vs later.</summary>
+        public const string LayerFormArrivingLater =
+            "Reorder is live; the layer form arrives with a later phase.";
+
         /// <summary>Field-override writes chip: suffix.</summary>
         public const string WritesSuffix = "suffix";
 

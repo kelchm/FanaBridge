@@ -47,6 +47,10 @@ namespace FanaBridge.UI.Display
         private static readonly IReadOnlyList<string> NoFormats =
             new ReadOnlyCollection<string>(Array.Empty<string>());
 
+        private static readonly IReadOnlyList<PagesFieldsLayerRowModel> NoLayerRows =
+            new ReadOnlyCollection<PagesFieldsLayerRowModel>(
+                Array.Empty<PagesFieldsLayerRowModel>());
+
         private static readonly IReadOnlyList<PagesFieldsRotationItemModel> NoRotation =
             new ReadOnlyCollection<PagesFieldsRotationItemModel>(
                 Array.Empty<PagesFieldsRotationItemModel>());
@@ -139,6 +143,15 @@ namespace FanaBridge.UI.Display
                 scopeGroups = FilterGroupsToFocus(scopeGroups, effectiveFocus.Value);
             }
 
+            // Hosted pages: the layer ladder is their content pane (board 5i slice —
+            // ladder + base + reorder; the layer form is a later phase).
+            var layerRows = modeOff || selectedPage == null || selectedPage.IsItm
+                ? NoLayerRows
+                : BuildLayerRows(config, aliases, resolution, selectedPage.HostedPageId);
+            string layerBaseText = null;
+            if (!modeOff && selectedPage != null && !selectedPage.IsItm)
+                layerBaseText = HostedBaseText(config, selectedPage.HostedPageId);
+
             var entrypoints = modeOff || selectedPage == null
                 ? NoEntrypoints
                 : BuildEntrypointsToPage(config, catalog, aliases, resolution, selectedPage);
@@ -202,7 +215,9 @@ namespace FanaBridge.UI.Display
                 entrypointsCountLabel: DisplayCopy.ReadOnlyHereCount(entrypoints.Count),
                 rotationIn: rotationIn,
                 rotationOut: rotationOut,
-                values: values);
+                values: values,
+                layerRows: layerRows,
+                layerBaseText: layerBaseText);
         }
 
         private DisplayPagesFieldsV2Model(
@@ -237,8 +252,12 @@ namespace FanaBridge.UI.Display
             string entrypointsCountLabel,
             IReadOnlyList<PagesFieldsRotationItemModel> rotationIn,
             IReadOnlyList<PagesFieldsRotationItemModel> rotationOut,
-            DisplayValuesSnapshot values)
+            DisplayValuesSnapshot values,
+            IReadOnlyList<PagesFieldsLayerRowModel> layerRows = null,
+            string layerBaseText = null)
         {
+            LayerRows = layerRows ?? NoLayerRows;
+            LayerBaseText = layerBaseText;
             SurfaceWord = surfaceWord;
             SituationCopy = situationCopy;
             InGame = inGame;
@@ -347,6 +366,19 @@ namespace FanaBridge.UI.Display
         public IReadOnlyList<PagesFieldsRotationItemModel> RotationOut { get; }
 
         public DisplayValuesSnapshot Values { get; }
+
+        // ── Hosted-page layer ladder (5i slice) ──────────────────────────
+
+        /// <summary>Layer ladder rows for a selected hosted page (rank = order,
+        /// top-first). Empty for ITM pages.</summary>
+        public IReadOnlyList<PagesFieldsLayerRowModel> LayerRows { get; }
+
+        /// <summary>Base content line for the pinned BASE row of the layer ladder.
+        /// Null when the selected page is not hosted.</summary>
+        public string LayerBaseText { get; }
+
+        /// <summary>True when the content pane shows the hosted layer ladder.</summary>
+        public bool ShowLayerLadder => SelectedPage != null && !SelectedPage.IsItm;
 
         // ── Selection / filter pure helpers (test seams) ─────────────────
 
@@ -1047,6 +1079,100 @@ namespace FanaBridge.UI.Display
             return DisplayCopy.ThisWheelEnvelope(name, suffixChars.Value, valueKind);
         }
 
+        // ── Hosted-page layer ladder (5i slice) ──────────────────────────
+
+        private static IReadOnlyList<PagesFieldsLayerRowModel> BuildLayerRows(
+            DisplayConfigV2 config,
+            AliasTable aliases,
+            DisplayResolutionSnapshotModel resolution,
+            string hostedPageId)
+        {
+            var page = FindHostedEntry(config, hostedPageId);
+            if (page?.Layers == null || page.Layers.Count == 0)
+                return NoLayerRows;
+
+            // Live presence by layer id — same status vocabulary as every ladder.
+            var presence = new Dictionary<string, string>(StringComparer.Ordinal);
+            var carriers = resolution?.Carriers;
+            if (carriers != null)
+            {
+                for (int i = 0; i < carriers.Count; i++)
+                {
+                    var c = carriers[i];
+                    if (c?.CarrierId != null && !string.IsNullOrEmpty(c.PresenceCopy))
+                        presence[c.CarrierId] = c.PresenceCopy;
+                }
+            }
+
+            var list = new List<PagesFieldsLayerRowModel>(page.Layers.Count);
+            for (int i = 0; i < page.Layers.Count; i++)
+            {
+                var layer = page.Layers[i];
+                if (layer == null) continue;
+                string status = DisplayCopy.Waiting;
+                if (layer.Id != null && presence.TryGetValue(layer.Id, out string live))
+                    status = live;
+                list.Add(new PagesFieldsLayerRowModel(
+                    layerId: layer.Id,
+                    rank: list.Count + 1,
+                    contentChip: ContentLabel(layer.Content),
+                    conditionSentence: !string.IsNullOrWhiteSpace(layer.Name)
+                        ? layer.Name
+                        : ConditionSentence.From(layer.Condition, layer.Lifetime, aliases),
+                    actsAsEntrypoint: layer.ActsAsEntrypoint && !layer.ActsAsEntrypointIgnored,
+                    enabled: layer.Enabled,
+                    degraded: layer.DegradedAtLoad,
+                    statusCopy: status));
+            }
+            return list.Count == 0
+                ? NoLayerRows
+                : new ReadOnlyCollection<PagesFieldsLayerRowModel>(list);
+        }
+
+        private static string HostedBaseText(DisplayConfigV2 config, string hostedPageId)
+        {
+            var page = FindHostedEntry(config, hostedPageId);
+            string label = ContentLabel(page?.Base?.Content);
+            return string.IsNullOrEmpty(label) ? DisplayCopy.BaseBlockBlank : label;
+        }
+
+        private static PageEntry FindHostedEntry(DisplayConfigV2 config, string hostedPageId)
+        {
+            if (config?.Pages == null || string.IsNullOrEmpty(hostedPageId))
+                return null;
+            for (int i = 0; i < config.Pages.Count; i++)
+            {
+                var page = config.Pages[i];
+                if (page != null
+                    && page.Kind == PageEntryKind.HostedPage
+                    && string.Equals(page.Id, hostedPageId, StringComparison.Ordinal))
+                    return page;
+            }
+            return null;
+        }
+
+        /// <summary>Short label for a 3-char content object: the text itself, the
+        /// property source name, or the content kind's document spelling.</summary>
+        private static string ContentLabel(ContentObject content)
+        {
+            if (content == null)
+                return null;
+            switch (content.Kind)
+            {
+                case ContentKind.Text:
+                case ContentKind.Message:
+                    return string.IsNullOrEmpty(content.EffectiveText)
+                        ? content.Text
+                        : content.EffectiveText;
+                case ContentKind.Property:
+                    return content.Source?.Name;
+                case ContentKind.Unknown:
+                    return content.KindRaw;
+                default:
+                    return FanaBridge.Display.Rules.EnumText.Write(content.Kind);
+            }
+        }
+
         // ── Entrypoints to this page ─────────────────────────────────────
 
         private static IReadOnlyList<PagesFieldsEntrypointRowModel> BuildEntrypointsToPage(
@@ -1545,6 +1671,33 @@ namespace FanaBridge.UI.Display
         public string StatusCopy { get; }
         public bool IsWinner { get; }
         public string RowId { get; }
+    }
+
+    /// <summary>One row of a hosted page's layer ladder (rank = order, top-first).</summary>
+    public sealed class PagesFieldsLayerRowModel
+    {
+        public PagesFieldsLayerRowModel(
+            string layerId, int rank, string contentChip, string conditionSentence,
+            bool actsAsEntrypoint, bool enabled, bool degraded, string statusCopy)
+        {
+            LayerId = layerId;
+            Rank = rank;
+            ContentChip = contentChip;
+            ConditionSentence = conditionSentence;
+            ActsAsEntrypoint = actsAsEntrypoint;
+            Enabled = enabled;
+            Degraded = degraded;
+            StatusCopy = statusCopy;
+        }
+
+        public string LayerId { get; }
+        public int Rank { get; }
+        public string ContentChip { get; }
+        public string ConditionSentence { get; }
+        public bool ActsAsEntrypoint { get; }
+        public bool Enabled { get; }
+        public bool Degraded { get; }
+        public string StatusCopy { get; }
     }
 
     public sealed class PagesFieldsRotationItemModel

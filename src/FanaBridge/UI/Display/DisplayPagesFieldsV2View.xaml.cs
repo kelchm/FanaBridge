@@ -955,6 +955,22 @@ namespace FanaBridge.UI.Display
             }
             sb.Append('#');
 
+            sb.Append(model.ShowLayerLadder ? '1' : '0').Append(S)
+                .Append(model.LayerBaseText).Append(S);
+            var layers = model.LayerRows;
+            for (int i = 0; i < layers.Count; i++)
+            {
+                var l = layers[i];
+                if (l == null) continue;
+                sb.Append(l.LayerId).Append(S).Append(l.Rank).Append(S)
+                    .Append(l.ContentChip).Append(S).Append(l.ConditionSentence).Append(S)
+                    .Append(l.StatusCopy).Append(S)
+                    .Append(l.ActsAsEntrypoint ? '1' : '0')
+                    .Append(l.Enabled ? '1' : '0')
+                    .Append(l.Degraded ? '1' : '0').Append(S);
+            }
+            sb.Append('#');
+
             var groups = model.ScopeGroups;
             for (int g = 0; g < groups.Count; g++)
             {
@@ -1163,6 +1179,14 @@ namespace FanaBridge.UI.Display
 
             panelFieldCollection.Children.Clear();
 
+            if (model.ShowLayerLadder)
+            {
+                BuildLayerLadder(model);
+                if (keepOffset > 0)
+                    scrollFieldCollection.ScrollToVerticalOffset(keepOffset);
+                return;
+            }
+
             if (model.ScopeGroups.Count > 0)
             {
                 for (int g = 0; g < model.ScopeGroups.Count; g++)
@@ -1214,6 +1238,210 @@ namespace FanaBridge.UI.Display
                 wrap.Children.Add(card);
             }
             return wrap;
+        }
+
+        // ── Hosted-page layer ladder (5i slice: ladder + base + reorder) ──
+
+        private void BuildLayerLadder(DisplayPagesFieldsV2Model model)
+        {
+            panelFieldCollection.Children.Add(new TextBlock
+            {
+                Text = DisplayCopy.LayersSection,
+                FontSize = 9.5,
+                FontFamily = new FontFamily("Consolas"),
+                Foreground = MutedFg,
+                Margin = new Thickness(0, 0, 0, 4),
+            });
+            panelFieldCollection.Children.Add(new TextBlock
+            {
+                Text = DisplayCopy.LayerLadderHint,
+                FontSize = 11,
+                Foreground = MutedFg,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+            });
+
+            string pageId = model.SelectedPage?.HostedPageId;
+            var rows = model.LayerRows;
+            if (rows.Count == 0)
+            {
+                panelFieldCollection.Children.Add(new TextBlock
+                {
+                    Text = DisplayCopy.NoLayersOnThisPage,
+                    FontSize = 12,
+                    Foreground = MutedFg,
+                    Margin = new Thickness(0, 0, 0, 8),
+                });
+            }
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                if (row == null) continue;
+                panelFieldCollection.Children.Add(BuildLayerRow(pageId, row, rows.Count));
+            }
+
+            // Pinned BASE row — condition-"always" floor, fixed last, no grip.
+            var baseBorder = new Border
+            {
+                BorderBrush = DashedBorder,
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(8, 6, 8, 8),
+                Margin = new Thickness(0, 6, 0, 0),
+            };
+            var baseStack = new StackPanel();
+            baseStack.Children.Add(new TextBlock
+            {
+                Text = DisplayCopy.BaseBlockLabel,
+                FontSize = 9.5,
+                FontFamily = new FontFamily("Consolas"),
+                Foreground = MutedFg,
+            });
+            baseStack.Children.Add(new TextBlock
+            {
+                Text = model.LayerBaseText ?? DisplayCopy.BaseBlockBlank,
+                FontSize = 12,
+                Foreground = BodyFg,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 4, 0, 0),
+            });
+            baseBorder.Child = baseStack;
+            panelFieldCollection.Children.Add(baseBorder);
+
+            if (rows.Count > 0)
+            {
+                panelFieldCollection.Children.Add(new TextBlock
+                {
+                    Text = DisplayCopy.LayerFormArrivingLater,
+                    FontSize = 11,
+                    Foreground = MutedFg,
+                    Margin = new Thickness(0, 8, 0, 0),
+                });
+            }
+        }
+
+        private UIElement BuildLayerRow(
+            string pageId, PagesFieldsLayerRowModel row, int rowCount)
+        {
+            var border = new Border
+            {
+                Background = CardBg,
+                Padding = new Thickness(8, 6, 8, 6),
+                Margin = new Thickness(0, 0, 0, 2),
+                Opacity = row.Enabled && !row.Degraded ? 1.0 : 0.55,
+            };
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(104) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(88) });
+
+            int rankIndex = row.Rank - 1;
+            var reorder = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            reorder.Children.Add(new TextBlock
+            {
+                Text = DisplayCopy.GripGlyph,
+                FontSize = 11,
+                Foreground = MutedFg,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 2, 0),
+            });
+            var up = MakeTinyButton("↑", () =>
+            {
+                if (rankIndex > 0)
+                    MoveLayerCore(pageId, rankIndex, rankIndex - 1);
+            });
+            var down = MakeTinyButton("↓", () =>
+            {
+                if (rankIndex < rowCount - 1)
+                    MoveLayerCore(pageId, rankIndex, rankIndex + 1);
+            });
+            reorder.Children.Add(up);
+            reorder.Children.Add(down);
+            Grid.SetColumn(reorder, 0);
+            grid.Children.Add(reorder);
+
+            grid.Children.Add(Cell(
+                row.Rank.ToString(CultureInfo.InvariantCulture), 1, MutedFg, 12));
+
+            var chip = new StackPanel { Orientation = Orientation.Horizontal };
+            chip.Children.Add(new TextBlock
+            {
+                Text = DisplayCopy.LayerChip,
+                FontSize = 11,
+                Foreground = Freeze(new SolidColorBrush(Color.FromRgb(0x9F, 0xB4, 0xC4))),
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            if (!string.IsNullOrEmpty(row.ContentChip))
+            {
+                chip.Children.Add(new Border
+                {
+                    Background = Brushes.Black,
+                    Padding = new Thickness(4, 1, 4, 1),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Child = new TextBlock
+                    {
+                        Text = row.ContentChip,
+                        FontSize = 10,
+                        FontFamily = new FontFamily("Consolas"),
+                        Foreground = Freeze(new SolidColorBrush(Color.FromRgb(0x7F, 0xD0, 0xF5))),
+                    },
+                });
+            }
+            Grid.SetColumn(chip, 2);
+            grid.Children.Add(chip);
+
+            grid.Children.Add(new TextBlock
+            {
+                Text = row.ConditionSentence ?? string.Empty,
+                FontSize = 11.5,
+                Foreground = BodyFg,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center,
+            }.WithColumn(3));
+
+            if (row.ActsAsEntrypoint)
+            {
+                var glyph = new TextBlock
+                {
+                    Text = DisplayCopy.EntrypointGlyph,
+                    FontSize = 14,
+                    Foreground = Freeze(new SolidColorBrush(Color.FromRgb(0x9F, 0xBD, 0xD4))),
+                    ToolTip = DisplayCopy.EntrypointTooltip,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                Grid.SetColumn(glyph, 4);
+                grid.Children.Add(glyph);
+            }
+
+            grid.Children.Add(new TextBlock
+            {
+                Text = row.StatusCopy ?? string.Empty,
+                FontSize = 11.5,
+                Foreground = MutedFg,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+            }.WithColumn(5));
+
+            border.Child = grid;
+            return border;
+        }
+
+        /// <summary>Reorder a hosted page's layer ladder through the edit session.</summary>
+        internal bool MoveLayerCore(string pageId, int fromIndex, int toIndex)
+        {
+            if (string.IsNullOrEmpty(pageId) || fromIndex == toIndex
+                || fromIndex < 0 || toIndex < 0)
+                return false;
+            ApplyEdit(session => session.MoveLayer(pageId, fromIndex, toIndex));
+            return true;
         }
 
         private Border BuildFieldSection(PagesFieldsFieldSectionModel section)

@@ -172,6 +172,44 @@ namespace FanaBridge.UI.Display
         }
 
         /// <summary>
+        /// Reorder a hosted page's layer ladder (array order = rank, top-first). No-op
+        /// when the page or either index is missing / out of range / equal.
+        /// </summary>
+        public DisplayConfigV2 MoveLayer(string hostedPageId, int fromIndex, int toIndex)
+        {
+            return Mutate(doc =>
+            {
+                var page = FindHostedPage(doc, hostedPageId);
+                var layers = page?.Layers;
+                if (layers == null
+                    || fromIndex < 0 || fromIndex >= layers.Count
+                    || toIndex < 0 || toIndex >= layers.Count
+                    || fromIndex == toIndex)
+                    return false;
+
+                var item = layers[fromIndex];
+                layers.RemoveAt(fromIndex);
+                layers.Insert(toIndex, item);
+                return true;
+            });
+        }
+
+        private static PageEntry FindHostedPage(DisplayConfigV2 doc, string hostedPageId)
+        {
+            if (doc?.Pages == null || string.IsNullOrEmpty(hostedPageId))
+                return null;
+            for (int i = 0; i < doc.Pages.Count; i++)
+            {
+                var page = doc.Pages[i];
+                if (page != null
+                    && page.Kind == PageEntryKind.HostedPage
+                    && string.Equals(page.Id, hostedPageId, StringComparison.Ordinal))
+                    return page;
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Append a summon to the row identified by <paramref name="rowId"/>. Assigns a
         /// GUID id when the summon's id is blank. Clones the supplied summon first — the
         /// caller's instance is never mutated or retained. No-op when the row is missing.

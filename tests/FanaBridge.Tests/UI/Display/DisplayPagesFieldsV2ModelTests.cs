@@ -322,6 +322,81 @@ namespace FanaBridge.Tests.UI.Display
             Assert.Equal(DisplayCopy.LegacyBadge, model.PageButtons[firstHosted].Badge);
         }
 
+        // ── Hosted-page layer ladder (5i slice) ──────────────────────────
+
+        [Fact]
+        public void HostedPage_ProjectsLayerLadder_RankedTopFirst_WithBase()
+        {
+            var doc = DocWithPageFields();
+            doc.Pages.Add(new PageEntry
+            {
+                Kind = PageEntryKind.HostedPage,
+                Id = "alerts",
+                Name = "Alerts",
+                Base = new ContentWithEffect
+                {
+                    Content = new ContentObject { Kind = ContentKind.Text, Text = "SPD" },
+                },
+                Layers = new List<LayerEntry>
+                {
+                    new LayerEntry
+                    {
+                        Id = "l1",
+                        Content = new ContentObject { Kind = ContentKind.Text, Text = "PIT" },
+                        ActsAsEntrypoint = true,
+                    },
+                    new LayerEntry
+                    {
+                        Id = "l2",
+                        Content = new ContentObject { Kind = ContentKind.Text, Text = "LOW" },
+                    },
+                },
+            });
+            var model = DisplayPagesFieldsV2Model.Project(
+                doc, EmptyConnected(), null, DisplayType.Itm, TireTempsCatalog(),
+                selectedPageKey: "hosted:alerts");
+
+            Assert.True(model.ShowLayerLadder);
+            Assert.Equal(2, model.LayerRows.Count);
+            Assert.Equal("l1", model.LayerRows[0].LayerId);
+            Assert.Equal(1, model.LayerRows[0].Rank);
+            Assert.Equal("PIT", model.LayerRows[0].ContentChip);
+            Assert.True(model.LayerRows[0].ActsAsEntrypoint);
+            Assert.Equal("l2", model.LayerRows[1].LayerId);
+            Assert.Equal(2, model.LayerRows[1].Rank);
+            Assert.Equal("SPD", model.LayerBaseText);
+        }
+
+        [Fact]
+        public void HostedPage_NoLayers_BlankBase_HonestEmptyState()
+        {
+            var doc = DocWithPageFields();
+            doc.Pages.Add(new PageEntry
+            {
+                Kind = PageEntryKind.HostedPage,
+                Id = "alerts",
+                Name = "Alerts",
+            });
+            var model = DisplayPagesFieldsV2Model.Project(
+                doc, EmptyConnected(), null, DisplayType.Itm, TireTempsCatalog(),
+                selectedPageKey: "hosted:alerts");
+
+            Assert.True(model.ShowLayerLadder);
+            Assert.Empty(model.LayerRows);
+            Assert.Equal(DisplayCopy.BaseBlockBlank, model.LayerBaseText);
+        }
+
+        [Fact]
+        public void ItmPage_HasNoLayerLadder()
+        {
+            var doc = DocWithPageFields();
+            var model = DisplayPagesFieldsV2Model.Project(
+                doc, EmptyConnected(), null, DisplayType.Itm, TireTempsCatalog());
+
+            Assert.False(model.ShowLayerLadder);
+            Assert.Empty(model.LayerRows);
+        }
+
         // ── Fixtures ─────────────────────────────────────────────────────
 
         private static WheelCatalog TireTempsCatalog()
