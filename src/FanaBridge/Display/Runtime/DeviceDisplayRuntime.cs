@@ -892,6 +892,12 @@ namespace FanaBridge.Display.Runtime
                 Manual = manual,
                 Content = content,
             });
+
+            // Universal blank: the composition decides when the idle blank floor owns
+            // an ITM wheel; the driver executes it as the Off-mode gate (true legacy
+            // mode on the wire) while the composition paints the segments off.
+            if (_itmDisplay != null)
+                _itmDisplay.IdleBlankParked = _compositionV2.IdleBlankLegacyModeActive;
         }
 
         private void LogCompositionDiagnostic(string message)

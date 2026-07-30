@@ -18,6 +18,12 @@ namespace FanaBridge.Display.Arbitration
         /// </summary>
         public ScreenCommandsCapability ScreenCommands { get; set; }
 
+        /// <summary>
+        /// Whether the wheel renders ITM pages — shapes the universal blank
+        /// (legacy-mode + segments off vs segments off alone; IdleCompile).
+        /// </summary>
+        public bool IsItmWheel { get; set; }
+
         /// <summary>Device key stamped on the composed-resolution slice.</summary>
         public string DeviceKey { get; set; } = "";
 

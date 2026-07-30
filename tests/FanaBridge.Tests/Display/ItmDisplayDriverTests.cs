@@ -902,6 +902,30 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
+        public void IdleBlankParked_GatesLikeOffMode_ThenComesBack()
+        {
+            // Universal blank: parking drops to TRUE legacy mode via the Off-mode
+            // gate (ItmModeOff once); clearing brings ITM back up. The user-facing
+            // Enabled setting never changes.
+            var driver = MakeDriver(out var t, out var clock);
+            Sync(driver, clock);
+            t.Sent.Clear();
+
+            driver.IdleBlankParked = true;
+            clock.T += 40;
+            driver.Update(NotRunningData());
+            Assert.Contains(t.Sent, IsItmModeOff);
+            Assert.True(driver.Enabled);           // the setting is untouched
+            Assert.False(driver.IsRunning);
+
+            t.Sent.Clear();
+            driver.IdleBlankParked = false;
+            clock.T += 40;
+            driver.Update(NotRunningData());
+            Assert.Contains(t.Sent, IsItmModeOn);  // bring-up restarts
+        }
+
+        [Fact]
         public void Idle_ConfigSuffixEdit_SendsParamDefs_WithoutTelemetry()
         {
             // Idle parity: an authored suffix edit (field plans) must land on the

@@ -34,16 +34,23 @@ namespace FanaBridge.Display.Arbitration
         /// Idle-entry program anchor. Null when not yet entered idle; treated as
         /// <paramref name="nowMs"/> (step 0) so a first tick still resolves.
         /// </param>
+        /// <param name="isItmWheel">
+        /// Whether the wheel renders ITM pages. Decides the UNIVERSAL BLANK shape
+        /// when the firmware blank command is not confirmed: TRUE legacy mode on the
+        /// wire + segments off (ITM) vs segments off alone (segment-only). The
+        /// user-facing display-mode setting never changes on either.
+        /// </param>
         public static IdleCompileResult Resolve(
             IdleSpec idle,
             ScreenCommandsCapability screenCommands = null,
             IReadOnlyDictionary<string, PlaylistEntry> playlists = null,
             long nowMs = 0,
-            long? anchorMs = null)
+            long? anchorMs = null,
+            bool isItmWheel = false)
         {
             // Absent / degraded → blank path (spec §10 / §14).
             if (idle == null || idle.DegradedAtLoad)
-                return CompileBlank(parkOnLegacy: false, screenCommands);
+                return CompileBlank(parkOnLegacy: false, screenCommands, isItmWheel);
 
             switch (idle.Kind)
             {
@@ -53,19 +60,19 @@ namespace FanaBridge.Display.Arbitration
 
                 case IdleKind.Screen:
                     if (idle.ScreenIgnored || idle.Screen == WheelScreenCommand.Unknown)
-                        return CompileBlank(idle.ParkOnLegacyForBlank, screenCommands);
+                        return CompileBlank(idle.ParkOnLegacyForBlank, screenCommands, isItmWheel);
                     return CompileScreen(idle.Screen, screenCommands);
 
                 case IdleKind.Blank:
-                    return CompileBlank(idle.ParkOnLegacyForBlank, screenCommands);
+                    return CompileBlank(idle.ParkOnLegacyForBlank, screenCommands, isItmWheel);
 
                 case IdleKind.Playlist:
                     return ResolvePlaylist(
-                        idle, screenCommands, playlists, nowMs, anchorMs);
+                        idle, screenCommands, playlists, nowMs, anchorMs, isItmWheel);
 
                 default:
                     // Unknown kind: treat as degraded → blank.
-                    return CompileBlank(idle.ParkOnLegacyForBlank, screenCommands);
+                    return CompileBlank(idle.ParkOnLegacyForBlank, screenCommands, isItmWheel);
             }
         }
 
@@ -78,8 +85,10 @@ namespace FanaBridge.Display.Arbitration
         public static IdleCompileResult ResolveAtEntry(
             IdleSpec idle,
             ScreenCommandsCapability screenCommands = null,
-            IReadOnlyDictionary<string, PlaylistEntry> playlists = null)
-            => Resolve(idle, screenCommands, playlists, nowMs: 0, anchorMs: 0);
+            IReadOnlyDictionary<string, PlaylistEntry> playlists = null,
+            bool isItmWheel = false)
+            => Resolve(idle, screenCommands, playlists, nowMs: 0, anchorMs: 0,
+                isItmWheel: isItmWheel);
 
         /// <summary>
         /// Expand a playlist idle: capability-filter first, then pick the active step
@@ -91,7 +100,8 @@ namespace FanaBridge.Display.Arbitration
             ScreenCommandsCapability screenCommands,
             IReadOnlyDictionary<string, PlaylistEntry> playlists,
             long nowMs,
-            long? anchorMs)
+            long? anchorMs,
+            bool isItmWheel)
         {
             // Floor for missing / degraded / all-skipped programs: same blank compile
             // the document's blank idle would produce — including ParkOnLegacyForBlank
@@ -104,7 +114,7 @@ namespace FanaBridge.Display.Arbitration
                 || playlist == null
                 || playlist.DegradedAtLoad)
             {
-                return CompileBlank(floorPark, screenCommands);
+                return CompileBlank(floorPark, screenCommands, isItmWheel);
             }
 
             // 1) Capability FILTER first — skipped steps contribute no time.
@@ -113,7 +123,7 @@ namespace FanaBridge.Display.Arbitration
             if (survivors == null || survivors.Count == 0)
             {
                 // P6 rider (a): all-skipped → idle floor, never Silence.
-                return CompileBlank(floorPark, screenCommands);
+                return CompileBlank(floorPark, screenCommands, isItmWheel);
             }
 
             long anchor = anchorMs ?? nowMs;
@@ -128,7 +138,7 @@ namespace FanaBridge.Display.Arbitration
             // ONE selector — shared with ResolveAtEntry (elapsed 0 → entry step).
             int activeIndex = SelectActiveStepIndex(survivors, elapsed, terminal);
             var active = survivors[activeIndex];
-            return CompileStepDestination(active.Destination, screenCommands);
+            return CompileStepDestination(active.Destination, screenCommands, isItmWheel);
         }
 
         /// <summary>
@@ -299,10 +309,10 @@ namespace FanaBridge.Display.Arbitration
         }
 
         private static IdleCompileResult CompileStepDestination(
-            IdleSpec dest, ScreenCommandsCapability sc)
+            IdleSpec dest, ScreenCommandsCapability sc, bool isItmWheel)
         {
             if (dest == null)
-                return CompileBlank(parkOnLegacy: false, sc);
+                return CompileBlank(parkOnLegacy: false, sc, isItmWheel);
 
             switch (dest.Kind)
             {
@@ -313,25 +323,31 @@ namespace FanaBridge.Display.Arbitration
                     return CompileScreen(dest.Screen, sc);
 
                 case IdleKind.Blank:
-                    return CompileBlank(dest.ParkOnLegacyForBlank, sc);
+                    return CompileBlank(dest.ParkOnLegacyForBlank, sc, isItmWheel);
 
                 default:
-                    return CompileBlank(parkOnLegacy: false, sc);
+                    return CompileBlank(parkOnLegacy: false, sc, isItmWheel);
             }
         }
 
         private static IdleCompileResult CompileBlank(
-            bool parkOnLegacy, ScreenCommandsCapability sc)
+            bool parkOnLegacy, ScreenCommandsCapability sc, bool isItmWheel)
         {
             if (parkOnLegacy)
                 return IdleCompileResult.ParkOnLegacy();
 
+            // The firmware blank COMMAND only where bench-confirmed. Everywhere else
+            // the UNIVERSAL BLANK (owner ruling 2026-07-29): ITM wheels drop to TRUE
+            // legacy mode on the wire (the Off-mode gate; the Legacy PAGE would keep
+            // the ITM branding on screen) + paint segments off; segment-only wheels
+            // paint segments off. The user-facing display-mode SETTING never changes.
             bool? blankSupported = CapabilityOf(sc, WheelScreenCommand.Blank);
-            if (blankSupported == false)
-                return IdleCompileResult.PaintBlankFrame();
+            if (blankSupported == true)
+                return IdleCompileResult.FirmwareBlank(capabilityUntested: false);
 
-            // true or null (untested): firmware blank command, warn-and-allow when null.
-            return IdleCompileResult.FirmwareBlank(capabilityUntested: blankSupported == null);
+            return isItmWheel
+                ? IdleCompileResult.ParkOnLegacy()
+                : IdleCompileResult.PaintBlankFrame();
         }
 
         private static IdleCompileResult CompileScreen(
@@ -466,7 +482,9 @@ namespace FanaBridge.Display.Arbitration
         Page,
         /// <summary>Blank absent/false on a segment wheel — E5/E7 paints all-off.</summary>
         PaintBlankFrame,
-        /// <summary>Blank absent/false on ITM (<c>ParkOnLegacyForBlank</c>) — park + paint.</summary>
+        /// <summary>Blank without a confirmed command on ITM — TRUE legacy mode on the
+        /// wire (Off-mode gate; never the Legacy page, never a settings change) +
+        /// painted all-off segments. Historic spelling kept from the §6.2 table.</summary>
         ParkOnLegacyForBlank,
         /// <summary>Inert: unsupported non-blank screen; plane silent.</summary>
         Silence,

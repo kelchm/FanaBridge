@@ -1197,11 +1197,14 @@ namespace FanaBridge.Display.Schema2
                 case IdleKind.Blank:
                     if (catalog != null && IsItmWheel(catalog))
                     {
+                        // Universal blank (owner ruling): the firmware command only
+                        // where bench-CONFIRMED; untested counts as unavailable —
+                        // the display drops to true legacy mode + painted-off segments.
                         bool? blankOk = catalog.ScreenCommands?.Blank;
-                        if (blankOk == false)
+                        if (blankOk != true)
                         {
                             idle.ParkOnLegacyForBlank = true;
-                            warn(site + " blank on command-less ITM wheel — park-on-Legacy compile policy");
+                            warn(site + " blank without a confirmed blank command — legacy-mode blank compile policy");
                         }
                     }
                     break;
@@ -1225,12 +1228,12 @@ namespace FanaBridge.Display.Schema2
                         warn(site + ".playlist '" + idle.Playlist
                             + "' unresolvable — degraded; runtime falls back to blank");
                     }
-                    // All-skipped / missing-program floor: same park policy as blank idle
-                    // on command-less ITM (IdleCompile floor uses this flag).
+                    // All-skipped / missing-program floor: same universal-blank policy
+                    // as blank idle (IdleCompile floor uses this flag).
                     if (catalog != null && IsItmWheel(catalog))
                     {
                         bool? blankOk = catalog.ScreenCommands?.Blank;
-                        if (blankOk == false)
+                        if (blankOk != true)
                             idle.ParkOnLegacyForBlank = true;
                     }
                     break;

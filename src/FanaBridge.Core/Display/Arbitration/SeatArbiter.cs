@@ -44,6 +44,7 @@ namespace FanaBridge.Display.Arbitration
         private readonly string _deviceKey;
         private readonly IReadOnlyDictionary<ushort, string> _primaryHostByParam;
         private readonly WheelCatalog _catalog;
+        private readonly bool _isItmWheel;
         private readonly ScreenCommandsCapability _screenCommands;
         private readonly Action<string> _warn;
         private readonly HashSet<string> _warnedKeys = new HashSet<string>(StringComparer.Ordinal);
@@ -120,6 +121,9 @@ namespace FanaBridge.Display.Arbitration
             _primaryHostByParam = options.PrimaryHostByParam
                 ?? new Dictionary<ushort, string>();
             _catalog = options.Catalog;
+            // Universal-blank shape (legacy-mode + segments off vs segments off alone)
+            // keys on wheel class — derived once from the catalog.
+            _isItmWheel = _catalog?.Itm?.Pages != null && _catalog.Itm.Pages.Count > 0;
             // Same capability envelope as WheelScreenArbiter — playlist step filter
             // must not diverge between planes (shared IdleCompile law).
             _screenCommands = options.ScreenCommands;
@@ -1434,7 +1438,8 @@ namespace FanaBridge.Display.Arbitration
                     screenCommands: _screenCommands,
                     playlists: _playlists,
                     nowMs: now,
-                    anchorMs: _playlistAnchorMs);
+                    anchorMs: _playlistAnchorMs,
+                    isItmWheel: _isItmWheel);
                 if (compiledIdle.Value.PublishedIdleKind == Schema2.IdleKind.Page
                     && !string.IsNullOrEmpty(compiledIdle.Value.PageDestinationId)
                     && DestinationIds.IsRest(dest))

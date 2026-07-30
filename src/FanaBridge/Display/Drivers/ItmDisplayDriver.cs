@@ -150,6 +150,14 @@ namespace FanaBridge.Display.Drivers
         /// </summary>
         public bool Enabled { get; set; } = true;
 
+        /// <summary>
+        /// Universal-blank park (composition-driven, per tick): while true the
+        /// lifecycle is gated exactly like the Off display mode — ITM drops to true
+        /// legacy mode on the wire and the composition paints the segments off. The
+        /// user's display-mode setting is never touched; clearing brings ITM back up.
+        /// </summary>
+        public bool IdleBlankParked { get; set; }
+
         // ── State ────────────────────────────────────────────────────────
         private long _lastValuesMs;
         private long _lastSendOkMs;    // last accepted value send — drives the periodic re-assert
@@ -286,7 +294,11 @@ namespace FanaBridge.Display.Drivers
             byte basePage = EffectiveBasePage;
             _lifecycle.DefaultPage = basePage;
             _lifecycle.GameStartPageRevert = _externalBasePage == null;
-            _lifecycle.SetUserEnabled(Enabled);
+            // Universal blank: while the idle blank floor owns, the display drops to
+            // TRUE legacy mode via the same gate the Off mode uses (ItmModeOff once;
+            // bring-up on clear). The user's display-mode SETTING is untouched —
+            // Enabled still reflects it; this is a runtime park, not a mode change.
+            _lifecycle.SetUserEnabled(Enabled && !IdleBlankParked);
             if (_lastRequestedPage == null)
                 _lastRequestedPage = basePage;
             else if (basePage != _lastRequestedPage.Value)

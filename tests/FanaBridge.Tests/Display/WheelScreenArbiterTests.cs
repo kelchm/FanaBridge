@@ -1006,17 +1006,32 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void Untested_IdleFloor_StampedOnFloorRow()
+        public void Untested_IdleFloor_IsTheUniversalBlank_NeverHeld()
         {
+            // Universal blank: an untested blank command is not sent and the floor
+            // does not hold col01 — the display plane paints the all-off frame.
             var doc = Doc(rules: Array.Empty<WheelScreenRule>(), idleKind: IdleKind.Blank);
             var a = Arb(doc, Caps(blank: null));
 
             var r = a.Tick(In(0, inGame: false));
+            Assert.Equal(
+                WheelScreenOutcomeKind.DeferredToDisplayPlane, r.Intent.Kind);
+            Assert.Equal(
+                WheelScreenDeferReason.PaintBlankFrame, r.Intent.DeferReason);
+            Assert.False(r.SurfaceHeld);
+            Assert.False(r.SendRequested);
+        }
+
+        [Fact]
+        public void ConfirmedBlank_IdleFloor_StillHoldsAndSends()
+        {
+            var doc = Doc(rules: Array.Empty<WheelScreenRule>(), idleKind: IdleKind.Blank);
+            var a = Arb(doc, Caps(blank: true));
+
+            var r = a.Tick(In(0, inGame: false));
             Assert.Equal(WheelScreenCommand.Blank, r.Intent.Command);
             Assert.True(r.SurfaceHeld);
-            Assert.True(r.WinnerCapabilityUntested);
-            Assert.True((StatusOf(r, DestinationIds.RestIdle).RowLabels
-                & CarrierRowLabels.Untested) != 0);
+            Assert.False(r.WinnerCapabilityUntested);
         }
 
         // ════════════════════════════════════════════════════════════════

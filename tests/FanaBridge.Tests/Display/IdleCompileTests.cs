@@ -26,10 +26,13 @@ namespace FanaBridge.Tests.Display
             };
             yield return new object[]
             {
+                // Universal blank: untested command is NOT used — segment wheels
+                // paint the all-off frame (ITM wheels take the legacy-mode branch,
+                // pinned separately).
                 "absent+untested",
                 null,
                 null,
-                IdleCompileKind.FirmwareBlank,
+                IdleCompileKind.PaintBlankFrame,
                 false,
             };
             yield return new object[]
@@ -135,12 +138,22 @@ namespace FanaBridge.Tests.Display
         }
 
         [Fact]
-        public void AbsentIdle_UntestedBlank_StillFirmwareBlank()
+        public void AbsentIdle_UntestedBlank_IsTheUniversalBlank()
         {
-            // null capability = untested, warn-and-allow.
-            var r = IdleCompile.Resolve(null, screenCommands: null);
-            Assert.Equal(IdleCompileKind.FirmwareBlank, r.Kind);
-            Assert.True(r.CapabilityUntested);
+            // Untested blank command is never sent (owner ruling): segment-only
+            // wheels paint the all-off frame; ITM wheels drop to TRUE legacy mode
+            // (never the Legacy page — that keeps the ITM branding on screen).
+            var segment = IdleCompile.Resolve(null, screenCommands: null);
+            Assert.Equal(IdleCompileKind.PaintBlankFrame, segment.Kind);
+
+            var itm = IdleCompile.Resolve(null, screenCommands: null, isItmWheel: true);
+            Assert.Equal(IdleCompileKind.ParkOnLegacyForBlank, itm.Kind);
+
+            // Bench-confirmed command keeps the firmware blank.
+            var confirmed = IdleCompile.Resolve(
+                null, new ScreenCommandsCapability { Blank = true }, isItmWheel: true);
+            Assert.Equal(IdleCompileKind.FirmwareBlank, confirmed.Kind);
+            Assert.False(confirmed.CapabilityUntested);
         }
 
         [Fact]

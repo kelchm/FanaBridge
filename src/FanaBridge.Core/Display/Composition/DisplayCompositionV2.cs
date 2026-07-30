@@ -116,6 +116,7 @@ namespace FanaBridge.Display.Composition
             {
                 ScreenCommands = screenCommands,
                 DeviceKey = _deviceKey,
+                IsItmWheel = _catalog?.Itm?.Pages != null && _catalog.Itm.Pages.Count > 0,
                 Warn = _log,
             });
             _frame = new FrameComposer(_config, new FrameComposerOptions
@@ -205,6 +206,15 @@ namespace FanaBridge.Display.Composition
 
         /// <summary>Last E4 seat result (effective page / idle publish diagnostics).</summary>
         public SeatArbiterTickResult LastSeatResult => _lastSeatResult;
+
+        /// <summary>
+        /// True while the universal-blank idle floor owns an ITM wheel: the runtime
+        /// must drop the display to TRUE legacy mode on the wire (the Off-mode gate —
+        /// the Legacy PAGE would keep the ITM branding on screen) while this
+        /// composition paints the segments off. Never a display-mode settings change;
+        /// clears the moment a session starts or any page/manual/screen claim wins.
+        /// </summary>
+        public bool IdleBlankLegacyModeActive { get; private set; }
 
         /// <summary>Last field plans produced this tick (before / at ApplyFieldPlans).</summary>
         public IReadOnlyList<FieldRegionPlan> LastFieldPlans => _lastFieldPlans;
@@ -382,15 +392,44 @@ namespace FanaBridge.Display.Composition
                 _lastSendAccepted = null;
             }
 
+            // Universal blank floor (owner ruling 2026-07-29): when the idle floor
+            // compiled to a painted/legacy-mode blank AND the seat plane is at rest,
+            // the segment face is all-off — the composed frame (continuity seed)
+            // must not paint through it. On ITM wheels the same state also drops the
+            // display to TRUE legacy mode on the wire (published below; the runtime
+            // feeds it to the driver's Off-mode gate — never a settings change).
+            var deferReason = wsResult.Intent != null
+                && wsResult.Intent.Kind == WheelScreenOutcomeKind.DeferredToDisplayPlane
+                    ? wsResult.Intent.DeferReason
+                    : WheelScreenDeferReason.None;
+            bool blankFloorOwns =
+                (deferReason == WheelScreenDeferReason.PaintBlankFrame
+                    || deferReason == WheelScreenDeferReason.ParkOnLegacyForBlank)
+                && (seatResult.Intent == null
+                    || DestinationIds.IsRest(seatResult.Intent.EffectivePageDestinationId));
+            IdleBlankLegacyModeActive = blankFloorOwns
+                && deferReason == WheelScreenDeferReason.ParkOnLegacyForBlank;
+
             // col01 exclusivity (contract §6.2): no segment write while wheel-screen holds,
             // except the reclaim edge (SegmentFrameWritable / ReclaimFrame from E5).
             if (frameResult.SegmentFrameWritable || frameResult.ReclaimFrame)
             {
-                var segs = frameResult.SegmentFrame;
-                if (segs != null && segs.Length >= 3)
+                if (blankFloorOwns)
                 {
-                    var write = TryWriteLegacySegments;
-                    write?.Invoke(segs[0], segs[1], segs[2]);
+                    var writeBlank = TryWriteLegacySegments;
+                    writeBlank?.Invoke(
+                        FanaBridge.Protocol.SevenSegment.Blank,
+                        FanaBridge.Protocol.SevenSegment.Blank,
+                        FanaBridge.Protocol.SevenSegment.Blank);
+                }
+                else
+                {
+                    var segs = frameResult.SegmentFrame;
+                    if (segs != null && segs.Length >= 3)
+                    {
+                        var write = TryWriteLegacySegments;
+                        write?.Invoke(segs[0], segs[1], segs[2]);
+                    }
                 }
             }
 

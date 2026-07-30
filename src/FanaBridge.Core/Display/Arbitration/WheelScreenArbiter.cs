@@ -30,6 +30,7 @@ namespace FanaBridge.Display.Arbitration
         private readonly DisplayConfigV2 _config;
         private readonly string _deviceKey;
         private readonly ScreenCommandsCapability _screenCommands;
+        private readonly bool _isItmWheel;
         private readonly Action<string> _warn;
         private readonly HashSet<string> _warnedKeys = new HashSet<string>(StringComparer.Ordinal);
 
@@ -66,6 +67,7 @@ namespace FanaBridge.Display.Arbitration
             options = options ?? new WheelScreenArbiterOptions();
             _deviceKey = options.DeviceKey ?? "";
             _screenCommands = options.ScreenCommands;
+            _isItmWheel = options.IsItmWheel;
             _warn = options.Warn;
             _idle = _config.Priority?.Rest?.Idle;
 
@@ -319,7 +321,8 @@ namespace FanaBridge.Display.Arbitration
             // Absent or degraded rest.idle = blank floor; Silence is not the default.
             // Playlist expands here: active step's compile result, never raw playlist kind.
             var compiled = IdleCompile.Resolve(
-                _idle, _screenCommands, _playlists, nowMs, _playlistAnchorMs);
+                _idle, _screenCommands, _playlists, nowMs, _playlistAnchorMs,
+                isItmWheel: _isItmWheel);
             switch (compiled.Kind)
             {
                 case IdleCompileKind.Page:

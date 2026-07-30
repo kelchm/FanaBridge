@@ -387,6 +387,70 @@ namespace FanaBridge.Tests.Display
         }
 
         // ════════════════════════════════════════════════════════════════
+        // UNIVERSAL BLANK (owner ruling 2026-07-29)
+        // ════════════════════════════════════════════════════════════════
+
+        [Fact]
+        public void UniversalBlank_SegmentWheel_PaintsSegmentsOff_NoCommandNoHold()
+        {
+            // Segment-only wheel (no ITM catalog section), absent rest.idle: the
+            // untested blank command is never sent; the segment face paints all-off
+            // and col01 is never held.
+            var h = Harness.Create(
+                MinimalDoc(), catalog: new WheelCatalog { WheelId = "seg" });
+            h.Tick(inGame: false);
+
+            Assert.Contains(
+                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
+                h.SegmentWrites);
+            Assert.Empty(h.SpecialWrites);
+            Assert.False(h.Composition.IdleBlankLegacyModeActive);
+        }
+
+        [Fact]
+        public void UniversalBlank_ItmWheel_LegacyModeAtIdle_ClearsInSession()
+        {
+            // ITM wheel with NO confirmed blank command: at idle the runtime must
+            // drop to TRUE legacy mode (published flag; never the Legacy page, never
+            // a settings change) while segments paint off. In session it clears.
+            var cat = CatalogWithOverridableParam42(); // has an ITM section
+            cat.ScreenCommands = null; // every command untested
+            var h = Harness.Create(MinimalDoc(), catalog: cat);
+
+            h.Tick(inGame: false);
+            Assert.Equal(
+                WheelScreenDeferReason.ParkOnLegacyForBlank,
+                h.Composition.LastWheelScreenResult.Intent.DeferReason);
+            Assert.Equal(
+                DestinationIds.RestIdle,
+                h.Composition.LastSeatResult.Intent.EffectivePageDestinationId);
+            Assert.True(h.Composition.IdleBlankLegacyModeActive);
+            Assert.Contains(
+                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
+                h.SegmentWrites);
+            Assert.Empty(h.SpecialWrites);
+
+            h.Clock.T += 600;
+            h.Tick(inGame: true);
+            Assert.False(h.Composition.IdleBlankLegacyModeActive);
+        }
+
+        [Fact]
+        public void UniversalBlank_ConfirmedCommand_KeepsFirmwareBlank()
+        {
+            // Bench-confirmed blank (TestCatalog FullScreenCaps): the firmware
+            // command path is unchanged — command sent, surface held, no repaint.
+            var h = Harness.Create(MinimalDoc());
+            h.Tick(inGame: false);
+
+            Assert.NotEmpty(h.SpecialWrites);
+            Assert.False(h.Composition.IdleBlankLegacyModeActive);
+            Assert.DoesNotContain(
+                (SevenSegment.Blank, SevenSegment.Blank, SevenSegment.Blank),
+                h.SegmentWrites);
+        }
+
+        // ════════════════════════════════════════════════════════════════
         // ADOPT-EDGE PROBE
         // ════════════════════════════════════════════════════════════════
 
