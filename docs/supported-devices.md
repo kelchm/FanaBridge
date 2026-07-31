@@ -33,10 +33,10 @@ These profiles are based on SDK data and should work, but have not been tested o
 | ClubSport RS | On/Off | — | — | 3-digit |
 | CSL Elite McLaren GT3 V1.0 | — | — | — | 3-digit |
 | CSL Elite McLaren GT3 V2 | — | — | — | 3-digit |
-| CSL Elite P1 (Xbox) | 512 colors (RevStripe) | — | — | 3-digit |
-| CSL Elite P1 (PS4) | 512 colors (RevStripe) | — | — | 3-digit |
+| CSL Elite P1 (Xbox) | 8 colors (RevStripe) | — | — | 3-digit |
+| CSL Elite P1 (PS4) | 8 colors (RevStripe) | — | — | 3-digit |
 | CSL Elite Porsche Vision GT | — | — | — | 3-digit |
-| CSL Elite WRC | 512 colors (RevStripe) | — | — | 3-digit |
+| CSL Elite WRC | 8 colors (RevStripe) | — | — | 3-digit |
 | CSL GT3 | — | — | — | 3-digit |
 | GT PRO | 8 colors | — | — | 3-digit |
 | Podium Bentley GT3 | Full color | Full color | — | ITM |
