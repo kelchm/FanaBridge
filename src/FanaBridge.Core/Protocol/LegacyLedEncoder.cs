@@ -26,8 +26,11 @@ namespace FanaBridge.Protocol
         private const int REPORT_LENGTH = 8;
 
         // Subcmd bytes (byte[3] in the report)
-        private const byte SUBCMD_GLOBAL_ENABLE = 0x02;
+        //
+        // 0x02 is deliberately absent: it addresses a separate white LED on the rim,
+        // not the rev LEDs, so it has no business in an LED write path.
         private const byte SUBCMD_REVSTRIPE_ENABLE = 0x06;
+        private const byte SUBCMD_REV_LED_MODE = 0x07;
         private const byte SUBCMD_LED_DATA = 0x08;
         private const byte SUBCMD_LED_RGB_DATA = 0x0A;
         private const byte SUBCMD_FLAG_RGB_DATA = 0x0B;
@@ -44,9 +47,10 @@ namespace FanaBridge.Protocol
         // overwritten by that send's re-latch of the old state.
         private volatile bool _forceDirty;
 
-        // ── State tracking for enable sequences ────────────────────────────
-        private bool _globalEnabled;
-        private bool _revStripeEnabled;
+        // ── State tracking ─────────────────────────────────────────────────
+        // Whether we have prepared this rim for stripe color yet. One-shot per
+        // connection; re-armed by ForceDirty so a wheel change re-prepares.
+        private bool _revStripePrepared;
 
         // ── Pooled report buffer ───────────────────────────────────────────
         private readonly byte[] _reportBuf = new byte[REPORT_LENGTH];
@@ -59,7 +63,7 @@ namespace FanaBridge.Protocol
         /// <summary>
         /// Sets bitmask rev LED state for non-RGB rims.
         /// Each element in <paramref name="onOff"/> maps to one LED (index 0 = LED 0).
-        /// Sends a global enable on first use, then sends the bitmask via subcmd 0x08.
+        /// Sends the bitmask via subcmd 0x08.
         /// Skips the HID write when the bitmask hasn't changed.
         /// </summary>
         /// <param name="onOff">Per-LED on/off state. Max 9 LEDs.</param>
@@ -88,13 +92,10 @@ namespace FanaBridge.Protocol
             if (bitmask == _lastBitmask)
                 return true;
 
-            // Ensure global rev LEDs are enabled
-            if (!_globalEnabled)
-            {
-                if (!SendGlobalEnable(true))
-                    return false;
-                _globalEnabled = true;
-            }
+            // A bitmask write can itself make the driver stack switch the rim into
+            // pattern mode, so any previously asserted color mode is no longer known
+            // to hold.
+            _revStripePrepared = false;
 
             // Send bitmask: [RID, F8, 09, 08, data_lo, data_hi, 00, 00]
             bool ok = SendLedData(dataLo, dataHi);
@@ -106,27 +107,43 @@ namespace FanaBridge.Protocol
         /// <summary>
         /// Sets the RevStripe color for single-strip rims.
         /// The <paramref name="rgb333"/> value is a packed RGB333 color from
-        /// <see cref="ColorHelper.RgbToRgb333"/> (high byte = data_hi, low byte = data_lo).
-        /// Sends the enable sequence on first use.
+        /// <see cref="ColorHelper.RgbToRgb333Palette"/> (high byte = data_hi, low byte = data_lo).
+        /// Asserts color mode on first use.
         /// Skips the HID write when the color hasn't changed.
         /// </summary>
+        /// <remarks>
+        /// Values outside the eight-color palette are snapped here rather than
+        /// trusted from the caller. RGB333 <c>0x0001</c> is byte-identical to the
+        /// "LED 0 only" pattern and makes the driver stack switch the rim out of
+        /// color mode — so the guarantee has to hold at the wire boundary, not only
+        /// in whichever caller happens to be wired up today.
+        /// </remarks>
         public bool SetRevStripeColor(ushort rgb333)
         {
             ConsumePendingForceDirty();
+
+            rgb333 = SnapToPalette(rgb333);
 
             // Dirty check
             if (rgb333 == _lastRevStripeColor)
                 return true;
 
-            // Ensure RevStripe is enabled (inverted semantics: 0x00 = ON)
-            if (!_revStripeEnabled)
+            // Prepare the rim once per connection.
+            //
+            // 0x06 is a stored preference rather than a per-frame control, so it is
+            // sent once and never with the disable value — a user whose stripe is
+            // switched off has no other way to turn it back on from here, but
+            // flipping it off again on every clear would be trampling their setting.
+            //
+            // 0x07 recovers a rim another application left interpreting 0x08 as an
+            // on/off pattern; nothing in a color write alone undoes that.
+            if (!_revStripePrepared)
             {
-                if (!SendRevStripeEnable(true))
+                if (!SendRevStripeEnable())
                     return false;
-                if (!SendGlobalEnable(true))
+                if (!SendRevLedMode(false))
                     return false;
-                _revStripeEnabled = true;
-                _globalEnabled = true;
+                _revStripePrepared = true;
             }
 
             byte dataHi = (byte)((rgb333 >> 8) & 0xFF);
@@ -143,7 +160,7 @@ namespace FanaBridge.Protocol
         /// Each LED gets 3 consecutive bytes (R, G, B) in <paramref name="rgbBools"/>,
         /// where any nonzero value means "on" for that channel (1 bit per channel =
         /// 7 colors + off). Max 9 LEDs (27 bytes).
-        /// Sends a global enable on first use, then packs 27 bits into 4 data bytes.
+        /// Packs 27 bits into 4 data bytes.
         /// Skips the HID write when the packed state hasn't changed.
         /// </summary>
         /// <param name="rgbBools">Flat array: [LED0.R, LED0.G, LED0.B, LED1.R, ...]. Max 27 bytes.</param>
@@ -164,14 +181,6 @@ namespace FanaBridge.Protocol
             // Dirty check
             if (packed == _lastRev3BitPacked)
                 return true;
-
-            // Ensure global rev LEDs are enabled
-            if (!_globalEnabled)
-            {
-                if (!SendGlobalEnable(true))
-                    return false;
-                _globalEnabled = true;
-            }
 
             // Send: [RID, F8, 09, 0A, data0, data1, data2, data3]
             bool ok = SendLedRgbData(
@@ -212,14 +221,6 @@ namespace FanaBridge.Protocol
             if (packed == _lastFlag3BitPacked)
                 return true;
 
-            // Ensure global rev LEDs are enabled
-            if (!_globalEnabled)
-            {
-                if (!SendGlobalEnable(true))
-                    return false;
-                _globalEnabled = true;
-            }
-
             // Send: [RID, F8, 09, 0B, d0, d1, d2, d3]
             bool ok = SendFlagRgbData(
                 (byte)(packed & 0xFF),
@@ -232,24 +233,25 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
-        /// Clears all legacy LEDs — turns off bitmask LEDs or RevStripe.
+        /// Clears every legacy LED channel this encoder has driven.
         /// </summary>
         public void Clear()
         {
-            // Send all-off bitmask / zero color
-            SendLedData(0x00, 0x00);
+            // Each channel has to be zeroed on its own subcommand — a 0x08 frame does
+            // nothing for LEDs addressed via 0x0A or 0x0B, which would otherwise stay
+            // lit at their last color. Untouched channels are left alone so we don't
+            // write to hardware the profile never claimed.
+            //
+            // Nothing else is sent: turning LEDs off is not a reason to touch the
+            // rim's white LED or its stored preferences.
+            if (_lastBitmask != 0xFFFF || _lastRevStripeColor != 0xFFFF)
+                SendLedData(0x00, 0x00);
 
-            if (_globalEnabled)
-            {
-                SendGlobalEnable(false);
-                _globalEnabled = false;
-            }
+            if (_lastRev3BitPacked != 0xFFFFFFFF)
+                SendLedRgbData(0x00, 0x00, 0x00, 0x00);
 
-            if (_revStripeEnabled)
-            {
-                SendRevStripeEnable(false);
-                _revStripeEnabled = false;
-            }
+            if (_lastFlag3BitPacked != 0xFFFFFFFF)
+                SendFlagRgbData(0x00, 0x00, 0x00, 0x00);
 
             ForceDirty();
         }
@@ -275,30 +277,49 @@ namespace FanaBridge.Protocol
             _lastRevStripeColor = 0xFFFF;
             _lastRev3BitPacked = 0xFFFFFFFF;
             _lastFlag3BitPacked = 0xFFFFFFFF;
-            _globalEnabled = false;
-            _revStripeEnabled = false;
+            _revStripePrepared = false;
         }
 
         // ── Low-level report senders ───────────────────────────────────────
 
         /// <summary>
-        /// Sends the Rev LED Global On/Off command.
-        /// [RID, F8, 09, 02, enable, 00, 00, 00]
+        /// Forces a packed RGB333 value onto the eight-color palette, unpacking it
+        /// and re-snapping rather than trusting the caller.
         /// </summary>
-        private bool SendGlobalEnable(bool enable)
+        private static ushort SnapToPalette(ushort rgb333)
         {
-            BuildReport(SUBCMD_GLOBAL_ENABLE, enable ? (byte)0x01 : (byte)0x00, 0x00, 0x00, 0x00);
+            int dataHi = (rgb333 >> 8) & 0xFF;
+            int dataLo = rgb333 & 0xFF;
+
+            // Inverse of ColorHelper.RgbToRgb333
+            int g3 = ((dataLo & 0x01) << 2) | ((dataHi >> 6) & 0x03);
+            int r3 = (dataHi >> 3) & 0x07;
+            int b3 = dataHi & 0x07;
+
+            return ColorHelper.RgbToRgb333Palette(
+                (byte)(r3 * 255 / 7), (byte)(g3 * 255 / 7), (byte)(b3 * 255 / 7));
+        }
+
+        /// <summary>
+        /// Enables the RevStripe. Inverted semantics — <c>0x00</c> means on. There is
+        /// deliberately no disable: this is stored state, not a per-frame control.
+        /// [RID, F8, 09, 06, 00, 00, 00, 00]
+        /// </summary>
+        private bool SendRevStripeEnable()
+        {
+            BuildReport(SUBCMD_REVSTRIPE_ENABLE, 0x00, 0x00, 0x00, 0x00);
             return _transport.SendCol01(_reportBuf);
         }
 
         /// <summary>
-        /// Sends the RevStripe Enable/Disable command.
-        /// Inverted semantics: 0x00 = ON, 0x01 = OFF.
-        /// [RID, F8, 09, 06, enable, 00, 00, 00]
+        /// Selects how the rim interprets subsequent <c>0x08</c> writes.
+        /// <c>false</c> = the payload is an RGB333 color, <c>true</c> = it is a
+        /// per-LED on/off pattern.
+        /// [RID, F8, 09, 07, mode, 00, 00, 00]
         /// </summary>
-        private bool SendRevStripeEnable(bool enable)
+        private bool SendRevLedMode(bool bitmask)
         {
-            BuildReport(SUBCMD_REVSTRIPE_ENABLE, enable ? (byte)0x00 : (byte)0x01, 0x00, 0x00, 0x00);
+            BuildReport(SUBCMD_REV_LED_MODE, bitmask ? (byte)0x01 : (byte)0x00, 0x00, 0x00, 0x00);
             return _transport.SendCol01(_reportBuf);
         }
 

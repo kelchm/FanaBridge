@@ -116,6 +116,83 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
+        /// Converts 24-bit RGB to the col01 RGB333 encoding, snapped to the eight
+        /// fully saturated values (each channel fully on or fully off) that official
+        /// software emits.
+        /// <para>
+        /// The col01 <c>0x08</c> command carries either a per-LED on/off pattern or a
+        /// single RGB333 color, and both share one wire format. RGB333 <c>(r=0, g=4,
+        /// b=0)</c> — a mid-dark green — encodes to the same two bytes as the "LED 0
+        /// on, rest off" pattern, and the Fanatec driver stack reacts to that pattern
+        /// by switching the rim into on/off mode. Later colors are then read as
+        /// patterns, so the strip lights in its fixed pattern color for the values
+        /// whose low byte has bit 0 set and stays dark for the rest, until pure red
+        /// or pure blue returns it to color mode. Snapping keeps output inside the
+        /// set the hardware is known to be driven with and cannot produce that
+        /// encoding.
+        /// </para>
+        /// </summary>
+        /// <remarks>
+        /// Each channel is judged <em>relative to the brightest channel</em>, not against
+        /// a fixed level. Thresholding channels absolutely would make the hue depend on
+        /// brightness — amber dimmed past the point where green falls below the cut but
+        /// red does not would turn red, then black. Scaling all channels by the same
+        /// factor cannot change which side of a relative threshold they sit on, so the
+        /// chosen color survives dimming. Deciding whether the strip is lit at all is a
+        /// separate question, handled by <see cref="ToRgb333PalettePremultiplied"/>.
+        /// </remarks>
+        public static ushort RgbToRgb333Palette(byte r, byte g, byte b)
+        {
+            var (litR, litG, litB) = LitChannels(r, g, b);
+            return RgbToRgb333(
+                litR ? (byte)0xFF : (byte)0x00,
+                litG ? (byte)0xFF : (byte)0x00,
+                litB ? (byte)0xFF : (byte)0x00);
+        }
+
+        /// <summary>
+        /// Which color channels count as lit, judged relative to the brightest one.
+        /// Shared by every col01 path that has one bit per channel to work with.
+        /// </summary>
+        private static (bool R, bool G, bool B) LitChannels(byte r, byte g, byte b)
+        {
+            int max = Math.Max(r, Math.Max(g, b));
+            if (max == 0) return (false, false, false);
+            return (IsLit(r, max), IsLit(g, max), IsLit(b, max));
+        }
+
+        // channel >= max/2, written to avoid integer truncation: at max=1 a truncated
+        // threshold of 0 would count every channel — including the zero ones — as lit
+        // and turn a near-black red into white.
+        private static bool IsLit(byte channel, int max)
+        {
+            return channel > 0 && channel * 2 >= max;
+        }
+
+        /// <summary>
+        /// Converts a System.Drawing.Color to the snapped RGB333 palette encoding,
+        /// pre-multiplying alpha. See <see cref="RgbToRgb333Palette"/>.
+        /// <para>
+        /// The rim has no separate intensity channel, so brightness cannot dim the
+        /// strip — it can only decide whether the strip is lit. That cut-off uses the
+        /// same rule <c>legacyRevOnOff</c> applies to individual LEDs, so both col01
+        /// channels agree on when hardware counts as on.
+        /// </para>
+        /// </summary>
+        public static ushort ToRgb333PalettePremultiplied(System.Drawing.Color color)
+        {
+            if (ColorToIntensity(color) == 0) return 0;
+
+            // Hue comes from the original channels, not the premultiplied ones.
+            // Alpha scales all three equally, so it cannot change which side of a
+            // relative threshold they fall on — but rounding each channel to a byte
+            // first can, and did: ARGB(255,20,9,0) and ARGB(240,20,9,0) resolved to
+            // red while ARGB(248,20,9,0) resolved to yellow. Alpha decides only
+            // whether the strip is lit.
+            return RgbToRgb333Palette(color.R, color.G, color.B);
+        }
+
+        /// <summary>
         /// Converts a Color to per-channel RGB booleans, with alpha premultiply.
         /// Each channel is true when its premultiplied value rounds to >= 1
         /// (i.e. the raw value is >= 0.5).
@@ -123,12 +200,13 @@ namespace FanaBridge.Protocol
         /// </summary>
         public static (bool R, bool G, bool B) ColorToRgbBools(System.Drawing.Color color)
         {
-            double a = color.A / 255.0;
-            return (
-                Math.Round(color.R * a) > 0,
-                Math.Round(color.G * a) > 0,
-                Math.Round(color.B * a) > 0
-            );
+            // Same rule as the RGB333 palette: a channel is lit relative to the
+            // brightest one, and alpha decides only whether the LED is lit at all.
+            // Thresholding each channel at "greater than zero" instead would turn
+            // RGB(255,1,0) — visually pure red — into yellow, and light an LED for
+            // any trace value a gradient happens to pass through.
+            if (ColorToIntensity(color) == 0) return (false, false, false);
+            return LitChannels(color.R, color.G, color.B);
         }
 
         /// <summary>

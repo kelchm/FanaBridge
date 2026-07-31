@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using Xunit;
@@ -53,17 +54,13 @@ namespace FanaBridge.Tests
 
             encoder.SetLegacyRevOnOff(new bool[9]);
 
-            // Should have: 1 global enable + 1 LED data
-            Assert.Equal(2, transport.Col01Reports.Count);
-
-            // Global enable: subcmd 0x02, enable=0x01
-            Assert.Equal(0x02, transport.Col01Reports[0][3]);
-            Assert.Equal(0x01, transport.Col01Reports[0][4]);
+            // LED data only — bitmask writes carry no enable sequence.
+            Assert.Single(transport.Col01Reports);
 
             // LED data: subcmd 0x08, bitmask=0x00
-            Assert.Equal(0x08, transport.Col01Reports[1][3]);
-            Assert.Equal(0x00, transport.Col01Reports[1][4]);
-            Assert.Equal(0x00, transport.Col01Reports[1][5]);
+            Assert.Equal(0x08, transport.Col01Reports[0][3]);
+            Assert.Equal(0x00, transport.Col01Reports[0][4]);
+            Assert.Equal(0x00, transport.Col01Reports[0][5]);
         }
 
         [Fact]
@@ -78,7 +75,7 @@ namespace FanaBridge.Tests
             // LED data report — bitmask in RGB333 bit order:
             //   byte[4] = LED0 (bit 0) = 0x01
             //   byte[5] = LED1(bit7)..LED8(bit0) = 0xFF
-            var report = transport.Col01Reports[1];
+            var report = transport.Col01Reports[0];
             Assert.Equal(0x08, report[3]);
             Assert.Equal(0x01, report[4]); // LED0
             Assert.Equal(0xFF, report[5]); // LEDs 1-8
@@ -95,7 +92,7 @@ namespace FanaBridge.Tests
             encoder.SetLegacyRevOnOff(pattern);
 
             // LEDs 0, 1, 2 on → byte[4]=LED0=0x01, byte[5]=LED1(bit7)|LED2(bit6)=0xC0
-            var report = transport.Col01Reports[1];
+            var report = transport.Col01Reports[0];
             Assert.Equal(0x01, report[4]); // LED0
             Assert.Equal(0xC0, report[5]); // LED1(bit7) + LED2(bit6)
         }
@@ -132,7 +129,7 @@ namespace FanaBridge.Tests
         // ── RevStripe tests ────────────────────────────────────────────
 
         [Fact]
-        public void SetRevStripeColor_SendsEnableSequenceThenColor()
+        public void SetRevStripeColor_AssertsColorModeThenColor()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
@@ -140,21 +137,144 @@ namespace FanaBridge.Tests
             // Red in RGB333: data_hi=0x38, data_lo=0x00 → packed 0x3800
             encoder.SetRevStripeColor(0x3800);
 
-            // Should have: RevStripe enable + global enable + LED data = 3 reports
+            // Stripe enable + color-mode assert + LED data. No 0x02 — the rim white
+            // LED has no business in an LED write path.
             Assert.Equal(3, transport.Col01Reports.Count);
 
-            // RevStripe enable: subcmd 0x06, inverted 0x00 = ON
+            // Stripe enable: subcmd 0x06, inverted so 0x00 = on
             Assert.Equal(0x06, transport.Col01Reports[0][3]);
             Assert.Equal(0x00, transport.Col01Reports[0][4]);
 
-            // Global enable: subcmd 0x02, enable=0x01
-            Assert.Equal(0x02, transport.Col01Reports[1][3]);
-            Assert.Equal(0x01, transport.Col01Reports[1][4]);
+            // Mode select: subcmd 0x07, 0x00 = interpret 0x08 payloads as color
+            Assert.Equal(0x07, transport.Col01Reports[1][3]);
+            Assert.Equal(0x00, transport.Col01Reports[1][4]);
 
             // Color data: subcmd 0x08, data_lo=0x00, data_hi=0x38
             Assert.Equal(0x08, transport.Col01Reports[2][3]);
             Assert.Equal(0x00, transport.Col01Reports[2][4]); // data_lo
             Assert.Equal(0x38, transport.Col01Reports[2][5]); // data_hi
+        }
+
+        [Fact]
+        public void SetRevStripeColor_AssertsColorModeOnlyOnce()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            encoder.SetRevStripeColor(0x3800); // red
+            encoder.SetRevStripeColor(0x0700); // blue
+
+            Assert.Single(transport.Col01Reports, r => r[3] == 0x07);
+            Assert.Single(transport.Col01Reports, r => r[3] == 0x06);
+        }
+
+        [Fact]
+        public void SetRevStripeColor_NeverSendsWhiteLed()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            encoder.SetRevStripeColor(0x3800);
+            encoder.SetRevStripeColor(0x0700);
+            encoder.Clear();
+
+            Assert.DoesNotContain(transport.Col01Reports, r => r[3] == 0x02);
+        }
+
+        [Fact]
+        public void SetRevStripeColor_EnablesStripeOnceAndNeverDisablesIt()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            encoder.SetRevStripeColor(0x3800);
+            encoder.SetRevStripeColor(0x0700);
+            encoder.Clear();
+
+            // 0x06 is stored state: set it on once, never write the disable value.
+            // Clearing LEDs is not a reason to turn the user's stripe off.
+            var stripeEnables = transport.Col01Reports.Where(r => r[3] == 0x06).ToList();
+            Assert.Single(stripeEnables);
+            Assert.Equal(0x00, stripeEnables[0][4]);
+        }
+
+        [Fact]
+        public void SetRevStripeColor_UnsafeRawValue_IsSnappedAtTheWireBoundary()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            // 0x0001 is the payload that switches the rim out of color mode. The
+            // guarantee has to hold here, not only in whichever caller is wired up.
+            encoder.SetRevStripeColor(ColorHelper.RgbToRgb333(0, 128, 0));
+
+            var data = transport.Col01Reports.Single(r => r[3] == 0x08);
+            Assert.False(data[4] == 0x01 && data[5] == 0x00);
+            Assert.Equal(0x01, data[4]); // snapped to full green
+            Assert.Equal(0xC0, data[5]);
+        }
+
+        [Fact]
+        public void SetLegacyRevOnOff_InvalidatesAssertedColorMode()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            encoder.SetRevStripeColor(0x3800);
+            // A bitmask write can itself flip the rim into pattern mode.
+            encoder.SetLegacyRevOnOff(new bool[] { true, false, false, false, false, false, false, false, false });
+            encoder.SetRevStripeColor(0x0700);
+
+            // Color mode must be re-asserted rather than assumed still held.
+            Assert.Equal(2, transport.Col01Reports.Count(r => r[3] == 0x07));
+        }
+
+        [Fact]
+        public void ForceDirty_ReAssertsColorMode()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            encoder.SetRevStripeColor(0x3800);
+            encoder.ForceDirty();
+            encoder.SetRevStripeColor(0x3800);
+
+            Assert.Equal(2, transport.Col01Reports.Count(r => r[3] == 0x07));
+        }
+
+        [Fact]
+        public void Clear_ZeroesEachDrivenChannelOnItsOwnSubcommand()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            // A 0x08 frame does nothing for LEDs addressed via 0x0A.
+            var red = new byte[27];
+            for (int i = 0; i < 9; i++) red[i * 3] = 1;
+            encoder.SetLegacyRev3Bit(red);
+            int before = transport.Col01Reports.Count;
+
+            encoder.Clear();
+
+            var cleared = transport.Col01Reports.Skip(before).ToList();
+            var rgb = Assert.Single(cleared, r => r[3] == 0x0A);
+            Assert.Equal(new byte[] { 0, 0, 0, 0 }, new[] { rgb[4], rgb[5], rgb[6], rgb[7] });
+        }
+
+        [Fact]
+        public void Clear_DoesNotWriteChannelsThatWereNeverDriven()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            encoder.SetLegacyRevOnOff(new bool[] { true, false, false, false, false, false, false, false, false });
+            int before = transport.Col01Reports.Count;
+
+            encoder.Clear();
+
+            var cleared = transport.Col01Reports.Skip(before).ToList();
+            Assert.DoesNotContain(cleared, r => r[3] == 0x0A);
+            Assert.DoesNotContain(cleared, r => r[3] == 0x0B);
         }
 
         [Fact]
@@ -189,15 +309,11 @@ namespace FanaBridge.Tests
 
             encoder.SetLegacyRev3Bit(buf);
 
-            // Global enable + RGB data = 2 reports
-            Assert.Equal(2, transport.Col01Reports.Count);
-
-            // Global enable
-            Assert.Equal(0x02, transport.Col01Reports[0][3]);
-            Assert.Equal(0x01, transport.Col01Reports[0][4]);
+            // RGB data only — no enable sequence.
+            Assert.Single(transport.Col01Reports);
 
             // RGB data: subcmd 0x0A
-            var report = transport.Col01Reports[1];
+            var report = transport.Col01Reports[0];
             Assert.Equal(0x0A, report[3]);
 
             // All red: bit pattern per LED is 001 (R=1,G=0,B=0)
@@ -234,7 +350,7 @@ namespace FanaBridge.Tests
 
             encoder.SetLegacyRev3Bit(buf);
 
-            var report = transport.Col01Reports[1];
+            var report = transport.Col01Reports[0];
             Assert.Equal(0x0A, report[3]);
 
             // LED0: R=1,G=1,B=0 → bits 0,1,2 = 011 = 0x03
@@ -277,7 +393,7 @@ namespace FanaBridge.Tests
 
             encoder.SetLegacyRev3Bit(new byte[27]);
 
-            var report = transport.Col01Reports[1];
+            var report = transport.Col01Reports[0];
             Assert.Equal(0x0A, report[3]);
             Assert.Equal(0x00, report[4]);
             Assert.Equal(0x00, report[5]);
@@ -320,15 +436,11 @@ namespace FanaBridge.Tests
 
             encoder.SetLegacyFlag3Bit(buf);
 
-            // Global enable + flag data = 2 reports
-            Assert.Equal(2, transport.Col01Reports.Count);
-
-            // Global enable
-            Assert.Equal(0x02, transport.Col01Reports[0][3]);
-            Assert.Equal(0x01, transport.Col01Reports[0][4]);
+            // Flag data only — no enable sequence.
+            Assert.Single(transport.Col01Reports);
 
             // Flag data: subcmd 0x0B
-            var report = transport.Col01Reports[1];
+            var report = transport.Col01Reports[0];
             Assert.Equal(0x0B, report[3]);
 
             // All red: bit pattern per LED is 001 (R=1,G=0,B=0)
@@ -351,7 +463,7 @@ namespace FanaBridge.Tests
 
             encoder.SetLegacyFlag3Bit(new byte[18]);
 
-            var report = transport.Col01Reports[1];
+            var report = transport.Col01Reports[0];
             Assert.Equal(0x0B, report[3]);
             Assert.Equal(0x00, report[4]);
             Assert.Equal(0x00, report[5]);
@@ -378,7 +490,7 @@ namespace FanaBridge.Tests
         // ── Clear tests ───────────────────────────────────────────────
 
         [Fact]
-        public void Clear_SendsZeroDataAndDisablesGlobal()
+        public void Clear_SendsZeroDataOnly()
         {
             var transport = new StubTransport();
             var encoder = new LegacyLedEncoder(transport);
@@ -389,19 +501,14 @@ namespace FanaBridge.Tests
 
             encoder.Clear();
 
-            // Clear should send: LED data (all off) + global disable = 2 reports
-            Assert.True(transport.Col01Reports.Count > countBeforeClear);
+            // Clear sends exactly one report: all-off LED data. Turning LEDs off is
+            // not a reason to touch the rim white LED or the stored stripe preference.
+            Assert.Equal(countBeforeClear + 1, transport.Col01Reports.Count);
 
-            // Last LED data report should be all zeros (subcmd 0x08)
             var dataReport = transport.Col01Reports[countBeforeClear];
             Assert.Equal(0x08, dataReport[3]);
             Assert.Equal(0x00, dataReport[4]);
             Assert.Equal(0x00, dataReport[5]);
-
-            // Global disable: subcmd 0x02, enable=0x00
-            var disableReport = transport.Col01Reports[countBeforeClear + 1];
-            Assert.Equal(0x02, disableReport[3]);
-            Assert.Equal(0x00, disableReport[4]);
         }
 
         [Fact]
