@@ -230,6 +230,45 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void SetLegacyRevOnOff_SameStripeColor_ReassertsModeAndRewritesColor()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+
+            encoder.SetRevStripeColor(0x3800); // red
+            encoder.SetLegacyRevOnOff(
+                new bool[] { true, false, false, false, false, false, false, false, false });
+            int beforeRestore = transport.Col01Reports.Count;
+
+            encoder.SetRevStripeColor(0x3800); // same color as before the bitmask write
+
+            var restore = transport.Col01Reports.Skip(beforeRestore).ToList();
+            Assert.Equal(new byte[] { 0x07, 0x08 }, restore.Select(r => r[3]).ToArray());
+            Assert.Equal(0x00, restore[1][4]);
+            Assert.Equal(0x38, restore[1][5]);
+            Assert.Single(transport.Col01Reports, r => r[3] == 0x06);
+        }
+
+        [Fact]
+        public void SetRevStripeColor_InvalidatesCachedBitmaskPayload()
+        {
+            var transport = new StubTransport();
+            var encoder = new LegacyLedEncoder(transport);
+            var pattern = new bool[] { true, false, false, false, false, false, false, false, false };
+
+            encoder.SetLegacyRevOnOff(pattern);
+            encoder.SetRevStripeColor(0x3800);
+            int beforeRestore = transport.Col01Reports.Count;
+
+            encoder.SetLegacyRevOnOff(pattern);
+
+            var restore = Assert.Single(transport.Col01Reports.Skip(beforeRestore));
+            Assert.Equal(0x08, restore[3]);
+            Assert.Equal(0x01, restore[4]);
+            Assert.Equal(0x00, restore[5]);
+        }
+
+        [Fact]
         public void ForceDirty_ReAssertsColorMode()
         {
             var transport = new StubTransport();

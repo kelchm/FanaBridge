@@ -71,11 +71,14 @@ namespace FanaBridge.Tests
 
         // A plugin generation whose core is a wheelbase with a committed,
         // settled identity for the given wheel code (or none when null).
-        private static FanatecPlugin PluginWithWheel(string? wheelCode, out FanatecWheelbase wheelbase)
+        private static FanatecPlugin PluginWithWheel(
+            string? wheelCode, out FanatecWheelbase wheelbase, string? overrideProfileId = null)
         {
             var t = new FakeTransport();
             var clock = new Clock();
             wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);
+            if (overrideProfileId != null)
+                wheelbase.ProfileOverrideResolver = _ => overrideProfileId;
             Assert.True(wheelbase.AutoConnect());
 
             if (wheelCode != null)
@@ -206,6 +209,28 @@ namespace FanaBridge.Tests
             inst.PluginResolver = () => pluginB;
             inst.DataUpdate(null, ref data);
             Assert.Same(pluginB, inst.BoundPluginForTest);
+        }
+
+        [Fact]
+        public void ResolveCurrentCapabilities_PluginReplacedBeforeDataUpdate_UsesNewGeneration()
+        {
+            var inst = InstanceFor("PSWBMW");
+            var pluginA = PluginWithWheel(null, out _);
+            var pluginB = PluginWithWheel("PSWBMW", out _, "CSLESWP1X");
+
+            var data = new GameData();
+            inst.PluginResolver = () => pluginA;
+            inst.DataUpdate(null, ref data);
+            Assert.Same(pluginA, inst.BoundPluginForTest);
+
+            // SimHub can build the LEDs tab after the singleton changes but before
+            // its next DataUpdate. The notice must resolve through the new singleton,
+            // not through the generation that still owns the cached drivers.
+            inst.PluginResolver = () => pluginB;
+
+            var caps = inst.ResolveCurrentCapabilities();
+            Assert.Equal("CSLESWP1X", caps.Profile?.Id);
+            Assert.True(caps.HasLegacyRevStripe);
         }
 
         [Fact]

@@ -137,9 +137,9 @@ namespace FanaBridge.Adapters
         /// Resolves this descriptor's capabilities as of now, rather than as of
         /// whenever the LED module happened to be created.
         /// </summary>
-        private WheelCapabilities ResolveCurrentCapabilities()
+        internal WheelCapabilities ResolveCurrentCapabilities()
         {
-            var plugin = _boundPlugin ?? PluginResolver();
+            var plugin = PluginResolver() ?? _boundPlugin;
             return plugin == null ? WheelCapabilities.None : plugin.ResolveCapsFor(_config);
         }
 

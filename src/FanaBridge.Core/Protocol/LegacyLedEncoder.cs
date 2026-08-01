@@ -48,9 +48,11 @@ namespace FanaBridge.Protocol
         private volatile bool _forceDirty;
 
         // ── State tracking ─────────────────────────────────────────────────
-        // Whether we have prepared this rim for stripe color yet. One-shot per
-        // connection; re-armed by ForceDirty so a wheel change re-prepares.
-        private bool _revStripePrepared;
+        // 0x06 is a stored enable preference, while 0x07 selects how the next 0x08
+        // payload is interpreted. A bitmask write invalidates only the latter;
+        // ForceDirty invalidates both when the physical connection may have changed.
+        private bool _revStripeEnabled;
+        private bool _revStripeColorModeAsserted;
 
         // ── Pooled report buffer ───────────────────────────────────────────
         private readonly byte[] _reportBuf = new byte[REPORT_LENGTH];
@@ -93,9 +95,11 @@ namespace FanaBridge.Protocol
                 return true;
 
             // A bitmask write can itself make the driver stack switch the rim into
-            // pattern mode, so any previously asserted color mode is no longer known
-            // to hold.
-            _revStripePrepared = false;
+            // pattern mode, and it overwrites the shared 0x08 payload. The next
+            // stripe write therefore has to restore both color mode and color, even
+            // when the requested color matches the one sent before this pattern.
+            _revStripeColorModeAsserted = false;
+            _lastRevStripeColor = 0xFFFF;
 
             // Send bitmask: [RID, F8, 09, 08, data_lo, data_hi, 00, 00]
             bool ok = SendLedData(dataLo, dataHi);
@@ -124,11 +128,18 @@ namespace FanaBridge.Protocol
 
             rgb333 = SnapToPalette(rgb333);
 
-            // Dirty check
-            if (rgb333 == _lastRevStripeColor)
+            // The cached color is meaningful only while color mode is still known
+            // to hold. Bitmask writes invalidate both facts above.
+            if (rgb333 == _lastRevStripeColor && _revStripeColorModeAsserted)
                 return true;
 
-            // Prepare the rim once per connection.
+            // Entering color mode or writing color data invalidates the cached
+            // bitmask state that shares this 0x08 payload. Do this before sending
+            // so partial success cannot leave a later bitmask shortcut armed.
+            _lastBitmask = 0xFFFF;
+
+            // Enable the stripe once per connection, and assert color mode whenever
+            // a bitmask write has made its interpretation of 0x08 uncertain.
             //
             // 0x06 is a stored preference rather than a per-frame control, so it is
             // sent once and never with the disable value — a user whose stripe is
@@ -137,13 +148,18 @@ namespace FanaBridge.Protocol
             //
             // 0x07 recovers a rim another application left interpreting 0x08 as an
             // on/off pattern; nothing in a color write alone undoes that.
-            if (!_revStripePrepared)
+            if (!_revStripeEnabled)
             {
                 if (!SendRevStripeEnable())
                     return false;
+                _revStripeEnabled = true;
+            }
+
+            if (!_revStripeColorModeAsserted)
+            {
                 if (!SendRevLedMode(false))
                     return false;
-                _revStripePrepared = true;
+                _revStripeColorModeAsserted = true;
             }
 
             byte dataHi = (byte)((rgb333 >> 8) & 0xFF);
@@ -277,7 +293,8 @@ namespace FanaBridge.Protocol
             _lastRevStripeColor = 0xFFFF;
             _lastRev3BitPacked = 0xFFFFFFFF;
             _lastFlag3BitPacked = 0xFFFFFFFF;
-            _revStripePrepared = false;
+            _revStripeEnabled = false;
+            _revStripeColorModeAsserted = false;
         }
 
         // ── Low-level report senders ───────────────────────────────────────
