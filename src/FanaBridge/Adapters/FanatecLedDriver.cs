@@ -243,7 +243,7 @@ namespace FanaBridge.Adapters
                         break;
 
                     case LedChannel.LegacyRevStripe:
-                        legacyRevStripeColor = ColorHelper.ToRgb333Premultiplied(color);
+                        legacyRevStripeColor = ColorHelper.ToRgb333PalettePremultiplied(color);
                         break;
 
                     case LedChannel.LegacyRev3Bit:

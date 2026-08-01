@@ -134,6 +134,16 @@ namespace FanaBridge.Adapters
         // ── LED module setup ─────────────────────────────────────────────
 
         /// <summary>
+        /// Resolves this descriptor's capabilities as of now, rather than as of
+        /// whenever the LED module happened to be created.
+        /// </summary>
+        internal WheelCapabilities ResolveCurrentCapabilities()
+        {
+            var plugin = PluginResolver() ?? _boundPlugin;
+            return plugin == null ? WheelCapabilities.None : plugin.ResolveCapsFor(_config);
+        }
+
+        /// <summary>
         /// Lazily creates the LedModuleSettings for this device.
         /// A single module handles all LED types (Rev, Flag, Button/Encoder)
         /// through the unified <see cref="FanatecLedDriver"/>.
@@ -174,6 +184,19 @@ namespace FanaBridge.Adapters
                 ShowConnectionStatus = true,
                 VID = FanatecWheelbase.FANATEC_VENDOR_ID,
             };
+
+            // Wheels whose LEDs can't render the picker's range get a note in the
+            // LEDs tab. The picker stays stock — constraining it would break
+            // gradients and imported profiles without fixing anything, since those
+            // never pass through it.
+            //
+            // The factory is installed unconditionally and the notice resolves
+            // capabilities itself when the tab is opened. This method runs once, and
+            // usually before identity has settled or a user profile override has
+            // been applied — deciding here would miss wheels whose real profile
+            // arrives later, and could never correct itself.
+            options.ExtraSettingsControlFactory =
+                _ => new UI.LedColorLimitationNotice(() => ResolveCurrentCapabilities());
 
             _ledModule = new LedModuleSettings<FanatecLedManager>(options);
             _ledModule.IsEmbedded = true;

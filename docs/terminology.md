@@ -76,7 +76,7 @@ LEDs associated with rotary encoders on button modules. Controlled via the butto
 15-bit color encoding: 5 bits per channel. Slightly reduced color range vs RGB565 (green channel has 5 bits instead of 6).
 
 ### RGB333
-9-bit color encoding: 3 bits per channel, packed across 2 bytes. Used by the legacy col01 LED protocol for RevStripe and global rev LED color. The SDK only exercises 8 discrete values (each channel fully on or fully off), but the hardware supports the full 512-color range. See [RGB333 Color Encoding](reference/protocol.md#rgb333-color-encoding).
+9-bit color encoding: 3 bits per channel, packed across 2 bytes. Used by the legacy col01 LED protocol for RevStripe color. 512 values are representable, but no hardware tested to date renders more than the eight fully saturated combinations — seven colors plus off. Official software emits no others, and at least one of the remainder switches the rim into pattern mode. See [RGB333 Color Encoding](reference/protocol.md#rgb333-color-encoding).
 
 ---
 

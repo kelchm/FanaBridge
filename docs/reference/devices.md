@@ -216,7 +216,7 @@ These wheels have a single-color LED strip instead of individually-addressable r
 | CSLESWP1PS4 | RGB333 | Legacy (col01) |
 | CSLESWWRC | RGB333 | Legacy (col01) |
 
-RevStripe is controlled as a single unit (index 0 only) with RGB333 color encoding (512 possible colors, of which 8 discrete colors are commonly used). See [RevStripe protocol](protocol.md#0x06--revstripe-enabledisable).
+RevStripe is controlled as a single unit (index 0 only) with RGB333 color encoding. 512 values are representable, but no hardware tested to date renders more than eight — red, green, blue, cyan, magenta, yellow, white and off. See [RevStripe protocol](protocol.md#0x08--rev-led-data-bitmask--color).
 
 #### No Rev LEDs
 

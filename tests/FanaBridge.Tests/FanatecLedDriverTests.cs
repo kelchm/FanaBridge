@@ -87,6 +87,20 @@ namespace FanaBridge.Tests
             return transport;
         }
 
+        // As RunAllWhite, but drives every LED with a chosen color.
+        private static RecordingTransport RunAllColor(WheelCapabilities caps, Color color)
+        {
+            var transport = new RecordingTransport();
+            var driver = BuildDriver(caps, transport);
+            var raw = new Color[caps.AllLedCount];
+            for (int i = 0; i < raw.Length; i++) raw[i] = color;
+            var state = new LedDeviceState(new Color[0], new Color[0], new Color[0], new Color[0], raw);
+
+            Assert.True(driver.SendLeds(state, forceRefresh: true));
+            driver.Dispose();
+            return transport;
+        }
+
         private static bool Col03Has(RecordingTransport t, byte subcmd) => t.Col03.Any(r => r[2] == subcmd);
         private static bool Col01Has(RecordingTransport t, byte subcmd) => t.Col01.Any(r => r[3] == subcmd);
         private static byte[] Col03Last(RecordingTransport t, byte subcmd) => t.Col03.Last(r => r[2] == subcmd);
@@ -222,44 +236,89 @@ namespace FanaBridge.Tests
         }
 
         [Fact] // CSL P1 / WRC
-        public void Dispatch_LegacyRevStripe_SendsEnableSequenceAndData()
+        public void Dispatch_LegacyRevStripe_AssertsColorModeAndSendsData()
         {
             var t = RunAllWhite(Caps(("legacyRevStripe", 1)));
 
             Assert.Empty(t.Col03);
-            Assert.True(Col01Has(t, 0x06), "RevStripe enable (0x06) missing");
-            Assert.True(Col01Has(t, 0x02), "global enable (0x02) missing");
+            Assert.True(Col01Has(t, 0x07), "color-mode assert (0x07) missing");
             Assert.True(Col01Has(t, 0x08), "LED data (0x08) missing");
         }
 
         [Fact] // CSSWBMW etc.
-        public void Dispatch_LegacyRevOnOff_SendsGlobalEnableAndBitmask()
+        public void Dispatch_LegacyRevOnOff_SendsBitmask()
         {
             var t = RunAllWhite(Caps(("legacyRevOnOff", 9)));
 
             Assert.Empty(t.Col03);
-            Assert.True(Col01Has(t, 0x02), "global enable (0x02) missing");
             Assert.True(Col01Has(t, 0x08), "bitmask LED data (0x08) missing");
         }
 
         [Fact] // GTSWPRO
-        public void Dispatch_LegacyRev3Bit_SendsGlobalEnableAndRgbData()
+        public void Dispatch_LegacyRev3Bit_SendsRgbData()
         {
             var t = RunAllWhite(Caps(("legacyRev3Bit", 9)));
 
             Assert.Empty(t.Col03);
-            Assert.True(Col01Has(t, 0x02), "global enable (0x02) missing");
             Assert.True(Col01Has(t, 0x0A), "3-bit rev data (0x0A) missing");
         }
 
         [Fact] // supported channel, no shipped profile yet
-        public void Dispatch_LegacyFlag3Bit_SendsGlobalEnableAndFlagData()
+        public void Dispatch_LegacyFlag3Bit_SendsFlagData()
         {
             var t = RunAllWhite(Caps(("legacyFlag3Bit", 6)));
 
             Assert.Empty(t.Col03);
-            Assert.True(Col01Has(t, 0x02), "global enable (0x02) missing");
             Assert.True(Col01Has(t, 0x0B), "3-bit flag data (0x0B) missing");
+        }
+
+        [Fact] // #76 — the exact color that breaks the rim must never reach the wire
+        public void Dispatch_LegacyRevStripe_MidDarkGreen_IsSnappedNotSentRaw()
+        {
+            // Unsnapped, RGB(0,128,0) encodes to RGB333 0x0001 -> wire "01 00", which
+            // is byte-identical to the "LED 0 only" pattern and makes the driver stack
+            // switch the rim out of color mode. White would pass this test under
+            // either encoder, so it has to be this color.
+            var t = RunAllColor(Caps(("legacyRevStripe", 1)), Color.FromArgb(255, 0, 128, 0));
+
+            var colorFrames = t.Col01.Where(r => r[3] == 0x08).ToList();
+            Assert.NotEmpty(colorFrames);
+            Assert.All(colorFrames, r =>
+                Assert.False(r[4] == 0x01 && r[5] == 0x00, "raw 01 00 payload reached the wire"));
+
+            // Snapped to full green: data_lo = 0x01, data_hi = 0xC0.
+            Assert.Contains(colorFrames, r => r[4] == 0x01 && r[5] == 0xC0);
+        }
+
+        [Fact] // #82 — the rim white LED has no business in an LED write path
+        public void Dispatch_LegacyChannels_NeverSendWhiteLed()
+        {
+            foreach (var caps in new[]
+                     {
+                         Caps(("legacyRevStripe", 1)),
+                         Caps(("legacyRevOnOff", 9)),
+                         Caps(("legacyRev3Bit", 9)),
+                         Caps(("legacyFlag3Bit", 6)),
+                     })
+            {
+                var t = RunAllWhite(caps);
+                Assert.False(Col01Has(t, 0x02), "rim white LED (0x02) must not be sent");
+            }
+        }
+
+        [Fact] // #82 — 0x06 is stored state, only the stripe path may touch it
+        public void Dispatch_NonStripeChannels_NeverTouchStripePreference()
+        {
+            foreach (var caps in new[]
+                     {
+                         Caps(("legacyRevOnOff", 9)),
+                         Caps(("legacyRev3Bit", 9)),
+                         Caps(("legacyFlag3Bit", 6)),
+                     })
+            {
+                var t = RunAllWhite(caps);
+                Assert.False(Col01Has(t, 0x06), "stripe preference (0x06) must not be sent");
+            }
         }
     }
 }

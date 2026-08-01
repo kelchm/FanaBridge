@@ -12,12 +12,13 @@ Fanatec wheelbases communicate with the host PC over USB HID (Human Interface De
 - [Collection Routing](#collection-routing)
 - [col01 Reference](#col01-reference)
   - [0x09 — General Control](#0x09--general-control)
-    - [0x02 — Rev LED Global On/Off](#0x02--rev-led-global-onoff)
-    - [0x06 — RevStripe Enable/Disable](#0x06--revstripe-enabledisable)
-    - [0x07 — Rev LED Blink Enable](#0x07--rev-led-blink-enable)
+    - [0x02 — Rim White LED](#0x02--rim-white-led)
+    - [0x06 — RevStripe Enable/Disable (Setting)](#0x06--revstripe-enabledisable-setting)
+    - [0x07 — Rev LED Mode (Color / Bitmask)](#0x07--rev-led-mode-color--bitmask)
     - [0x08 — Rev LED Data (Bitmask / Color)](#0x08--rev-led-data-bitmask--color)
-    - [0x09 / 0x0A — RGB Rev LED Data (Legacy)](#0x09--0x0a--rgb-rev-led-data-legacy)
-    - [0x0C — Flag LED Data (Legacy)](#0x0c--flag-led-data-legacy)
+    - [0x0A — Legacy RGB Rev LEDs](#0x0a--legacy-rgb-rev-leds-per-led-3-bit-color)
+    - [0x0B — Legacy Flag LEDs](#0x0b--legacy-flag-leds)
+    - [0x0C — LED Brightness (Legacy RGB)](#0x0c--led-brightness-legacy-rgb)
     - [0x01 — Extended Operations (Group)](#0x01--extended-operations-group)
       - [0x02 — 7-Segment Display Data](#0x02--7-segment-display-data)
       - [0x06 — Report Trigger / ACK](#0x06--report-trigger--ack)
@@ -67,7 +68,7 @@ Fanatec wheelbases communicate with the host PC over USB HID (Human Interface De
   - [Tuning & Configuration](#tuning--configuration)
 - [Appendix](#appendix)
   - [RGB333 Color Encoding](#rgb333-color-encoding)
-  - [RGB565 Color Encoding](#rgb565-color-encoding)
+  - [BGR565 Color Encoding](#bgr565-color-encoding)
   - [7-Segment Encoding Tables](#7-segment-encoding-tables)
   - [ITM Parameter IDs](#itm-parameter-ids)
   - [ITM Page Layouts](#itm-page-layouts)
@@ -174,9 +175,9 @@ Most col01 commands use the `[ReportID, 0xF8, 0x09, ...]` framing described in [
 
 The catch-all control class — rev and flag LEDs, displays, and configuration. The **subcommand** sits in byte[3]; most subcommands are complete there (listed below). The exception is subcommand `0x01`, a *group* whose [operations](#0x01--extended-operations-group) are selected by byte[4].
 
-#### 0x02 — Rev LED Global On/Off
+#### 0x02 — Rim White LED
 
-Enables or disables the rev LED strip globally.
+Turns a single white LED on the rim on or off. It has no effect on rev LED output; the rev LEDs are driven entirely by [`0x08`](#0x08--rev-led-data-bitmask--color) and need no enable command.
 
 ```
 [ReportID, 0xF8, 0x09, 0x02, enable, 0x00, 0x00, 0x00]
@@ -186,7 +187,9 @@ Enables or disables the rev LED strip globally.
 |------|-------|--------|
 | 4 | enable | `0x01` = on, `0x00` = off |
 
-#### 0x06 — RevStripe Enable/Disable
+Thought to correspond to the small status LED next to the XBox button on some wheels, but this has not yet been verified.
+
+#### 0x06 — RevStripe Enable/Disable (Setting)
 
 Enables or disables the RevStripe LED strip. Found on three rims: CSLESWP1X, CSLESWP1PS4, CSLESWWRC.
 
@@ -201,25 +204,35 @@ Disable: [ReportID, 0xF8, 0x09, 0x06, 0x01, 0x00, 0x00, 0x00]
 |------|-------|--------|
 | 4 | enable | `0x00` = on, `0x01` = off (inverted) |
 
-**Typical RevStripe sequence:**
+**Typical RevStripe sequence**, as captured from official software driving the strip:
 
 ```
-1. Enable RevStripe:  [RID, F8, 09, 06, 00, 00, 00, 00]
-2. Global LEDs on:    [RID, F8, 09, 02, 01, 00, 00, 00]
-3. Set color (red):   [RID, F8, 09, 08, 00, 38, 00, 00]
-
-To turn off:
-4. Set color (off):   [RID, F8, 09, 08, 00, 00, 00, 00]
-5. Global LEDs off:   [RID, F8, 09, 02, 00, 00, 00, 00]
+1. Base rev LEDs off: [RID, F8, 14, FF, 00, 00, 00, 00]
+2. Set color (red):   [RID, F8, 09, 08, 00, 38, 00, 00]     (repeated per color)
+3. Base rev LEDs on:  [RID, F8, 14, 00, 00, 00, 00, 00]
 ```
 
-#### 0x07 — Rev LED Blink Enable
+#### 0x07 — Rev LED Mode (Color / Bitmask)
 
-Enables blinking mode for rev LEDs.
+Selects how the rim interprets subsequent [`0x08`](#0x08--rev-led-data-bitmask--color) writes.
 
 ```
-[ReportID, 0xF8, 0x09, 0x07, 0x01, 0x00, 0x00, 0x00]
+[ReportID, 0xF8, 0x09, 0x07, mode, 0x00, 0x00, 0x00]
 ```
+
+| Byte | Field | Values |
+|------|-------|--------|
+| 4 | mode | `0x00` = `0x08` payloads are colors, `0x01` = payloads are on/off patterns |
+
+**The driver stack sends this command on your behalf.** On CSL Elite P1 (Xbox), CSL Elite P1 (PS4) and CSL Elite WRC, Fanatec's driver watches `0x08` writes and injects a mode change in response to specific payloads:
+
+| Payload written | Driver injects | Resulting mode |
+|---|---|---|
+| `01 00` | `0x07` with `0x01` | pattern |
+| `00 07` (blue) | `0x07` with `0x00` | color |
+| `00 38` (red) | `0x07` with `0x00` | color |
+
+This is edge-triggered, so it fires only on transitions. `0x08` is ambiguous — `01 00` is both a valid color and the "LED 0 only" pattern — so the driver infers intent from the payload. RGB333 `r=0, g=4, b=0` encodes to `01 00`, which puts the rim into pattern mode. Later color writes are then read as bitmasks: on a RevStripe rim the strip lights in its fixed pattern color whenever `data_lo` bit 0 is set (green, cyan, yellow, white) and stays dark otherwise. Pure red or pure blue returns it to color mode.
 
 #### 0x08 — Rev LED Data (Bitmask / Color)
 
@@ -229,14 +242,14 @@ Sends LED data — interpreted as either a bitmask or a color depending on the c
 [ReportID, 0xF8, 0x09, 0x08, data_lo, data_hi, 0x00, 0x00]
 ```
 
-**Non-RGB rims** (e.g., CSSWBMWV2): 9-bit bitmask where each bit controls one LED (bit 0 = LED 0):
+**Non-RGB rims** (e.g., CSSWBMWV2): 9-bit bitmask. LED 0 sits alone in `data_lo` bit 0; LEDs 1-8 pack into `data_hi` **most-significant-first**, so LED 1 is bit 7 and LED 8 is bit 0. Note this differs from the `0x13` base ordering.
 
 ```
 Example: LEDs 0, 1, 2 on, rest off
-  data_lo = 0x07, data_hi = 0x00   (bitmask: 0b000000111)
+  data_lo = 0x01, data_hi = 0xC0   (LED0; LED1 = bit7, LED2 = bit6)
 
 Example: All 9 LEDs on
-  data_lo = 0xFF, data_hi = 0x01   (bitmask: 0b111111111)
+  data_lo = 0x01, data_hi = 0xFF
 ```
 
 **RevStripe rims** (CSLESWP1X, CSLESWP1PS4, CSLESWWRC): [RGB333](#rgb333-color-encoding) color value controlling the entire strip as one unit:
@@ -246,22 +259,41 @@ Example: Red     → data_lo = 0x00, data_hi = 0x38
 Example: Green   → data_lo = 0x01, data_hi = 0xC0
 ```
 
-#### 0x09 / 0x0A — RGB Rev LED Data (Legacy)
+#### 0x0A — Legacy RGB Rev LEDs (per-LED 3-bit color)
 
-Color data for RGB-capable rims sent via col01. Used by older RGB rims that lack col03 support.
-
-```
-[ReportID, 0xF8, 0x09, 0x09, data...]
-[ReportID, 0xF8, 0x09, 0x0A, data...]
-```
-
-#### 0x0C — Flag LED Data (Legacy)
-
-Sets flag LED color via legacy protocol. Only a subset of wheels have flag LEDs — see the [devices reference](devices.md#flag-leds) for the support matrix.
+Per-LED color for **RGB rims without col03**, one bit per channel — seven colors plus off.
 
 ```
-[ReportID, 0xF8, 0x09, 0x0C, flag_color, dirty_flag, 0x00, 0x00]
+[ReportID, 0xF8, 0x09, 0x0A, data0, data1, data2, data3]
 ```
+
+27 bits packed LSB-first across the four data bytes, three bits per LED for nine LEDs, in the order `[LED0.R, LED0.G, LED0.B, LED1.R, ...]`. So LED *n*'s red bit is `3n`, green `3n+1`, blue `3n+2`.
+
+```
+Example: LED 0 red        → data0 = 0x01
+Example: LED 0 blue       → data0 = 0x04
+Example: all nine green   → 92 24 49 02
+```
+
+Note the channel order here is **R, G, B** — the only conventional ordering in this protocol, and different from both [`0x08`](#0x08--rev-led-data-bitmask--color) (G, R, B) and the col03 color paths (B, G, R).
+
+#### 0x0B — Legacy Flag LEDs
+
+Per-LED 3-bit color for flag LEDs on col01, packed the same way as [`0x0A`](#0x0a--legacy-rgb-rev-leds-per-led-3-bit-color) but for six flag LEDs (18 bits). Only a subset of wheels have flag LEDs — see the [devices reference](devices.md#flag-leds) for the support matrix.
+
+```
+[ReportID, 0xF8, 0x09, 0x0B, data0, data1, data2, data3]
+```
+
+#### 0x0C — LED Brightness (Legacy RGB)
+
+Sets overall brightness for the legacy RGB rev LEDs driven by [`0x0A`](#0x0a--legacy-rgb-rev-leds-per-led-3-bit-color).
+
+```
+[ReportID, 0xF8, 0x09, 0x0C, brightness, dirty_flag, 0x00, 0x00]
+```
+
+The brightness value goes through the same conversion the col03 intensity path applies.
 
 #### 0x01 — Extended Operations (Group)
 
@@ -423,9 +455,9 @@ For non-OLED devices (including LED 7-segment displays and the PBMR's small OLED
 
 ### 0x13 / 0x14 — Base Rev LEDs
 
-Some older wheelbases (e.g., CSL Elite Wheel Base) have a resident 9-LED rev strip on the base unit — separate from any rev indicator on the connected wheel — driven by its own command class at byte[2] = `0x13`.
+Some older wheelbases (e.g., CSL Elite Wheel Base) have a resident 9-LED rev strip on the wheelbase itself — separate from any rev indicator on the connected wheel. This can be driven by its own command class at byte[2] = `0x13`.
 
-**The base and wheel share the rev-LED channel, then split.** At power-on both the base strip and the wheel's rev LEDs follow the legacy [`0x08`](#0x08--rev-led-data-bitmask--color) writes, gated by the shared [`0x02`](#0x02--rev-led-global-onoff) enable. The first `0x13` write moves the base onto its own channel; afterward `0x13` drives the base and `0x08` drives only the wheel — independently, until power-cycle. That's how an RPM display can run on the base strip and a [RevStripe](#0x06--revstripe-enabledisable) wheel at once (enable with `0x02`, drive the wheel via `0x06` + `0x08`, then the base via `0x13`).
+**The base and wheel share the rev-LED channel, then split.** At power-on both the base strip and the wheel's rev LEDs follow the legacy [`0x08`](#0x08--rev-led-data-bitmask--color) writes. The first `0x13` write moves the base onto its own channel; afterward `0x13` drives the base and `0x08` drives only the wheel — independently, until power-cycle. That's how an RPM display can run on the base strip and a RevStripe wheel at once: drive the wheel via `0x08` and the base via `0x13`.
 
 #### 0x13 — Base Rev LED Data
 
@@ -448,7 +480,7 @@ Enable:  [ReportID, 0xF8, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00]
 Disable: [ReportID, 0xF8, 0x14, 0xFF, 0x00, 0x00, 0x00, 0x00]
 ```
 
-In practice you don't need it: the base is turned on by the shared [`0x02`](#0x02--rev-led-global-onoff) enable and lit by [`0x13`](#0x13--base-rev-led-data).
+Captures of official software driving a RevStripe wheel bracket the color writes with `0x14` — `0xFF` first, `0x00` afterwards.
 
 ---
 
@@ -465,7 +497,7 @@ Byte:  [0]   [1]   [2]      [3..4]    [5..6]    ...
        0xFF  0x01  subcmd   LED0_RGB  LED1_RGB  ...
 ```
 
-Each LED color is a **16-bit [RGB565](#rgb565-color-encoding)** value stored in **big-endian** byte order. A color value of `0x0000` means the LED is off.
+Each LED color is a **16-bit [BGR565](#bgr565-color-encoding)** value stored in **big-endian** byte order. A color value of `0x0000` means the LED is off.
 
 #### 0x00 — Rev LEDs
 
@@ -487,7 +519,7 @@ FF 01 01 [F0hi F0lo] [F1hi F1lo] ... [F5hi F5lo] 00...
 
 Button backlight RGB colors. Up to 12 RGB565 values. Only applies to devices with RGB-capable button LEDs (currently PSWBMW, GTSWX, and the PBMR module).
 
-> **Note — PBMR color inconsistency:** The PBMR is the only known device that interprets these RGB565 values as RGB555 (5 bits per channel, green MSB ignored). This means the 6th green bit (G5) is silently discarded. For example, `0x0400` (RGB565: R=0, G=32, B=0 — a dim green) renders as **black** on the PBMR because only G5 is set and it's the ignored bit. In practice, colors should be constructed with 5-bit green values (shift left by 6, not 5) to display correctly on PBMR. See [PBMR](devices.md#pbmr-podium-button-module-rally) for details.
+> **Note — PBMR color inconsistency:** The PBMR is the only known device that interprets these 16-bit values as [BGR555](#bgr555-variant) (5 bits per channel, green MSB ignored). The 6th green bit — bit 10 — is silently discarded. For example, `0x0400` (G=32, a dim green) renders as **black** on the PBMR because bit 10 is the only bit set and it's the ignored one. Construct colors for the PBMR by quantizing green to 5 bits and shifting it left by **5**, which leaves bit 10 clear. See [PBMR](devices.md#pbmr-podium-button-module-rally) for details.
 
 ```
 Byte:  [0]   [1]   [2]   [3..4]    ... [25..26]  [27]
@@ -1043,16 +1075,16 @@ Fanatec steering wheels support several types of LEDs controlled through two dis
 | **Rev LEDs** | RPM / shift indicator strip | 9 | Per-LED RGB (modern) or on/off (legacy) |
 | **Flag LEDs** | Status / warning indicators | 6 | Per-LED RGB (modern) or single color (legacy) |
 | **Button LEDs** | Button backlighting (RGB devices only) | Up to 12 | Per-LED RGB + intensity |
-| **RevStripe** | Single-color LED strip | 1 (entire strip) | RGB333 (8 colors via official software, 512 via raw HID) |
+| **RevStripe** | Single-color LED strip | 1 (entire strip) | RGB333, 7 colors plus off |
 
 **Protocol selection by wheel type:**
 
 | Capability | Protocol | Collection | Color Depth |
 |------------|----------|------------|-------------|
 | RGB LED + col03 support | Modern | [col03 0x01](#0x01--led-control) | RGB565 (65K colors) |
-| RGB LED + no col03 | Legacy RGB | [col01 0x09/0x0A](#0x09--0x0a--rgb-rev-led-data-legacy) | RGB333 via col01 |
+| RGB LED + no col03 | Legacy RGB | [col01 0x0A](#0x0a--legacy-rgb-rev-leds-per-led-3-bit-color) | 3-bit per LED via col01 |
 | Non-RGB LED | Legacy bitmask | [col01 0x08](#0x08--rev-led-data-bitmask--color) | On/off only + global RGB333 |
-| RevStripe | Legacy color | [col01 0x06](#0x06--revstripe-enabledisable) + [0x08](#0x08--rev-led-data-bitmask--color) | RGB333 (512 colors) |
+| RevStripe | Legacy color | [col01 0x08](#0x08--rev-led-data-bitmask--color) | RGB333, 7 colors plus off |
 
 See the [devices reference](devices.md#wheel-protocol-summary) for the per-wheel capability matrix.
 
@@ -1094,7 +1126,7 @@ byte[5] (data_hi):  [ G1 G0 | R2 R1 R0 | B2 B1 B0 ]   (GG_RRR_BBB)
 byte[4] (data_lo):  [  0  0   0  0  0   0  0  G2  ]   (.......G)
 ```
 
-Each channel has 3 bits (0–7), yielding 512 possible colors:
+Each channel has 3 bits (0–7), so 512 values are representable, but no hardware tested to date renders more than the eight fully saturated combinations — seven colors plus off. Those eight are also the only values official software emits, and at least one of the remainder (`01 00`) puts the rim into pattern mode, see [`0x07`](#0x07--rev-led-mode-color--bitmask).
 
 | Color | R | G | B | data_lo (byte[4]) | data_hi (byte[5]) |
 |-------|---|---|---|-------------------|-------------------|
@@ -1107,22 +1139,43 @@ Each channel has 3 bits (0–7), yielding 512 possible colors:
 | Cyan | 0 | 7 | 7 | `0x01` | `0xC7` |
 | White | 7 | 7 | 7 | `0x01` | `0xFF` |
 
-> **Note:** The official software only uses 8 discrete colors (each channel fully on or fully off). The hardware encoding supports 3 bits per channel, so intermediate values (e.g., R=4, G=2, B=0) may work but are not officially exercised.
 
-### RGB565 Color Encoding
+### BGR565 Color Encoding
 
-The modern col03 protocol uses **16-bit RGB565** values in **big-endian** byte order:
+The modern col03 protocol uses 16-bit colors in **big-endian** byte order, packed **blue-high, red-low**:
 
 ```
-Bits:  RRRRR GGGGGG BBBBB
+Bits:  BBBBB GGGGGG RRRRR
        15-11  10-5   4-0
 ```
 
-- Red: 5 bits (0–31)
-- Green: 6 bits (0–63)
 - Blue: 5 bits (0–31)
+- Green: 6 bits (0–63)
+- Red: 5 bits (0–31)
 - 65,536 possible colors
 - `0x0000` = LED off
+
+Sanity check: pure red is `0x001F`, pure blue is `0xF800`.
+
+**Channel order is per-interface**, and no format name carries it:
+
+| Path | Channel order (high → low) |
+|---|---|
+| col03 color (`FF 01 00/01/02`) | **B, G, R** |
+| col01 [`0x08`](#0x08--rev-led-data-bitmask--color) RevStripe color | **G, R, B** |
+| col01 [`0x0A`](#0x0a--legacy-rgb-rev-leds-per-led-3-bit-color) per-LED 3-bit | **R, G, B** (bits `3n`, `3n+1`, `3n+2`) |
+
+Green sits in bits 10-5 under either 565 layout, so a green-only value cannot distinguish them. Verify ordering with red or blue.
+
+#### BGR555 variant
+
+Some hardware reads only 5 green bits and ignores the sixth. For those devices, quantize green to 5 bits and place it in the **low 5 bits of the green field**, leaving bit 10 clear:
+
+```
+Bits:  BBBBB _GGGGG RRRRR
+       15-11 10 9-5  4-0
+        (bit 10 always zero)
+```
 
 ### 7-Segment Encoding Tables
 
