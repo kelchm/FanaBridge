@@ -18,7 +18,11 @@ namespace FanaBridge.Adapters
         /// <summary>A bound Screen settings panel; <paramref name="settingsChanged"/> fires on any user change.</summary>
         Control CreateScreenPanel(DisplaySettings settings, DisplayType display, byte itmDeviceId, Action settingsChanged);
 
-        /// <summary>A bound Tuning settings panel.</summary>
-        Control CreateTuningPanel(JObject customSettings);
+        /// <summary>
+        /// A bound Tuning settings panel. Writes into <paramref name="customSettings"/>
+        /// must hold <paramref name="settingsGate"/> — the device instance
+        /// enumerates the same object during saves on another thread.
+        /// </summary>
+        Control CreateTuningPanel(JObject customSettings, object settingsGate);
     }
 }

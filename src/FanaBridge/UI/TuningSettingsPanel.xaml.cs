@@ -11,6 +11,9 @@ namespace FanaBridge.UI
     public partial class TuningSettingsPanel : UserControl
     {
         private JObject _settings;
+        // Guards every _settings access: the device instance enumerates the
+        // same JObject during saves on another thread.
+        private object _settingsGate = new object();
         private bool _suppressEvents;
 
         /// <summary>Fired when the user changes a setting. The parent should persist.</summary>
@@ -26,9 +29,10 @@ namespace FanaBridge.UI
         /// Binds the panel to a device-instance settings JObject.
         /// Call once after construction, before the panel is displayed.
         /// </summary>
-        public void Bind(JObject settings)
+        public void Bind(JObject settings, object settingsGate = null)
         {
             _settings = settings ?? new JObject();
+            _settingsGate = settingsGate ?? new object();
             UpdateEnabledState();
         }
 
@@ -77,14 +81,20 @@ namespace FanaBridge.UI
                         {
                             modeTag = ((EncoderMode)raw).ToString();
                             if (_settings != null)
-                                _settings["encoderMode"] = modeTag;
+                            {
+                                lock (_settingsGate)
+                                    _settings["encoderMode"] = modeTag;
+                            }
                         }
                     }
                 }
 
                 // Fall back to persisted setting
                 if (modeTag == null && _settings != null)
-                    modeTag = (string)_settings["encoderMode"];
+                {
+                    lock (_settingsGate)
+                        modeTag = (string)_settings["encoderMode"];
+                }
 
                 modeTag = modeTag ?? "Encoder";
 
@@ -139,7 +149,8 @@ namespace FanaBridge.UI
             if (selected == null) return;
 
             string modeTag = (string)selected.Tag;
-            _settings["encoderMode"] = modeTag;
+            lock (_settingsGate)
+                _settings["encoderMode"] = modeTag;
             SettingsChanged?.Invoke();
 
             // Send to hardware immediately

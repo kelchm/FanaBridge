@@ -200,19 +200,25 @@ namespace FanaBridge.Adapters
         /// A single module handles all LED types (Rev, Flag, Button/Encoder)
         /// through the unified <see cref="FanatecLedDriver"/>.
         /// </summary>
-        private void EnsureLedModuleInitialized()
+        private void EnsureLedModuleInitialized(bool throttled = false)
         {
             if (_ledModuleInitialized)
                 return;
 
             // DataUpdate retries this per frame while unbuilt; for wheels whose
             // caps genuinely resolve to zero LEDs (display-only profiles) that
-            // would mean a lock + ResolveCapsFor per frame forever. Bound the
-            // retry to ~1/s. Wrap-safe unsigned delta (see PublishItmStatusSnapshot).
+            // would mean a lock + ResolveCapsFor per frame forever. Bound that
+            // retry to ~1/s — but ONLY the DataUpdate path: GetSettingsControls
+            // runs once and SimHub caches its result, so a throttled return
+            // there would cost the LEDs tab for the whole session. Wrap-safe
+            // unsigned delta (see PublishItmStatusSnapshot).
             int tick = Environment.TickCount;
-            int lastZero = _lastZeroCapsTick;
-            if (lastZero != 0 && unchecked((uint)(tick - lastZero)) < 1000)
-                return;
+            if (throttled)
+            {
+                int lastZero = _lastZeroCapsTick;
+                if (lastZero != 0 && unchecked((uint)(tick - lastZero)) < 1000)
+                    return;
+            }
 
             lock (_settingsGate)
             {
@@ -320,7 +326,7 @@ namespace FanaBridge.Adapters
                     // reset itself failed the document keeps the old subtrees —
                     // out-of-sync already blocks refreshes.
                     if (hydrated)
-                        TryRefreshDocumentFromModule(module);
+                        TryRefreshDocumentFromModule(module, channelReset: true);
                     _pendingDefaultsReset = false;
                 }
             }
@@ -383,7 +389,8 @@ namespace FanaBridge.Adapters
         /// is left untouched so a save still returns the last good payload.
         /// Callers hold _settingsGate.
         /// </summary>
-        private bool TryRefreshDocumentFromModule(LedModuleSettings<FanatecLedManager> module)
+        private bool TryRefreshDocumentFromModule(
+            LedModuleSettings<FanatecLedManager> module, bool channelReset = false)
         {
             try
             {
@@ -398,11 +405,15 @@ namespace FanaBridge.Adapters
                     {
                         // SimHub emits every channel key and nulls the ones it
                         // has no driver for right now (e.g. a profile override
-                        // without button LEDs). Null means "can't emit", not
-                        // "deleted" — keep the stored subtree so reverting the
-                        // override gets it back.
+                        // without button LEDs). On an ordinary save null means
+                        // "can't emit", not "deleted" — keep the stored subtree
+                        // so reverting the override gets it back. On an explicit
+                        // defaults reset the stored subtree must go too, or it
+                        // resurrects after the override is reverted.
                         if (kvp.Value != null && kvp.Value.Type != JTokenType.Null)
                             doc[kvp.Key] = kvp.Value.DeepClone();
+                        else if (channelReset)
+                            doc.Remove(kvp.Key);
                     }
                 }
 
@@ -503,6 +514,15 @@ namespace FanaBridge.Adapters
             // Re-register with the new plugin's instance list (used by the
             // Control Mapper integration to read display names).
             _registeredWithPlugin = false;
+
+            // A new generation also earns a fresh module-build attempt if a
+            // previous construction failed or caps resolved to zero — the
+            // latch and throttle are per-generation, not per-session.
+            if (_ledModule == null)
+            {
+                _ledModuleInitialized = false;
+                _lastZeroCapsTick = 0;
+            }
         }
 
         // ── DeviceInstance overrides ─────────────────────────────────────
@@ -549,7 +569,7 @@ namespace FanaBridge.Adapters
                     if (TryLoadModuleDefaults(module))
                     {
                         _moduleOutOfSync = false;
-                        TryRefreshDocumentFromModule(module);
+                        TryRefreshDocumentFromModule(module, channelReset: true);
                     }
                     else
                     {
@@ -601,6 +621,21 @@ namespace FanaBridge.Adapters
             lock (_settingsGate)
             {
                 var module = _ledModule;
+
+                // While out-of-sync, retry applying the canonical document once
+                // per save: transient apply failures heal here (module returns
+                // to exactly the stored state, so no user data moves). If the
+                // payload itself is unappliable the document stays
+                // authoritative — reset-defaults is the repair path, and it
+                // re-trusts the module. Trade-off: a late-healing resync
+                // reverts LEDs-tab edits made while broken, visibly — better
+                // than silently excluding them from saves forever.
+                if (module != null && _moduleOutOfSync && _settingsDocument != null
+                    && ApplyLedSettings(module, _settingsDocument, _settingsDocumentIsDefault))
+                {
+                    _moduleOutOfSync = false;
+                }
+
                 bool trusted = module != null && !_moduleOutOfSync;
                 JObject result;
 
@@ -741,7 +776,7 @@ namespace FanaBridge.Adapters
             if (!isConnected)
                 return;
 
-            EnsureLedModuleInitialized();
+            EnsureLedModuleInitialized(throttled: true);
 
             var plugin = PluginResolver();
             var device = plugin?.Transport;
@@ -1002,7 +1037,7 @@ namespace FanaBridge.Adapters
             if (panels != null && _config.Capabilities.HasEncoders)
             {
                 yield return new DeviceSettingControl(
-                    panels.CreateTuningPanel(_customSettings),
+                    panels.CreateTuningPanel(_customSettings, _settingsGate),
                     2,
                     "Tuning",
                     DeviceSettingControlKind.None,

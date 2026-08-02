@@ -18,10 +18,10 @@ namespace FanaBridge.UI
             return panel;
         }
 
-        public Control CreateTuningPanel(JObject customSettings)
+        public Control CreateTuningPanel(JObject customSettings, object settingsGate)
         {
             var panel = new TuningSettingsPanel();
-            panel.Bind(customSettings);
+            panel.Bind(customSettings, settingsGate);
             return panel;
         }
     }
