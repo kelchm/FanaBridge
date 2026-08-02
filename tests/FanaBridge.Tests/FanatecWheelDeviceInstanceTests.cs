@@ -7,6 +7,7 @@ using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using GameReaderCommon;
+using Newtonsoft.Json.Linq;
 using SimHub.Plugins.Devices;
 using Xunit;
 
@@ -23,6 +24,16 @@ namespace FanaBridge.Tests
     /// </summary>
     public class FanatecWheelDeviceInstanceTests
     {
+        static FanatecWheelDeviceInstanceTests()
+        {
+            // SimHub's Profile static initializer wants a JavascriptExtensions
+            // directory next to the binary (present in every SimHub install,
+            // absent in the test bin) — and a failed type initializer is sticky
+            // for the whole process.
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory, "JavascriptExtensions"));
+        }
+
         // ── Wheelbase harness (same fakes as FanatecWheelbaseTests) ───────
 
         private sealed class FakeTransport : IConnectableTransport
@@ -269,6 +280,144 @@ namespace FanaBridge.Tests
             inst.DataUpdate(null, ref data);
 
             Assert.Same(pluginA, inst.BoundPluginForTest);
+        }
+
+        // ── Settings persistence (document-first) ──────────────────────────
+        //
+        // SimHub loads the DLL and creates DeviceInstances even when the
+        // plugin is deactivated in its plugin list, then rewrites each
+        // device's settings file from GetSettings on every save-all. The
+        // canonical document must round-trip losslessly in every state where
+        // the LED module can't be built — one save-all writing a stub is
+        // permanent loss of the stored LED profiles.
+
+        private static JObject LedSettingsPayload() => new JObject
+        {
+            ["ledModuleSettings"] = new JObject { ["_LEDsBrightness"] = 80.0 },
+            ["leds"] = new JObject { ["activeProfileId"] = "3795069f-fb17-46f8-a89e-b432d812283d" },
+            ["buttons"] = new JObject(),
+            ["wheelType"] = "PSWBMW",
+            ["itmDefaultPage"] = 3,
+        };
+
+        [Fact]
+        public void PluginUnavailable_GetSettings_RoundTripsTheDocument()
+        {
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            inst.SetSettings(LedSettingsPayload(), false);
+            var result = (JObject)inst.GetSettings(false, false);
+
+            Assert.Equal(80.0, (double)result["ledModuleSettings"]!["_LEDsBrightness"]!);
+            Assert.Equal("3795069f-fb17-46f8-a89e-b432d812283d", (string?)result["leds"]!["activeProfileId"]);
+            Assert.NotNull(result["buttons"]);
+            Assert.Equal(3, (int)result["itmDefaultPage"]!);
+        }
+
+        [Fact]
+        public void PluginUnavailable_SpecialFlavors_StillReturnTheFullDocument()
+        {
+            // Interim policy pending SimHub-contract verification: with no
+            // module to do the template/defaults filtering, returning the
+            // complete document is the only answer that can't wipe the
+            // per-device file if SimHub writes this output there.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+            inst.SetSettings(LedSettingsPayload(), false);
+
+            foreach (var (forTemplate, forDefaults) in new[] { (true, false), (false, true), (true, true) })
+            {
+                var result = (JObject)inst.GetSettings(forTemplate, forDefaults);
+                Assert.NotNull(result["leds"]);
+                Assert.Equal(3, (int)result["itmDefaultPage"]!);
+            }
+        }
+
+        [Fact]
+        public void PluginArrivesLater_DocumentHydratesTheBuiltModule()
+        {
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+            inst.SetSettings(LedSettingsPayload(), false);
+
+            var plugin = PluginWithWheel(null, out _);
+            inst.PluginResolver = () => plugin;
+            inst.GetDynamicButtonActions();   // any EnsureLedModuleInitialized site
+
+            var result = (JObject)inst.GetSettings(false, false);
+            Assert.Equal(80.0, (double)result["ledModuleSettings"]!["_LEDsBrightness"]!);
+        }
+
+        [Fact]
+        public void UnknownCustomKeys_SurviveTheReloadRoundTrip()
+        {
+            // The tuning panel writes keys (e.g. encoderMode) this class doesn't
+            // enumerate; a whitelist would silently drop them on the next load.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            var payload = LedSettingsPayload();
+            payload["encoderMode"] = "fine";
+            inst.SetSettings(payload, false);
+
+            var result = (JObject)inst.GetSettings(false, false);
+            Assert.Equal("fine", (string?)result["encoderMode"]);
+        }
+
+        [Fact]
+        public void SetSettingsTwice_TheLaterPayloadWins()
+        {
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            inst.SetSettings(LedSettingsPayload(), false);
+            var second = LedSettingsPayload();
+            second["ledModuleSettings"] = new JObject { ["_LEDsBrightness"] = 55.0 };
+            inst.SetSettings(second, false);
+
+            var result = (JObject)inst.GetSettings(false, false);
+            Assert.Equal(55.0, (double)result["ledModuleSettings"]!["_LEDsBrightness"]!);
+        }
+
+        [Fact]
+        public void LoadDefaults_WithoutModule_DefersTheLedReset()
+        {
+            // With no module to define LED defaults, the stored LED subtrees
+            // must survive (deferred reset) while custom keys reset now —
+            // destroying profiles to fake a reset is the wipe again.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+            inst.SetSettings(LedSettingsPayload(), false);
+
+            inst.LoadDefaultSettings();
+            var result = (JObject)inst.GetSettings(false, false);
+
+            Assert.Equal(80.0, (double)result["ledModuleSettings"]!["_LEDsBrightness"]!);   // retained
+            Assert.Equal(
+                (int)DisplaySettings.DefaultItmDefaultPage, (int)result["itmDefaultPage"]!); // reset
+        }
+
+        [Fact]
+        public void DeferredLedReset_ModuleBuildAttempt_NeverProducesAStub()
+        {
+            // Headless, LoadDefaults on the fresh module fails inside SimHub
+            // internals (app context is absent), taking the hydration-failure
+            // path; in-app it succeeds and materializes the reset. Either way
+            // the invariant this pins is the same: the LED subtrees survive —
+            // a save after the build attempt must never emit a stub.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+            inst.SetSettings(LedSettingsPayload(), false);
+            inst.LoadDefaultSettings();
+
+            var plugin = PluginWithWheel(null, out _);
+            inst.PluginResolver = () => plugin;
+            inst.GetDynamicButtonActions();   // builds the module → LoadDefaults path
+
+            var result = (JObject)inst.GetSettings(false, false);
+            Assert.NotNull(result["ledModuleSettings"]);
+            Assert.NotNull(result["leds"]);
         }
     }
 }
