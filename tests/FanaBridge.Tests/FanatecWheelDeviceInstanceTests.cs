@@ -345,6 +345,10 @@ namespace FanaBridge.Tests
             inst.PluginResolver = () => plugin;
             inst.GetDynamicButtonActions();   // any EnsureLedModuleInitialized site
 
+            // Publish-anyway: the module must exist even if hydration failed
+            // (the LEDs tab is the only way to repair a bad payload) — and the
+            // payload survives either way (module state or document fallback).
+            Assert.True(inst.LedModuleBuiltForTest);
             var result = (JObject)inst.GetSettings(false, false);
             Assert.Equal(80.0, (double)result["ledModuleSettings"]!["_LEDsBrightness"]!);
         }
@@ -415,9 +419,51 @@ namespace FanaBridge.Tests
             inst.PluginResolver = () => plugin;
             inst.GetDynamicButtonActions();   // builds the module → LoadDefaults path
 
+            Assert.True(inst.LedModuleBuiltForTest);
             var result = (JObject)inst.GetSettings(false, false);
             Assert.NotNull(result["ledModuleSettings"]);
             Assert.NotNull(result["leds"]);
+        }
+
+        [Fact]
+        public void LoadDefaults_PurgesPanelKeysFromTheDocument()
+        {
+            // The overlay can add and overwrite keys but never remove them, so
+            // a defaults reset must strip non-module keys from the document or
+            // panel-written keys resurrect on the next save.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            var payload = LedSettingsPayload();
+            payload["encoderMode"] = "fine";
+            inst.SetSettings(payload, false);
+            inst.LoadDefaultSettings();
+
+            var result = (JObject)inst.GetSettings(false, false);
+            Assert.Null(result["encoderMode"]);                                  // purged
+            Assert.Equal(80.0, (double)result["ledModuleSettings"]!["_LEDsBrightness"]!); // LED subtrees deferred
+        }
+
+        [Fact]
+        public void CustomSettingsObject_IsStableAcrossReloads()
+        {
+            // UI panels hold the custom-settings JObject for their lifetime;
+            // a reload must repopulate it in place, not replace it, or panel
+            // edits land in an orphaned object and are never persisted.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            var bound = inst.CustomSettingsForTest;
+            inst.SetSettings(LedSettingsPayload(), false);
+            var second = LedSettingsPayload();
+            second["itmDefaultPage"] = 5;
+            inst.SetSettings(second, false);
+
+            Assert.Same(bound, inst.CustomSettingsForTest);
+            Assert.Equal(5, (int)bound["itmDefaultPage"]!);
+
+            inst.LoadDefaultSettings();
+            Assert.Same(bound, inst.CustomSettingsForTest);
         }
     }
 }
