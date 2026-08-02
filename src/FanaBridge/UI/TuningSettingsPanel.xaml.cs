@@ -26,10 +26,11 @@ namespace FanaBridge.UI
         }
 
         /// <summary>
-        /// Binds the panel to a device-instance settings JObject.
-        /// Call once after construction, before the panel is displayed.
+        /// Binds the panel to a device-instance settings JObject. The gate is
+        /// required: the device instance enumerates the same object during
+        /// saves on another thread, so every caller must share its lock.
         /// </summary>
-        public void Bind(JObject settings, object settingsGate = null)
+        public void Bind(JObject settings, object settingsGate)
         {
             _settings = settings ?? new JObject();
             _settingsGate = settingsGate ?? new object();

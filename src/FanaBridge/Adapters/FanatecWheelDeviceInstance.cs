@@ -56,6 +56,14 @@ namespace FanaBridge.Adapters
         // reset — deferring it beats fabricating an empty payload.
         private bool _pendingDefaultsReset;
 
+        // A defaults reset was requested and the document refresh that
+        // materializes it hasn't succeeded yet. While set, the refresh uses
+        // reset semantics (all module-owned keys removed before writing what
+        // the module emits) — otherwise a single failed refresh would let
+        // pre-reset subtrees survive and resurrect later. Cleared by the
+        // first successful refresh, or by a new SetSettings payload.
+        private bool _channelResetPending;
+
         // The published module diverged from the canonical document (an
         // apply/defaults call into it failed partway). While set, saves
         // serve the document and never refresh it from the module — a
@@ -288,8 +296,12 @@ namespace FanaBridge.Adapters
                     // Construction failed — latch so DataUpdate doesn't rebuild
                     // per frame. A new SetSettings payload unlatches for one
                     // fresh attempt; the canonical document keeps round-tripping
-                    // meanwhile.
+                    // meanwhile. Record the generation the failure belongs to,
+                    // or a plugin swap before the first DataUpdate would leave
+                    // both generation markers null and the rebind that unlatches
+                    // would never fire.
                     _ledModuleInitialized = true;
+                    _moduleSourcePlugin = plugin;
                     SimHub.Logging.Current.Warn(
                         "FanatecWheelDeviceInstance[" + caps.Name + "]: LED module construction " +
                         "failed — stored settings still round-trip: " + ex.Message);
@@ -326,7 +338,7 @@ namespace FanaBridge.Adapters
                     // reset itself failed the document keeps the old subtrees —
                     // out-of-sync already blocks refreshes.
                     if (hydrated)
-                        TryRefreshDocumentFromModule(module, channelReset: true);
+                        TryRefreshDocumentFromModule(module);
                     _pendingDefaultsReset = false;
                 }
             }
@@ -389,8 +401,7 @@ namespace FanaBridge.Adapters
         /// is left untouched so a save still returns the last good payload.
         /// Callers hold _settingsGate.
         /// </summary>
-        private bool TryRefreshDocumentFromModule(
-            LedModuleSettings<FanatecLedManager> module, bool channelReset = false)
+        private bool TryRefreshDocumentFromModule(LedModuleSettings<FanatecLedManager> module)
         {
             try
             {
@@ -398,6 +409,17 @@ namespace FanaBridge.Adapters
                 var channels = module.GetSettings(false, false);
 
                 var doc = (JObject)(_settingsDocument?.DeepClone() ?? new JObject());
+
+                // While a defaults reset is pending, drop every module-owned
+                // key first: emitted-null channels AND keys the module omits
+                // entirely (e.g. "extra" when ExtraSettings is unused) must
+                // not survive an explicit reset.
+                if (_channelResetPending)
+                {
+                    foreach (var key in ModuleOwnedKeys)
+                        doc.Remove(key);
+                }
+
                 doc["ledModuleSettings"] = moduleState;
                 if (channels != null)
                 {
@@ -407,18 +429,15 @@ namespace FanaBridge.Adapters
                         // has no driver for right now (e.g. a profile override
                         // without button LEDs). On an ordinary save null means
                         // "can't emit", not "deleted" — keep the stored subtree
-                        // so reverting the override gets it back. On an explicit
-                        // defaults reset the stored subtree must go too, or it
-                        // resurrects after the override is reverted.
+                        // so reverting the override gets it back.
                         if (kvp.Value != null && kvp.Value.Type != JTokenType.Null)
                             doc[kvp.Key] = kvp.Value.DeepClone();
-                        else if (channelReset)
-                            doc.Remove(kvp.Key);
                     }
                 }
 
                 _settingsDocument = doc;
                 _settingsDocumentIsDefault = false;
+                _channelResetPending = false;
                 return true;
             }
             catch (Exception ex)
@@ -517,11 +536,18 @@ namespace FanaBridge.Adapters
 
             // A new generation also earns a fresh module-build attempt if a
             // previous construction failed or caps resolved to zero — the
-            // latch and throttle are per-generation, not per-session.
-            if (_ledModule == null)
+            // latch and throttle are per-generation, not per-session. Under
+            // the gate: a lock-free null-check here could interleave with a
+            // concurrent build publishing a module and then unlatch anyway,
+            // making the next call construct a SECOND module while SimHub's
+            // cached LEDs control stays bound to the orphaned first one.
+            lock (_settingsGate)
             {
-                _ledModuleInitialized = false;
-                _lastZeroCapsTick = 0;
+                if (_ledModule == null)
+                {
+                    _ledModuleInitialized = false;
+                    _lastZeroCapsTick = 0;
+                }
             }
         }
 
@@ -548,6 +574,11 @@ namespace FanaBridge.Adapters
                 _customSettings["itmDefaultPage"] = DisplaySettings.DefaultItmDefaultPage;
                 _displaySettings = new DisplaySettings();
 
+                // Reset semantics stay pending until a document refresh
+                // actually succeeds — a single failed refresh must not let
+                // pre-reset subtrees survive into later ordinary saves.
+                _channelResetPending = true;
+
                 // A reset must also purge non-module keys from the document or
                 // panel-written keys resurrect on the next save (the overlay
                 // can add and overwrite but never remove). Only the LED
@@ -569,7 +600,7 @@ namespace FanaBridge.Adapters
                     if (TryLoadModuleDefaults(module))
                     {
                         _moduleOutOfSync = false;
-                        TryRefreshDocumentFromModule(module, channelReset: true);
+                        TryRefreshDocumentFromModule(module);
                     }
                     else
                     {
@@ -623,14 +654,17 @@ namespace FanaBridge.Adapters
                 var module = _ledModule;
 
                 // While out-of-sync, retry applying the canonical document once
-                // per save: transient apply failures heal here (module returns
+                // per ordinary save (template/defaults calls never write the
+                // per-device file — no reason to mutate the live module for
+                // them): transient apply failures heal here (module returns
                 // to exactly the stored state, so no user data moves). If the
                 // payload itself is unappliable the document stays
                 // authoritative — reset-defaults is the repair path, and it
                 // re-trusts the module. Trade-off: a late-healing resync
                 // reverts LEDs-tab edits made while broken, visibly — better
                 // than silently excluding them from saves forever.
-                if (module != null && _moduleOutOfSync && _settingsDocument != null
+                if (!forTemplate && !forDefaultSettings
+                    && module != null && _moduleOutOfSync && _settingsDocument != null
                     && ApplyLedSettings(module, _settingsDocument, _settingsDocumentIsDefault))
                 {
                     _moduleOutOfSync = false;
@@ -693,6 +727,7 @@ namespace FanaBridge.Adapters
                 _settingsDocument = (JObject)obj.DeepClone();
                 _settingsDocumentIsDefault = isDefault;
                 _pendingDefaultsReset = false;
+                _channelResetPending = false;   // a full payload supersedes a reset
 
                 _customSettings.RemoveAll();
                 foreach (var prop in obj.Properties())
