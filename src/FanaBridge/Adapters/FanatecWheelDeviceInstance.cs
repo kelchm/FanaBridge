@@ -45,6 +45,12 @@ namespace FanaBridge.Adapters
         private JObject _pendingLedSettings;
         private bool _pendingLedSettingsIsDefault;
         private bool _pendingLedDefaults;
+        // Whether the pending payload has already been retried since it was
+        // stashed. A payload the module rejects blocks saving (see GetSettings),
+        // so it gets one more chance on the next call that touches the module —
+        // enough to clear a transient failure without retrying a permanently
+        // malformed payload on every frame.
+        private bool _pendingLedRetried;
 
         // Display manager — null when the wheel has no display.
         private FanatecDisplayDriver _displayManager;
@@ -158,7 +164,10 @@ namespace FanaBridge.Adapters
         private void EnsureLedModuleInitialized()
         {
             if (_ledModuleInitialized)
+            {
+                RetryPendingLedSettings();
                 return;
+            }
 
             // Without the shared encoders we can't build a module at all. Leave
             // the initialized flag unset so the next call retries — latching it
@@ -229,6 +238,40 @@ namespace FanaBridge.Adapters
                 _ledModule.LoadDefaults();
             }
             _pendingLedDefaults = false;
+        }
+
+        /// <summary>
+        /// Gives a payload the module previously rejected one more chance.
+        /// </summary>
+        /// <remarks>
+        /// While a payload is pending against an existing module the device
+        /// cannot save at all, so a failure that was only transient must not
+        /// strand it for the rest of the session. One retry is enough for that
+        /// without re-parsing a permanently malformed payload on every frame —
+        /// this runs from the per-frame update path.
+        /// </remarks>
+        private void RetryPendingLedSettings()
+        {
+            if (_ledModule == null || _pendingLedSettings == null || _pendingLedRetried)
+                return;
+
+            _pendingLedRetried = true;
+
+            if (ApplyLedSettings(_pendingLedSettings, _pendingLedSettingsIsDefault))
+            {
+                _pendingLedSettings = null;
+                SimHub.Logging.Current.Info(
+                    "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                    "]: pending LED settings applied on retry — saving is enabled again");
+            }
+            else
+            {
+                SimHub.Logging.Current.Warn(
+                    "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
+                    "]: pending LED settings were rejected again — this device will not " +
+                    "save until its settings are reloaded or reset, so the stored file " +
+                    "keeps the last complete copy");
+            }
         }
 
         /// <summary>
@@ -464,6 +507,7 @@ namespace FanaBridge.Adapters
                 {
                     _pendingLedSettings = (JObject)obj.DeepClone();
                     _pendingLedSettingsIsDefault = isDefault;
+                    _pendingLedRetried = false;
                 }
                 _pendingLedDefaults = false;
             }
@@ -473,6 +517,7 @@ namespace FanaBridge.Adapters
                 // payload so EnsureLedModuleInitialized can apply it on creation.
                 _pendingLedSettings = (JObject)obj.DeepClone();
                 _pendingLedSettingsIsDefault = isDefault;
+                _pendingLedRetried = false;
                 _pendingLedDefaults = false;
             }
 

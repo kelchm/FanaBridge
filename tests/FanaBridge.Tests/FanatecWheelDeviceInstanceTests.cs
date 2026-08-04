@@ -300,8 +300,10 @@ namespace FanaBridge.Tests
         //
         // SimHub rewrites each device's settings file from GetSettings() on every
         // save, with no merge — and it does so even while the plugin is disabled,
-        // when the LED module cannot be built. These pin that a save can never
-        // emit less than it was given.
+        // when the LED module cannot be built. These pin that such a save either
+        // reproduces the loaded document or fails outright, never writing a
+        // partial one. (Once the module owns the settings, roots this build does
+        // not recognise are still dropped; carrying them across is PR 2's job.)
 
         /// <summary>A complete on-disk settings payload, shaped like a real one.</summary>
         private static JObject FullDocument() => new JObject
@@ -460,6 +462,67 @@ namespace FanaBridge.Tests
             // The stashed document — including its unknown roots — reached the module.
             Assert.NotNull(applied);
             Assert.Equal("keep-me", (string?)applied?["futureExtension"]?["nested"]);
+        }
+
+        [Fact]
+        public void FailedHydration_IsRetriedOnce_AndSavingRecovers()
+        {
+            // A transient refusal must not strand the device for the session.
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var attempts = 0;
+            inst.LedApplyForTest = (_, __) => ++attempts > 1;   // fails once, then succeeds
+
+            inst.SetSettings(FullDocument(), isDefault: false);
+            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
+
+            inst.GetDynamicButtonActions();   // next touch retries the payload
+
+            var saved = (JObject)inst.GetSettings(false, false)!;
+            Assert.Equal(2, attempts);
+            Assert.Equal(3, (int?)saved["itmDefaultPage"]);
+        }
+
+        [Fact]
+        public void RepeatedlyRejectedPayload_IsNotRetriedEveryFrame()
+        {
+            // A permanently malformed payload must not be re-parsed per frame.
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var attempts = 0;
+            inst.LedApplyForTest = (_, __) => { attempts++; return false; };
+
+            inst.SetSettings(FullDocument(), isDefault: false);
+            for (int i = 0; i < 5; i++)
+                inst.GetDynamicButtonActions();
+
+            Assert.Equal(2, attempts);   // the initial apply plus one retry
+            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
+        }
+
+        [Fact]
+        public void NewPayloadAfterRejection_GetsAFreshRetry()
+        {
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var accept = false;
+            inst.LedApplyForTest = (_, __) => accept;
+
+            inst.SetSettings(FullDocument(), isDefault: false);
+            inst.GetDynamicButtonActions();                     // retry budget spent
+            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
+
+            accept = true;
+            inst.SetSettings(FullDocument(), isDefault: false); // a new load succeeds
+
+            var saved = (JObject)inst.GetSettings(false, false)!;
+            Assert.Equal(3, (int?)saved["itmDefaultPage"]);
         }
 
         [Fact]
