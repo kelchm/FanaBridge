@@ -401,6 +401,7 @@ namespace FanaBridge.Tests
             inst.DataUpdate(null, ref data);
 
             Assert.True(inst.SettingsForTest.IsFaulted);
+            Assert.Equal(0, host.DisplayCount);
         }
 
         [Fact]
@@ -474,6 +475,41 @@ namespace FanaBridge.Tests
             var saved = (JObject)inst.GetSettings(false, false)!;
             Assert.Equal("Gear", (string?)saved["displayMode"]);
             Assert.Equal(5, (int?)saved["itmDefaultPage"]);
+        }
+
+        [Fact]
+        public void SettingsRejectedBeforePublication_DisposeTheLedHost()
+        {
+            // SimHub abandons a device that throws on the way up without ever
+            // calling End(), so the host's subscription to a static event would
+            // outlive it -- once per failed attempt.
+            var host = new FakeLedModuleHost { AcceptSettings = false };
+            var inst = InstanceWith(host);
+            inst.PluginResolver = () => null;
+
+            Assert.Throws<InvalidOperationException>(
+                () => inst.SetSettings(FullDocument(), isDefault: false));
+
+            Assert.Equal(1, host.DisposeCount);
+        }
+
+        [Fact]
+        public void SettingsRejectedAfterPublication_KeepTheLedHost()
+        {
+            // Once SimHub owns the device it stays in the list and will call
+            // End() later, so a rejected reload must not tear its editor down --
+            // it only stops the device saving.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWith(host);
+            inst.PluginResolver = () => null;
+            inst.SetSettings(FullDocument(), isDefault: false);
+            inst.Init(null);
+
+            host.AcceptSettings = false;
+            Assert.Throws<InvalidOperationException>(
+                () => inst.SetSettings(FullDocument(), isDefault: false));
+
+            Assert.Equal(0, host.DisposeCount);
         }
 
         [Fact]

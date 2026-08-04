@@ -41,11 +41,14 @@ namespace FanaBridge.Tests.TestDoubles
         public bool AcceptSettings { get; set; } = true;
         public bool ThrowOnCapture { get; set; }
         public bool ThrowOnDefaults { get; set; }
+        /// <summary>Whether LoadDefaults mutates before it throws.</summary>
+        public bool MutateBeforeThrowingOnDefaults { get; set; }
 
         public int ApplyCount { get; private set; }
         public int DefaultsCount { get; private set; }
         public int DisposeCount { get; private set; }
         public int FinalizeCount { get; private set; }
+        public int DisplayCount { get; private set; }
         public JObject LastApplied => _applied;
 
         public bool HasModule => true;
@@ -86,12 +89,18 @@ namespace FanaBridge.Tests.TestDoubles
         {
             DefaultsCount++;
             if (ThrowOnDefaults)
+            {
+                // Mimic a reset that got part way before failing, leaving the
+                // module holding neither the old settings nor the defaults.
+                if (MutateBeforeThrowingOnDefaults)
+                    _applied = new JObject();
                 throw new InvalidOperationException("defaults failed");
+            }
 
             _applied = new JObject();
         }
 
-        public void Display() { }
+        public void Display() => DisplayCount++;
         public void RebindToCurrentGeneration() { }
         public void HotSwapIfNeeded(WheelCapabilities currentCaps) { }
 

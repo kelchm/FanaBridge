@@ -27,6 +27,11 @@ namespace FanaBridge.Adapters
     ///    untouched, so unrecognised settings survive a round trip.
     ///  • Applying settings either commits all of it or none of it.
     ///
+    /// That last rule is about this document. The LED module is a separate
+    /// object that can be left partly changed by a failed apply, which is why
+    /// such a failure stops the device saving rather than being retried: only a
+    /// complete apply, or a reset, makes the two agree again.
+    ///
     /// Reads and writes are serialized on a private lock so a save taken while
     /// settings are being applied sees either the whole old state or the whole
     /// new one. SimHub's LED editor does its own internal synchronization and
@@ -184,10 +189,30 @@ namespace FanaBridge.Adapters
         {
             lock (_gate)
             {
-                _host.LoadDefaults();
+                try
+                {
+                    _host.LoadDefaults();
+                }
+                catch
+                {
+                    // A reset that failed part way leaves the module holding a
+                    // mixture of the old settings and the defaults. Persisting
+                    // that would replace a good file with a state nobody chose,
+                    // so the device stops saving until it is trustworthy again.
+                    _faulted = true;
+                    throw;
+                }
 
                 _current = FanatecSettingsSnapshot.Defaults();
-                foreach (var root in TypedRoots.Concat(IdentityRoots))
+
+                // A reset makes the module authoritative over its whole key
+                // space again, including channels it currently has no driver
+                // for — otherwise an old profile kept for one of those would
+                // survive the reset and reappear if a later profile change gave
+                // that channel a driver. Settings that belong to neither the
+                // module nor this build are left alone: resetting FanaBridge's
+                // options has no business discarding somebody else's.
+                foreach (var root in ModuleOwnedRoots().Concat(TypedRoots).Concat(IdentityRoots))
                     _residual.Remove(root);
 
                 _faulted = false;
@@ -220,6 +245,31 @@ namespace FanaBridge.Adapters
             }
 
             RaiseChanged();
+        }
+
+        /// <summary>
+        /// Every root the module speaks for, whether or not it currently has
+        /// anything to say for it. Read from the module itself rather than
+        /// listed here, so it cannot drift from what SimHub actually emits.
+        /// </summary>
+        private IEnumerable<string> ModuleOwnedRoots()
+        {
+            try
+            {
+                return _host.Capture(false, false).Properties()
+                    .Select(p => p.Name)
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                // Only reached on a reset the module has just accepted, so this
+                // is unlikely; keeping the residual untouched is the safe way to
+                // fail, since nothing here would delete data.
+                SimHub.Logging.Current.Warn(
+                    "FanatecDeviceSettings: could not read the module's settings after a " +
+                    "reset, so unrecognised LED data was left as it was: " + ex.Message);
+                return Enumerable.Empty<string>();
+            }
         }
 
         /// <summary>

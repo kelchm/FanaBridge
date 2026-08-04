@@ -41,6 +41,11 @@ namespace FanaBridge.Adapters
         private readonly FanatecDeviceSettings _settings;
         private readonly IDevicePanelFactory _panels;
 
+        // Whether SimHub has taken ownership of this device. Until it has, a
+        // failure means the instance is abandoned without End() ever running,
+        // so it has to clean up after itself (see GuardBeforePublication).
+        private bool _published;
+
         // Display manager — null when the wheel has no display.
         private FanatecDisplayDriver _displayManager;
 
@@ -245,7 +250,7 @@ namespace FanaBridge.Adapters
             SimHub.Logging.Current.Info(
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: LoadDefaultSettings");
 
-            _settings.LoadDefaults();
+            GuardBeforePublication(_settings.LoadDefaults);
         }
 
         public override DeviceState GetDeviceState()
@@ -288,9 +293,48 @@ namespace FanaBridge.Adapters
         public override JToken GetSettings(bool forTemplate, bool forDefaultSettings) =>
             _settings.Capture(forTemplate, forDefaultSettings);
 
-        public override void SetSettings(JToken settings, bool isDefault)
+        public override void SetSettings(JToken settings, bool isDefault) =>
+            GuardBeforePublication(() => _settings.Apply(settings, isDefault));
+
+        public override void Init(PluginManager pluginManager)
         {
-            _settings.Apply(settings, isDefault);
+            GuardBeforePublication(() => base.Init(pluginManager));
+
+            // Past this point SimHub owns the instance and will call End() on it,
+            // so failures no longer need to clean up here.
+            _published = true;
+        }
+
+        /// <summary>
+        /// Cleans up if the device fails before SimHub takes ownership of it.
+        /// </summary>
+        /// <remarks>
+        /// SimHub builds a device, gives it its settings, initializes it, and only
+        /// then adds it to its list — and it does not call End() on one that threw
+        /// on the way. Since the LED host is built with the device, an instance
+        /// abandoned there would keep the manager's subscription to a static event
+        /// alive for the rest of the session, once per failed attempt.
+        ///
+        /// After publication the opposite applies: the device stays in SimHub's
+        /// list, so its host must survive and simply refuse to save.
+        /// </remarks>
+        private void GuardBeforePublication(Action action)
+        {
+            if (_published)
+            {
+                action();
+                return;
+            }
+
+            try
+            {
+                action();
+            }
+            catch
+            {
+                _ledHost.Dispose();
+                throw;
+            }
         }
 
         public override void DataUpdate(PluginManager pluginManager, ref GameData data)

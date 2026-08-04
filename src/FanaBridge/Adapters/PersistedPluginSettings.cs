@@ -25,6 +25,11 @@ namespace FanaBridge.Adapters
     {
         private const string SettingsFileName = "FanatecPlugin.FanaBridgeSettings.json";
 
+        // SimHub keeps rolling copies of every settings file it writes, and
+        // falls back through them when the current one will not parse.
+        private const string BackupDirectoryName = "_Backups";
+        private const int MaxBackupVersions = 10;
+
         /// <summary>Where SimHub keeps this plugin's settings.</summary>
         internal static readonly Func<string> DefaultSettingsPath = () =>
             Path.Combine("PluginsData", "Common", SettingsFileName);
@@ -44,11 +49,11 @@ namespace FanaBridge.Adapters
             try
             {
                 var path = SettingsPathResolver();
-                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                if (string.IsNullOrEmpty(path))
                     return result;
 
-                var root = JObject.Parse(File.ReadAllText(path));
-                if (!(root["ProfileOverrides"] is JObject overrides))
+                var overrides = ReadOverridesObject(path);
+                if (overrides == null)
                     return result;
 
                 foreach (var prop in overrides.Properties())
@@ -65,6 +70,58 @@ namespace FanaBridge.Adapters
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Reads the overrides from the settings file, falling back through
+        /// SimHub's rolling backups exactly as SimHub itself does.
+        /// </summary>
+        /// <remarks>
+        /// Matching that fallback matters: if the plugin recovers an override
+        /// from a backup while device registration only looked at a corrupt
+        /// primary file, the two disagree about which profile a device has —
+        /// and the LED editor, which is sized at registration, would be built
+        /// for the wrong one for the rest of the session.
+        /// </remarks>
+        private static JObject ReadOverridesObject(string path)
+        {
+            foreach (var candidate in CandidatePaths(path))
+            {
+                if (!File.Exists(candidate))
+                    continue;
+
+                try
+                {
+                    if (JObject.Parse(File.ReadAllText(candidate))["ProfileOverrides"]
+                        is JObject overrides)
+                    {
+                        return overrides;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    SimHub.Logging.Current.Warn(
+                        "PersistedPluginSettings: " + Path.GetFileName(candidate) +
+                        " could not be read (" + ex.Message + "); trying the previous copy");
+                }
+            }
+
+            return null;
+        }
+
+        private static IEnumerable<string> CandidatePaths(string path)
+        {
+            yield return path;
+
+            var directory = Path.GetDirectoryName(path) ?? string.Empty;
+            var name = Path.GetFileNameWithoutExtension(path);
+            var extension = Path.GetExtension(path);
+
+            for (int version = 1; version <= MaxBackupVersions; version++)
+            {
+                yield return Path.Combine(
+                    directory, BackupDirectoryName, name + "_b" + version + extension);
+            }
         }
     }
 }

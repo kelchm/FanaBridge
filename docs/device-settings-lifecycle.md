@@ -80,3 +80,9 @@ When there is nothing to drive, it returns no driver rather than throwing — Si
 ## Known gaps
 
 A settings panel left open while SimHub applies a different document to the same device shows the previous values until it is reopened. The stored settings and the hardware are correct; only the open panel is stale.
+
+Two narrow races remain, both requiring a settings document to be applied at the same moment as something else, and neither able to corrupt the stored file:
+
+The Screen panel edits the live display settings object directly, outside the owner's lock. An edit landing at the same instant as a document being applied can submit a mixture of the two, and the display driver can briefly read one. The next save writes whichever values won; nothing is lost.
+
+Output checks whether the device is faulted just before driving a frame, rather than holding the lock across it. An apply that faults in that gap can let one frame render from partly applied settings. Holding the lock across per-frame hardware output would be the alternative, which is a worse trade.

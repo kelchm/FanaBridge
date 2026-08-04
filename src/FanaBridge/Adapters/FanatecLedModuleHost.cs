@@ -94,6 +94,14 @@ namespace FanaBridge.Adapters
 
         public bool Apply(JObject source, bool isDefault)
         {
+            // Module-level state is written before the channels, so a channel
+            // failure would otherwise leave brightness and friends carrying
+            // values from a payload that was refused. Nothing resets those
+            // afterwards — LoadDefaults only rebuilds channel drivers — so a
+            // rejected apply has to put them back itself.
+            var moduleLevelBefore = JToken.FromObject(_module);
+            var driversBefore = ChannelDrivers();
+
             try
             {
                 // Restore module-level state (brightness, IndividualLEDsMode, etc.)
@@ -105,13 +113,68 @@ namespace FanaBridge.Adapters
                 // Per-channel profile data (leds, buttons, raw, …)
                 var dict = source.Properties().ToDictionary(p => p.Name, p => p.Value);
                 _module.SetSettings(dict, isDefault);
+
+                DisposeReplacedDrivers(driversBefore);
                 return true;
             }
             catch (Exception ex)
             {
                 SimHub.Logging.Current.Warn(
                     "FanatecLedModuleHost: applying LED settings failed: " + ex.Message);
+
+                TryRestoreModuleLevelState(moduleLevelBefore);
+                DisposeReplacedDrivers(driversBefore);
                 return false;
+            }
+        }
+
+        private void TryRestoreModuleLevelState(JToken snapshot)
+        {
+            try
+            {
+                JsonConvert.PopulateObject(snapshot.ToString(), _module);
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn(
+                    "FanatecLedModuleHost: could not restore module state after a " +
+                    "failed apply: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// The module's per-channel drivers. Each subscribes to a static update
+        /// event and only its own disposal unsubscribes, so every one that gets
+        /// replaced has to be disposed or it keeps being called forever.
+        /// </summary>
+        private IDisposable[] ChannelDrivers() => new IDisposable[]
+        {
+            _module.LedsDriver,
+            _module.ButtonsDriver,
+            _module.EncodersDriver,
+            _module.RawDriver,
+            _module.MatrixDriver,
+        };
+
+        private void DisposeReplacedDrivers(IDisposable[] before)
+        {
+            var after = ChannelDrivers();
+
+            foreach (var driver in before)
+            {
+                if (driver == null || after.Any(a => ReferenceEquals(a, driver)))
+                    continue;
+
+                try
+                {
+                    driver.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    SimHub.Logging.Current.Warn(
+                        "FanatecLedModuleHost: disposing a replaced LED channel failed: " +
+                        ex.Message);
+                }
             }
         }
 
@@ -136,7 +199,18 @@ namespace FanaBridge.Adapters
             return result;
         }
 
-        public void LoadDefaults() => _module.LoadDefaults();
+        public void LoadDefaults()
+        {
+            var driversBefore = ChannelDrivers();
+            try
+            {
+                _module.LoadDefaults();
+            }
+            finally
+            {
+                DisposeReplacedDrivers(driversBefore);
+            }
+        }
 
         public void Display() => _module.Display();
 
@@ -170,9 +244,20 @@ namespace FanaBridge.Adapters
             }
             finally
             {
-                // Must run even if flushing threw: only Dispose removes the
-                // manager's static USB-change subscription, and nothing in
-                // SimHub will do it for us.
+                // Must run even if flushing threw: these are the only calls that
+                // remove subscriptions to static events -- the manager's to USB
+                // changes, and each channel driver's to LED updates -- and
+                // nothing in SimHub will do it for us.
+                foreach (var driver in ChannelDrivers())
+                {
+                    try { driver?.Dispose(); }
+                    catch (Exception ex)
+                    {
+                        SimHub.Logging.Current.Warn(
+                            "FanatecLedModuleHost: disposing an LED channel failed: " + ex.Message);
+                    }
+                }
+
                 (_manager.GetDriverInstance() as IDisposable)?.Dispose();
                 _manager.Dispose();
             }

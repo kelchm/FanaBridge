@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using FanaBridge.Adapters;
@@ -23,6 +24,7 @@ namespace FanaBridge.Tests
         private readonly string _userProfileDir;
         private readonly string _settingsPath;
         private readonly string _writtenProfile;
+        private readonly List<string> _extraFiles = new List<string>();
 
         public DeviceRegistryOverrideTests()
         {
@@ -37,6 +39,8 @@ namespace FanaBridge.Tests
             PersistedPluginSettings.SettingsPathResolver = PersistedPluginSettings.DefaultSettingsPath;
             TryDelete(_writtenProfile);
             TryDelete(_settingsPath);
+            foreach (var extra in _extraFiles)
+                TryDelete(extra);
             WheelProfileStore.Reload();
         }
 
@@ -144,6 +148,31 @@ namespace FanaBridge.Tests
 
             Assert.NotNull(config);
             Assert.Equal(ProfileSource.BuiltIn, config.Profile.Source);
+        }
+
+        [Fact]
+        public void CorruptSettingsFile_FallsBackToSimHubsBackup()
+        {
+            // SimHub itself recovers settings from its rolling backups. If
+            // registration did not, it would size the LED editor from the
+            // built-in profile while the running plugin used the override.
+            WriteLedAddingOverrideForDisplayOnlyWheel();
+            var overridden = WheelProfileStore.GetById("CSLSWGT3_LEDTEST");
+            WriteSettings("CSLSWGT3", WheelProfileStore.MakeOverrideKey(overridden));
+
+            var backupDir = Path.Combine(Path.GetDirectoryName(_settingsPath), "_Backups");
+            Directory.CreateDirectory(backupDir);
+            var backup = Path.Combine(backupDir,
+                Path.GetFileNameWithoutExtension(_settingsPath) + "_b1.json");
+            File.Copy(_settingsPath, backup, overwrite: true);
+            _extraFiles.Add(backup);
+
+            File.WriteAllText(_settingsPath, "{ truncated...");
+
+            var config = ConfigFor("Fanatec_CSLSWGT3");
+
+            Assert.NotNull(config);
+            Assert.Equal("CSLSWGT3_LEDTEST", config.Profile.Id);
         }
 
         [Fact]

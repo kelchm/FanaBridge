@@ -300,6 +300,26 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void APartlyAppliedReset_BlocksSaving()
+        {
+            // A reset that failed part way leaves the module holding neither the
+            // old settings nor the defaults; saving that would replace a good
+            // file with a state nobody chose.
+            var host = new FakeLedModuleHost
+            {
+                ThrowOnDefaults = true,
+                MutateBeforeThrowingOnDefaults = true,
+            };
+            var settings = SettingsWith(host);
+            settings.Apply(StoredDocument(), isDefault: false);
+
+            Assert.Throws<InvalidOperationException>(() => settings.LoadDefaults());
+
+            Assert.True(settings.IsFaulted);
+            Assert.Throws<InvalidOperationException>(() => settings.Capture(false, false));
+        }
+
+        [Fact]
         public void NonObjectSettings_AreRejected()
         {
             var settings = SettingsWith(new FakeLedModuleHost());
@@ -323,6 +343,28 @@ namespace FanaBridge.Tests
             Assert.Null(saved["encoderMode"]);
             // A reset of FanaBridge's options has no business discarding
             // settings that belong to something else.
+            Assert.Equal("keep-me", (string?)saved["futureExtension"]?["nested"]);
+        }
+
+        [Fact]
+        public void Defaults_ClearLedDataForChannelsWithNoDriver()
+        {
+            // "encoders" is kept through ordinary saves because the module has
+            // no driver to describe it — but a reset is explicit, and leaving it
+            // would resurrect the old profile if a later profile change gave
+            // that channel a driver.
+            var settings = SettingsWith(new FakeLedModuleHost("leds", "buttons", "raw"));
+            settings.Apply(StoredDocument(), isDefault: false);
+            Assert.Equal("encoders-kept",
+                (string?)settings.Capture(false, false)["encoders"]?["activeProfileId"]);
+
+            settings.LoadDefaults();
+            var saved = settings.Capture(false, false);
+
+            // The module reports the channel as empty, and nothing stored
+            // overrides that any more.
+            Assert.Equal(JTokenType.Null, saved["encoders"]?.Type);
+            // Settings that are nobody's business but their own still survive.
             Assert.Equal("keep-me", (string?)saved["futureExtension"]?["nested"]);
         }
 
