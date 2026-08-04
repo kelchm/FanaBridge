@@ -49,6 +49,7 @@
       <_Parameter2>$(SimHubDir)</_Parameter2>
     </AssemblyAttribute>
     <None Include="Snapshots\SimHub.FanatecManaged.enums.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
