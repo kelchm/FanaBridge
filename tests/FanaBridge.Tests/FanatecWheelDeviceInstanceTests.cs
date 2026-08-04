@@ -32,20 +32,6 @@ namespace FanaBridge.Tests
             // for the whole process.
             System.IO.Directory.CreateDirectory(System.IO.Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory, "JavascriptExtensions"));
-
-            // Applying LED settings reaches SimHub's profile subsystem, which
-            // reads the running host (game name, car id) off PluginManager.
-            // Tests have no host, so stand up a bare instance — the fields it
-            // touches read as null/default, which is all these paths need.
-            var field = typeof(SimHub.Plugins.PluginManager)
-                .GetField("Instance", System.Reflection.BindingFlags.Static
-                                    | System.Reflection.BindingFlags.NonPublic
-                                    | System.Reflection.BindingFlags.Public);
-            if (field != null && field.GetValue(null) == null)
-            {
-                field.SetValue(null, System.Runtime.Serialization.FormatterServices
-                    .GetUninitializedObject(typeof(SimHub.Plugins.PluginManager)));
-            }
         }
 
         // ── Wheelbase harness (same fakes as FanatecWheelbaseTests) ───────
