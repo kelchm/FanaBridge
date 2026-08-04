@@ -186,7 +186,7 @@ namespace FanaBridge.Adapters
 
             if (allLeds == 0) return;
 
-            _manager = new FanatecLedManager(_config, plugin.Leds, plugin.LegacyLeds);
+            _manager = new FanatecLedManager(_config, PluginResolver);
             var manager = _manager;
             var options = new LedModuleOptions
             {
