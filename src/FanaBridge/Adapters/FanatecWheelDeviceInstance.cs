@@ -91,6 +91,13 @@ namespace FanaBridge.Adapters
         // drive the null→A, A→A, A→B, and connected→scanning transitions.
         internal Func<FanatecPlugin> PluginResolver = () => FanatecPlugin.Instance;
 
+        // Test seams for the two LED-module operations that can fail. SimHub's
+        // LED profile subsystem reads the running host, so it cannot run in a
+        // unit test — these let tests drive the success/failure outcomes the
+        // persistence logic branches on. Null in production.
+        internal Func<JObject, bool, bool> LedApplyForTest;
+        internal Action LedDefaultsForTest;
+
         /// <summary>Test hook: the generation the cached drivers were built against.</summary>
         internal FanatecPlugin BoundPluginForTest => _boundPlugin;
 
@@ -208,11 +215,14 @@ namespace FanaBridge.Adapters
                 ", buttonRgb=" + caps.ButtonRgbCount + ", buttonAuxIntensity=" + caps.ButtonAuxIntensityCount +
                 ", total=" + allLeds + ")");
 
-            // Apply anything SimHub delivered before the module existed.
+            // Apply anything SimHub delivered before the module existed. The stash
+            // is dropped only once the payload is fully applied — a failed apply
+            // leaves a half-populated module, and the stash is then the only
+            // complete copy of the user's settings (see GetSettings).
             if (_pendingLedSettings != null)
             {
-                ApplyLedSettings(_pendingLedSettings, _pendingLedSettingsIsDefault);
-                _pendingLedSettings = null;
+                if (ApplyLedSettings(_pendingLedSettings, _pendingLedSettingsIsDefault))
+                    _pendingLedSettings = null;
             }
             else if (_pendingLedDefaults)
             {
@@ -224,9 +234,14 @@ namespace FanaBridge.Adapters
         /// <summary>
         /// Applies a saved settings payload to the LED module (module-level
         /// state such as brightness first, then per-channel profile data).
+        /// Returns false when the payload was not fully applied, so callers can
+        /// keep the pending copy rather than trusting a half-populated module.
         /// </summary>
-        private void ApplyLedSettings(JObject obj, bool isDefault)
+        private bool ApplyLedSettings(JObject obj, bool isDefault)
         {
+            if (LedApplyForTest != null)
+                return LedApplyForTest(obj, isDefault);
+
             try
             {
                 // Restore module-level state (brightness, IndividualLEDsMode, etc.)
@@ -240,11 +255,13 @@ namespace FanaBridge.Adapters
                 foreach (var prop in obj.Properties())
                     dict[prop.Name] = prop.Value;
                 _ledModule.SetSettings(dict, isDefault);
+                return true;
             }
             catch (Exception ex)
             {
                 SimHub.Logging.Current.Warn(
                     "FanatecWheelDeviceInstance: SetSettings(LED) failed: " + ex.Message);
+                return false;
             }
         }
 
@@ -304,7 +321,13 @@ namespace FanaBridge.Adapters
 
             if (_ledModule != null)
             {
-                _ledModule.LoadDefaults();
+                if (LedDefaultsForTest != null)
+                    LedDefaultsForTest();
+                else
+                    _ledModule.LoadDefaults();
+                // An explicit reset makes the module authoritative again: any
+                // payload left over from a failed apply is now obsolete.
+                _pendingLedSettings = null;
             }
             else
             {
@@ -342,32 +365,61 @@ namespace FanaBridge.Adapters
             return DeviceState.Connected;
         }
 
+        /// <summary>
+        /// Produces this device's persisted settings document.
+        /// </summary>
+        /// <remarks>
+        /// SimHub rewrites every device's settings file from this method on each
+        /// save, with no merge against what is already on disk — so anything
+        /// missing here is erased. The plugin can be disabled or still starting
+        /// while SimHub loads and saves devices, in which case the LED module
+        /// does not exist and the loaded payload lives in
+        /// <see cref="_pendingLedSettings"/>; it is echoed back verbatim rather
+        /// than emitting a document without LED data.
+        ///
+        /// A module coexisting with a pending payload means hydration failed, so
+        /// the module holds partial state. That case throws: SimHub catches
+        /// per-device save failures and leaves the existing file (and its index
+        /// entry) untouched, which is the safe outcome.
+        /// </remarks>
         public override JToken GetSettings(bool forTemplate, bool forDefaultSettings)
         {
             var result = new JObject();
 
             if (_ledModule != null)
             {
-                try
+                if (_pendingLedSettings != null)
                 {
-                    // Serialize the module object itself (brightness, IndividualLEDsMode, etc.)
-                    // under "ledModuleSettings" — matches how LedModuleDevice does it.
-                    result["ledModuleSettings"] = JToken.FromObject(_ledModule);
+                    throw new InvalidOperationException(
+                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: refusing to " +
+                        "save — the loaded LED settings were not applied to the module, so the " +
+                        "document would be incomplete.");
+                }
 
-                    // Per-channel profile data (leds, buttons, raw, …)
-                    var ledDict = _ledModule.GetSettings(forTemplate, forDefaultSettings);
-                    if (ledDict != null)
+                // Serialize the module object itself (brightness, IndividualLEDsMode, etc.)
+                // under "ledModuleSettings" — matches how LedModuleDevice does it.
+                // Failures propagate: a partial document here would overwrite a
+                // complete file on disk.
+                result["ledModuleSettings"] = JToken.FromObject(_ledModule);
+
+                // Per-channel profile data (leds, buttons, raw, …)
+                var ledDict = _ledModule.GetSettings(forTemplate, forDefaultSettings);
+                if (ledDict != null)
+                {
+                    foreach (var kvp in ledDict)
                     {
-                        foreach (var kvp in ledDict)
-                        {
-                            result[kvp.Key] = kvp.Value ?? JValue.CreateNull();
-                        }
+                        result[kvp.Key] = kvp.Value ?? JValue.CreateNull();
                     }
                 }
-                catch (Exception ex)
+            }
+            else if (_pendingLedSettings != null)
+            {
+                // Module not buildable (plugin disabled or still starting). Echo the
+                // document SimHub gave us — no edit path exists while the module is
+                // absent, so this is still the user's complete, current payload.
+                foreach (var prop in _pendingLedSettings.Properties())
                 {
-                    SimHub.Logging.Current.Warn(
-                        "FanatecWheelDeviceInstance: GetSettings(LED) failed: " + ex.Message);
+                    result[prop.Name] = prop.Value.DeepClone();
                 }
             }
 
@@ -401,8 +453,18 @@ namespace FanaBridge.Adapters
 
             if (_ledModule != null)
             {
-                ApplyLedSettings(obj, isDefault);
-                _pendingLedSettings = null;
+                // Keep the payload when the module refuses it: the module is then
+                // partially populated and this copy is the only complete one.
+                // GetSettings refuses to save while both exist.
+                if (ApplyLedSettings(obj, isDefault))
+                {
+                    _pendingLedSettings = null;
+                }
+                else
+                {
+                    _pendingLedSettings = (JObject)obj.DeepClone();
+                    _pendingLedSettingsIsDefault = isDefault;
+                }
                 _pendingLedDefaults = false;
             }
             else
