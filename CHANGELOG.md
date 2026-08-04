@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Device settings are no longer erased while FanaBridge is disabled.** SimHub rewrites each device's settings file whenever it saves, and it does so whether or not the plugin is running. FanaBridge only built its LED editor once the plugin was up, so a save taken before that — most obviously with the plugin disabled — wrote a settings file with no LED data over one that had it, replacing hand-built profiles with a stub. The editor and everything a device stores are now built with the device itself, so a device can always describe its settings. If it ever cannot, it declines to save and SimHub keeps the existing file.
+- **Settings written by another version are no longer dropped.** A device only wrote back the settings it recognised, so anything stored by a newer build was lost on the next save. Unrecognised settings are now kept as-is.
+- **LED data for channels the current wheel cannot drive is no longer deleted.** Saving reported those channels as empty, which erased their stored profiles.
+- **The Screen and Tuning tabs no longer disappear when FanaBridge is disabled.** Editing what a device stores never needed the hardware, and SimHub kept saving those settings regardless.
+- A profile override that changes a wheel's LED layout is now applied when devices are registered, so restarting SimHub gives the LED editor the right number of slots. A display-only wheel given LEDs by an override previously had no LED editor at all.
+- Pulling the plugin out from under a running device no longer risks an error from the LED output path, and a device idle while the plugin was down now resumes output when it returns.
+
 ## v0.6.0 - 2026-07-14
 
 ### Changed
