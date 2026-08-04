@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using FanaBridge.Profiles;
 using SimHub.Plugins.Devices;
 
@@ -133,7 +134,79 @@ namespace FanaBridge.Adapters
                 configs[config.DeviceTypeId] = config;
             }
 
+            ApplyProfileOverrides(configs, verbose);
+
             return configs.Values;
+        }
+
+        /// <summary>
+        /// Swaps in the user's chosen profile for any device that has one.
+        /// </summary>
+        /// <remarks>
+        /// Dedupe above picks the built-in profile so a device's identity stays
+        /// stable, but the capabilities it carries also size the LED editor —
+        /// which is fixed for the lifetime of a device instance. Resolving the
+        /// override here (rather than only at runtime) is what lets a restart
+        /// actually produce an editor matching an override that changes the LED
+        /// layout, including one that adds LEDs to a display-only wheel.
+        ///
+        /// The override is only honoured when it resolves to a profile matching
+        /// the same wheel/module, since <see cref="DeviceConfig.DeviceTypeId"/>
+        /// is derived from those — a mismatched override would rename the device
+        /// and orphan its saved settings.
+        /// </remarks>
+        private static void ApplyProfileOverrides(
+            Dictionary<string, DeviceConfig> configs, bool verbose)
+        {
+            var overrides = PersistedPluginSettings.ReadProfileOverrides();
+            if (overrides.Count == 0)
+                return;
+
+            foreach (var key in configs.Keys.ToList())
+            {
+                var config = configs[key];
+                var matchKey = WheelProfileStore.MakeMatchKey(config.WheelCode, config.ModuleCode);
+                if (string.IsNullOrEmpty(matchKey))
+                    continue;
+
+                if (!overrides.TryGetValue(matchKey, out var overrideKey))
+                    continue;
+
+                var overridden = WheelProfileStore.ResolveOverrideKey(overrideKey);
+                if (overridden == null)
+                {
+                    if (verbose)
+                        SimHub.Logging.Current.Info(
+                            "FanatecDevicesRegistry: override '" + overrideKey + "' for " +
+                            matchKey + " did not resolve — using " + config.Profile.Id);
+                    continue;
+                }
+
+                var overriddenMatch = WheelProfileStore.MakeMatchKey(
+                    overridden.Match?.WheelType, overridden.Match?.ModuleType);
+                if (!string.Equals(overriddenMatch, matchKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    SimHub.Logging.Current.Warn(
+                        "FanatecDevicesRegistry: override '" + overrideKey + "' matches " +
+                        (overriddenMatch ?? "nothing") + " but was stored for " + matchKey +
+                        " — ignoring so the device keeps its identity.");
+                    continue;
+                }
+
+                if (ReferenceEquals(overridden, config.Profile))
+                    continue;
+
+                configs[key] = new DeviceConfig
+                {
+                    Profile = overridden,
+                    Capabilities = new WheelCapabilities(overridden),
+                };
+
+                if (verbose)
+                    SimHub.Logging.Current.Info(
+                        "FanatecDevicesRegistry: device " + key + " uses override profile '" +
+                        overridden.Id + "' (" + overridden.Source + ")");
+            }
         }
 
         /// <summary>

@@ -380,6 +380,23 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void DataUpdate_WithoutEncoders_DoesNotThrowIntoSimHubsFrameLoop()
+        {
+            // The base class calls GetDriver() outside its own try/catch, so a
+            // driver that cannot be built has to return null rather than throw:
+            // the exception would otherwise escape into SimHub's update loop.
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);   // connected, but no encoders
+            inst.PluginResolver = () => plugin;
+            inst.LedApplyForTest = (_, __) => true;
+
+            inst.SetSettings(FullDocument(), isDefault: false);
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);   // must not throw
+        }
+
+        [Fact]
         public void FailedHydration_RefusesToSave()
         {
             // A payload the module cannot consume leaves it partially populated;
