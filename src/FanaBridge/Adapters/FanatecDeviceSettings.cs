@@ -104,7 +104,22 @@ namespace FanaBridge.Adapters
 
                 // Ask the module what it now owns, so the residual keeps only
                 // what nothing else will write back.
-                var projection = _host.Capture(false, false);
+                JObject projection;
+                try
+                {
+                    projection = _host.Capture(false, false);
+                }
+                catch
+                {
+                    // The module took the settings but cannot describe what it
+                    // now holds, so there is no way to work out which parts of
+                    // the document are still ours to keep. Committing either
+                    // half would leave the device saving a mixture of the old
+                    // and new state.
+                    _faulted = true;
+                    throw;
+                }
+
                 _residual = BuildResidual(source, projection);
                 _current = candidate;
                 _faulted = false;

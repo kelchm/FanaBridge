@@ -252,6 +252,25 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void AnApplyThatCannotBeReconciled_BlocksSaving()
+        {
+            // The module took the settings but cannot describe what it now
+            // holds, so there is no way to tell which parts of the document are
+            // still ours to keep. Saving either half would persist a mixture.
+            var host = new FakeLedModuleHost();
+            var settings = SettingsWith(host);
+            settings.Apply(StoredDocument(), isDefault: false);
+
+            host.ThrowOnCapture = true;
+            Assert.Throws<InvalidOperationException>(
+                () => settings.Apply(StoredDocument(), isDefault: false));
+
+            host.ThrowOnCapture = false;
+            Assert.True(settings.IsFaulted);
+            Assert.Throws<InvalidOperationException>(() => settings.Capture(false, false));
+        }
+
+        [Fact]
         public void AFailedCapture_IsNotLatched()
         {
             // Serialization can fail transiently while the editor is mid-edit;
