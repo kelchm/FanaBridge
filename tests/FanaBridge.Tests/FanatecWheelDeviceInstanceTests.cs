@@ -529,17 +529,48 @@ namespace FanaBridge.Tests
             inst.PluginResolver = () => plugin;
 
             var accept = false;
-            inst.LedApplyForTest = (_, __) => accept;
+            var attempts = 0;
+            inst.LedApplyForTest = (_, __) => { attempts++; return accept; };
 
-            inst.SetSettings(FullDocument(), isDefault: false);
-            inst.GetDynamicButtonActions();                     // retry budget spent
+            inst.SetSettings(FullDocument(), isDefault: false);  // 1: rejected
+            inst.GetDynamicButtonActions();                      // 2: retry, rejected
             Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
+            Assert.Equal(2, attempts);                           // budget spent
+
+            // A newly loaded payload is a fresh start: it is rejected once and
+            // still gets its own retry, rather than inheriting the exhausted
+            // budget of the payload it replaced.
+            inst.SetSettings(FullDocument(), isDefault: false);  // 3: rejected
+            Assert.Equal(3, attempts);
 
             accept = true;
-            inst.SetSettings(FullDocument(), isDefault: false); // a new load succeeds
+            inst.GetDynamicButtonActions();                      // 4: retry, accepted
 
             var saved = (JObject)inst.GetSettings(false, false)!;
+            Assert.Equal(4, attempts);
             Assert.Equal(3, (int?)saved["itmDefaultPage"]);
+        }
+
+        [Fact]
+        public void PluginArrivingBetweenLoadAndSave_StillSavesEverything()
+        {
+            // The module cannot be built while the plugin is away, so the
+            // loaded payload is held rather than applied. A save taken after
+            // the plugin returns but before anything has rebuilt the module
+            // must still describe the whole document.
+            var inst = InstanceFor("PSWBMW");
+            FanatecPlugin? plugin = null;
+            inst.PluginResolver = () => plugin;
+            inst.LedApplyForTest = (_, __) => true;
+            var doc = FullDocument();
+
+            inst.SetSettings(doc, isDefault: false);
+            plugin = PluginWithWheel("PSWBMW", out _);
+
+            var saved = inst.GetSettings(false, false);
+
+            Assert.True(JToken.DeepEquals(doc, saved),
+                "a save in this order must still reproduce the document, got: " + saved);
         }
 
         [Fact]
