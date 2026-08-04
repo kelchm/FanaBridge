@@ -157,14 +157,6 @@ namespace FanaBridge
         /// </summary>
         internal void InstallWheelbaseForTest(FanatecWheelbase wheelbase) => _wheelbase = wheelbase;
 
-        /// <summary>
-        /// Factory for the per-device WPF settings panels. Lives here (the
-        /// composition root, which legitimately sees both Adapters and UI) so
-        /// DeviceInstances can build their tabs without Adapters referencing
-        /// FanaBridge.UI.
-        /// </summary>
-        internal Adapters.IDevicePanelFactory PanelFactory { get; } = new UI.DevicePanelFactory();
-
         /// <summary>Called by each <see cref="Adapters.FanatecWheelDeviceInstance"/> so the
         /// plugin can read the connected wheel's SimHub device name for the Control Mapper
         /// integration. Idempotent.</summary>

@@ -20,6 +20,13 @@ namespace FanaBridge.Adapters
     /// </summary>
     public class FanatecDevicesRegistry : IDeviceDescriptorsRegistry
     {
+        /// <summary>
+        /// Builds the settings panels for each device. Not resolved from the
+        /// plugin: SimHub shows a device's settings whether or not FanaBridge is
+        /// running. Overridable so tests can build instances without WPF.
+        /// </summary>
+        internal static IDevicePanelFactory PanelFactory = new UI.DevicePanelFactory();
+
         public IEnumerable<DeviceDescriptor> GetDevices()
         {
             SimHub.Logging.Current.Info("FanatecDevicesRegistry: GetDevices() called");
@@ -43,7 +50,11 @@ namespace FanaBridge.Adapters
                     // PID (0x0001) just so SimHub sees a USB descriptor; the real
                     // matching is done in GetDeviceState() against the wheelbase identity.
                     DetectionDescriptor = new USBRequest(0x0EB7, 0x0001, true),
-                    Factory = () => new FanatecWheelDeviceInstance(capturedConfig),
+                    // The composition root for a device: it supplies the panel
+                    // factory so the settings tabs do not depend on the plugin
+                    // being enabled (SimHub shows them either way).
+                    Factory = () => new FanatecWheelDeviceInstance(
+                        capturedConfig, PanelFactory, null),
                     MaximumInstances = 1,
                     IsGeneric = false,
                     IsOEM = false,

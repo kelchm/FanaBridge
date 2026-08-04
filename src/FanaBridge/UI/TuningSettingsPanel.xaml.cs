@@ -4,13 +4,13 @@ using System.Windows.Controls;
 using FanaBridge;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
-using Newtonsoft.Json.Linq;
+using FanaBridge.Adapters;
 
 namespace FanaBridge.UI
 {
     public partial class TuningSettingsPanel : UserControl
     {
-        private JObject _settings;
+        private FanatecDeviceSettings _settings;
         private bool _suppressEvents;
 
         /// <summary>Fired when the user changes a setting. The parent should persist.</summary>
@@ -23,12 +23,12 @@ namespace FanaBridge.UI
         }
 
         /// <summary>
-        /// Binds the panel to a device-instance settings JObject.
+        /// Binds the panel to the device's settings owner.
         /// Call once after construction, before the panel is displayed.
         /// </summary>
-        public void Bind(JObject settings)
+        internal void Bind(FanatecDeviceSettings settings)
         {
-            _settings = settings ?? new JObject();
+            _settings = settings;
             UpdateEnabledState();
         }
 
@@ -76,15 +76,16 @@ namespace FanaBridge.UI
                         if (Enum.IsDefined(typeof(EncoderMode), raw))
                         {
                             modeTag = ((EncoderMode)raw).ToString();
-                            if (_settings != null)
-                                _settings["encoderMode"] = modeTag;
+                            _settings?.UpdateEncoderMode(modeTag);
                         }
                     }
                 }
 
                 // Fall back to persisted setting
-                if (modeTag == null && _settings != null)
-                    modeTag = (string)_settings["encoderMode"];
+                // Fall back to what was stored, so the panel still shows the
+                // user's choice when the wheel cannot be read.
+                if (modeTag == null)
+                    modeTag = _settings?.Current.EncoderMode;
 
                 modeTag = modeTag ?? "Encoder";
 
@@ -139,7 +140,7 @@ namespace FanaBridge.UI
             if (selected == null) return;
 
             string modeTag = (string)selected.Tag;
-            _settings["encoderMode"] = modeTag;
+            _settings.UpdateEncoderMode(modeTag);
             SettingsChanged?.Invoke();
 
             // Send to hardware immediately
