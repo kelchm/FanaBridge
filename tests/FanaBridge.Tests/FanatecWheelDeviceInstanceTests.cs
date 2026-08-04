@@ -465,7 +465,7 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void FailedHydration_IsRetriedOnce_AndSavingRecovers()
+        public void FailedHydration_IsRetriedWhenTheDeviceIsNextTouched()
         {
             // A transient refusal must not strand the device for the session.
             var inst = InstanceFor("PSWBMW");
@@ -476,13 +476,44 @@ namespace FanaBridge.Tests
             inst.LedApplyForTest = (_, __) => ++attempts > 1;   // fails once, then succeeds
 
             inst.SetSettings(FullDocument(), isDefault: false);
-            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
-
-            inst.GetDynamicButtonActions();   // next touch retries the payload
+            inst.GetDynamicButtonActions();   // any module-touching call retries
 
             var saved = (JObject)inst.GetSettings(false, false)!;
             Assert.Equal(2, attempts);
             Assert.Equal(3, (int?)saved["itmDefaultPage"]);
+        }
+
+        [Fact]
+        public void FailedHydration_IsRetriedOnSave_ForANeverConnectedDevice()
+        {
+            // A device that never becomes connected reaches no other path that
+            // would retry, so the save itself has to spend the budget.
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var attempts = 0;
+            inst.LedApplyForTest = (_, __) => ++attempts > 1;   // fails once, then succeeds
+
+            inst.SetSettings(FullDocument(), isDefault: false);
+
+            var saved = (JObject)inst.GetSettings(false, false)!;
+            Assert.Equal(2, attempts);
+            Assert.Equal(3, (int?)saved["itmDefaultPage"]);
+        }
+
+        [Fact]
+        public void RepeatedlyRejectedPayload_StillRefusesToSave()
+        {
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+            inst.LedApplyForTest = (_, __) => false;
+
+            inst.SetSettings(FullDocument(), isDefault: false);
+
+            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
+            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
         }
 
         [Fact]

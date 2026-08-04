@@ -429,6 +429,13 @@ namespace FanaBridge.Adapters
         {
             var result = new JObject();
 
+            // A device that never becomes connected reaches no other path that
+            // would retry, so spend the budget here rather than refuse every
+            // save for the rest of the session over a failure that may have
+            // been momentary. Bounded by the same flag, so this stays one
+            // attempt per loaded payload.
+            RetryPendingLedSettings();
+
             if (_ledModule != null)
             {
                 if (_pendingLedSettings != null)
