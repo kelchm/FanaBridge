@@ -151,6 +151,42 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void NoPlugin_PresentsAsNotEnabled_ToTheUiOnly()
+        {
+            // SimHub greys the settings pane from this property, so it reports
+            // false while nothing can drive the device -- but persistence reads
+            // it through a DeviceInstance-typed reference and must still see the
+            // user's own choice, or their device would come back switched off.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            Assert.False(inst.Enabled);
+            Assert.True(((DeviceInstance)inst).Enabled);
+        }
+
+        [Fact]
+        public void PluginPresent_PresentsAsEnabled()
+        {
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => PluginWithWheel("PSWBMW", out _);
+
+            Assert.True(inst.Enabled);
+        }
+
+        [Fact]
+        public void DeviceSwitchedOffByTheUser_StaysOff_EvenWithAPlugin()
+        {
+            // Hiding the property must not override the user's own choice.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => PluginWithWheel("PSWBMW", out _);
+
+            inst.Enabled = false;
+
+            Assert.False(inst.Enabled);
+            Assert.False(((DeviceInstance)inst).Enabled);   // and it is what gets stored
+        }
+
+        [Fact]
         public void PluginWithoutCore_ReportsScanning()
         {
             var inst = InstanceFor("PSWBMW");

@@ -253,6 +253,38 @@ namespace FanaBridge.Adapters
             GuardBeforePublication(_settings.LoadDefaults);
         }
 
+        /// <summary>
+        /// Whether this device is switched on <em>and</em> has something able to
+        /// drive it.
+        /// </summary>
+        /// <remarks>
+        /// SimHub greys out a device's settings pane by binding the hosting
+        /// control's IsEnabled to this property, so reporting false while the
+        /// plugin is not running presents the device as what it actually is:
+        /// present, but inert. The header shows "Disabled" for the same reason.
+        ///
+        /// It deliberately HIDES the base property rather than overriding it.
+        /// SimHub persists and restores the user's own on/off choice through a
+        /// DeviceInstance-typed reference, which binds to the base member at
+        /// compile time, while its WPF bindings resolve on the runtime type.
+        /// Overriding would therefore write "off" into the user's settings file
+        /// whenever the plugin was disabled, and leave the device genuinely
+        /// switched off next launch — something they never asked for. Hiding
+        /// lets the UI see one answer and persistence keep the real one.
+        ///
+        /// The seam is covered by EnabledHidingProbeTests: if a future SimHub
+        /// or WPF change collapsed the two, that is where it would show up.
+        ///
+        /// Note this also means the device cannot be switched on while the
+        /// plugin is off — the toggle will spring back. Enabling the plugin is
+        /// the way to get it back.
+        /// </remarks>
+        public new bool Enabled
+        {
+            get => base.Enabled && PluginResolver() != null;
+            set => base.Enabled = value;
+        }
+
         public override DeviceState GetDeviceState()
         {
             var plugin = PluginResolver();
