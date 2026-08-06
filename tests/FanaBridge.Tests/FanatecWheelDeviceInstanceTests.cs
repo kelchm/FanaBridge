@@ -122,12 +122,32 @@ namespace FanaBridge.Tests
         // ── GetDeviceState rows ────────────────────────────────────────────
 
         [Fact]
-        public void NoPlugin_ReportsDisabled()
+        public void NoPlugin_ReportsScanning_NotDisabled()
         {
+            // Disabled is SimHub's word for "the user switched this device off",
+            // and it overrides anything else claiming it: an enabled device
+            // reporting Disabled is moved to Scanning every frame and asked
+            // again, so the pair never settles and every flip is logged.
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;
 
-            Assert.Equal(DeviceState.Disabled, inst.GetDeviceState());
+            Assert.Equal(DeviceState.Scanning, inst.GetDeviceState());
+        }
+
+        [Fact]
+        public void NoPlugin_ReportsTheSameStateEveryFrame()
+        {
+            // The flood was not the state itself but its instability: whatever
+            // is reported has to survive SimHub re-asking after it has forced
+            // the device to Scanning.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            var first = inst.GetDeviceState();
+            for (int frame = 0; frame < 5; frame++)
+                Assert.Equal(first, inst.GetDeviceState());
+
+            Assert.NotEqual(DeviceState.Disabled, first);
         }
 
         [Fact]
@@ -261,7 +281,7 @@ namespace FanaBridge.Tests
             inst.PluginResolver = () => null;
             inst.DataUpdate(null, ref data);
             Assert.Same(pluginA, inst.BoundPluginForTest);   // unchanged while gone
-            Assert.Equal(DeviceState.Disabled, inst.GetDeviceState());
+            Assert.Equal(DeviceState.Scanning, inst.GetDeviceState());
 
             inst.PluginResolver = () => pluginA;
             inst.DataUpdate(null, ref data);
@@ -368,7 +388,75 @@ namespace FanaBridge.Tests
             inst.PluginResolver = () => null;
 
             Assert.NotNull(inst.SettingsForTest);
-            Assert.Equal(DeviceState.Disabled, inst.GetDeviceState());
+            Assert.Equal(DeviceState.Scanning, inst.GetDeviceState());
+        }
+
+        // A panel factory that yields placeholder controls, so tab composition
+        // can be asserted without standing up the real WPF panels.
+        private sealed class StubPanelFactory : IDevicePanelFactory
+        {
+            public System.Windows.Controls.Control CreateScreenPanel(
+                DisplaySettings settings, DisplayType display, byte itmDeviceId, Action settingsChanged)
+                => new System.Windows.Controls.ContentControl();
+
+            public System.Windows.Controls.Control CreateTuningPanel(FanatecDeviceSettings settings)
+                => new System.Windows.Controls.ContentControl();
+        }
+
+        [Fact]
+        public void PluginUnavailable_StillOffersEveryTab()
+        {
+            // SimHub composes a device's settings pane once and caches it for
+            // the instance's lifetime, with nothing to rebuild it. A pane built
+            // while the plugin was away therefore used to stay empty for the
+            // rest of the session -- re-enabling did not bring the tabs back,
+            // only restarting SimHub did. Composition must not depend on the
+            // plugin at all.
+            //
+            // Runs on its own STA thread: the tabs are real WPF controls, and
+            // xUnit hands tests whichever pooled thread is free.
+            var titles = OnStaThread(() =>
+            {
+                var host = new FakeLedModuleHost
+                {
+                    EditControlForTest = new System.Windows.Controls.ContentControl(),
+                };
+                var profile = WheelProfileStore.FindByWheelType("PSWBMW");
+                var inst = new FanatecWheelDeviceInstance(
+                    new DeviceConfig
+                    {
+                        Profile = profile,
+                        Capabilities = new WheelCapabilities(profile),
+                    },
+                    new StubPanelFactory(),
+                    host);
+                inst.PluginResolver = () => null;
+
+                return inst.GetSettingsControls().Select(c => c.Title).ToList();
+            });
+
+            Assert.Contains("LEDs", titles);
+            Assert.Contains("Screen", titles);
+        }
+
+        /// <summary>Runs <paramref name="body"/> on a fresh STA thread, rethrowing anything it threw.</summary>
+        private static T OnStaThread<T>(Func<T> body)
+        {
+            T result = default!;
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo? failure = null;
+
+            var thread = new System.Threading.Thread(() =>
+            {
+                try { result = body(); }
+                catch (Exception ex)
+                { failure = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex); }
+            });
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+
+            failure?.Throw();
+            return result;
         }
 
         [Fact]

@@ -52,7 +52,10 @@ namespace FanaBridge.Tests.TestDoubles
         public JObject LastApplied => _applied;
 
         public bool HasModule => true;
-        public Control EditControl => null!;   // no test builds the editor
+
+        /// <summary>The LEDs tab, when a test needs to see it offered.</summary>
+        public Control? EditControlForTest { get; set; }
+        public Control EditControl => EditControlForTest!;
 
         public bool Apply(JObject source, bool isDefault)
         {

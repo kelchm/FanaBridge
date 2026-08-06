@@ -257,7 +257,19 @@ namespace FanaBridge.Adapters
         {
             var plugin = PluginResolver();
             if (plugin == null)
-                return DeviceState.Disabled;
+            {
+                // Not Disabled, however tempting: SimHub reserves that for a
+                // device the user switched off, and enforces it — on every frame
+                // an enabled device reporting Disabled is moved to Scanning and
+                // asked again. Answering Disabled therefore never settles; it
+                // logs a status change per device per frame, which filled one
+                // user's log with 127,145 lines in a single session.
+                //
+                // Scanning is also the honest answer. The device is switched on
+                // and simply has nothing driving it, which is the same position
+                // it is in whenever the hardware is unreachable.
+                return DeviceState.Scanning;
+            }
 
             // ARCHITECTURE: this reaches directly into wheelbase identity fields.
             // When the peripheral model lands, bind to a peripheral snapshot (class
