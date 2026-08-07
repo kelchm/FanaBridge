@@ -164,6 +164,11 @@ namespace FanaBridge.Adapters
             _settings = new FanatecDeviceSettings(config, _ledHost);
             _settings.Changed += OnSettingsChanged;
 
+            // Everything SimHub raises has to reach subscribers of the hiding
+            // event, or a device that hides one property would go quiet on all
+            // the others. Self-referential, so it cannot keep this alive.
+            base.PropertyChanged += ForwardBaseNotification;
+
             // Start from defaults so the device is coherent even if SimHub never
             // delivers settings (a freshly added device).
             ApplySnapshotToDisplaySettings();
@@ -225,7 +230,7 @@ namespace FanaBridge.Adapters
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                 "]: Plugin generation changed — rebinding drivers to the current hardware core");
 
-            _ledHost.RebindToCurrentGeneration();
+            _ledHost.StopDriving();
 
             // Display/ITM drivers hold their encoder for life — recreate them
             // lazily (DataUpdate builds them on demand from the live plugin).
@@ -318,39 +323,20 @@ namespace FanaBridge.Adapters
         // the subscription lands here. Base notifications are forwarded on so
         // nothing SimHub raises is lost. See EnabledNotificationProbeTests.
 
-        private readonly object _handlerLock = new object();
-        private PropertyChangedEventHandler _uiHandlers;
-        private bool _forwardingBase;
+        // Hides the base event as the property does. Listing the interface again
+        // re-implements it against this member, so interface dispatch — which is
+        // how WPF subscribes — resolves here on the runtime type. The compiler's
+        // own accessors are already thread-safe.
+        public new event PropertyChangedEventHandler PropertyChanged;
 
         // 1/0 once evaluated, -1 while unknown. Swapped atomically so exactly
         // one caller sees each transition: the UI thread writes it through the
         // setter while the update thread polls it every frame.
         private int _announcedEnabled = -1;
 
-        event PropertyChangedEventHandler INotifyPropertyChanged.PropertyChanged
-        {
-            add
-            {
-                lock (_handlerLock)
-                {
-                    if (!_forwardingBase)
-                    {
-                        _forwardingBase = true;
-                        base.PropertyChanged += ForwardBaseNotification;
-                    }
-
-                    _uiHandlers = (PropertyChangedEventHandler)Delegate.Combine(_uiHandlers, value);
-                }
-            }
-            remove
-            {
-                lock (_handlerLock)
-                    _uiHandlers = (PropertyChangedEventHandler)Delegate.Remove(_uiHandlers, value);
-            }
-        }
-
+        // Named rather than a lambda so End() can unsubscribe it again.
         private void ForwardBaseNotification(object sender, PropertyChangedEventArgs e) =>
-            _uiHandlers?.Invoke(this, e);
+            PropertyChanged?.Invoke(this, e);
 
         /// <summary>
         /// Tells the UI to re-read <see cref="Enabled"/> when the answer has
@@ -362,7 +348,7 @@ namespace FanaBridge.Adapters
             if (System.Threading.Interlocked.Exchange(ref _announcedEnabled, now) == now && !force)
                 return;
 
-            _uiHandlers?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
         }
 
         public override DeviceState GetDeviceState()
@@ -723,7 +709,7 @@ namespace FanaBridge.Adapters
         private void StopDrivingHardware(bool blankLeds)
         {
             if (blankLeds)
-                _ledHost.ClearOutput();
+                _ledHost.StopDriving();
 
             _displayManager?.Clear();
             _itmDisplay?.Stop();
@@ -789,11 +775,7 @@ namespace FanaBridge.Adapters
             // it cannot keep this object alive, but a device SimHub has finished
             // with should not still be talking to bindings.
             base.PropertyChanged -= ForwardBaseNotification;
-            lock (_handlerLock)
-            {
-                _uiHandlers = null;
-                _forwardingBase = false;
-            }
+            PropertyChanged = null;
 
             _ledHost.Dispose();
         }

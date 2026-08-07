@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge;
@@ -324,11 +324,11 @@ namespace FanaBridge.Tests
 
             Assert.Equal(drivenWhileOn, host.DisplayCount);
             // and the wheel is darkened rather than left on the last frame
-            Assert.Equal(1, host.ClearOutputCount);
+            Assert.Equal(1, host.StopDrivingCount);
 
             // The blanking is an edge, not a per-frame write.
             inst.DataUpdate(null, ref data);
-            Assert.Equal(1, host.ClearOutputCount);
+            Assert.Equal(1, host.StopDrivingCount);
         }
 
         [Theory]
@@ -396,7 +396,7 @@ namespace FanaBridge.Tests
 
             inst.BlankOutput();
 
-            Assert.Equal(1, host.ClearOutputCount);
+            Assert.Equal(1, host.StopDrivingCount);
         }
 
         [Fact]
@@ -410,7 +410,7 @@ namespace FanaBridge.Tests
 
             inst.BlankOutput();
 
-            Assert.Equal(0, host.ClearOutputCount);
+            Assert.Equal(0, host.StopDrivingCount);
         }
 
         [Fact]

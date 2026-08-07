@@ -23,9 +23,6 @@ namespace FanaBridge.Adapters
     /// </remarks>
     internal interface IFanatecLedModuleHost : IDisposable
     {
-        /// <summary>Whether this device has an LED editor at all.</summary>
-        bool HasModule { get; }
-
         /// <summary>The LEDs tab, or null for a device without LEDs.</summary>
         Control EditControl { get; }
 
@@ -63,22 +60,21 @@ namespace FanaBridge.Adapters
 
         /// <summary>
         /// Stops driving the wheel's LEDs: darkens them and lets go of the
-        /// driver. Used when output stops while the hardware is still attached
-        /// — otherwise the last frame stays lit and the LEDs tab keeps
-        /// reporting a connection that is no longer there.
+        /// driver.
         /// </summary>
-        void ClearOutput();
-
-        /// <summary>Rebinds output to the current plugin generation.</summary>
-        void RebindToCurrentGeneration();
+        /// <remarks>
+        /// Used both when output stops while the hardware is still attached —
+        /// otherwise the last frame stays lit and the LEDs tab keeps reporting
+        /// a connection that is no longer there — and when the plugin
+        /// generation is replaced, where dropping the driver is what makes the
+        /// next frame build one against the current hardware core.
+        /// </remarks>
+        void StopDriving();
 
         /// <summary>Tells the module the active profile may have changed.</summary>
         void HotSwapIfNeeded(Profiles.WheelCapabilities currentCaps);
 
         /// <summary>The module's dynamic button actions (brightness, etc.).</summary>
         IEnumerable<DynamicButtonAction> GetDynamicActions();
-
-        /// <summary>Flushes module state on shutdown. Safe to call more than once.</summary>
-        void FinalizeModule();
     }
 }

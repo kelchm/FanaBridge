@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Controls;
@@ -47,12 +47,9 @@ namespace FanaBridge.Tests.TestDoubles
         public int ApplyCount { get; private set; }
         public int DefaultsCount { get; private set; }
         public int DisposeCount { get; private set; }
-        public int FinalizeCount { get; private set; }
         public int DisplayCount { get; private set; }
-        public int ClearOutputCount { get; private set; }
+        public int StopDrivingCount { get; private set; }
         public JObject LastApplied => _applied;
-
-        public bool HasModule => true;
 
         /// <summary>The LEDs tab, when a test needs to see it offered.</summary>
         public Control? EditControlForTest { get; set; }
@@ -105,7 +102,7 @@ namespace FanaBridge.Tests.TestDoubles
         }
 
         public void Display() => DisplayCount++;
-        public void ClearOutput() => ClearOutputCount++;
+        public void StopDriving() => StopDrivingCount++;
 
         /// <summary>Last values pushed, or null if the device never said.</summary>
         public bool? CanDrive { get; private set; }
@@ -116,13 +113,11 @@ namespace FanaBridge.Tests.TestDoubles
             CanDrive = canDrive;
             ReportedConnected = connected;
         }
-        public void RebindToCurrentGeneration() { }
         public void HotSwapIfNeeded(WheelCapabilities currentCaps) { }
 
         public IEnumerable<DynamicButtonAction> GetDynamicActions() =>
             Enumerable.Empty<DynamicButtonAction>();
 
-        public void FinalizeModule() => FinalizeCount++;
 
         public void Dispose() => DisposeCount++;
     }

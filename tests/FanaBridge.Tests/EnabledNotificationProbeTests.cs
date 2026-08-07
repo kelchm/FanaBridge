@@ -33,10 +33,9 @@ namespace FanaBridge.Tests
     {
         private sealed class NotifyingDevice : DeviceInstance, INotifyPropertyChanged
         {
-            private PropertyChangedEventHandler? _handlers;
-            private bool _forwardingBase;
-
             public bool PretendUnavailable;
+
+            public NotifyingDevice() => base.PropertyChanged += ForwardFromBase;
 
             public new bool Enabled
             {
@@ -45,29 +44,17 @@ namespace FanaBridge.Tests
             }
 
             /// <summary>
-            /// Re-implements the interface so WPF's subscription lands here
-            /// instead of on the base event.
+            /// Hides the base event. Listing the interface again re-implements
+            /// it against this member, so WPF's subscription — made through the
+            /// interface — lands here rather than on the base event.
             /// </summary>
-            event PropertyChangedEventHandler? INotifyPropertyChanged.PropertyChanged
-            {
-                add
-                {
-                    if (!_forwardingBase)
-                    {
-                        _forwardingBase = true;
-                        base.PropertyChanged += ForwardFromBase;
-                    }
-
-                    _handlers += value;
-                }
-                remove => _handlers -= value;
-            }
+            public new event PropertyChangedEventHandler? PropertyChanged;
 
             private void ForwardFromBase(object sender, PropertyChangedEventArgs e) =>
-                _handlers?.Invoke(this, e);
+                PropertyChanged?.Invoke(this, e);
 
             public void AnnounceEnabled() =>
-                _handlers?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
 
             public void SetCustomNameThroughTheBase(string name) => CustomName = name;
 

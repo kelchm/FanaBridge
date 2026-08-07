@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Controls;
 using FanaBridge.Profiles;
@@ -18,8 +18,6 @@ namespace FanaBridge.Adapters
     /// </remarks>
     internal sealed class NoLedModuleHost : IFanatecLedModuleHost
     {
-        public bool HasModule => false;
-
         public Control EditControl => null;
 
         public bool Apply(JObject source, bool isDefault) => true;
@@ -32,16 +30,12 @@ namespace FanaBridge.Adapters
 
         public void SetStatus(bool canDrive, bool connected) { }
 
-        public void ClearOutput() { }
-
-        public void RebindToCurrentGeneration() { }
+        public void StopDriving() { }
 
         public void HotSwapIfNeeded(WheelCapabilities currentCaps) { }
 
         public IEnumerable<DynamicButtonAction> GetDynamicActions() =>
             Enumerable.Empty<DynamicButtonAction>();
-
-        public void FinalizeModule() { }
 
         public void Dispose() { }
     }

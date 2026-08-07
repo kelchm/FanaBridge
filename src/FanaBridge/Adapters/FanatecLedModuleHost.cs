@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Controls;
@@ -31,10 +31,7 @@ namespace FanaBridge.Adapters
     {
         private readonly LedModuleSettings<FanatecLedManager> _module;
         private readonly FanatecLedManager _manager;
-        private bool _finalized;
         private bool _disposed;
-
-        public bool HasModule => true;
 
         public FanatecLedModuleHost(
             DeviceConfig config,
@@ -226,7 +223,7 @@ namespace FanaBridge.Adapters
             _module.IsConnected = connected;
         }
 
-        public void ClearOutput()
+        public void StopDriving()
         {
             // Close() is the SDK's own way to stop driving a device, and it does
             // more than blank: it disposes the driver — the only thing that
@@ -245,22 +242,11 @@ namespace FanaBridge.Adapters
             }
         }
 
-        public void RebindToCurrentGeneration() => _manager.Close();
-
         public void HotSwapIfNeeded(WheelCapabilities currentCaps) =>
             _manager.HotSwapIfNeeded(currentCaps);
 
         public IEnumerable<DynamicButtonAction> GetDynamicActions() =>
             _module.GetDynamicActions() ?? Enumerable.Empty<DynamicButtonAction>();
-
-        public void FinalizeModule()
-        {
-            if (_finalized)
-                return;
-
-            _finalized = true;
-            _module.FinalizeModule();
-        }
 
         public void Dispose()
         {
@@ -271,7 +257,7 @@ namespace FanaBridge.Adapters
 
             try
             {
-                FinalizeModule();
+                _module.FinalizeModule();
             }
             finally
             {
