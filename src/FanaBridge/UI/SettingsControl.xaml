@@ -9,6 +9,44 @@
     <ScrollViewer>
         <StackPanel>
 
+            <!-- Self-updater banner. Hidden until the background release check
+                 finds a newer version; from there it walks the update phases
+                 (offer → downloading/installing → restart, or the amber failed
+                 state — palette swapped in code by StyleUpdateBanner). Same
+                 callout layout as the add-device alert below. Driven entirely
+                 by UpdateUpdateBanner from UpdateService snapshots. -->
+            <Border x:Name="borderUpdateAlert" Visibility="Collapsed"
+                    Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
+                    CornerRadius="4" Padding="12,10" Margin="0,4,0,10"
+                    HorizontalAlignment="Left" MaxWidth="700">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="txtUpdateGlyph" Grid.Column="0" Text="&#x2B06;" FontSize="18"
+                               Foreground="#4488CC" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock x:Name="txtUpdateTitle" Foreground="#AADDFF" FontSize="12"
+                                   FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock x:Name="txtUpdateDetail" Foreground="#AADDFF" Opacity="0.7"
+                                   FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
+                        <TextBlock FontSize="11" Margin="0,3,0,0">
+                            <Hyperlink Click="LnkReleaseNotes_Click"
+                                       Foreground="#4FC3F7" TextDecorations="None"
+                                       ToolTip="Open the release page on GitHub">
+                                Release notes
+                            </Hyperlink>
+                        </TextBlock>
+                    </StackPanel>
+                    <styles:SHButtonPrimary Grid.Column="2" x:Name="btnUpdateNow" Click="BtnUpdateNow_Click"
+                                            VerticalAlignment="Center" Margin="16,0,0,0">
+                        Update
+                    </styles:SHButtonPrimary>
+                </Grid>
+            </Border>
+
             <!-- Connection Status -->
             <styles:SHSection Title="DEVICE STATUS" ShowSeparator="True">
                 <StackPanel>
@@ -244,6 +282,21 @@
                             github.com/kelchm/FanaBridge
                         </Hyperlink>
                     </TextBlock>
+                    <CheckBox x:Name="chkEnableUpdateCheck" Margin="0,10,0,0"
+                              Content="Check for updates at startup"
+                              IsChecked="{Binding EnableUpdateCheck}"
+                              Checked="ChkEnableUpdateCheck_Changed" Unchecked="ChkEnableUpdateCheck_Changed" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock FontSize="11" Foreground="#AAAAAA">
+                            <Hyperlink Click="LnkCheckForUpdates_Click"
+                                       Foreground="#4FC3F7" TextDecorations="None"
+                                       ToolTip="Query GitHub for the latest FanaBridge release">
+                                Check for updates now
+                            </Hyperlink>
+                        </TextBlock>
+                        <TextBlock x:Name="txtUpdateCheckResult" FontSize="11" Foreground="#AAAAAA"
+                                   Margin="10,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
                 </StackPanel>
             </styles:SHSection>
 

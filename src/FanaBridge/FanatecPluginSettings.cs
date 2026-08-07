@@ -52,5 +52,14 @@ namespace FanaBridge
         /// <see cref="Adapters.ControlMapperBridge"/>.
         /// </summary>
         public bool EnableControlMapperIntegration { get; set; } = true;
+
+        // ---- Updates ----
+
+        /// <summary>
+        /// Check GitHub for a newer FanaBridge release at startup (one API
+        /// request per SimHub launch). The manual "Check for updates" link in
+        /// the settings UI works regardless.
+        /// </summary>
+        public bool EnableUpdateCheck { get; set; } = true;
     }
 }

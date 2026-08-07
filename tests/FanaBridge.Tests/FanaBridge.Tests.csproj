@@ -13,6 +13,7 @@
     <!-- Explicit (though transitive via the plugin): most of the suite tests
          Core types directly and uses its internals via InternalsVisibleTo. -->
     <ProjectReference Include="..\..\src\FanaBridge.Core\FanaBridge.Core.csproj" />
+    <ProjectReference Include="..\..\src\FanaBridge.Updater\FanaBridge.Updater.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -30,6 +31,8 @@
     <Reference Include="SimHub.Plugins">
       <HintPath>$(SimHubDir)SimHub.Plugins.dll</HintPath>
     </Reference>
+    <!-- Framework assembly: updater tests build release zips in memory. -->
+    <Reference Include="System.IO.Compression" />
   </ItemGroup>
 
   <ItemGroup>

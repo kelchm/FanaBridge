@@ -19,11 +19,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The SimHub-free device stack (HID transport, protocol, profiles).
-         Private=true (default) so FanaBridge.Core.dll lands in this project's
-         bin, where MergePlugin folds it into the single merged FanaBridge.dll
-         that packaging and the install target ship. -->
+    <!-- The SimHub-free device stack (HID transport, protocol, profiles) and
+         the self-updater. Private=true (default) so both DLLs land in this
+         project's bin, where MergePlugin folds them into the single merged
+         FanaBridge.dll that packaging and the install target ship. -->
     <ProjectReference Include="..\FanaBridge.Core\FanaBridge.Core.csproj" />
+    <ProjectReference Include="..\FanaBridge.Updater\FanaBridge.Updater.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -35,6 +36,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Framework assembly (self-updater HTTP client); not an external dependency. -->
+    <Reference Include="System.Net.Http" />
     <!-- SimHub references (from install directory) -->
     <Reference Include="GameReaderCommon">
       <HintPath>$(SimHubDir)GameReaderCommon.dll</HintPath>
@@ -111,20 +114,20 @@
   </Target>
 
   <!-- ── Single-DLL packaging ──────────────────────────────────────────
-       End users install exactly one FanaBridge.dll, as before the Core
-       split — the two assemblies exist for development (compiler-enforced
-       layering), and ILRepack folds FanaBridge.Core into the plugin at
-       package/install time. Output goes to bin\<cfg>\merged\ so the normal
-       two-assembly build outputs (which the test project consumes) are
-       never touched. Runs when packaging (-p:MergePlugin=true) or
+       End users install exactly one FanaBridge.dll, as before the project
+       split — the satellite assemblies (Core, Updater) exist for development
+       (compiler-enforced layering), and ILRepack folds them into the plugin
+       at package/install time. Output goes to bin\<cfg>\merged\ so the
+       normal multi-assembly build outputs (which the test project consumes)
+       are never touched. Runs when packaging (-p:MergePlugin=true) or
        installing (-p:InstallToSimHub=true). -->
   <Target Name="MergePlugin" AfterTargets="Build"
           Condition="'$(MergePlugin)' == 'true' or '$(InstallToSimHub)' == 'true'"
-          Inputs="$(TargetPath);$(TargetDir)FanaBridge.Core.dll"
+          Inputs="$(TargetPath);$(TargetDir)FanaBridge.Core.dll;$(TargetDir)FanaBridge.Updater.dll"
           Outputs="$(TargetDir)merged\$(TargetFileName)">
     <MakeDir Directories="$(TargetDir)merged" />
-    <Exec Command="&quot;$(PkgILRepack)\tools\ILRepack.exe&quot; /out:&quot;$(TargetDir)merged\$(TargetFileName)&quot; /lib:&quot;$(SimHubDir)\&quot; /targetplatform:v4 &quot;$(TargetPath)&quot; &quot;$(TargetDir)FanaBridge.Core.dll&quot;" />
-    <Message Importance="high" Text="Merged FanaBridge.Core into $(TargetDir)merged\$(TargetFileName)" />
+    <Exec Command="&quot;$(PkgILRepack)\tools\ILRepack.exe&quot; /out:&quot;$(TargetDir)merged\$(TargetFileName)&quot; /lib:&quot;$(SimHubDir)\&quot; /targetplatform:v4 &quot;$(TargetPath)&quot; &quot;$(TargetDir)FanaBridge.Core.dll&quot; &quot;$(TargetDir)FanaBridge.Updater.dll&quot;" />
+    <Message Importance="high" Text="Merged FanaBridge.Core + FanaBridge.Updater into $(TargetDir)merged\$(TargetFileName)" />
   </Target>
 
   <!-- ── Local dev install (device logos) ──────────────────────────────

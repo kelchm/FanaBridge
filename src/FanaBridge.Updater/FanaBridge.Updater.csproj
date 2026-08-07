@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>FanaBridge.Updater</RootNamespace>
+    <AssemblyName>FanaBridge.Updater</AssemblyName>
+    <Description>FanaBridge self-updater (SimHub-free): release feed, download verification, in-place file swap</Description>
+    <Product>FanaBridge</Product>
+    <Copyright>Copyright (c) 2026</Copyright>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Provides .NET Framework 4.8 reference assemblies for builds without VS -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Resolved from the SimHub install so runtime assembly identities match
+         the ones SimHub loads; never copied (SimHub ships it). Newtonsoft is
+         the updater's only external reference — no SimHub.* assemblies and no
+         FanaBridge.Core, by design: this project is an isolated audit boundary
+         for the code that downloads releases and rewrites files next to
+         SimHub.exe. -->
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(SimHubDir)Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Framework assembly (zip extraction); not an external dependency. -->
+    <Reference Include="System.IO.Compression" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FanaBridge.Tests" />
+  </ItemGroup>
+
+</Project>

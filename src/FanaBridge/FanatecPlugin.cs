@@ -3,10 +3,14 @@ using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
 using FanaBridge.UI;
+using FanaBridge.Updater;
+using FanaBridge.Updates;
 using GameReaderCommon;
 using SimHub.Plugins;
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -72,6 +76,24 @@ namespace FanaBridge
 
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
         public event Action StateChanged;
+
+        /// <summary>
+        /// Fired on every self-updater phase change. Deliberately separate from
+        /// <see cref="StateChanged"/>, which drives the device-chain refresh in
+        /// the settings UI. May fire from any thread.
+        /// </summary>
+        public event Action UpdateStateChanged;
+
+        /// <summary>
+        /// Self-updater state machine. Like the hardware core it is built once
+        /// per SimHub process and survives in-process plugin manager restarts,
+        /// so a check result (and its banner) persists across game changes.
+        /// Null when the updater couldn't start (unknown assembly location).
+        /// </summary>
+        public UpdateService Updates => _updateService;
+
+        private UpdateService _updateService;
+        private CancellationTokenSource _updateCheckCts;
 
         /// <summary>
         /// When true, device instances skip all LED and display output so the
@@ -453,6 +475,69 @@ namespace FanaBridge
 
             // Attempt initial connection
             _connectionMonitor.TryInitialConnect();
+
+            // Last step on purpose: a FanaBridge.dll.old left by a self-update
+            // survives as a manual rollback copy until this (new) build has
+            // proven it can construct its core.
+            InitializeUpdater();
+        }
+
+        /// <summary>
+        /// Builds the self-updater, sweeps stale swap artifacts, and kicks the
+        /// once-per-process background check (opt-out via
+        /// <see cref="FanatecPluginSettings.EnableUpdateCheck"/>). Strictly
+        /// best-effort: no failure in here may affect plugin init.
+        /// </summary>
+        private void InitializeUpdater()
+        {
+            try
+            {
+                string installDir = System.IO.Path.GetDirectoryName(
+                    typeof(FanatecPlugin).Assembly.Location);
+                if (string.IsNullOrEmpty(installDir))
+                {
+                    SimHub.Logging.Current.Warn(
+                        "FanaBridge: self-updater disabled (assembly location unknown)");
+                    return;
+                }
+
+                UpdateFileSwapper.CleanupStaleArtifacts(
+                    installDir,
+                    System.IO.Path.GetTempPath(),
+                    msg => SimHub.Logging.Current.Warn(msg));
+
+                _updateService = new UpdateService(
+                    BuildIdentity.Version,
+                    installDir,
+                    GitHubHttpClient.GetStringAsync,
+                    GitHubHttpClient.GetBytesAsync,
+                    GitHubHttpClient.LatestReleaseUrl,
+                    msg => SimHub.Logging.Current.Info(msg),
+                    msg => SimHub.Logging.Current.Warn(msg));
+                _updateService.Changed += _ => UpdateStateChanged?.Invoke();
+
+                if (Settings.EnableUpdateCheck)
+                {
+                    _updateCheckCts = new CancellationTokenSource();
+                    var token = _updateCheckCts.Token;
+                    Task.Run(async () =>
+                    {
+                        // CheckAsync converts failures to states; this catch is
+                        // belt-and-braces so a bug can never surface as an
+                        // unobserved task exception.
+                        try { await _updateService.CheckAsync(token); }
+                        catch (Exception ex)
+                        {
+                            SimHub.Logging.Current.Warn(
+                                "FanaBridge: update check failed unexpectedly: " + ex.Message);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanaBridge: self-updater init failed: " + ex.Message);
+            }
         }
 
         public void DataUpdate(PluginManager pluginManager, ref GameData data)
@@ -550,6 +635,11 @@ namespace FanaBridge
         public void FinalizePlugin()
         {
             SimHub.Logging.Current.Info("FanaBridge: FinalizePlugin (final teardown)");
+
+            // Stop a still-running startup update check. An apply that already
+            // reached its commit point runs to completion (UpdateService passes
+            // CancellationToken.None past the point of no return).
+            try { _updateCheckCts?.Cancel(); } catch { /* best-effort */ }
 
             // Unpublish FIRST: device DataUpdate frames can still be in flight
             // (the host doesn't join them on a manager restart), and they must
