@@ -92,8 +92,33 @@ namespace FanaBridge
         /// </summary>
         public UpdateService Updates => _updateService;
 
+        /// <summary>
+        /// True once the settings UI has offered the post-update restart prompt.
+        /// Held here (not on the control) because SimHub creates a fresh
+        /// SettingsControl per page open while the updater — and its
+        /// ReadyToRestart state — lives for the whole process.
+        /// </summary>
+        public bool UpdateRestartPromptShown { get; set; }
+
+        /// <summary>
+        /// Manual "check for updates" entry point. Routes through the
+        /// updater-lifetime cancellation token so FinalizePlugin can stop it.
+        /// </summary>
+        public Task CheckForUpdatesAsync()
+            => _updateService?.CheckAsync(_updaterCts?.Token ?? CancellationToken.None)
+               ?? Task.CompletedTask;
+
+        /// <summary>
+        /// One-click update entry point (download + verify + swap). Cancellable
+        /// via the updater-lifetime token up to the commit point only; the swap
+        /// itself always runs to completion.
+        /// </summary>
+        public Task ApplyUpdateAsync()
+            => _updateService?.DownloadAndApplyAsync(_updaterCts?.Token ?? CancellationToken.None)
+               ?? Task.CompletedTask;
+
         private UpdateService _updateService;
-        private CancellationTokenSource _updateCheckCts;
+        private CancellationTokenSource _updaterCts;
 
         /// <summary>
         /// When true, device instances skip all LED and display output so the
@@ -516,10 +541,14 @@ namespace FanaBridge
                     msg => SimHub.Logging.Current.Warn(msg));
                 _updateService.Changed += _ => UpdateStateChanged?.Invoke();
 
+                // One CTS for the updater's whole lifetime — it also covers
+                // MANUAL checks/applies started from the settings UI, so
+                // FinalizePlugin can stop those too, not just the startup check.
+                _updaterCts = new CancellationTokenSource();
+
                 if (Settings.EnableUpdateCheck)
                 {
-                    _updateCheckCts = new CancellationTokenSource();
-                    var token = _updateCheckCts.Token;
+                    var token = _updaterCts.Token;
                     Task.Run(async () =>
                     {
                         // CheckAsync converts failures to states; this catch is
@@ -636,10 +665,11 @@ namespace FanaBridge
         {
             SimHub.Logging.Current.Info("FanaBridge: FinalizePlugin (final teardown)");
 
-            // Stop a still-running startup update check. An apply that already
-            // reached its commit point runs to completion (UpdateService passes
-            // CancellationToken.None past the point of no return).
-            try { _updateCheckCts?.Cancel(); } catch { /* best-effort */ }
+            // Stop any in-flight update work — the startup check AND manual
+            // checks/applies from the settings UI share this token. A swap that
+            // already reached its commit point still runs to completion
+            // (UpdateService stops honoring the token past the last safe point).
+            try { _updaterCts?.Cancel(); } catch { /* best-effort */ }
 
             // Unpublish FIRST: device DataUpdate frames can still be in flight
             // (the host doesn't join them on a manager restart), and they must

@@ -151,7 +151,12 @@ namespace FanaBridge.Updater
 
                     zipName = name;
                     zipUrl = ao.Value<string>("browser_download_url");
-                    zipSize = ao.Value<long?>("size") ?? 0;
+                    // Defensive: a non-numeric "size" must degrade to unknown, not
+                    // throw out of the parse contract.
+                    JToken? sizeToken = ao["size"];
+                    zipSize = sizeToken != null && sizeToken.Type == JTokenType.Integer
+                        ? (long)sizeToken
+                        : 0;
                     digestRaw = ao.Value<string>("digest");
                     break;
                 }
@@ -183,7 +188,7 @@ namespace FanaBridge.Updater
                 version: version,
                 htmlUrl: htmlUrl!,
                 zipName: zipName,
-                zipUrl: canInstall ? zipUrl : zipUrl,
+                zipUrl: zipUrl,
                 zipSizeBytes: zipSize,
                 digestHex: digestHex,
                 canSelfInstall: canInstall,

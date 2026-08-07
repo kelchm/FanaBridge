@@ -1077,8 +1077,6 @@ namespace FanaBridge.UI
         // never decides what is allowed, it only displays and forwards clicks.
         // =====================================================================
 
-        private bool _updateRestartOffered;
-
         private static readonly Brush UpdateBlueBg = HexBrush("#1A4488CC");
         private static readonly Brush UpdateBlueBorder = HexBrush("#4488CC");
         private static readonly Brush UpdateBlueText = HexBrush("#AADDFF");
@@ -1210,10 +1208,12 @@ namespace FanaBridge.UI
         private void OfferUpdateRestartOnce()
         {
             // The banner keeps its Restart button, so declining here isn't
-            // final — this just avoids re-prompting on every render.
-            if (_updateRestartOffered)
+            // final — this just avoids re-prompting on every render. The flag
+            // lives on the plugin: SimHub creates a fresh control per page open
+            // while ReadyToRestart persists for the whole process.
+            if (Plugin.UpdateRestartPromptShown)
                 return;
-            _updateRestartOffered = true;
+            Plugin.UpdateRestartPromptShown = true;
 
             var result = MessageBox.Show(
                 "FanaBridge has been updated. Restart SimHub now to load the new version?",
@@ -1237,7 +1237,8 @@ namespace FanaBridge.UI
                 case UpdatePhase.UpdateAvailable when snapshot.Release?.CanSelfInstall == true:
                     // Fire-and-forget: phase transitions drive the UI, and the
                     // service ignores re-entrant calls, so a double-click is safe.
-                    _ = updates.DownloadAndApplyAsync();
+                    // Routed via the plugin so FinalizePlugin's cancel covers it.
+                    _ = Plugin.ApplyUpdateAsync();
                     break;
 
                 case UpdatePhase.UpdateAvailable:
@@ -1279,7 +1280,8 @@ namespace FanaBridge.UI
             }
 
             txtUpdateCheckResult.Text = "Checking…";
-            try { await updates.CheckAsync(); }
+            // Routed via the plugin so FinalizePlugin's cancel covers it.
+            try { await Plugin.CheckForUpdatesAsync(); }
             catch { /* CheckAsync converts failures to states */ }
 
             // A debounced/no-op check fires no Changed event, which would leave

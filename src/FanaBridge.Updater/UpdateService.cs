@@ -231,6 +231,7 @@ namespace FanaBridge.Updater
 
                 Publish(new UpdateSnapshot(UpdatePhase.Downloading, release, null, false));
 
+                string? staging = null;
                 try
                 {
                     byte[] bytes = await _fetchBytes(release.ZipUrl!, ct).ConfigureAwait(false);
@@ -243,10 +244,9 @@ namespace FanaBridge.Updater
                         return;
                     }
 
-                    // Cancellation is honored up to Apply; the file swap runs to completion.
                     ct.ThrowIfCancellationRequested();
 
-                    string staging = _stagingDirFactory();
+                    staging = _stagingDirFactory();
                     try
                     {
                         UpdatePackage.ExtractToStaging(bytes, staging);
@@ -259,9 +259,12 @@ namespace FanaBridge.Updater
                         return;
                     }
 
+                    // Last cancellation point: beyond this the swap must run to
+                    // completion (partial renames must finish or roll back).
+                    ct.ThrowIfCancellationRequested();
+
                     Publish(new UpdateSnapshot(UpdatePhase.Applying, release, null, false));
 
-                    // Apply itself is not cancellable — partial renames must finish or roll back.
                     SwapResult result = _swapper.Apply(staging, _installDir, release.Version);
                     if (result.Success)
                     {
@@ -280,6 +283,8 @@ namespace FanaBridge.Updater
                 catch (OperationCanceledException)
                 {
                     // Restore to UpdateAvailable so the user can retry; do not mark Failed.
+                    if (staging != null)
+                        TryDeleteDir(staging);
                     Publish(new UpdateSnapshot(UpdatePhase.UpdateAvailable, release, null, false));
                 }
                 catch (Exception ex)

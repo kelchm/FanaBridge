@@ -99,21 +99,13 @@ namespace FanaBridge.Tests.Updater
         }
 
         [Fact]
-        public void ExtractToStaging_DuplicateDll_Throws()
+        public void ExtractToStaging_DuplicateLogoViaSeparators_Throws()
         {
             string staging = Path.Combine(Path.GetTempPath(), "FanaBridge-pkg-" + Guid.NewGuid().ToString("N"));
             try
             {
-                // ZipArchive API doesn't allow two entries with the same name easily via
-                // CreateEntry twice — build raw-ish by writing two CreateEntry with same name
-                // which throws. Use different casing? Whitelist is ordinal for DLL exact name.
-                // Build zip with two identical names by manipulating: CreateEntry then another
-                // with a name that maps to the same relative path isn't possible for DLL.
-                // Use ZipArchive with Update mode after creating first entry — still unique names.
-                // Instead: create via raw zip by writing entry named "FanaBridge.dll" twice
-                // through a custom approach — ZipArchive.CreateEntry throws on duplicate.
-                // Workaround: extract path uses ordinal for DLL name "FanaBridge.dll" only.
-                // For logos, "DevicesLogos/a.png" and "DevicesLogos\\a.png" map to same relative.
+                // "DevicesLogos/a.png" and "DevicesLogos\a.png" map to the same
+                // relative path after separator normalization.
                 byte[] zip = BuildZip(entries =>
                 {
                     WriteEntry(entries, "FanaBridge.dll", new byte[] { 1 });
@@ -123,6 +115,55 @@ namespace FanaBridge.Tests.Updater
 
                 var ex = Assert.Throws<InvalidDataException>(() => UpdatePackage.ExtractToStaging(zip, staging));
                 Assert.Contains("duplicate", ex.Message, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                try { if (Directory.Exists(staging)) Directory.Delete(staging, true); } catch { /* ignore */ }
+            }
+        }
+
+        [Fact]
+        public void ExtractToStaging_DuplicateDll_Throws()
+        {
+            string staging = Path.Combine(Path.GetTempPath(), "FanaBridge-pkg-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                // ZipArchive.CreateEntry does NOT reject duplicate names — a
+                // hand-crafted archive can carry two FanaBridge.dll entries.
+                byte[] zip = BuildZip(entries =>
+                {
+                    WriteEntry(entries, "FanaBridge.dll", new byte[] { 1 });
+                    WriteEntry(entries, "FanaBridge.dll", new byte[] { 2 });
+                });
+
+                var ex = Assert.Throws<InvalidDataException>(() => UpdatePackage.ExtractToStaging(zip, staging));
+                Assert.Contains("duplicate", ex.Message, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                try { if (Directory.Exists(staging)) Directory.Delete(staging, true); } catch { /* ignore */ }
+            }
+        }
+
+        [Fact]
+        public void ExtractToStaging_TotalSizeCap_Throws()
+        {
+            string staging = Path.Combine(Path.GetTempPath(), "FanaBridge-pkg-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                // Three whitelisted entries of exactly 20 MB each (per-entry cap
+                // boundary): the cumulative 60 MB crosses the 50 MB total cap
+                // during the third entry's streaming copy.
+                byte[] twentyMb = new byte[20 * 1024 * 1024];
+                byte[] zip = BuildZip(entries =>
+                {
+                    WriteEntry(entries, "FanaBridge.dll", twentyMb);
+                    WriteEntry(entries, "DevicesLogos/a.png", twentyMb);
+                    WriteEntry(entries, "DevicesLogos/b.png", twentyMb);
+                });
+
+                var ex = Assert.Throws<InvalidDataException>(() => UpdatePackage.ExtractToStaging(zip, staging));
+                Assert.Contains("total", ex.Message, StringComparison.OrdinalIgnoreCase);
             }
             finally
             {

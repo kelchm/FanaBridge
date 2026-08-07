@@ -95,6 +95,12 @@ namespace FanaBridge.Updater
             {
                 return FileVersionInfo.GetVersionInfo(path).FileVersion;
             }
+            catch (UnauthorizedAccessException)
+            {
+                // Let Apply's outer catch classify this as access-denied instead
+                // of reporting a misleading generic version mismatch.
+                throw;
+            }
             catch
             {
                 return null;
@@ -250,35 +256,50 @@ namespace FanaBridge.Updater
             }
         }
 
+        // Runs strictly AFTER the DLL commit, so nothing in here may surface as a
+        // swap failure: a Failed state on a live new DLL would let a retry delete
+        // the .old rollback copy. Fully non-throwing, including the warn delegate.
         private void CopyLogosBestEffort(string stagingDir, string installDir)
         {
-            string stagedLogos = Path.Combine(stagingDir, UpdatePackage.LogosDirName);
-            if (!Directory.Exists(stagedLogos))
-                return;
-
-            string destLogos = Path.Combine(installDir, UpdatePackage.LogosDirName);
             try
             {
-                Directory.CreateDirectory(destLogos);
-            }
-            catch (Exception ex)
-            {
-                _logWarn("Could not create DevicesLogos directory: " + ex.Message);
-                return;
-            }
+                string stagedLogos = Path.Combine(stagingDir, UpdatePackage.LogosDirName);
+                if (!Directory.Exists(stagedLogos))
+                    return;
 
-            foreach (string src in Directory.GetFiles(stagedLogos, "*.png"))
-            {
-                string dest = Path.Combine(destLogos, Path.GetFileName(src));
+                string destLogos = Path.Combine(installDir, UpdatePackage.LogosDirName);
                 try
                 {
-                    _copyOverwrite(src, dest);
+                    Directory.CreateDirectory(destLogos);
                 }
                 catch (Exception ex)
                 {
-                    _logWarn("Could not copy logo '" + Path.GetFileName(src) + "': " + ex.Message);
+                    WarnQuiet("Could not create DevicesLogos directory: " + ex.Message);
+                    return;
+                }
+
+                foreach (string src in Directory.GetFiles(stagedLogos, "*.png"))
+                {
+                    string dest = Path.Combine(destLogos, Path.GetFileName(src));
+                    try
+                    {
+                        _copyOverwrite(src, dest);
+                    }
+                    catch (Exception ex)
+                    {
+                        WarnQuiet("Could not copy logo '" + Path.GetFileName(src) + "': " + ex.Message);
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                WarnQuiet("Logo copy skipped: " + ex.Message);
+            }
+        }
+
+        private void WarnQuiet(string message)
+        {
+            try { _logWarn(message); } catch { /* cosmetic step must never throw */ }
         }
 
         private SwapResult FailClosed(string message, Exception ex)

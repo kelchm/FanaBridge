@@ -73,6 +73,72 @@ namespace FanaBridge.Tests.Updater
         }
 
         [Fact]
+        public void Apply_MoveAccessDeniedIoException_ClassifiedAccessDenied()
+        {
+            string install = MakeTempDir("install");
+            string staging = MakeTempDir("staging");
+            try
+            {
+                File.WriteAllBytes(Path.Combine(install, UpdatePackage.DllName), Encoding.UTF8.GetBytes("OLD"));
+                File.WriteAllBytes(Path.Combine(staging, UpdatePackage.DllName), Encoding.UTF8.GetBytes("NEW"));
+
+                var swapper = new UpdateFileSwapper(
+                    move: (src, dst) => throw new IOException(
+                        "access denied", unchecked((int)0x80070005)),
+                    readFileVersion: _ => "0.7.0.0");
+
+                SwapResult result = swapper.Apply(staging, install, "0.7.0");
+
+                Assert.False(result.Success);
+                Assert.True(result.AccessDenied);
+                // Live DLL untouched: only rename 1 was attempted and it failed atomically.
+                Assert.Equal("OLD", File.ReadAllText(Path.Combine(install, UpdatePackage.DllName)));
+            }
+            finally
+            {
+                DeleteQuiet(install);
+                DeleteQuiet(staging);
+            }
+        }
+
+        [Fact]
+        public void Apply_LogoDestinationBlocked_StillSucceeds()
+        {
+            string install = MakeTempDir("install");
+            string staging = MakeTempDir("staging");
+            try
+            {
+                File.WriteAllBytes(Path.Combine(install, UpdatePackage.DllName), Encoding.UTF8.GetBytes("OLD"));
+                File.WriteAllBytes(Path.Combine(staging, UpdatePackage.DllName), Encoding.UTF8.GetBytes("NEW"));
+                string stagedLogos = Path.Combine(staging, UpdatePackage.LogosDirName);
+                Directory.CreateDirectory(stagedLogos);
+                File.WriteAllBytes(Path.Combine(stagedLogos, "wheel.png"), new byte[] { 1 });
+
+                // Occupy the destination logos path with a FILE so the cosmetic
+                // step fails after the DLL commit — the swap must still succeed
+                // (a Failed state on a live new DLL would let a retry delete the
+                // .old rollback copy).
+                File.WriteAllText(Path.Combine(install, UpdatePackage.LogosDirName), "in the way");
+
+                var warns = new List<string>();
+                var swapper = new UpdateFileSwapper(
+                    readFileVersion: _ => "0.7.0.0",
+                    logWarn: warns.Add);
+
+                SwapResult result = swapper.Apply(staging, install, "0.7.0");
+
+                Assert.True(result.Success, result.Error);
+                Assert.Equal("NEW", File.ReadAllText(Path.Combine(install, UpdatePackage.DllName)));
+                Assert.NotEmpty(warns);
+            }
+            finally
+            {
+                DeleteQuiet(install);
+                DeleteQuiet(staging);
+            }
+        }
+
+        [Fact]
         public void Apply_CommitRename2Fails_RollsBack()
         {
             string install = MakeTempDir("install");

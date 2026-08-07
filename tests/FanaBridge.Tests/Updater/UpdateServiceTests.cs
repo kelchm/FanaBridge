@@ -245,6 +245,41 @@ namespace FanaBridge.Tests.Updater
             Assert.Contains(warns, w => w.IndexOf("unparseable", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
+        [Fact]
+        public async Task DownloadAndApply_CanceledAfterExtraction_RestoresUpdateAvailable_CleansStaging()
+        {
+            byte[] zip = BuildReleaseZip(new byte[] { 1, 2, 3 });
+            string digest = Sha256Hex(zip);
+
+            bool swapperCalled = false;
+            var swapper = new UpdateFileSwapper(
+                move: (_, __) => swapperCalled = true,
+                copyOverwrite: (_, __) => swapperCalled = true,
+                readFileVersion: _ => "0.7.0.0");
+
+            string staging = Path.Combine(
+                Path.GetTempPath(), "FanaBridge-update-cancel-" + Guid.NewGuid().ToString("N"));
+            using var cts = new CancellationTokenSource();
+            var svc = CreateService(
+                currentVersion: "0.6.0",
+                fetchText: (_, __) => Task.FromResult(FeedJson("0.7.0", digest: digest)),
+                fetchBytes: (_, __) => Task.FromResult(zip),
+                swapper: swapper,
+                // Cancel after the pre-staging token check but before the
+                // post-extraction one — extraction runs, then the last
+                // cancellation point must clean up and restore.
+                stagingDirFactory: () => { cts.Cancel(); return staging; });
+
+            await svc.CheckAsync();
+            Assert.Equal(UpdatePhase.UpdateAvailable, svc.Snapshot.Phase);
+
+            await svc.DownloadAndApplyAsync(cts.Token);
+
+            Assert.Equal(UpdatePhase.UpdateAvailable, svc.Snapshot.Phase);
+            Assert.False(swapperCalled);
+            Assert.False(Directory.Exists(staging));
+        }
+
         private static UpdateService CreateService(
             string currentVersion,
             Func<string, CancellationToken, Task<string>>? fetchText = null,
