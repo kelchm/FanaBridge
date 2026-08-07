@@ -214,6 +214,21 @@ namespace FanaBridge.Adapters
 
         public void Display() => _module.Display();
 
+        public void ClearOutput()
+        {
+            // Only a driver that was actually built can blank anything; there is
+            // nothing lit to blank when the runtime never produced one.
+            try
+            {
+                (_manager.GetDriverInstance() as FanatecLedDriver)?.Clear();
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn(
+                    "FanatecLedModuleHost: clearing LED output failed: " + ex.Message);
+            }
+        }
+
         public void RebindToCurrentGeneration() => _manager.Close();
 
         public void HotSwapIfNeeded(WheelCapabilities currentCaps) =>

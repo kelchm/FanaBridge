@@ -47,6 +47,12 @@ namespace FanaBridge.Adapters
         /// <summary>Drives one frame of LED output.</summary>
         void Display();
 
+        /// <summary>
+        /// Darkens the wheel's LEDs. Used when output stops while the hardware
+        /// is still attached — otherwise the last frame simply stays lit.
+        /// </summary>
+        void ClearOutput();
+
         /// <summary>Rebinds output to the current plugin generation.</summary>
         void RebindToCurrentGeneration();
 

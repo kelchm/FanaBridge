@@ -49,6 +49,7 @@ namespace FanaBridge.Tests.TestDoubles
         public int DisposeCount { get; private set; }
         public int FinalizeCount { get; private set; }
         public int DisplayCount { get; private set; }
+        public int ClearOutputCount { get; private set; }
         public JObject LastApplied => _applied;
 
         public bool HasModule => true;
@@ -104,6 +105,7 @@ namespace FanaBridge.Tests.TestDoubles
         }
 
         public void Display() => DisplayCount++;
+        public void ClearOutput() => ClearOutputCount++;
         public void RebindToCurrentGeneration() { }
         public void HotSwapIfNeeded(WheelCapabilities currentCaps) { }
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using FanaBridge;
 using FanaBridge.Profiles;
@@ -27,7 +28,7 @@ namespace FanaBridge.Adapters
     /// for all HID access. Reports Connected only when the singleton's
     /// current wheel identity matches this instance's wheel type.
     /// </summary>
-    public class FanatecWheelDeviceInstance : DeviceInstance
+    public class FanatecWheelDeviceInstance : DeviceInstance, INotifyPropertyChanged
     {
         private readonly DeviceConfig _config;
 
@@ -282,7 +283,77 @@ namespace FanaBridge.Adapters
         public new bool Enabled
         {
             get => base.Enabled && PluginResolver() != null;
-            set => base.Enabled = value;
+            set
+            {
+                base.Enabled = value;
+
+                // The base only notifies when its own value moved, so a user
+                // switching on a device nothing can drive would move the toggle
+                // and hear nothing back — leaving it showing a state we are not
+                // in. Announcing unconditionally makes it spring back.
+                AnnounceEnabled(force: true);
+            }
+        }
+
+        // ── Change notification for the hiding property ───────────────────
+        //
+        // Enabled answers from something SimHub knows nothing about, so nothing
+        // raises PropertyChanged when the plugin comes or goes. Every binding
+        // already made would keep showing the old answer: device tiles stay as
+        // they were, and an open settings pane only catches up when re-selecting
+        // it rebuilds the binding.
+        //
+        // The base raises through a compiler-generated member no derived class
+        // can call. Re-implementing the interface works instead — WPF subscribes
+        // through it, and interface dispatch resolves on the runtime type, so
+        // the subscription lands here. Base notifications are forwarded on so
+        // nothing SimHub raises is lost. See EnabledNotificationProbeTests.
+
+        private readonly object _handlerLock = new object();
+        private PropertyChangedEventHandler _uiHandlers;
+        private bool _forwardingBase;
+
+        // 1/0 once evaluated, -1 while unknown. Swapped atomically so exactly
+        // one caller sees each transition: the UI thread writes it through the
+        // setter while the update thread polls it every frame.
+        private int _announcedEnabled = -1;
+
+        event PropertyChangedEventHandler INotifyPropertyChanged.PropertyChanged
+        {
+            add
+            {
+                lock (_handlerLock)
+                {
+                    if (!_forwardingBase)
+                    {
+                        _forwardingBase = true;
+                        base.PropertyChanged += ForwardBaseNotification;
+                    }
+
+                    _uiHandlers = (PropertyChangedEventHandler)Delegate.Combine(_uiHandlers, value);
+                }
+            }
+            remove
+            {
+                lock (_handlerLock)
+                    _uiHandlers = (PropertyChangedEventHandler)Delegate.Remove(_uiHandlers, value);
+            }
+        }
+
+        private void ForwardBaseNotification(object sender, PropertyChangedEventArgs e) =>
+            _uiHandlers?.Invoke(this, e);
+
+        /// <summary>
+        /// Tells the UI to re-read <see cref="Enabled"/> when the answer has
+        /// moved (or unconditionally, when the user just acted on it).
+        /// </summary>
+        private void AnnounceEnabled(bool force = false)
+        {
+            int now = Enabled ? 1 : 0;
+            if (System.Threading.Interlocked.Exchange(ref _announcedEnabled, now) == now && !force)
+                return;
+
+            _uiHandlers?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
         }
 
         public override DeviceState GetDeviceState()
@@ -401,14 +472,33 @@ namespace FanaBridge.Adapters
                 _registeredWithPlugin = true;
             }
 
-            bool isConnected = GetDeviceState() == DeviceState.Connected;
+            // The plugin appearing or going away changes what Enabled answers
+            // without changing anything on this object, so nothing else would
+            // tell the UI to look again.
+            AnnounceEnabled();
+
+            // SimHub calls DataUpdate on every device whatever its on/off switch
+            // says — it only reads Enabled to force the state it reports — so a
+            // device that stops driving hardware when switched off has to stop
+            // itself. Suspension is the same arrangement, for users who asked
+            // for it. Reads the base property deliberately: this is the user's
+            // own choice, not the presented value above.
+            bool switchedOn = base.Enabled && !(Suspended && SuspendWhenMonitorIsOff);
+
+            bool isConnected = switchedOn && GetDeviceState() == DeviceState.Connected;
 
             // Detect Connected → Scanning transition
             if (_wasConnected && !isConnected)
             {
                 SimHub.Logging.Current.Info(
                     "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                    "]: Lost connection");
+                    "]: " + (switchedOn ? "Lost connection" : "Switched off"));
+
+                // Switched off with the wheel still attached: its LEDs would
+                // otherwise sit lit on the last frame drawn. A wheel that went
+                // away has nothing to blank.
+                if (!switchedOn)
+                    _ledHost.ClearOutput();
 
                 _displayManager?.Clear();
                 _itmDisplay?.Stop();
@@ -557,10 +647,12 @@ namespace FanaBridge.Adapters
                     // where "None" leaves it off.
                     if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
                     {
-                        if (_displayManager == null)
+                        // No encoder means this generation cannot reach a display
+                        // at all; a driver built around one could only throw.
+                        if (_displayManager == null && plugin.Display != null)
                             _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
                         if (!displayTest)
-                            _displayManager.Update(data);
+                            _displayManager?.Update(data);
                         _legacyBlanked = false;
                     }
                     else if (_displayManager != null && !_legacyBlanked && !displayTest)
@@ -585,7 +677,7 @@ namespace FanaBridge.Adapters
             }
             else if (displayType != DisplayType.None)
             {
-                if (_displayManager == null)
+                if (_displayManager == null && plugin.Display != null)
                 {
                     _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
                     SimHub.Logging.Current.Info(
@@ -593,7 +685,7 @@ namespace FanaBridge.Adapters
                 }
 
                 if (!displayTest)
-                    _displayManager.Update(data);
+                    _displayManager?.Update(data);
             }
 
             // ── LEDs ─────────────────────────────────────────────────────

@@ -119,6 +119,21 @@ namespace FanaBridge.Tests
             return new FanatecWheelDeviceInstance(config);
         }
 
+        // Same device, but with the LED module stood in for so a test can see
+        // whether output was driven or blanked.
+        private static FanatecWheelDeviceInstance InstanceWithHost(
+            string wheelCode, IFanatecLedModuleHost host)
+        {
+            var profile = WheelProfileStore.FindByWheelType(wheelCode);
+            Assert.NotNull(profile);
+            var config = new DeviceConfig
+            {
+                Profile = profile,
+                Capabilities = new WheelCapabilities(profile),
+            };
+            return new FanatecWheelDeviceInstance(config, null, host);
+        }
+
         // ── GetDeviceState rows ────────────────────────────────────────────
 
         [Fact]
@@ -184,6 +199,122 @@ namespace FanaBridge.Tests
 
             Assert.False(inst.Enabled);
             Assert.False(((DeviceInstance)inst).Enabled);   // and it is what gets stored
+        }
+
+        [Fact]
+        public void PluginGoingAway_TellsTheUiToLookAgain()
+        {
+            // Enabled answers from something SimHub knows nothing about, so
+            // without this every binding already made keeps showing the old
+            // answer -- the device tiles and their toggles stay as they were,
+            // and an open pane only greys once re-selecting it rebuilds it.
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var announced = new List<string>();
+            ((System.ComponentModel.INotifyPropertyChanged)inst).PropertyChanged +=
+                (_, e) => announced.Add(e.PropertyName);
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);   // establishes the baseline
+            announced.Clear();
+
+            inst.DataUpdate(null, ref data);
+            Assert.Empty(announced);           // nothing moved, nothing said
+
+            inst.PluginResolver = () => null;
+            inst.DataUpdate(null, ref data);
+            Assert.Contains(nameof(FanatecWheelDeviceInstance.Enabled), announced);
+
+            // Once per transition, not once per frame -- this runs at frame rate.
+            announced.Clear();
+            inst.DataUpdate(null, ref data);
+            Assert.Empty(announced);
+        }
+
+        [Fact]
+        public void SwitchingOnWithNothingToDriveIt_MakesTheToggleSpringBack()
+        {
+            // The base only notifies when its own value moves, and it is already
+            // true here, so without an unconditional announcement the toggle
+            // would sit in the "on" position the user just put it in.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            var announced = new List<string>();
+            ((System.ComponentModel.INotifyPropertyChanged)inst).PropertyChanged +=
+                (_, e) => announced.Add(e.PropertyName);
+
+            inst.Enabled = true;
+
+            Assert.Contains(nameof(FanatecWheelDeviceInstance.Enabled), announced);
+            Assert.False(inst.Enabled);
+        }
+
+        [Fact]
+        public void SimHubsOwnNotifications_StillReachTheUi()
+        {
+            // Intercepting the subscription must not cost us everything SimHub
+            // raises -- the device list binds to those.
+            var inst = InstanceFor("PSWBMW");
+
+            var announced = new List<string>();
+            ((System.ComponentModel.INotifyPropertyChanged)inst).PropertyChanged +=
+                (_, e) => announced.Add(e.PropertyName);
+
+            inst.SuspendWhenMonitorIsOff = !inst.SuspendWhenMonitorIsOff;
+
+            Assert.Contains(nameof(DeviceInstance.SuspendWhenMonitorIsOff), announced);
+        }
+
+        // ── Honouring the device's own on/off switch ───────────────────────
+
+        [Fact]
+        public void SwitchedOffDevice_StopsDrivingItsLeds()
+        {
+            // SimHub calls DataUpdate on every device whatever the switch says,
+            // so a device that keeps driving hardware when switched off is one
+            // the user cannot actually turn off.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+            Assert.True(host.DisplayCount > 0);
+
+            var drivenWhileOn = host.DisplayCount;
+            inst.Enabled = false;
+            inst.DataUpdate(null, ref data);
+
+            Assert.Equal(drivenWhileOn, host.DisplayCount);
+            // and the wheel is darkened rather than left on the last frame
+            Assert.Equal(1, host.ClearOutputCount);
+
+            // The blanking is an edge, not a per-frame write.
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(1, host.ClearOutputCount);
+        }
+
+        [Fact]
+        public void SwitchedBackOn_ResumesDrivingItsLeds()
+        {
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var data = new GameData();
+            inst.Enabled = false;
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(0, host.DisplayCount);
+
+            inst.Enabled = true;
+            inst.DataUpdate(null, ref data);
+
+            Assert.True(host.DisplayCount > 0);
         }
 
         [Fact]

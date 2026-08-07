@@ -30,6 +30,8 @@ namespace FanaBridge.Adapters
 
         public void Display() { }
 
+        public void ClearOutput() { }
+
         public void RebindToCurrentGeneration() { }
 
         public void HotSwapIfNeeded(WheelCapabilities currentCaps) { }
