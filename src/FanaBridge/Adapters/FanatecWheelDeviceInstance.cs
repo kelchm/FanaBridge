@@ -62,8 +62,9 @@ namespace FanaBridge.Adapters
         // resets the display cold with no trace on the ITM channel, so the ITM
         // lifecycle must restart from bring-up.
         private int _itmWheelChangeCount;
-        // True once the legacy page has been blanked after switching to mode "None",
-        // so it is cleared once on the transition rather than every frame.
+        // True once the 7-segment display (the legacy page on ITM wheels) has been
+        // blanked after switching to mode "None", so it is cleared once on the
+        // transition rather than every frame.
         private bool _legacyBlanked;
         // Tracks the settings page's display test so the handback edge (test just
         // ended) can blank the residue and reset the driver's value latches.
@@ -491,7 +492,13 @@ namespace FanaBridge.Adapters
             // waiting for the next value change.
             bool displayTest = plugin.DisplayTestActive;
             if (!displayTest && _displayTestWasActive)
+            {
                 _displayManager?.Clear();
+                // In mode "None" that clear only removed our test residue — the
+                // display goes back to not-ours, so release ownership again.
+                if (_displaySettings.DisplayMode == DisplaySettings.ModeNone)
+                    plugin.Display?.Release();
+            }
             _displayTestWasActive = displayTest;
 
             // Resolve THIS descriptor's caps override-aware — the same rule the
@@ -602,24 +609,7 @@ namespace FanaBridge.Adapters
                     // adds col01 traffic interleaved with col03 ITM, which can destabilise the
                     // firmware under load, so it is opt-in — the "Legacy Display Mode" dropdown,
                     // where "None" leaves it off.
-                    if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
-                    {
-                        // No encoder means this generation cannot reach a display
-                        // at all; a driver built around one could only throw.
-                        if (_displayManager == null && plugin.Display != null)
-                            _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
-                        if (!displayTest)
-                            _displayManager?.Update(data);
-                        _legacyBlanked = false;
-                    }
-                    else if (_displayManager != null && !_legacyBlanked && !displayTest)
-                    {
-                        // Switched to None — blank the legacy page once. Only latch
-                        // when the blanking write was accepted, so a transient
-                        // transport failure gets retried instead of leaving the
-                        // page frozen on its last value.
-                        _legacyBlanked = _displayManager.Clear();
-                    }
+                    UpdateSegmentDisplay(plugin, data, displayTest);
                 }
                 catch (Exception ex)
                 {
@@ -634,15 +624,10 @@ namespace FanaBridge.Adapters
             }
             else if (displayType != DisplayType.None)
             {
-                if (_displayManager == null && plugin.Display != null)
-                {
-                    _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
-                    SimHub.Logging.Current.Info(
-                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
-                }
-
-                if (!displayTest)
-                    _displayManager?.Update(data);
+                // Same drive (and mode-"None" gate) as the ITM legacy page: "None"
+                // stops all display writes so another application can own the screen
+                // while FanaBridge keeps driving the LEDs.
+                UpdateSegmentDisplay(plugin, data, displayTest);
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
@@ -673,7 +658,10 @@ namespace FanaBridge.Adapters
         {
             _ledHost.StopDriving();
 
-            _displayManager?.Clear();
+            // Skip the display blank in mode "None" — the display isn't ours, and
+            // on an identity transition the transport may still be live.
+            if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+                _displayManager?.Clear();
             _itmDisplay?.Stop();
             _itmWasRunning = false;
             _itmStatusSnapshot = null;   // don't show a stale ITM row while disconnected
@@ -712,6 +700,42 @@ namespace FanaBridge.Adapters
             }
         }
 
+        /// <summary>
+        /// Drives the 7-segment gear/speed display (the legacy page on ITM wheels),
+        /// honouring mode "None": any other mode runs the display driver each frame;
+        /// "None" blanks the display once on the transition — retried until the write
+        /// is accepted — and then never writes again, leaving the display free for
+        /// the firmware or another application.
+        /// </summary>
+        private void UpdateSegmentDisplay(FanatecPlugin plugin, GameData data, bool displayTest)
+        {
+            if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+            {
+                // No encoder means this generation cannot reach a display at all;
+                // a driver built around one could only throw.
+                if (_displayManager == null && plugin.Display != null)
+                {
+                    _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
+                    SimHub.Logging.Current.Info(
+                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
+                }
+                if (!displayTest)
+                    _displayManager?.Update(data);
+                _legacyBlanked = false;
+            }
+            else if (_displayManager != null && !_legacyBlanked && !displayTest)
+            {
+                // Switched to None — blank once. Only latch when the blanking write
+                // was accepted, so a transient transport failure gets retried instead
+                // of leaving the display frozen on its last value.
+                _legacyBlanked = _displayManager.Clear();
+                // The accepted blank hands the display off: release ownership so
+                // shutdown cleanup won't blank another application's content later.
+                if (_legacyBlanked)
+                    plugin.Display?.Release();
+            }
+        }
+
         public override void End()
         {
             SimHub.Logging.Current.Info(
@@ -723,8 +747,13 @@ namespace FanaBridge.Adapters
             try { PluginResolver()?.UnregisterDeviceInstance(this); }
             catch (Exception ex) { LogCleanupFailure("unregistering the device", ex); }
 
-            try { _displayManager?.Clear(); }
-            catch (Exception ex) { LogCleanupFailure("clearing the display", ex); }
+            // Mode "None" means the display isn't ours — the exit blank would stomp
+            // whatever the firmware or another application has on it.
+            if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+            {
+                try { _displayManager?.Clear(); }
+                catch (Exception ex) { LogCleanupFailure("clearing the display", ex); }
+            }
 
             try { _itmDisplay?.Stop(); }
             catch (Exception ex) { LogCleanupFailure("stopping the ITM display", ex); }

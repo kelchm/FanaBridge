@@ -71,6 +71,12 @@ namespace FanaBridge.Adapters
         /// </summary>
         public void Update(GameData data)
         {
+            // Mode "None": the display is off — the owner blanks it once on the
+            // transition; never write here, not even the exit blank. Belt-and-braces
+            // with the call-site gate, so "None" can never fall through to Gear.
+            if (DisplayMode == DisplaySettings.ModeNone)
+                return;
+
             bool telemetryLive = data != null && data.GameRunning && data.NewData != null;
             if (!telemetryLive)
             {

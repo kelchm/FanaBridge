@@ -155,6 +155,45 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void Update_ModeNone_NeverWrites()
+        {
+            // "None" must not fall through to the unknown-mode → Gear default, and
+            // must not arm the exit blank either — the display belongs to the
+            // firmware or another application.
+            var transport = new RecordingTransport();
+            var driver = MakeDriver(transport, DisplaySettings.ModeNone);
+
+            driver.Update(MakeData(gear: "4"));   // live telemetry
+            driver.Update(NotRunningData());      // game exit
+
+            Assert.Empty(transport.SentCol01Reports);
+        }
+
+        [Fact]
+        public void EncoderHasWritten_LatchesOnFirstAcceptedWrite()
+        {
+            // Shutdown cleanup uses HasWritten to skip its exit blank when
+            // FanaBridge never touched the display (mode "None").
+            var transport = new RecordingTransport();
+            var encoder = new DisplayEncoder(transport);
+            Assert.False(encoder.HasWritten);
+
+            transport.SendReturns = false;
+            encoder.DisplayGear(3);
+            Assert.False(encoder.HasWritten);     // declined sends don't count
+
+            transport.SendReturns = true;
+            encoder.DisplayGear(3);
+            Assert.True(encoder.HasWritten);
+
+            encoder.Release();                    // handoff into mode "None"
+            Assert.False(encoder.HasWritten);
+
+            encoder.DisplayGear(4);
+            Assert.True(encoder.HasWritten);      // a later write re-latches
+        }
+
+        [Fact]
         public void Update_UnknownMode_FallsBackToGear()
         {
             var transport = new RecordingTransport();
