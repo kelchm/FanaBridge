@@ -463,6 +463,20 @@ namespace FanaBridge.Transport
             if (!IsConnected)
                 return false;
 
+            // ITM subscription pushes are a display concern, not an identity one, so they are
+            // drained for the life of the connection regardless of how identity was established.
+            // This MUST stay above the converter short-circuit below: an SRM kit's identity is a
+            // one-shot, but its ITM channel is not, and skipping the drain leaves the lifecycle
+            // waiting on a confirming push that is sitting unread in the transport queue — so
+            // bring-up runs the whole recovery ladder and settles into Unavailable forever.
+            // (Whether a given kit relays those pushes at all is a separate, open question; this
+            // only guarantees we read whatever does arrive.) Draining here rather than alongside
+            // the identity streams below widens, by a few microseconds of same-thread work, the
+            // pre-existing window in which a late push from a previous attachment can outlive the
+            // wheel-change clear in the transport queue — one drain site is worth that over two
+            // that can drift apart.
+            DrainFamily(Transport.ItmReports, _bufferItm);
+
             // An SRM converter's identity is a fixed one-shot — nothing to drain or re-settle once
             // committed. Genuine bases fall through to the unchanged FF 08 path.
             if (IsSrmConverter)
@@ -478,12 +492,11 @@ namespace FanaBridge.Transport
                 catch { /* transient; the next tick retries */ }
             }
 
-            // Drain this device's three input streams (the transport's reader thread
-            // routes frames by signature). Lock-free: the wheelbase is the single
-            // owner of all three, and reads never touch the write lock.
+            // Drain this device's identity streams (the transport's reader thread routes
+            // frames by signature; the ITM stream is already drained above). Lock-free: the
+            // wheelbase is the single owner of all three, and reads never touch the write lock.
             _drainNow = now;
             _reportReader.DrainIdentity(_transport, _ingest);
-            DrainFamily(Transport.ItmReports, _bufferItm);
             DrainFamily(Transport.SrmReports, _ingestSrm);
 
             // Commit a converter identity the drain routed to us — outside the drain,

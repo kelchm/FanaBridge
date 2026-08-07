@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **FanaBridge now collects the ITM display's status messages on a wheel run through an SRM Conversion Kit.** On a converted wheel the display never came up — Device Status sat at "Unavailable — retry in …" indefinitely — because FanaBridge stopped reading those messages once it had identified the wheel through the conversion kit, leaving it waiting on a confirmation that had already arrived and gone unread. Not yet confirmed on hardware, and it does not rule out a conversion kit that never relays the messages in the first place.
+
 ## v0.6.0 - 2026-07-14
 
 ### Changed

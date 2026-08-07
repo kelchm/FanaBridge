@@ -633,6 +633,42 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void ItmReports_StillDrained_OnAnSrmConverter()
+        {
+            // Regression (v0.6.0 field report, SRM kit + Podium Bentley GT3): once a
+            // converter identity committed, UpdateIdentity short-circuited BEFORE the ITM
+            // drain. The kit's FF 05 subscription pushes then sat unread in the transport
+            // queue forever, so the ITM lifecycle never got its confirming push — bring-up
+            // ran the whole recovery ladder and parked in Unavailable. Identity is a
+            // one-shot on a converter; the ITM channel is not.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0005, 64, 64, "CSL Elite"));
+            Assert.True(wb.AutoConnect());
+
+            t.Srm.Enqueue(SrmReply());
+            clock.T += 10;
+            wb.UpdateIdentity();
+            Assert.True(wb.IsSrmConverter);
+
+            // A realistic push rather than a marker byte: FF 05 01 then one 5-byte entry
+            // [deviceId][fwHandle][paramId-LE][dataType] for display device 4 (the Bentley).
+            // The sibling tests above only need a distinguishable frame, but this one is the
+            // converter path's only coverage — so it drains AND parses, which would also catch
+            // a future regression that hands the driver a frame it silently discards.
+            t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, 0x04, 0x00, (byte)ItmParam.Speed, 0x00, 0x34 });
+            clock.T += 10;
+            Assert.False(wb.UpdateIdentity());   // no identity change — but the ITM drain still runs
+
+            var drained = new List<byte[]>();
+            wb.DrainItmReports(drained.Add);
+            Assert.Single(drained);
+
+            var subs = ItmTelemetry.ParseSubscriptionReport(drained[0], drained[0].Length, deviceId: 4);
+            var sub = Assert.Single(subs);
+            Assert.Equal(ItmParam.Speed, sub.ParamId);
+        }
+
+        [Fact]
         public void ItmReports_BufferBounded_DropsOldestWhenFull()
         {
             // Cap is 32; a stalled consumer (e.g. during the wizard) must cost the
