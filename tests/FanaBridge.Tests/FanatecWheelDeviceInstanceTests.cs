@@ -332,6 +332,40 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void PluginGoingAway_DarkensTheDeviceItWasDriving()
+        {
+            // Disabling FanaBridge should leave the wheel the way switching the
+            // device off does. The device cannot notice on its own: by teardown
+            // its updates have stopped, so the plugin has to ask.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+            Assert.True(host.DisplayCount > 0);
+
+            inst.BlankOutput();
+
+            Assert.Equal(1, host.ClearOutputCount);
+        }
+
+        [Fact]
+        public void PluginGoingAway_LeavesAnUndrivenDeviceAlone()
+        {
+            // Nothing was lit, so there is nothing to darken -- and blanking it
+            // anyway would make teardown wait on a driver that never ran.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            inst.PluginResolver = () => null;
+
+            inst.BlankOutput();
+
+            Assert.Equal(0, host.ClearOutputCount);
+        }
+
+        [Fact]
         public void SwitchedBackOn_ResumesDrivingItsLeds()
         {
             var host = new FakeLedModuleHost();

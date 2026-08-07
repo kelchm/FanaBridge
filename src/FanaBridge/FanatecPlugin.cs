@@ -554,6 +554,24 @@ namespace FanaBridge
 
             if (_connectionMonitor?.IsConnected == true)
             {
+                // Darken whatever we were driving while the transport is still
+                // alive. Disabling FanaBridge should leave the wheel the way
+                // switching the device off does, rather than frozen on the last
+                // frame drawn — the devices cannot do this themselves, as their
+                // updates have already stopped by the time we get here.
+                lock (_deviceInstancesLock)
+                {
+                    foreach (var inst in _deviceInstances)
+                    {
+                        try { inst.BlankOutput(); }
+                        catch (Exception ex)
+                        {
+                            SimHub.Logging.Current.Warn(
+                                $"FanaBridge: blanking a device on finalize: {ex.Message}");
+                        }
+                    }
+                }
+
                 try
                 {
                     _display.ClearDisplay();

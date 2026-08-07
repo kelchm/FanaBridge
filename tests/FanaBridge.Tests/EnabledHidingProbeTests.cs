@@ -99,6 +99,34 @@ namespace FanaBridge.Tests
             Assert.False(read);
         }
 
+        [Fact]
+        public void AToggleBinding_WritesBackThroughTheDerivedSetter()
+        {
+            // The link the "a refused click rewrites the stored choice" finding
+            // rests on. ToggleButton.IsChecked binds two-way by default, and the
+            // path resolves on the runtime type -- so if this holds, a click on
+            // the device toggle reaches the hiding setter and, before the guard,
+            // went straight into the value SimHub persists.
+            var stored = OnStaThread(() =>
+            {
+                var device = new HidingDevice { PretendUnavailable = true };
+                ((DeviceInstance)device).Enabled = false;   // the user switched it off
+
+                var toggle = new CheckBox();
+                BindingOperations.SetBinding(
+                    toggle, CheckBox.IsCheckedProperty,
+                    new Binding("Enabled") { Source = device });
+
+                toggle.IsChecked = true;                    // ...and then clicks it
+
+                return ((DeviceInstance)device).Enabled;    // what would be stored
+            });
+
+            // HidingDevice writes the base unconditionally, as the production
+            // setter did before the guard: the click lands on stored state.
+            Assert.True(stored);
+        }
+
         private static T OnStaThread<T>(Func<T> body)
         {
             T result = default!;

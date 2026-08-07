@@ -506,17 +506,7 @@ namespace FanaBridge.Adapters
                 // Switched off with the wheel still attached: its LEDs would
                 // otherwise sit lit on the last frame drawn. A wheel that went
                 // away has nothing to blank.
-                if (!switchedOn)
-                    _ledHost.ClearOutput();
-
-                _displayManager?.Clear();
-                _itmDisplay?.Stop();
-                _itmWasRunning = false;
-                _itmStatusSnapshot = null;   // don't show a stale ITM row while disconnected
-                // Reset one-shot latches so a reconnect starts clean: errors can log again
-                // and the legacy page can re-blank when the mode is "None".
-                _itmErrorLogged = false;
-                _legacyBlanked = false;
+                StopDrivingHardware(blankLeds: !switchedOn);
             }
 
             _wasConnected = isConnected;
@@ -713,6 +703,56 @@ namespace FanaBridge.Adapters
             // trustworthy again -- the same condition that unblocks saving.
             if (!_settings.IsFaulted)
                 _ledHost.Display();
+        }
+
+        /// <summary>
+        /// Stops driving the wheel and darkens it, resetting the state that a
+        /// later reconnect rebuilds from.
+        /// </summary>
+        private void StopDrivingHardware(bool blankLeds)
+        {
+            if (blankLeds)
+                _ledHost.ClearOutput();
+
+            _displayManager?.Clear();
+            _itmDisplay?.Stop();
+            _itmWasRunning = false;
+            _itmStatusSnapshot = null;   // don't show a stale ITM row while disconnected
+            // Reset one-shot latches so a reconnect starts clean: errors can log again
+            // and the legacy page can re-blank when the mode is "None".
+            _itmErrorLogged = false;
+            _legacyBlanked = false;
+        }
+
+        /// <summary>
+        /// Darkens this device on the plugin's way out, while its transport is
+        /// still alive.
+        /// </summary>
+        /// <remarks>
+        /// Disabling FanaBridge should leave a wheel the way switching the
+        /// device off does. Nothing else can do this: by the time SimHub tears
+        /// the plugin down, DataUpdate has stopped being called and the
+        /// transport is about to go, so the device never sees an edge it could
+        /// act on. The plugin calls this for each device it is driving.
+        /// </remarks>
+        internal void BlankOutput()
+        {
+            // Only a device that was actually being driven has anything lit.
+            // Skipping the rest also avoids their LED drivers' bounded wait for
+            // an in-flight refresh, which teardown should not pay for.
+            if (!_wasConnected)
+                return;
+
+            _wasConnected = false;
+
+            try
+            {
+                StopDrivingHardware(blankLeds: true);
+            }
+            catch (Exception ex)
+            {
+                LogCleanupFailure("blanking output", ex);
+            }
         }
 
         public override void End()

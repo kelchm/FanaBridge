@@ -63,7 +63,9 @@ The rule is that a device would rather save nothing than save something incomple
 
 **Failing to construct or load leaves the device unpublished** rather than half-built. SimHub keeps its settings directory, so nothing is lost.
 
-**Anything the runtime does is not a failure of this kind.** No plugin means no LED output; it does not affect storing, editing, or resetting settings, and the device reports itself as disabled rather than broken.
+**Anything the runtime does is not a failure of this kind.** No plugin means no LED output, and the device presents itself as not enabled: SimHub greys a device's settings while it is switched off, and one nothing can drive gets the same treatment. Editing is therefore unavailable — deliberately, and consistently with how SimHub already treats a device the user switched off.
+
+What that does *not* mean is data loss. The device still describes its settings in full, so a save taken in that state reproduces what was loaded, and the user's own on/off choice is left exactly as they set it — a click on the toggle while nothing can drive the device is declined rather than stored, since the interface would refuse to show it either way.
 
 ## Concurrency
 
