@@ -176,6 +176,34 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void HealthySettingsFileWithoutOverrides_IsNotSecondGuessedByABackup()
+        {
+            // Backups are for files that cannot be read. A file with no
+            // overrides in it is a healthy state -- most obviously after the
+            // settings file was reset while _Backups survived -- and walking
+            // past it would resurrect an override the live settings no longer
+            // carry, sizing the LED editor from a ghost for the session.
+            WriteLedAddingOverrideForDisplayOnlyWheel();
+            var overridden = WheelProfileStore.GetById("CSLSWGT3_LEDTEST");
+            WriteSettings("CSLSWGT3", WheelProfileStore.MakeOverrideKey(overridden));
+
+            var backupDir = Path.Combine(Path.GetDirectoryName(_settingsPath), "_Backups");
+            Directory.CreateDirectory(backupDir);
+            var backup = Path.Combine(backupDir,
+                Path.GetFileNameWithoutExtension(_settingsPath) + "_b1.json");
+            File.Copy(_settingsPath, backup, overwrite: true);
+            _extraFiles.Add(backup);
+
+            // A fresh, parseable file with no ProfileOverrides at all.
+            File.WriteAllText(_settingsPath, "{ \"EnableTuning\": false }");
+
+            var config = ConfigFor("Fanatec_CSLSWGT3");
+
+            Assert.NotNull(config);
+            Assert.Equal(ProfileSource.BuiltIn, config.Profile.Source);
+        }
+
+        [Fact]
         public void UnreadableSettingsFile_DoesNotBreakRegistration()
         {
             File.WriteAllText(_settingsPath, "{ this is not json");

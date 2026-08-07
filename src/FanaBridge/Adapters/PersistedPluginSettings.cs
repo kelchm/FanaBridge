@@ -92,11 +92,12 @@ namespace FanaBridge.Adapters
 
                 try
                 {
-                    if (JObject.Parse(File.ReadAllText(candidate))["ProfileOverrides"]
-                        is JObject overrides)
-                    {
-                        return overrides;
-                    }
+                    // The first candidate that parses is authoritative, overrides
+                    // or not. Backups are for files that cannot be read — a file
+                    // with no overrides in it is a healthy state, and walking past
+                    // it would resurrect whatever an older copy still carries.
+                    return JObject.Parse(File.ReadAllText(candidate))
+                        ["ProfileOverrides"] as JObject;
                 }
                 catch (Exception ex)
                 {
