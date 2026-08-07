@@ -48,8 +48,10 @@ namespace FanaBridge.Adapters
         void Display();
 
         /// <summary>
-        /// Darkens the wheel's LEDs. Used when output stops while the hardware
-        /// is still attached — otherwise the last frame simply stays lit.
+        /// Stops driving the wheel's LEDs: darkens them and lets go of the
+        /// driver. Used when output stops while the hardware is still attached
+        /// — otherwise the last frame stays lit and the LEDs tab keeps
+        /// reporting a connection that is no longer there.
         /// </summary>
         void ClearOutput();
 

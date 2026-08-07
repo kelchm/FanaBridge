@@ -216,16 +216,20 @@ namespace FanaBridge.Adapters
 
         public void ClearOutput()
         {
-            // Only a driver that was actually built can blank anything; there is
-            // nothing lit to blank when the runtime never produced one.
+            // Close() is the SDK's own way to stop driving a device, and it does
+            // more than blank: it disposes the driver — the only thing that
+            // removes its subscription to a static update event — drops the
+            // reference, so the LEDs tab stops reporting a connection that is
+            // gone, and resets the retry backoff so a later reconnect rebuilds
+            // cleanly. A driver that was never built is a no-op.
             try
             {
-                (_manager.GetDriverInstance() as FanatecLedDriver)?.Clear();
+                _manager.Close();
             }
             catch (Exception ex)
             {
                 SimHub.Logging.Current.Warn(
-                    "FanatecLedModuleHost: clearing LED output failed: " + ex.Message);
+                    "FanatecLedModuleHost: stopping LED output failed: " + ex.Message);
             }
         }
 
