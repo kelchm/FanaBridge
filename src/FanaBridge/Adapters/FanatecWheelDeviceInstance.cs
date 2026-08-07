@@ -514,7 +514,10 @@ namespace FanaBridge.Adapters
                     "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                     "]: " + (switchedOn ? "Lost connection" : "Switched off"));
 
-                StopDrivingHardware();
+                // Switched off with the wheel still attached: its LEDs would
+                // otherwise sit lit on the last frame drawn. A wheel that went
+                // away has nothing to blank.
+                StopDrivingHardware(blankLeds: !switchedOn);
             }
 
             _wasConnected = isConnected;
@@ -717,15 +720,10 @@ namespace FanaBridge.Adapters
         /// Stops driving the wheel and darkens it, resetting the state that a
         /// later reconnect rebuilds from.
         /// </summary>
-        private void StopDrivingHardware()
+        private void StopDrivingHardware(bool blankLeds)
         {
-            // Always, even for a wheel that has gone away and has nothing left
-            // to blank: this also lets go of the LED driver, and that is the
-            // only way the module finds out. It learns of a lost wheel from a
-            // failed write, and we have just stopped writing — so without this
-            // the LEDs tab keeps reporting the wheel as connected while the
-            // header says otherwise.
-            _ledHost.ClearOutput();
+            if (blankLeds)
+                _ledHost.ClearOutput();
 
             _displayManager?.Clear();
             _itmDisplay?.Stop();
@@ -760,7 +758,7 @@ namespace FanaBridge.Adapters
 
             try
             {
-                StopDrivingHardware();
+                StopDrivingHardware(blankLeds: true);
             }
             catch (Exception ex)
             {

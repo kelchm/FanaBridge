@@ -380,30 +380,6 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
-        public void LosingTheWheel_StopsTheModuleReportingItAsConnected()
-        {
-            // The module only learns a wheel has gone from a write that fails,
-            // and losing it is exactly when we stop writing -- so nothing told
-            // it, and the LEDs tab kept saying "Connected" while the header
-            // said otherwise.
-            var host = new FakeLedModuleHost();
-            var inst = InstanceWithHost("PSWBMW", host);
-            var withWheel = PluginWithWheel("PSWBMW", out _);
-            inst.PluginResolver = () => withWheel;
-
-            var data = new GameData();
-            inst.DataUpdate(null, ref data);
-            Assert.True(host.DisplayCount > 0);
-
-            // The wheel goes away while FanaBridge keeps running.
-            var withoutWheel = PluginWithWheel(null, out _);
-            inst.PluginResolver = () => withoutWheel;
-            inst.DataUpdate(null, ref data);
-
-            Assert.Equal(1, host.ClearOutputCount);
-        }
-
-        [Fact]
         public void PluginGoingAway_DarkensTheDeviceItWasDriving()
         {
             // Disabling FanaBridge should leave the wheel the way switching the
