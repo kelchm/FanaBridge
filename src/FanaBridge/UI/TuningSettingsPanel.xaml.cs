@@ -44,7 +44,17 @@ namespace FanaBridge.UI
         /// </summary>
         private void UpdateEnabledState()
         {
-            bool enabled = FanatecPlugin.Instance?.Settings?.EnableTuning == true;
+            var plugin = FanatecPlugin.Instance;
+            bool enabled = plugin?.Settings?.EnableTuning == true;
+
+            // Without a plugin the flag reads false whether or not the user set
+            // it, so the stock hint would send someone to a settings page that
+            // is not there to tell them to turn on something already on.
+            txtDisabledHint.Text = plugin == null
+                ? "FanaBridge is not running, so these settings cannot be read from or " +
+                  "written to the wheel. Enable the plugin to use them."
+                : "Tuning features are disabled. Enable them in the FanaBridge plugin " +
+                  "settings under Experimental Features.";
 
             panelDisabled.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
             panelEnabled.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;

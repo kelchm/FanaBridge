@@ -253,6 +253,39 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void ClickingTheToggleWithNothingToDriveIt_LeavesTheStoredChoiceAlone()
+        {
+            // Only WPF reaches this setter, so a click the UI is going to refuse
+            // must not change what is stored. While nothing can drive the device
+            // the toggle reads false whatever the user chose, so honouring the
+            // click would write true -- switching on a device they deliberately
+            // switched off, and making it impossible to switch one off at all.
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+            inst.Enabled = false;                 // the user switches it off
+
+            inst.PluginResolver = () => null;     // ...then disables the plugin
+            inst.Enabled = true;                  // ...and clicks the toggle
+
+            Assert.False(((DeviceInstance)inst).Enabled);   // the stored choice stands
+        }
+
+        [Fact]
+        public void ClickingTheToggleWithAPluginPresent_StillStores()
+        {
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            inst.Enabled = false;
+            Assert.False(((DeviceInstance)inst).Enabled);
+
+            inst.Enabled = true;
+            Assert.True(((DeviceInstance)inst).Enabled);
+        }
+
+        [Fact]
         public void SimHubsOwnNotifications_StillReachTheUi()
         {
             // Intercepting the subscription must not cost us everything SimHub

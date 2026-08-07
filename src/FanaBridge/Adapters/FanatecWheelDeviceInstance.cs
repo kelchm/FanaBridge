@@ -285,12 +285,21 @@ namespace FanaBridge.Adapters
             get => base.Enabled && PluginResolver() != null;
             set
             {
-                base.Enabled = value;
+                // Only WPF's two-way bindings reach this setter — every place
+                // SimHub reads or restores the switch goes through a
+                // DeviceInstance-typed reference and so writes the base member
+                // directly. That makes this purely the user clicking a toggle,
+                // and a click the UI is going to refuse must not quietly change
+                // what is stored: while nothing can drive the device the toggle
+                // reads false whatever the user chose, so every click would
+                // write true — switching a device they had deliberately turned
+                // off back on, and making it impossible to turn one off.
+                if (PluginResolver() != null)
+                    base.Enabled = value;
 
-                // The base only notifies when its own value moved, so a user
-                // switching on a device nothing can drive would move the toggle
-                // and hear nothing back — leaving it showing a state we are not
-                // in. Announcing unconditionally makes it spring back.
+                // The base only notifies when its own value moved, so a click
+                // we declined — or one that set what was already set — would
+                // otherwise leave the toggle showing a state we are not in.
                 AnnounceEnabled(force: true);
             }
         }
@@ -724,6 +733,17 @@ namespace FanaBridge.Adapters
             catch (Exception ex) { LogCleanupFailure("stopping the ITM display", ex); }
 
             _settings.Changed -= OnSettingsChanged;
+
+            // Let go of the UI's subscription. Forwarding is a self-reference so
+            // it cannot keep this object alive, but a device SimHub has finished
+            // with should not still be talking to bindings.
+            base.PropertyChanged -= ForwardBaseNotification;
+            lock (_handlerLock)
+            {
+                _uiHandlers = null;
+                _forwardingBase = false;
+            }
+
             _ledHost.Dispose();
         }
 
