@@ -214,7 +214,17 @@ namespace FanaBridge.Adapters
 
         public void Display() => _module.Display();
 
-        public void SetCanDrive(bool canDrive) => _module.IsEnabled = canDrive;
+        public void SetStatus(bool canDrive, bool connected)
+        {
+            _module.IsEnabled = canDrive;
+
+            // The module refreshes this itself, but only from inside Display(),
+            // which we stop calling the moment the device is not connected. So
+            // it would sit on whatever it last saw -- reporting a wheel as
+            // connected long after it was unplugged. Both setters no-op when
+            // the value has not moved, and neither is persisted.
+            _module.IsConnected = connected;
+        }
 
         public void ClearOutput()
         {

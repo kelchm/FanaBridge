@@ -353,6 +353,33 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void LosingTheWheel_TellsTheModuleItIsNoLongerConnected()
+        {
+            // The module caches this and only refreshes it from inside its own
+            // output path -- which stops the moment the wheel goes -- so left
+            // alone it reports a wheel as connected long after it was
+            // unplugged, while the header correctly says otherwise.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var withWheel = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => withWheel;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(true, host.ReportedConnected);
+
+            // The wheel goes away while FanaBridge keeps running.
+            var withoutWheel = PluginWithWheel(null, out _);
+            inst.PluginResolver = () => withoutWheel;
+            inst.DataUpdate(null, ref data);
+
+            Assert.Equal(false, host.ReportedConnected);
+            // ...and the badge stays visible to say so, rather than vanishing:
+            // FanaBridge really is looking for the wheel in this state.
+            Assert.Equal(true, host.CanDrive);
+        }
+
+        [Fact]
         public void LosingTheWheel_StopsTheModuleReportingItAsConnected()
         {
             // The module only learns a wheel has gone from a write that fails,
