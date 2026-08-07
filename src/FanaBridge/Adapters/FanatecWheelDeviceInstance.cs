@@ -511,7 +511,13 @@ namespace FanaBridge.Adapters
             if (!isConnected)
                 return;
 
-            var plugin = PluginResolver();
+            // The generation resolved at the top of the frame — deliberately not
+            // resolved again. A second read could observe a newer plugin than
+            // _boundPlugin records, so the display/ITM drivers built below would
+            // belong to a generation the guard has not seen yet, and the next
+            // frame would tear down drivers that were built correctly. One
+            // generation per frame, by construction.
+            var plugin = currentPlugin;
             var device = plugin?.Transport;
             if (device == null || !device.IsConnected)
                 return;
