@@ -493,20 +493,27 @@ namespace FanaBridge.Adapters
                 canDrive: switchedOn && currentPlugin != null,
                 connected: isConnected);
 
-            // Detect Connected → Scanning transition
-            if (_wasConnected && !isConnected)
+            // Detect Connected → Scanning transition. The edge is recorded
+            // before it is acted on, so a teardown that somehow threw could
+            // never leave the edge armed to fire again every frame.
+            bool lostConnection = _wasConnected && !isConnected;
+            _wasConnected = isConnected;
+
+            if (lostConnection)
             {
                 SimHub.Logging.Current.Info(
                     "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                     "]: " + (switchedOn ? "Lost connection" : "Switched off"));
 
-                // Switched off with the wheel still attached: its LEDs would
-                // otherwise sit lit on the last frame drawn. A wheel that went
-                // away has nothing to blank.
-                StopDrivingHardware(blankLeds: !switchedOn);
+                try
+                {
+                    StopDrivingHardware();
+                }
+                catch (Exception ex)
+                {
+                    LogCleanupFailure("stopping output on disconnect", ex);
+                }
             }
-
-            _wasConnected = isConnected;
 
             if (!isConnected)
                 return;
@@ -712,10 +719,18 @@ namespace FanaBridge.Adapters
         /// Stops driving the wheel and darkens it, resetting the state that a
         /// later reconnect rebuilds from.
         /// </summary>
-        private void StopDrivingHardware(bool blankLeds)
+        /// <remarks>
+        /// The LEDs are blanked whatever the reason output stopped. When the
+        /// wheel itself went away that write quietly fails — the transport
+        /// converts every write failure into a false return — so it costs
+        /// nothing, and blanking unconditionally is what makes the plugin
+        /// teardown race benign: an update frame that observes the plugin
+        /// already unpublished takes this edge and darkens the wheel itself,
+        /// and the plugin's own BlankOutput then finds nothing left to do.
+        /// </remarks>
+        private void StopDrivingHardware()
         {
-            if (blankLeds)
-                _ledHost.StopDriving();
+            _ledHost.StopDriving();
 
             _displayManager?.Clear();
             _itmDisplay?.Stop();
@@ -750,7 +765,7 @@ namespace FanaBridge.Adapters
 
             try
             {
-                StopDrivingHardware(blankLeds: true);
+                StopDrivingHardware();
             }
             catch (Exception ex)
             {

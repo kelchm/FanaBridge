@@ -380,6 +380,53 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void AThrowingTeardown_FiresTheEdgeOnce_AndTheFrameSurvives()
+        {
+            // Nothing enforces that a host's StopDriving cannot throw. If one
+            // did, the edge must not stay armed -- re-detecting the same
+            // disconnect every frame, logging and failing forever -- and the
+            // frame itself must come back for the next update.
+            var host = new FakeLedModuleHost { ThrowOnStopDriving = true };
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);          // connected
+
+            inst.Enabled = false;                     // take the edge, throwing
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(1, host.StopDrivingCount);
+
+            inst.DataUpdate(null, ref data);          // edge must not re-fire
+            Assert.Equal(1, host.StopDrivingCount);
+        }
+
+        [Fact]
+        public void FinalizeRace_TheFrameThatSeesThePluginGone_StillDarkensTheWheel()
+        {
+            // FinalizePlugin unpublishes the singleton before it blanks. A
+            // frame landing in that window takes the disconnect edge itself --
+            // and must blank, because BlankOutput afterwards sees the device as
+            // no longer driven and correctly does nothing. Whichever side wins
+            // the race, the wheel goes dark exactly once.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);          // connected, driving
+
+            inst.PluginResolver = () => null;         // finalize has unpublished
+            inst.DataUpdate(null, ref data);          // the in-flight frame
+            Assert.Equal(1, host.StopDrivingCount);   // ...darkens the wheel
+
+            inst.BlankOutput();                       // finalize's own pass
+            Assert.Equal(1, host.StopDrivingCount);   // nothing left to do
+        }
+
+        [Fact]
         public void PluginGoingAway_DarkensTheDeviceItWasDriving()
         {
             // Disabling FanaBridge should leave the wheel the way switching the

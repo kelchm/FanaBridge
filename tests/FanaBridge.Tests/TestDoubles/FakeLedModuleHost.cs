@@ -102,7 +102,20 @@ namespace FanaBridge.Tests.TestDoubles
         }
 
         public void Display() => DisplayCount++;
-        public void StopDriving() => StopDrivingCount++;
+
+        /// <summary>
+        /// The real host never lets StopDriving throw, but nothing enforces
+        /// that on an implementation — so the device's disconnect edge is
+        /// tested against one that does.
+        /// </summary>
+        public bool ThrowOnStopDriving { get; set; }
+
+        public void StopDriving()
+        {
+            StopDrivingCount++;
+            if (ThrowOnStopDriving)
+                throw new InvalidOperationException("stop driving failed");
+        }
 
         /// <summary>Last values pushed, or null if the device never said.</summary>
         public bool? CanDrive { get; private set; }
