@@ -177,9 +177,19 @@ namespace FanaBridge.Updater
 
                     _lastCheckCompletedUtc = _utcNow();
                 }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    // Cancellation nobody asked for is an HttpClient timeout —
+                    // report it, or a manual check would appear to do nothing.
+                    const string detail = "request timed out.";
+                    _logWarn("Update check failed: " + detail);
+                    Publish(new UpdateSnapshot(UpdatePhase.CheckFailed, null, detail, false));
+                    _lastCheckCompletedUtc = _utcNow();
+                }
                 catch (OperationCanceledException)
                 {
-                    // Cancellation is not a failure — restore the pre-check non-busy phase.
+                    // Caller-requested cancellation is not a failure — restore
+                    // the pre-check non-busy phase.
                     Publish(previous);
                 }
                 catch (Exception ex)
@@ -280,6 +290,15 @@ namespace FanaBridge.Updater
                         TryDeleteDir(staging);
                     }
                 }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    // Timeout, not a user cancel — report it as a failure.
+                    if (staging != null)
+                        TryDeleteDir(staging);
+                    const string detail = "download timed out.";
+                    _logWarn("Update apply failed: " + detail);
+                    Publish(new UpdateSnapshot(UpdatePhase.Failed, release, detail, false));
+                }
                 catch (OperationCanceledException)
                 {
                     // Restore to UpdateAvailable so the user can retry; do not mark Failed.
@@ -289,6 +308,8 @@ namespace FanaBridge.Updater
                 }
                 catch (Exception ex)
                 {
+                    if (staging != null)
+                        TryDeleteDir(staging);
                     string detail = ex.Message;
                     _logWarn("Update apply failed: " + detail);
                     Publish(new UpdateSnapshot(UpdatePhase.Failed, release, detail, false));

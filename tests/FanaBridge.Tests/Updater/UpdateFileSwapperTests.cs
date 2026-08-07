@@ -93,6 +93,8 @@ namespace FanaBridge.Tests.Updater
                 Assert.True(result.AccessDenied);
                 // Live DLL untouched: only rename 1 was attempted and it failed atomically.
                 Assert.Equal("OLD", File.ReadAllText(Path.Combine(install, UpdatePackage.DllName)));
+                // The half-staged .new is swept on the way out, not left behind.
+                Assert.False(File.Exists(Path.Combine(install, UpdatePackage.DllName + UpdateFileSwapper.NewSuffix)));
             }
             finally
             {

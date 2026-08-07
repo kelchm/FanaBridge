@@ -146,6 +146,7 @@ namespace FanaBridge.Tests.Updater
         }
 
         [Fact]
+        [Trait("Category", "Slow")]
         public void ExtractToStaging_TotalSizeCap_Throws()
         {
             string staging = Path.Combine(Path.GetTempPath(), "FanaBridge-pkg-" + Guid.NewGuid().ToString("N"));

@@ -113,11 +113,20 @@ namespace FanaBridge.Updater
 
         /// <summary>Formats as <c>0.6.0</c> or <c>0.6.0-preview</c>.</summary>
         public override string ToString()
-            => Suffix == null ? Numeric.ToString() : Numeric.ToString() + "-" + Suffix;
-
-        /// <summary>Missing Version components are -1; treat them as 0 for equality/order.</summary>
-        private static Version Normalize(Version v)
         {
+            Version n = Numeric ?? new Version(0, 0);
+            return Suffix == null ? n.ToString() : n + "-" + Suffix;
+        }
+
+        /// <summary>
+        /// Missing Version components are -1; treat them as 0 for equality/order.
+        /// A null input (default-constructed struct — <c>Numeric</c> is a reference
+        /// type) normalizes to 0.0.0.0 so comparisons never throw.
+        /// </summary>
+        private static Version Normalize(Version? v)
+        {
+            if (v == null)
+                return new Version(0, 0, 0, 0);
             int build = v.Build < 0 ? 0 : v.Build;
             int rev = v.Revision < 0 ? 0 : v.Revision;
             return new Version(v.Major, v.Minor, build, rev);

@@ -215,6 +215,9 @@ namespace FanaBridge.Updater
             }
             catch (Exception ex)
             {
+                // Don't leave a half-written .new behind (a retry would have to
+                // delete it anyway, and next launch would sweep it regardless).
+                TryDelete(newDll);
                 return FailClosed(ex.Message, ex);
             }
         }

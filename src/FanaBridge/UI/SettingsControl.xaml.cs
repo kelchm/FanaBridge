@@ -1259,7 +1259,15 @@ namespace FanaBridge.UI
 
         private void OpenReleasePage(UpdateSnapshot snapshot)
         {
-            string url = snapshot?.Release?.HtmlUrl ?? "https://github.com/kelchm/FanaBridge/releases";
+            const string fallback = "https://github.com/kelchm/FanaBridge/releases";
+
+            // The feed's html_url is remote data handed to the shell — only
+            // launch real web URLs, never other schemes.
+            string url = snapshot?.Release?.HtmlUrl;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri uri)
+                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                url = fallback;
+
             try
             {
                 Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });

@@ -194,19 +194,22 @@ namespace FanaBridge.Tests.Updater
         [Fact]
         public async Task CheckAsync_ConcurrentSecondCall_IsNoOp()
         {
-            var tcs = new TaskCompletionSource<string>();
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
             int fetches = 0;
             var svc = CreateService(
                 currentVersion: "0.6.0",
                 fetchText: async (_, ct) =>
                 {
                     Interlocked.Increment(ref fetches);
+                    entered.TrySetResult(true);
                     return await tcs.Task.ConfigureAwait(false);
                 });
 
             Task first = svc.CheckAsync();
-            // Allow first to enter fetch.
-            await Task.Delay(50);
+            // Deterministic: wait until the first call is INSIDE the fetch, so
+            // the second call is guaranteed to hit the busy gate.
+            await entered.Task;
             Task second = svc.CheckAsync();
             await second;
 

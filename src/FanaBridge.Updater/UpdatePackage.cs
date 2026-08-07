@@ -165,6 +165,11 @@ namespace FanaBridge.Updater
                     return false;
                 if (file == "." || file == "..")
                     return false;
+                // Names that aren't valid Windows file names (':' in particular
+                // has drive-qualifier semantics in legacy path handling) are not
+                // logos — ignore rather than rely on FileStream rejecting them.
+                if (file.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                    return false;
 
                 relativePath = LogosDirName + "\\" + file;
                 return true;

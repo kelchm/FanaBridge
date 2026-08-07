@@ -113,8 +113,13 @@ namespace FanaBridge.Updater
                 return null;
             }
 
+            // Normalize before deriving anything: stray whitespace would poison
+            // the asset-name match and the UI version string, while TryParse
+            // (which trims internally) would still succeed.
+            tagName = tagName!.Trim();
+
             // Version string for the UI/asset name: strip a single leading v/V only.
-            string version = tagName!;
+            string version = tagName;
             if (version.Length > 0 && (version[0] == 'v' || version[0] == 'V'))
                 version = version.Substring(1);
 
@@ -184,7 +189,7 @@ namespace FanaBridge.Updater
 
             bool canInstall = blocked == null && digestHex != null && !string.IsNullOrWhiteSpace(zipUrl);
             return new ReleaseInfo(
-                tagName: tagName!,
+                tagName: tagName,
                 version: version,
                 htmlUrl: htmlUrl!,
                 zipName: zipName,
