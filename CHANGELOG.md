@@ -9,6 +9,10 @@
 - **The Screen and Tuning tabs no longer disappear when FanaBridge is disabled.** Editing what a device stores never needed the hardware, and SimHub kept saving those settings regardless.
 - A profile override that changes a wheel's LED layout is now applied when devices are registered, so restarting SimHub gives the LED editor the right number of slots. A display-only wheel given LEDs by an override previously had no LED editor at all.
 - Pulling the plugin out from under a running device no longer risks an error from the LED output path, and a device idle while the plugin was down now resumes output when it returns.
+- **Switching a device off in SimHub now actually stops it.** The toggle had no effect: SimHub asks every device for an update whatever its switch says, and reads the switch only afterwards, to decide what state to display — so FanaBridge kept driving the LEDs and display of a device the user had turned off. Switching one off now stops its output and darkens its LEDs, rather than leaving them lit on the last frame drawn.
+- **A device now shows as not enabled while FanaBridge is disabled, instead of looking live.** SimHub greys out a device's settings while it has nothing to drive it, and the header says so. The user's own on/off choice is untouched — a device switched on stays switched on, and comes back when the plugin does.
+- The device list keeps up with the plugin being enabled or disabled. Previously the tiles and their toggles held whatever they showed when they were drawn, and an open settings page only caught up once another device was selected and the first re-opened.
+- **FanaBridge no longer floods the SimHub log while it is disabled.** A device with nothing driving it reported a state SimHub immediately overrode, so the two disagreed on every frame and each disagreement was logged — 127,145 lines in one user's session.
 
 ## v0.6.0 - 2026-07-14
 
