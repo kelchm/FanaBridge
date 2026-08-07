@@ -494,6 +494,12 @@ namespace FanaBridge.Adapters
             // own choice, not the presented value above.
             bool switchedOn = base.Enabled && !(Suspended && SuspendWhenMonitorIsOff);
 
+            // Tell the LED module whether it is driving anything, so the LEDs
+            // tab drops its connection badge instead of claiming to search for
+            // hardware nobody is looking for. This is what SimHub itself shows
+            // for a device that is switched off.
+            _ledHost.SetCanDrive(switchedOn && currentPlugin != null);
+
             bool isConnected = switchedOn && GetDeviceState() == DeviceState.Connected;
 
             // Detect Connected → Scanning transition

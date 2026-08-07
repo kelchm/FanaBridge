@@ -214,6 +214,8 @@ namespace FanaBridge.Adapters
 
         public void Display() => _module.Display();
 
+        public void SetCanDrive(bool canDrive) => _module.IsEnabled = canDrive;
+
         public void ClearOutput()
         {
             // Close() is the SDK's own way to stop driving a device, and it does

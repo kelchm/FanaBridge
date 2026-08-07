@@ -30,6 +30,8 @@ namespace FanaBridge.Adapters
 
         public void Display() { }
 
+        public void SetCanDrive(bool canDrive) { }
+
         public void ClearOutput() { }
 
         public void RebindToCurrentGeneration() { }

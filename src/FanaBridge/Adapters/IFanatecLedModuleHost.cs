@@ -48,6 +48,17 @@ namespace FanaBridge.Adapters
         void Display();
 
         /// <summary>
+        /// Tells the module whether anything can drive this device right now.
+        /// </summary>
+        /// <remarks>
+        /// SimHub hides the LEDs tab's connection badge while this is false —
+        /// the same thing it does for a device the user switched off, rather
+        /// than claiming to be searching for hardware nobody is looking for.
+        /// It also gates SimHub's own per-channel output on it.
+        /// </remarks>
+        void SetCanDrive(bool canDrive);
+
+        /// <summary>
         /// Stops driving the wheel's LEDs: darkens them and lets go of the
         /// driver. Used when output stops while the hardware is still attached
         /// — otherwise the last frame stays lit and the LEDs tab keeps

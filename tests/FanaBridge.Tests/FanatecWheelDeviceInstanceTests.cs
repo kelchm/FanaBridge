@@ -331,6 +331,27 @@ namespace FanaBridge.Tests
             Assert.Equal(1, host.ClearOutputCount);
         }
 
+        [Theory]
+        [InlineData(true, true, true)]     // switched on, plugin present
+        [InlineData(true, false, false)]   // switched on, but nothing to drive it
+        [InlineData(false, true, false)]   // switched off by the user
+        public void TheModuleIsToldWhetherItIsDrivingAnything(
+            bool switchedOn, bool pluginPresent, bool expected)
+        {
+            // SimHub hides the LEDs tab's connection badge while this is false,
+            // rather than claiming to search for hardware nobody is looking for.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => pluginPresent ? plugin : null;
+            inst.Enabled = switchedOn;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+
+            Assert.Equal(expected, host.CanDrive);
+        }
+
         [Fact]
         public void PluginGoingAway_DarkensTheDeviceItWasDriving()
         {

@@ -106,6 +106,10 @@ namespace FanaBridge.Tests.TestDoubles
 
         public void Display() => DisplayCount++;
         public void ClearOutput() => ClearOutputCount++;
+
+        /// <summary>Last value pushed, or null if the device never said.</summary>
+        public bool? CanDrive { get; private set; }
+        public void SetCanDrive(bool canDrive) => CanDrive = canDrive;
         public void RebindToCurrentGeneration() { }
         public void HotSwapIfNeeded(WheelCapabilities currentCaps) { }
 
