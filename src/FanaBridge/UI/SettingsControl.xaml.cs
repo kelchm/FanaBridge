@@ -1135,11 +1135,9 @@ namespace FanaBridge.UI
                     break;
 
                 case UpdatePhase.UpdateAvailable:
-                    // The About line reports the manual check's outcome and
-                    // points at the banner — the actionable UI — rather than
-                    // duplicating it at the bottom of the page.
-                    txtUpdateCheckResult.Text = "FanaBridge " + release.Version
-                        + " is available — see above.";
+                    // The banner sits directly above the manual-check line, so
+                    // it IS the outcome display — no text needed here.
+                    txtUpdateCheckResult.Text = "";
                     StyleUpdateBanner(failed: false);
                     runUpdateHeadline.Text = "Update available: FanaBridge " + release.Version;
                     if (release.CanSelfInstall)

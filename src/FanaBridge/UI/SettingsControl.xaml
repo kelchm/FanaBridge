@@ -9,43 +9,6 @@
     <ScrollViewer>
         <StackPanel>
 
-            <!-- Self-updater banner. Hidden until the background release check
-                 finds a newer version; from there it walks the update phases
-                 (offer → downloading/installing → restart, or the amber failed
-                 state — palette swapped in code by StyleUpdateBanner). Spans
-                 the section content width: one row of headline (+ inline
-                 release-notes link) and a right-aligned action button, with a
-                 muted detail line only for states that need one. Headline text
-                 goes through runUpdateHeadline — setting txtUpdateTitle.Text
-                 would wipe the inline hyperlink. Driven entirely by
-                 UpdateUpdateBanner from UpdateService snapshots. -->
-            <Border x:Name="borderUpdateAlert" Visibility="Collapsed"
-                    Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
-                    CornerRadius="4" Padding="12,8" Margin="19,4,19,12">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                        <TextBlock x:Name="txtUpdateTitle" Foreground="#AADDFF" FontSize="12"
-                                   FontWeight="SemiBold" TextWrapping="Wrap">
-                            <Run x:Name="runUpdateHeadline" /><Run Text="   " /><Hyperlink
-                                Click="LnkReleaseNotes_Click"
-                                Foreground="#4FC3F7" TextDecorations="None" FontWeight="Normal"
-                                ToolTip="Open the release page on GitHub">Release notes</Hyperlink>
-                        </TextBlock>
-                        <TextBlock x:Name="txtUpdateDetail" Foreground="#AADDFF" Opacity="0.7"
-                                   FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0"
-                                   Visibility="Collapsed" />
-                    </StackPanel>
-                    <styles:SHButtonPrimary Grid.Column="1" x:Name="btnUpdateNow" Click="BtnUpdateNow_Click"
-                                            VerticalAlignment="Center" Margin="16,0,0,0">
-                        Update
-                    </styles:SHButtonPrimary>
-                </Grid>
-            </Border>
-
             <!-- Connection Status -->
             <styles:SHSection Title="DEVICE STATUS" ShowSeparator="True">
                 <StackPanel>
@@ -281,6 +244,48 @@
                             github.com/kelchm/FanaBridge
                         </Hyperlink>
                     </TextBlock>
+
+                    <!-- Self-updater banner. Lives here so everything update-
+                         related shares one surface (installed version above,
+                         auto-check preference + manual check below) — accepted
+                         trade-off: it can sit below the fold on small windows.
+                         Hidden until the release check finds a newer version;
+                         from there it walks the update phases (offer →
+                         downloading/installing → restart, or the amber failed
+                         state — palette swapped by StyleUpdateBanner). One row
+                         of headline (+ inline release-notes link) and a
+                         right-aligned action button; muted detail line only
+                         for states that need one. Headline text goes through
+                         runUpdateHeadline — setting txtUpdateTitle.Text would
+                         wipe the inline hyperlink. Driven entirely by
+                         UpdateUpdateBanner from UpdateService snapshots. -->
+                    <Border x:Name="borderUpdateAlert" Visibility="Collapsed"
+                            Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
+                            CornerRadius="4" Padding="12,8" Margin="0,10,0,2">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock x:Name="txtUpdateTitle" Foreground="#AADDFF" FontSize="12"
+                                           FontWeight="SemiBold" TextWrapping="Wrap">
+                                    <Run x:Name="runUpdateHeadline" /><Run Text="   " /><Hyperlink
+                                        Click="LnkReleaseNotes_Click"
+                                        Foreground="#4FC3F7" TextDecorations="None" FontWeight="Normal"
+                                        ToolTip="Open the release page on GitHub">Release notes</Hyperlink>
+                                </TextBlock>
+                                <TextBlock x:Name="txtUpdateDetail" Foreground="#AADDFF" Opacity="0.7"
+                                           FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0"
+                                           Visibility="Collapsed" />
+                            </StackPanel>
+                            <styles:SHButtonPrimary Grid.Column="1" x:Name="btnUpdateNow" Click="BtnUpdateNow_Click"
+                                                    VerticalAlignment="Center" Margin="16,0,0,0">
+                                Update
+                            </styles:SHButtonPrimary>
+                        </Grid>
+                    </Border>
+
                     <CheckBox x:Name="chkEnableUpdateCheck" Margin="0,10,0,0"
                               Content="Check for updates automatically"
                               ToolTip="Checks at startup and once a day while SimHub runs."
