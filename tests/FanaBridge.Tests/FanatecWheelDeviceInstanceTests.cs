@@ -41,6 +41,10 @@ namespace FanaBridge.Tests
         {
             public bool Connected;
             public FakeReportStream Identity { get; } = new FakeReportStream();
+            // Recorded col01 output (copied — the encoders reuse their buffers) so
+            // display tests can assert exactly what reached the wire.
+            public List<byte[]> Col01Sent { get; } = new List<byte[]>();
+            public bool AcceptCol01 = true;
             public bool Connect(int productId) { Connected = true; return true; }
             public void Disconnect() => Connected = false;
             public void Dispose() => Disconnect();
@@ -49,7 +53,13 @@ namespace FanaBridge.Tests
             public FanatecTransport.TransportConnectStatus LastConnectStatus =>
                 FanatecTransport.TransportConnectStatus.Connected;
             public bool SendCol03(byte[] data) => true;
-            public bool SendCol01(byte[] data) => true;
+            public bool SendCol01(byte[] data)
+            {
+                var copy = new byte[data.Length];
+                Array.Copy(data, copy, data.Length);
+                Col01Sent.Add(copy);
+                return AcceptCol01;
+            }
             public IReportStream IdentityReports => Identity;
             public IReportStream ItmReports => FakeReportStream.Empty;
             public IReportStream SrmReports => FakeReportStream.Empty;
@@ -85,8 +95,18 @@ namespace FanaBridge.Tests
         // settled identity for the given wheel code (or none when null).
         private static FanatecPlugin PluginWithWheel(
             string? wheelCode, out FanatecWheelbase wheelbase, string? overrideProfileId = null)
+            => PluginWithWheel(wheelCode, out wheelbase, out _, overrideProfileId,
+                withDisplayEncoder: false);
+
+        // The transport-exposing overload also installs a display encoder by
+        // default — it exists for the display tests, which assert on the col01
+        // frames that encoder emits.
+        private static FanatecPlugin PluginWithWheel(
+            string? wheelCode, out FanatecWheelbase wheelbase, out FakeTransport transport,
+            string? overrideProfileId = null, bool withDisplayEncoder = true)
         {
             var t = new FakeTransport();
+            transport = t;
             var clock = new Clock();
             wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);
             if (overrideProfileId != null)
@@ -103,7 +123,7 @@ namespace FanaBridge.Tests
             }
 
             var plugin = new FanatecPlugin();
-            plugin.InstallWheelbaseForTest(wheelbase);
+            plugin.InstallWheelbaseForTest(wheelbase, withDisplayEncoder);
             return plugin;
         }
 
@@ -1018,6 +1038,230 @@ namespace FanaBridge.Tests
             inst.End();
 
             Assert.Equal(1, host.DisposeCount);
+        }
+
+        // ── Display mode "None" (basic 7-segment wheels) ───────────────────
+        //
+        // "None" hands the 7-segment display to the firmware or another
+        // application while FanaBridge keeps driving the LEDs: no display writes
+        // while a game runs, one blank on the transition into "None" (retried
+        // until the transport accepts it), and no exit blank on End.
+        // Runs on CSLSWGT3 — a basic-display wheel with no LEDs, so the col01
+        // stream carries display frames only.
+
+        // StatusDataBase is abstract with internal setters (see
+        // FanatecDisplayDriverTests) — close StatusData<T> over object and drive
+        // the internal setters via reflection.
+        private static readonly Type StatusDataType =
+            typeof(GameData).Assembly
+                .GetType("GameReaderCommon.StatusData`1")
+                .MakeGenericType(typeof(object));
+
+        private static GameData RunningData(string gear)
+        {
+            var status = System.Runtime.Serialization.FormatterServices
+                .GetUninitializedObject(StatusDataType);
+            StatusDataType.GetProperty("Gear")!.GetSetMethod(true)!
+                .Invoke(status, new object[] { gear });
+            var d = new GameData { NewData = (StatusDataBase)status };
+            typeof(GameData).GetProperty("GameRunning")!.GetSetMethod(true)!
+                .Invoke(d, new object[] { true });
+            return d;
+        }
+
+        /// <summary>Display control frames (01 F8 09 01 02 s1 s2 s3) on the wire.</summary>
+        private static List<byte[]> DisplayFrames(FakeTransport t) =>
+            t.Col01Sent.Where(r => r.Length == 8 && r[1] == 0xF8 && r[2] == 0x09
+                                   && r[3] == 0x01 && r[4] == 0x02).ToList();
+
+        private static FanatecWheelDeviceInstance ConnectedGt3Instance(out FakeTransport transport)
+        {
+            var plugin = PluginWithWheel("CSLSWGT3", out _, out transport);
+            var inst = InstanceFor("CSLSWGT3");
+            inst.PluginResolver = () => plugin;
+            return inst;
+        }
+
+        private static JObject Gt3Settings(string displayMode) => new JObject
+        {
+            ["wheelType"] = "CSLSWGT3",
+            ["displayMode"] = displayMode,
+        };
+
+        [Fact]
+        public void BasicWheel_ModeNone_WritesNothingWhileGameRuns()
+        {
+            var inst = ConnectedGt3Instance(out var transport);
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+
+            foreach (var gear in new[] { "1", "2", "3" })
+            {
+                var data = RunningData(gear);
+                inst.DataUpdate(null, ref data);
+            }
+
+            Assert.Empty(DisplayFrames(transport));
+        }
+
+        [Fact]
+        public void BasicWheel_ActiveMode_DrivesTheDisplay()
+        {
+            // Sanity for the fixture: the same harness DOES write in Gear mode,
+            // so the empty assertions above can't pass vacuously.
+            var inst = ConnectedGt3Instance(out var transport);
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+
+            Assert.NotEmpty(DisplayFrames(transport));
+        }
+
+        [Fact]
+        public void BasicWheel_SwitchingToNone_BlanksOnceThenStaysSilent()
+        {
+            var inst = ConnectedGt3Instance(out var transport);
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+            transport.Col01Sent.Clear();
+            inst.DataUpdate(null, ref data);
+            inst.DataUpdate(null, ref data);
+            inst.DataUpdate(null, ref data);
+
+            var blank = Assert.Single(DisplayFrames(transport));
+            Assert.Equal(SevenSegment.Blank, blank[5]);
+            Assert.Equal(SevenSegment.Blank, blank[6]);
+            Assert.Equal(SevenSegment.Blank, blank[7]);
+        }
+
+        [Fact]
+        public void BasicWheel_NoneBlank_RetriesUntilTheTransportAccepts()
+        {
+            var inst = ConnectedGt3Instance(out var transport);
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+            transport.AcceptCol01 = false;
+            transport.Col01Sent.Clear();
+            inst.DataUpdate(null, ref data);   // declined — must not latch
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(2, DisplayFrames(transport).Count);
+
+            transport.AcceptCol01 = true;
+            inst.DataUpdate(null, ref data);   // accepted — latches
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(3, DisplayFrames(transport).Count);
+        }
+
+        [Fact]
+        public void BasicWheel_ModeNone_EndDoesNotBlankTheDisplay()
+        {
+            var inst = ConnectedGt3Instance(out var transport);
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);   // creates the display manager
+
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+            inst.DataUpdate(null, ref data);   // transition blank
+            transport.Col01Sent.Clear();
+
+            inst.End();
+
+            Assert.Empty(DisplayFrames(transport));
+        }
+
+        [Fact]
+        public void BasicWheel_SwitchingToNone_ReleasesDisplayOwnership()
+        {
+            // The accepted handoff blank must clear HasWritten so the plugin's
+            // shutdown cleanup no longer blanks the (now foreign) display content.
+            var plugin = PluginWithWheel("CSLSWGT3", out _, out var transport);
+            var inst = InstanceFor("CSLSWGT3");
+            inst.PluginResolver = () => plugin;
+
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+            Assert.True(plugin.Display.HasWritten);    // gear content is ours
+
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+            inst.DataUpdate(null, ref data);           // accepted handoff blank
+
+            Assert.False(plugin.Display.HasWritten);
+        }
+
+        [Fact]
+        public void BasicWheel_DisplayTestEndingInNone_BlanksExactlyOnce()
+        {
+            // The handback edge and the blank-once path both run in the frame the
+            // test is released; only one of them may write.
+            var plugin = PluginWithWheel("CSLSWGT3", out _, out var transport);
+            var inst = InstanceFor("CSLSWGT3");
+            inst.PluginResolver = () => plugin;
+
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);        // builds the display manager
+
+            plugin.DisplayTestActive = true;
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+            inst.DataUpdate(null, ref data);        // test owns the display
+            transport.Col01Sent.Clear();
+
+            plugin.DisplayTestActive = false;
+            inst.DataUpdate(null, ref data);        // handback frame
+            inst.DataUpdate(null, ref data);
+
+            var blank = Assert.Single(DisplayFrames(transport));
+            Assert.Equal(SevenSegment.Blank, blank[5]);
+            Assert.False(plugin.Display.HasWritten);   // ownership handed off
+        }
+
+        [Fact]
+        public void BasicWheel_DisplayTestHandback_KeepsOwnershipWhenTheClearIsDeclined()
+        {
+            // Releasing on a declined clear would drop ownership while our own
+            // test residue is still on the display.
+            var plugin = PluginWithWheel("CSLSWGT3", out _, out var transport);
+            var inst = InstanceFor("CSLSWGT3");
+            inst.PluginResolver = () => plugin;
+
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+
+            plugin.DisplayTestActive = true;
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+            inst.DataUpdate(null, ref data);
+
+            transport.AcceptCol01 = false;
+            plugin.DisplayTestActive = false;
+            inst.DataUpdate(null, ref data);        // handback blank declined
+            Assert.True(plugin.Display.HasWritten); // still ours
+
+            transport.AcceptCol01 = true;
+            inst.DataUpdate(null, ref data);        // retry accepted
+            Assert.False(plugin.Display.HasWritten);
+        }
+
+        [Fact]
+        public void BasicWheel_ActiveMode_EndBlanksTheDisplay()
+        {
+            var inst = ConnectedGt3Instance(out var transport);
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+            transport.Col01Sent.Clear();
+
+            inst.End();
+
+            var blank = Assert.Single(DisplayFrames(transport));
+            Assert.Equal(SevenSegment.Blank, blank[5]);
         }
     }
 }

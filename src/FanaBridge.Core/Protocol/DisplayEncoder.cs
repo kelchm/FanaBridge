@@ -28,6 +28,25 @@ namespace FanaBridge.Protocol
         }
 
         /// <summary>
+        /// True while the display content was last written by FanaBridge: latched by
+        /// an accepted display report, cleared by <see cref="Release"/>. Lets shutdown
+        /// cleanup skip its exit blank when the display isn't ours (mode "None" —
+        /// another application may own the content).
+        /// </summary>
+        public bool HasWritten { get; private set; }
+
+        /// <summary>
+        /// Marks the display as handed off (the one-shot blank into mode "None" was
+        /// accepted): whatever appears on it next is another writer's, so shutdown
+        /// cleanup must not blank it. A later accepted write re-latches ownership.
+        /// </summary>
+        public void Release()
+        {
+            lock (_sync)
+                HasWritten = false;
+        }
+
+        /// <summary>
         /// Sets the 3-digit 7-segment display.
         /// Matches the Linux kernel driver ftec_set_display() protocol.
         /// </summary>
@@ -44,7 +63,10 @@ namespace FanaBridge.Protocol
                 _reportBuf[6] = seg2;
                 _reportBuf[7] = seg3;
 
-                return _transport.SendCol01(_reportBuf);
+                bool sent = _transport.SendCol01(_reportBuf);
+                if (sent)
+                    HasWritten = true;
+                return sent;
             }
         }
 

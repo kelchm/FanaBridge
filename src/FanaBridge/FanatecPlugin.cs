@@ -155,7 +155,15 @@ namespace FanaBridge
         /// identity without a SimHub host. Production cores are built only by
         /// InitializeCore.
         /// </summary>
-        internal void InstallWheelbaseForTest(FanatecWheelbase wheelbase) => _wheelbase = wheelbase;
+        internal void InstallWheelbaseForTest(FanatecWheelbase wheelbase, bool withDisplayEncoder = false)
+        {
+            _wheelbase = wheelbase;
+            // Real init builds the encoders in InitializeCore. Display tests opt in
+            // to an encoder wired to the (fake) transport; everything else leaves it
+            // null so the no-encoder guards keep being exercised.
+            if (withDisplayEncoder)
+                _display = new DisplayEncoder(wheelbase.Transport);
+        }
 
         /// <summary>Called by each <see cref="Adapters.FanatecWheelDeviceInstance"/> so the
         /// plugin can read the connected wheel's SimHub device name for the Control Mapper
@@ -576,7 +584,11 @@ namespace FanaBridge
 
                 try
                 {
-                    _display.ClearDisplay();
+                    // Only blank what we wrote: if no display report was ever sent
+                    // (every device on mode "None"), the display isn't ours and the
+                    // exit blank would stomp another application's content.
+                    if (_display.HasWritten)
+                        _display.ClearDisplay();
                 }
                 catch (Exception ex)
                 {

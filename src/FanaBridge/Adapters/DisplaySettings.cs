@@ -9,17 +9,18 @@ namespace FanaBridge.Adapters
         public const string DefaultMode = "Gear";
 
         /// <summary>
-        /// Sentinel <see cref="DisplayMode"/> meaning "no legacy page". Offered only on ITM
-        /// wheels, where the legacy gear/speed page is optional; selecting it turns the
-        /// legacy page off. Basic 7-segment wheels never use this value.
+        /// Sentinel <see cref="DisplayMode"/> meaning "display off": FanaBridge never
+        /// writes to the 7-segment display (beyond a one-shot blank on the transition),
+        /// leaving it free for the firmware or another application to drive. On ITM
+        /// wheels this turns off the optional legacy gear/speed page.
         /// </summary>
         public const string ModeNone = "None";
 
         /// <summary>
-        /// Display mode: "Gear", "Speed", "GearAndSpeed", or "GearUpshiftBrackets".
-        /// On basic 7-segment wheels this is the only display. On ITM wheels it selects the
-        /// optional legacy gear/speed page's mode, and "None" turns that page off. ITM
-        /// telemetry pages themselves are firmware-driven (chosen with the wheel button).
+        /// Display mode: "None", "Gear", "Speed", "GearAndSpeed", or "GearUpshiftBrackets".
+        /// On basic 7-segment wheels this drives the wheel's only display; on ITM wheels it
+        /// selects the optional legacy gear/speed page's mode. ITM telemetry pages
+        /// themselves are firmware-driven (chosen with the wheel button).
         /// </summary>
         public string DisplayMode { get; set; } = DefaultMode;
 
