@@ -1135,10 +1135,13 @@ namespace FanaBridge.UI
                     break;
 
                 case UpdatePhase.UpdateAvailable:
-                    txtUpdateCheckResult.Text = "Update available.";
+                    // The About line reports the manual check's outcome and
+                    // points at the banner — the actionable UI — rather than
+                    // duplicating it at the bottom of the page.
+                    txtUpdateCheckResult.Text = "FanaBridge " + release.Version
+                        + " is available — see above.";
                     StyleUpdateBanner(failed: false);
-                    runUpdateHeadline.Text = "Update available: FanaBridge " + release.Version
-                        + " — you have " + BuildIdentity.Version + ".";
+                    runUpdateHeadline.Text = "Update available: FanaBridge " + release.Version;
                     if (release.CanSelfInstall)
                     {
                         SetUpdateDetail(null);
@@ -1156,7 +1159,10 @@ namespace FanaBridge.UI
 
                 case UpdatePhase.Downloading:
                 case UpdatePhase.Applying:
-                    txtUpdateCheckResult.Text = "Installing update…";
+                    // These states (and the two below) are outcomes of banner
+                    // interaction, not of the manual check link — the banner
+                    // owns their messaging, the About line stays quiet.
+                    txtUpdateCheckResult.Text = "";
                     StyleUpdateBanner(failed: false);
                     runUpdateHeadline.Text = "Updating to FanaBridge " + release?.Version;
                     SetUpdateDetail("Downloading and installing…");
@@ -1166,7 +1172,7 @@ namespace FanaBridge.UI
                     break;
 
                 case UpdatePhase.ReadyToRestart:
-                    txtUpdateCheckResult.Text = "Update installed — restart SimHub.";
+                    txtUpdateCheckResult.Text = "";
                     StyleUpdateBanner(failed: false);
                     runUpdateHeadline.Text = "Update installed — restart SimHub to finish updating to FanaBridge "
                         + release?.Version + ".";
@@ -1178,7 +1184,7 @@ namespace FanaBridge.UI
                     break;
 
                 case UpdatePhase.Failed:
-                    txtUpdateCheckResult.Text = "Automatic update failed.";
+                    txtUpdateCheckResult.Text = "";
                     StyleUpdateBanner(failed: true);
                     runUpdateHeadline.Text = "Automatic update failed";
                     SetUpdateDetail(ComposeUpdateFailureDetail(snapshot));
