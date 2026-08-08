@@ -1,7 +1,7 @@
-using FanaBridge.Protocol;
+using FanaBridge.Diagnostics;
 using Xunit;
 
-namespace FanaBridge.Tests
+namespace FanaBridge.Tests.Core.Diagnostics
 {
     /// <summary>
     /// Unit tests for the pure decoders of the converter capture probe — the col01 tail classifier

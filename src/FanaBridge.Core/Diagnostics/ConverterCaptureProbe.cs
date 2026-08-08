@@ -4,7 +4,7 @@ using System.Diagnostics;
 using FanaBridge.Devices.Identity;
 using FanaBridge.Transport;
 
-namespace FanaBridge.Protocol
+namespace FanaBridge.Diagnostics
 {
     /// <summary>
     /// One-shot, read-only identity capture run at diagnostics time so a SINGLE detection report from

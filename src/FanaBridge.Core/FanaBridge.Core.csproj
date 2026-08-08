@@ -45,11 +45,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- FanaBridge: ConverterCaptureProbe (plugin-side Diagnostics/) uses the
-         internal Col03FrameClassifier — the only cross-assembly internal use.
-         FanaBridge.Tests: internal ctors, interfaces, and test hooks across
-         Transport/Protocol/Profiles. -->
-    <InternalsVisibleTo Include="FanaBridge" />
+    <!-- FanaBridge.Tests: internal ctors, interfaces, and test hooks across
+         Core domains. -->
     <InternalsVisibleTo Include="FanaBridge.Tests" />
   </ItemGroup>
 

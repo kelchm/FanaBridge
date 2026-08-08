@@ -2,7 +2,7 @@ using System;
 using System.Linq;
 using System.Text;
 using FanaBridge.Devices;
-using FanaBridge.Protocol;
+using FanaBridge.Diagnostics;
 using HidSharp;
 
 namespace FanaBridge.Plugin.Diagnostics
