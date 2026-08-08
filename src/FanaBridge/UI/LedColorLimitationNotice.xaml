@@ -1,4 +1,4 @@
-<UserControl x:Class="FanaBridge.UI.LedColorLimitationNotice"
+<UserControl x:Class="FanaBridge.Plugin.UI.LedColorLimitationNotice"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <!-- Matches the info box on the Screen tab (ScreenSettingsPanel.xaml).

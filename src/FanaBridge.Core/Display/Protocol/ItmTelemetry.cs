@@ -102,7 +102,7 @@ namespace FanaBridge.Display.Protocol
     /// Wire-side ITM protocol vocabulary: the per-page parameter <b>catalog</b> (which
     /// parameter IDs a page carries, in order) and firmware subscription-report parsing.
     /// This is pure wire — no SimHub <c>GameData</c>. The SimHub telemetry → value/suffix
-    /// mapping lives in <c>ItmTelemetryMapper</c> (Adapters), which knows both sides.
+    /// mapping lives in <c>ItmTelemetryMapper</c> (Display.Drivers), which knows both sides.
     ///
     /// This declares each page's parameter list (<see cref="ParamsFor"/>) and display name
     /// (<see cref="NameOf"/>), keyed by the <see cref="ItmPage"/> content identity. Which pages a

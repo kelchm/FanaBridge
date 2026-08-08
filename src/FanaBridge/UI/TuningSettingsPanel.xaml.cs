@@ -2,10 +2,10 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using FanaBridge;
-using FanaBridge.Adapters;
+using FanaBridge.Plugin.Settings;
 using FanaBridge.Tuning;
 
-namespace FanaBridge.UI
+namespace FanaBridge.Plugin.UI
 {
     public partial class TuningSettingsPanel : UserControl
     {

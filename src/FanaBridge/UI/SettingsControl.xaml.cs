@@ -9,15 +9,15 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Navigation;
 using System.Windows.Threading;
-using FanaBridge.Adapters;
 using FanaBridge.Devices;
 using FanaBridge.Devices.Profiles;
 using FanaBridge.Display.Protocol;
+using FanaBridge.Plugin.Devices;
 using FanaBridge.Updater;
 using SimHub.Plugins.Devices;
 using Timer = System.Timers.Timer;
 
-namespace FanaBridge.UI
+namespace FanaBridge.Plugin.UI
 {
     public partial class SettingsControl : UserControl
     {

@@ -17,7 +17,7 @@ using Microsoft.Win32;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 
-namespace FanaBridge.UI
+namespace FanaBridge.Plugin.UI
 {
     /// <summary>
     /// Standalone probe-based wizard dialog that discovers a wheel's LED and

@@ -2,9 +2,10 @@ using System;
 using System.Linq;
 using System.Text;
 using FanaBridge.Devices;
+using FanaBridge.Protocol;
 using HidSharp;
 
-namespace FanaBridge.Protocol
+namespace FanaBridge.Plugin.Diagnostics
 {
     /// <summary>
     /// Builds a human-readable, GitHub-ready snapshot of device detection — the

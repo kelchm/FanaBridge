@@ -3,7 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using FanaBridge.Devices.Profiles;
 
-namespace FanaBridge.UI
+namespace FanaBridge.Plugin.UI
 {
     /// <summary>
     /// Explains, in the SimHub LEDs tab, the ways this wheel's LEDs cannot show

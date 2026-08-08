@@ -1,12 +1,12 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
-using FanaBridge.Adapters;
 using FanaBridge.Devices.Profiles;
 using FanaBridge.Display.Catalog;
 using FanaBridge.Display.Protocol;
+using FanaBridge.Plugin.Display;
 
-namespace FanaBridge.UI
+namespace FanaBridge.Plugin.UI
 {
     public partial class ScreenSettingsPanel : UserControl
     {

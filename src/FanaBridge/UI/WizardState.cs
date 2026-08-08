@@ -3,7 +3,7 @@ using System.Linq;
 using FanaBridge.Devices.Profiles;
 using FanaBridge.Tuning;
 
-namespace FanaBridge.UI
+namespace FanaBridge.Plugin.UI
 {
     // ── Wizard sections (replace magic step numbers) ─────────────────────
 

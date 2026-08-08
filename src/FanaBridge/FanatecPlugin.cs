@@ -4,17 +4,20 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using FanaBridge.Adapters;
 using FanaBridge.Devices;
 using FanaBridge.Devices.Profiles;
 using FanaBridge.Display.Protocol;
 using FanaBridge.Leds;
-using FanaBridge.Protocol;
+using FanaBridge.Plugin;
+using FanaBridge.Plugin.ControlMapper;
+using FanaBridge.Plugin.Devices;
+using FanaBridge.Plugin.Diagnostics;
+using FanaBridge.Plugin.Settings;
+using FanaBridge.Plugin.UI;
+using FanaBridge.Plugin.Updates;
 using FanaBridge.Transport;
 using FanaBridge.Tuning;
-using FanaBridge.UI;
 using FanaBridge.Updater;
-using FanaBridge.Updates;
 using GameReaderCommon;
 using SimHub.Plugins;
 
@@ -65,7 +68,7 @@ namespace FanaBridge
         // volatile: written on the DataUpdate thread (UpdateControlMapperIntegration),
         // read in the WheelChanged handler, which may fire from any thread. Ensures the
         // handler observes the constructed bridge; a missed read self-heals next tick.
-        private volatile FanaBridge.Adapters.ControlMapperBridge _controlMapperBridge;
+        private volatile ControlMapperBridge _controlMapperBridge;
 
         /// <summary>Frame counter that throttles the Control Mapper reconcile (see <see cref="UpdateControlMapperIntegration"/>).</summary>
         private int _cmReconcileTick;
@@ -75,8 +78,8 @@ namespace FanaBridge
         // connected wheel's SimHub device name — the user's rename if set, else the
         // short name — and label the mapped controller consistently with the Devices view.
         private readonly object _deviceInstancesLock = new object();
-        private readonly List<Adapters.FanatecWheelDeviceInstance> _deviceInstances =
-            new List<Adapters.FanatecWheelDeviceInstance>();
+        private readonly List<FanatecWheelDeviceInstance> _deviceInstances =
+            new List<FanatecWheelDeviceInstance>();
 
         /// <summary>Fired when connection status or wheel identity changes. May fire from any thread.</summary>
         public event Action StateChanged;
@@ -218,10 +221,10 @@ namespace FanaBridge
                 _display = new DisplayEncoder(wheelbase.Transport);
         }
 
-        /// <summary>Called by each <see cref="Adapters.FanatecWheelDeviceInstance"/> so the
+        /// <summary>Called by each <see cref="FanatecWheelDeviceInstance"/> so the
         /// plugin can read the connected wheel's SimHub device name for the Control Mapper
         /// integration. Idempotent.</summary>
-        internal void RegisterDeviceInstance(Adapters.FanatecWheelDeviceInstance instance)
+        internal void RegisterDeviceInstance(FanatecWheelDeviceInstance instance)
         {
             if (instance == null) return;
             lock (_deviceInstancesLock)
@@ -230,7 +233,7 @@ namespace FanaBridge
         }
 
         /// <summary>Removes a DeviceInstance from the registry (on its End).</summary>
-        internal void UnregisterDeviceInstance(Adapters.FanatecWheelDeviceInstance instance)
+        internal void UnregisterDeviceInstance(FanatecWheelDeviceInstance instance)
         {
             if (instance == null) return;
             lock (_deviceInstancesLock)
@@ -324,7 +327,7 @@ namespace FanaBridge
         {
             try
             {
-                var bridge = _controlMapperBridge ?? new FanaBridge.Adapters.ControlMapperBridge();
+                var bridge = _controlMapperBridge ?? new ControlMapperBridge();
                 return bridge.IsRecognizeIndividualWheelsOn(PluginManager);
             }
             catch { return null; }
@@ -412,7 +415,7 @@ namespace FanaBridge
             // dashboard while testing the experimental Control Mapper integration.
             // Cheap (no reflection) — it only reads live wheel state.
             this.AttachDelegate("FanaBridge.ControlMapperVariant",
-                () => Adapters.FanaBridgeVariantProvider.ComputeFriendlyName() ?? "");
+                () => FanaBridgeVariantProvider.ComputeFriendlyName() ?? "");
 
             // --- Events ---
             this.AddEvent("DeviceConnected");
@@ -632,7 +635,7 @@ namespace FanaBridge
                 if (Settings.EnableControlMapperIntegration)
                 {
                     if (_controlMapperBridge == null)
-                        _controlMapperBridge = new FanaBridge.Adapters.ControlMapperBridge();
+                        _controlMapperBridge = new ControlMapperBridge();
                     _controlMapperBridge.EnsureRegistered(PluginManager);
                     // Stamp a friendly CustomName on the connected wheel's source(s) so
                     // the UI shows a readable name while the match key stays the stable id.
@@ -718,9 +721,9 @@ namespace FanaBridge
                 // serializes this against any frame still in flight; see
                 // docs/device-settings-lifecycle.md. Copied out of the lock so
                 // no device work runs while holding the instance list.
-                List<Adapters.FanatecWheelDeviceInstance> instances;
+                List<FanatecWheelDeviceInstance> instances;
                 lock (_deviceInstancesLock)
-                    instances = new List<Adapters.FanatecWheelDeviceInstance>(_deviceInstances);
+                    instances = new List<FanatecWheelDeviceInstance>(_deviceInstances);
 
                 foreach (var inst in instances)
                 {
@@ -777,7 +780,7 @@ namespace FanaBridge
             string controlMapperSection;
             try
             {
-                var bridge = _controlMapperBridge ?? new FanaBridge.Adapters.ControlMapperBridge();
+                var bridge = _controlMapperBridge ?? new ControlMapperBridge();
                 controlMapperSection = bridge.DescribeResolution(PluginManager);
             }
             catch (Exception ex)
