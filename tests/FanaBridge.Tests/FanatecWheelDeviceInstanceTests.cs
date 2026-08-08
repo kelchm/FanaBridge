@@ -1196,6 +1196,60 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public void BasicWheel_DisplayTestEndingInNone_BlanksExactlyOnce()
+        {
+            // The handback edge and the blank-once path both run in the frame the
+            // test is released; only one of them may write.
+            var plugin = PluginWithWheel("CSLSWGT3", out _, out var transport);
+            var inst = InstanceFor("CSLSWGT3");
+            inst.PluginResolver = () => plugin;
+
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);        // builds the display manager
+
+            plugin.DisplayTestActive = true;
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+            inst.DataUpdate(null, ref data);        // test owns the display
+            transport.Col01Sent.Clear();
+
+            plugin.DisplayTestActive = false;
+            inst.DataUpdate(null, ref data);        // handback frame
+            inst.DataUpdate(null, ref data);
+
+            var blank = Assert.Single(DisplayFrames(transport));
+            Assert.Equal(SevenSegment.Blank, blank[5]);
+            Assert.False(plugin.Display.HasWritten);   // ownership handed off
+        }
+
+        [Fact]
+        public void BasicWheel_DisplayTestHandback_KeepsOwnershipWhenTheClearIsDeclined()
+        {
+            // Releasing on a declined clear would drop ownership while our own
+            // test residue is still on the display.
+            var plugin = PluginWithWheel("CSLSWGT3", out _, out var transport);
+            var inst = InstanceFor("CSLSWGT3");
+            inst.PluginResolver = () => plugin;
+
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+
+            plugin.DisplayTestActive = true;
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+            inst.DataUpdate(null, ref data);
+
+            transport.AcceptCol01 = false;
+            plugin.DisplayTestActive = false;
+            inst.DataUpdate(null, ref data);        // handback blank declined
+            Assert.True(plugin.Display.HasWritten); // still ours
+
+            transport.AcceptCol01 = true;
+            inst.DataUpdate(null, ref data);        // retry accepted
+            Assert.False(plugin.Display.HasWritten);
+        }
+
+        [Fact]
         public void BasicWheel_ActiveMode_EndBlanksTheDisplay()
         {
             var inst = ConnectedGt3Instance(out var transport);

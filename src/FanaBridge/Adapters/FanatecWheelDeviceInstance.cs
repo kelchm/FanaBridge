@@ -491,13 +491,13 @@ namespace FanaBridge.Adapters
             // latches, so the live gear/speed repaints immediately instead of
             // waiting for the next value change.
             bool displayTest = plugin.DisplayTestActive;
-            if (!displayTest && _displayTestWasActive)
+            if (!displayTest && _displayTestWasActive
+                && _displaySettings.DisplayMode != DisplaySettings.ModeNone)
             {
+                // In mode "None" the blank-once path clears the test residue and
+                // releases ownership, with retry — clearing here would double the
+                // write and could release ownership on a declined clear.
                 _displayManager?.Clear();
-                // In mode "None" that clear only removed our test residue — the
-                // display goes back to not-ours, so release ownership again.
-                if (_displaySettings.DisplayMode == DisplaySettings.ModeNone)
-                    plugin.Display?.Release();
             }
             _displayTestWasActive = displayTest;
 
