@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- **A wheel's 3-digit display can now be left to another application.** Display Mode "None" stops FanaBridge writing to it, so Fanatec's own software can drive the display while FanaBridge keeps the LEDs. The option previously existed only on ITM wheels, where it governs just the legacy gear/speed page. ([#97](https://github.com/kelchm/FanaBridge/pull/97))
+- **A wheel's segment display can now be left to another application.** Display Mode "None" stops FanaBridge writing to it, so Fanatec's own software can drive the display while FanaBridge keeps the LEDs. The option previously existed only for the legacy page of ITM wheels. ([#97](https://github.com/kelchm/FanaBridge/pull/97))
 
 ### Fixed
 - **Device settings are no longer erased while FanaBridge is disabled.** SimHub rewrites each device's settings file whenever it saves, and it does so whether or not the plugin is running. FanaBridge only built its LED editor once the plugin was up, so a save taken before that — most obviously with the plugin disabled — wrote a settings file with no LED data over one that had it, replacing hand-built profiles with a stub. The editor and everything a device stores are now built with the device itself, so a device can always describe its settings. If it ever cannot, it declines to save and SimHub keeps the existing file.
