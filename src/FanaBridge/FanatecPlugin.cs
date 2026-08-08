@@ -557,8 +557,12 @@ namespace FanaBridge
                 // Darken whatever we were driving while the transport is still
                 // alive. Disabling FanaBridge should leave the wheel the way
                 // switching the device off does, rather than frozen on the last
-                // frame drawn — the devices cannot do this themselves, as their
-                // updates have already stopped by the time we get here.
+                // frame drawn. Device update frames are stopping but not joined
+                // (see the Instance comment above): a straggler that observes
+                // the null Instance darkens the wheel itself on its disconnect
+                // edge and this loop then finds nothing to do — either order
+                // blanks exactly once. This pass exists for the devices whose
+                // frames have already stopped and will never see that edge.
                 lock (_deviceInstancesLock)
                 {
                     foreach (var inst in _deviceInstances)

@@ -136,7 +136,11 @@ namespace FanaBridge.Tests
             var config = ConfigFor("Fanatec_CSLSWGT3");
 
             Assert.NotNull(config);
-            Assert.NotEqual("PSWBMW", config.Profile.Id);
+            // Compare profile ids to profile ids: the other wheel's *code* need
+            // not equal its profile id, and comparing against the code would
+            // pass whether or not the override was wrongly applied.
+            Assert.NotEqual(otherWheel.Id, config.Profile.Id);
+            Assert.Equal("CSLSWGT3", config.WheelCode);
         }
 
         [Fact]

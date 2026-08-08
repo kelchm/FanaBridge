@@ -219,7 +219,10 @@ namespace FanaBridge.Adapters
             // which we stop calling the moment the device is not connected. So
             // it would sit on whatever it last saw -- reporting a wheel as
             // connected long after it was unplugged. Both setters no-op when
-            // the value has not moved, and neither is persisted.
+            // the value has not moved. IsConnected is never persisted;
+            // IsEnabled does round-trip through the saved ledModuleSettings
+            // blob (exactly as stock devices save it) and is overwritten here
+            // on the next frame, so the stored copy is churn, not state.
             _module.IsConnected = connected;
         }
 

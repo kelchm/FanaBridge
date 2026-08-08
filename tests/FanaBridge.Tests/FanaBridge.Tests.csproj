@@ -6,8 +6,10 @@
     <!-- Nullable annotations start here (our own code, no unannotated SimHub
          API pressure); production files opt in per-file as they are touched. -->
     <Nullable>enable</Nullable>
-    <!-- The device settings tests stand in for the LED module, whose contract
-         includes its editor control — a WPF type. No test creates one. -->
+    <!-- WPF types appear in two places: the LED module host's contract exposes
+         its editor control, and the Enabled probe tests make real bindings to
+         ContentControl/CheckBox on STA threads — that is the behaviour under
+         test, so it cannot be faked away. -->
     <UseWPF>true</UseWPF>
   </PropertyGroup>
 

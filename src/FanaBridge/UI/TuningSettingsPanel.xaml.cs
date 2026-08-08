@@ -13,9 +13,6 @@ namespace FanaBridge.UI
         private FanatecDeviceSettings _settings;
         private bool _suppressEvents;
 
-        /// <summary>Fired when the user changes a setting. The parent should persist.</summary>
-        public event Action SettingsChanged;
-
         public TuningSettingsPanel()
         {
             InitializeComponent();
@@ -151,7 +148,6 @@ namespace FanaBridge.UI
 
             string modeTag = (string)selected.Tag;
             _settings.UpdateEncoderMode(modeTag);
-            SettingsChanged?.Invoke();
 
             // Send to hardware immediately
             try

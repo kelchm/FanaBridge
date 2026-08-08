@@ -599,7 +599,8 @@ namespace FanaBridge.Tests
         {
             // The A → null → A sequence (plugin torn down mid-restart): with no
             // current generation there is nothing to rebind against — the guard
-            // must neither rebind nor clear, and the state must report Disabled.
+            // must neither rebind nor clear, and the state reports Scanning
+            // (never Disabled; see NoPlugin_ReportsScanning_NotDisabled).
             var inst = InstanceFor("PSWBMW");
             var pluginA = PluginWithWheel(null, out _);
 
@@ -880,7 +881,8 @@ namespace FanaBridge.Tests
         {
             // The display and ITM drivers read a live settings object every
             // frame; settings that only landed in the document would never
-            // reach the hardware.
+            // reach the hardware — so this asserts on that live object, not
+            // on what GetSettings re-serializes.
             var inst = InstanceWith(new FakeLedModuleHost());
             inst.PluginResolver = () => null;
 
@@ -889,9 +891,8 @@ namespace FanaBridge.Tests
             doc["itmDefaultPage"] = 5;
             inst.SetSettings(doc, isDefault: false);
 
-            var saved = (JObject)inst.GetSettings(false, false)!;
-            Assert.Equal("Gear", (string?)saved["displayMode"]);
-            Assert.Equal(5, (int?)saved["itmDefaultPage"]);
+            Assert.Equal("Gear", inst.DisplaySettingsForTest.DisplayMode);
+            Assert.Equal(5, inst.DisplaySettingsForTest.ItmDefaultPage);
         }
 
         [Fact]

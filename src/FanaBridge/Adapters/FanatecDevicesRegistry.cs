@@ -67,12 +67,16 @@ namespace FanaBridge.Adapters
         /// Builds the deduplicated set of device configs that back the
         /// registered descriptors — one per device match key. When multiple
         /// profiles share the same match (e.g. built-in + user test variants),
-        /// the built-in profile wins for the device descriptor (name, type ID,
-        /// LED editor sizing). The capabilities used at runtime — LED layout AND
-        /// display type / ITM device id — come from the currently-active profile
-        /// via FanatecPlugin.ResolveCapsFor (see FanatecLedManager.GetDriver and
-        /// the display section of FanatecWheelDeviceInstance.DataUpdate), so a
-        /// user override losing this dedupe still takes effect live.
+        /// the built-in profile wins the dedupe for the device's stable identity
+        /// (name, type ID) — but a persisted override for the same wheel and
+        /// module then replaces the config's profile and capabilities
+        /// (ApplyProfileOverrides), so the LED editor is sized for the override
+        /// at the next registration. Runtime output additionally follows the
+        /// currently-active profile via FanatecPlugin.ResolveCapsFor (see
+        /// FanatecLedManager.GetDriver and the display section of
+        /// FanatecWheelDeviceInstance.DataUpdate), so an override created
+        /// mid-session still takes effect live where it can — only editor
+        /// sizing waits for the restart.
         ///
         /// Shared by descriptor registration (<see cref="GetDevices"/>) and the
         /// settings page's add-device prompt so both resolve a detected wheel

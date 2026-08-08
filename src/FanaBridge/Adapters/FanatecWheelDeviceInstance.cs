@@ -103,6 +103,13 @@ namespace FanaBridge.Adapters
         /// <summary>Test hook: this device's settings owner.</summary>
         internal FanatecDeviceSettings SettingsForTest => _settings;
 
+        /// <summary>
+        /// Test hook: the live settings object the display and ITM drivers read
+        /// every frame — what loaded settings must reach, over and above the
+        /// persisted document.
+        /// </summary>
+        internal DisplaySettings DisplaySettingsForTest => _displaySettings;
+
         // ITM status snapshot for the Device Status panel / diagnostics. Composed on the
         // DataUpdate thread (the only thread that mutates the lifecycle) and read from the
         // UI's DispatcherTimer — a volatile string hand-off instead of cross-thread reads
@@ -475,10 +482,10 @@ namespace FanaBridge.Adapters
             // SimHub calls DataUpdate on every device whatever its on/off switch
             // says — it only reads Enabled to force the state it reports — so a
             // device that stops driving hardware when switched off has to stop
-            // itself. Suspension is the same arrangement, for users who asked
-            // for it. Reads the base property deliberately: this is the user's
-            // own choice, not the presented value above.
-            bool switchedOn = base.Enabled && !(Suspended && SuspendWhenMonitorIsOff);
+            // itself; SimHub's own devices gate on the same call. Compiled in
+            // the base, its Enabled read binds to the base member: the user's
+            // own choice, not the presented value above, which is what we want.
+            bool switchedOn = ShouldBeRunning();
 
             bool isConnected = switchedOn && GetDeviceState() == DeviceState.Connected;
 
@@ -817,10 +824,15 @@ namespace FanaBridge.Adapters
         /// The device's settings tabs.
         /// </summary>
         /// <remarks>
-        /// None of these need a running plugin. Editing what a device stores is
-        /// independent of whether its hardware is reachable, and hiding the tabs
-        /// while FanaBridge was disabled left users unable to see settings that
-        /// were nonetheless being saved.
+        /// None of these need a running plugin to be built: the tabs exist so
+        /// the device can always show — and describe, which is what saving is —
+        /// what it stores. Hiding them while FanaBridge was disabled left users
+        /// unable to see settings that were being saved regardless.
+        ///
+        /// Shown is not editable. While nothing can drive the device, SimHub
+        /// greys this pane through the hiding Enabled property, the same
+        /// treatment it gives a device the user switched off — deliberately, so
+        /// do not "fix" these controls to work there.
         /// </remarks>
         public override IEnumerable<DeviceSettingControl> GetSettingsControls()
         {

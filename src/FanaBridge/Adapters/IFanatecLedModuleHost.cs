@@ -38,7 +38,11 @@ namespace FanaBridge.Adapters
         /// </summary>
         JObject Capture(bool forTemplate, bool forDefaultSettings);
 
-        /// <summary>Resets the module to its defaults.</summary>
+        /// <summary>
+        /// Resets the module's channel profiles to their defaults. Module-level
+        /// values — brightness, individual-LEDs mode — survive, which is what
+        /// SimHub's own reset does too: the SDK offers no way to reset them.
+        /// </summary>
         void LoadDefaults();
 
         /// <summary>Drives one frame of LED output.</summary>
