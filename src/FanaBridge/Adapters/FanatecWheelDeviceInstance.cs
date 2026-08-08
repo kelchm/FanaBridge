@@ -358,9 +358,16 @@ namespace FanaBridge.Adapters
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
         }
 
-        public override DeviceState GetDeviceState()
+        public override DeviceState GetDeviceState() =>
+            GetDeviceStateFor(PluginResolver());
+
+        /// <summary>
+        /// The device state as seen by one specific plugin generation.
+        /// DataUpdate passes the generation it captured at the top of the
+        /// frame, so state and drivers can never come from different ones.
+        /// </summary>
+        private DeviceState GetDeviceStateFor(FanatecPlugin plugin)
         {
-            var plugin = PluginResolver();
             if (plugin == null)
             {
                 // Not Disabled, however tempting: SimHub reserves that for a
@@ -487,7 +494,8 @@ namespace FanaBridge.Adapters
             // own choice, not the presented value above, which is what we want.
             bool switchedOn = ShouldBeRunning();
 
-            bool isConnected = switchedOn && GetDeviceState() == DeviceState.Connected;
+            bool isConnected =
+                switchedOn && GetDeviceStateFor(currentPlugin) == DeviceState.Connected;
 
             // Keep the LEDs tab's connection badge honest. It is dropped while
             // nothing can drive the device — what SimHub shows for a device the

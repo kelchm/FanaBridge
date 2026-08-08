@@ -201,10 +201,14 @@ namespace FanaBridge.Adapters
                     overridden.Match?.WheelType, overridden.Match?.ModuleType);
                 if (!string.Equals(overriddenMatch, matchKey, StringComparison.OrdinalIgnoreCase))
                 {
-                    SimHub.Logging.Current.Warn(
-                        "FanatecDevicesRegistry: override '" + overrideKey + "' matches " +
-                        (overriddenMatch ?? "nothing") + " but was stored for " + matchKey +
-                        " — ignoring so the device keeps its identity.");
+                    // Gated like the unresolved-override warning above: the
+                    // settings page re-runs this every refresh, and a mismatch
+                    // is permanent for the session, so it would repeat forever.
+                    if (verbose)
+                        SimHub.Logging.Current.Warn(
+                            "FanatecDevicesRegistry: override '" + overrideKey + "' matches " +
+                            (overriddenMatch ?? "nothing") + " but was stored for " + matchKey +
+                            " — ignoring so the device keeps its identity.");
                     continue;
                 }
 

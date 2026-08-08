@@ -262,6 +262,14 @@ namespace FanaBridge.Adapters
             {
                 _module.FinalizeModule();
             }
+            catch (Exception ex)
+            {
+                // Teardown stays quiet: End() calls this unguarded, and inside
+                // GuardBeforePublication's catch a second throw would replace
+                // the exception that actually explains the failure.
+                SimHub.Logging.Current.Warn(
+                    "FanatecLedModuleHost: flushing the LED module failed: " + ex.Message);
+            }
             finally
             {
                 // Must run even if flushing threw: these are the only calls that
@@ -278,7 +286,16 @@ namespace FanaBridge.Adapters
                     }
                 }
 
-                (_manager.GetDriverInstance() as IDisposable)?.Dispose();
+                // Isolated from each other: a throw disposing the driver must
+                // not skip the manager, whose disposal is the only thing that
+                // removes its static USB-change subscription.
+                try { (_manager.GetDriverInstance() as IDisposable)?.Dispose(); }
+                catch (Exception ex)
+                {
+                    SimHub.Logging.Current.Warn(
+                        "FanatecLedModuleHost: disposing the LED driver failed: " + ex.Message);
+                }
+
                 _manager.Dispose();
             }
         }
