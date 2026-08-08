@@ -1,6 +1,5 @@
 using System;
-using FanaBridge.Profiles;
-using FanaBridge.Protocol;
+using FanaBridge.Devices.Profiles;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.PSE;
 
 namespace FanaBridge.Adapters

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using FanaBridge.Adapters;
-using FanaBridge.Protocol;
+using FanaBridge.Display.Protocol;
 using FanaBridge.Transport;
 using GameReaderCommon;
 using Xunit;

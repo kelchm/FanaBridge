@@ -1,18 +1,22 @@
-using FanaBridge.Adapters;
-using FanaBridge.Profiles;
-using FanaBridge.Protocol;
-using FanaBridge.Transport;
-using FanaBridge.UI;
-using FanaBridge.Updater;
-using FanaBridge.Updates;
-using GameReaderCommon;
-using SimHub.Plugins;
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using FanaBridge.Adapters;
+using FanaBridge.Devices;
+using FanaBridge.Devices.Profiles;
+using FanaBridge.Display.Protocol;
+using FanaBridge.Leds;
+using FanaBridge.Protocol;
+using FanaBridge.Transport;
+using FanaBridge.Tuning;
+using FanaBridge.UI;
+using FanaBridge.Updater;
+using FanaBridge.Updates;
+using GameReaderCommon;
+using SimHub.Plugins;
 
 namespace FanaBridge
 {

@@ -1,6 +1,6 @@
 using System;
 using FanaBridge.Adapters;
-using FanaBridge.Profiles;
+using FanaBridge.Devices.Profiles;
 using FanaBridge.Tests.TestDoubles;
 using Newtonsoft.Json.Linq;
 using Xunit;

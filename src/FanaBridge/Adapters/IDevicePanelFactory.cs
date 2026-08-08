@@ -1,6 +1,6 @@
 using System;
 using System.Windows.Controls;
-using FanaBridge.Profiles;
+using FanaBridge.Devices.Profiles;
 
 namespace FanaBridge.Adapters
 {

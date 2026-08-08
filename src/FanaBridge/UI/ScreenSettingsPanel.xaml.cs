@@ -2,8 +2,9 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using FanaBridge.Adapters;
-using FanaBridge.Profiles;
-using FanaBridge.Protocol;
+using FanaBridge.Devices.Profiles;
+using FanaBridge.Display.Catalog;
+using FanaBridge.Display.Protocol;
 
 namespace FanaBridge.UI
 {

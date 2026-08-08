@@ -1,7 +1,7 @@
 using System;
 using System.Linq;
 using System.Text;
-using FanaBridge.Transport;
+using FanaBridge.Devices;
 using HidSharp;
 
 namespace FanaBridge.Protocol

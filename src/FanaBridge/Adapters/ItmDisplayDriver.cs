@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Protocol;
+using FanaBridge.Display.Protocol;
+using FanaBridge.Display.Session;
 using GameReaderCommon;
 
 namespace FanaBridge.Adapters

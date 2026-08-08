@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using FanaBridge.Devices;
 using HidSharp;
 using Microsoft.Win32.SafeHandles;
 

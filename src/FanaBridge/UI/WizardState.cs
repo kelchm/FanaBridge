@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
-using FanaBridge.Profiles;
-using FanaBridge.Protocol;
+using FanaBridge.Devices.Profiles;
+using FanaBridge.Tuning;
 
 namespace FanaBridge.UI
 {

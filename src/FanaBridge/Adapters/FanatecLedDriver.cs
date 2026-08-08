@@ -5,8 +5,8 @@ using System.Threading.Tasks;
 using BA63Driver.Base;
 using BA63Driver.Interfaces;
 using BA63Driver.Mapper;
-using FanaBridge.Profiles;
-using FanaBridge.Protocol;
+using FanaBridge.Devices.Profiles;
+using FanaBridge.Leds;
 
 namespace FanaBridge.Adapters
 {

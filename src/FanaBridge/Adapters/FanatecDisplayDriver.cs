@@ -1,6 +1,6 @@
-using FanaBridge.Protocol;
-using GameReaderCommon;
 using System;
+using FanaBridge.Display.Protocol;
+using GameReaderCommon;
 
 namespace FanaBridge.Adapters
 {

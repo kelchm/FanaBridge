@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Windows.Controls;
+using FanaBridge.Devices.Profiles;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
 
@@ -52,7 +53,7 @@ namespace FanaBridge.Adapters
         void StopDriving();
 
         /// <summary>Tells the module the active profile may have changed.</summary>
-        void HotSwapIfNeeded(Profiles.WheelCapabilities currentCaps);
+        void HotSwapIfNeeded(WheelCapabilities currentCaps);
 
         /// <summary>The module's dynamic button actions (brightness, etc.).</summary>
         IEnumerable<DynamicButtonAction> GetDynamicActions();

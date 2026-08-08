@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Protocol;
+using FanaBridge.Devices.Identity;
 using SimHub.Plugins.OutputPlugins.ControlRemapper.Variants;
 
 namespace FanaBridge.Adapters
@@ -40,7 +40,7 @@ namespace FanaBridge.Adapters
         /// <summary>
         /// Fanatec USB vendor id (0x0EB7 = 3767). Matches the value the stock
         /// <c>FanatecVariantProvider</c> gates on, and
-        /// <see cref="Transport.FanatecWheelbase.FANATEC_VENDOR_ID"/>.
+        /// <see cref="FanaBridge.Devices.FanatecWheelbase.FANATEC_VENDOR_ID"/>.
         /// </summary>
         public const int FanatecVendorId = 0x0EB7;
 
@@ -77,7 +77,7 @@ namespace FanaBridge.Adapters
         /// provider, or no variant at all, decide).
         ///
         /// <para>Gated on the Fanatec vendor id AND the connected wheelbase's product id
-        /// (<see cref="Transport.FanatecWheelbase.ConnectedProductId"/>): we only speak for
+        /// (<see cref="FanaBridge.Devices.FanatecWheelbase.ConnectedProductId"/>): we only speak for
         /// the device we actually have open over HID. A standalone Fanatec peripheral on
         /// its own PID (pedals, handbrake) — or another Fanatec base we aren't driving —
         /// is therefore left alone and falls through to SimHub instead of being tagged with

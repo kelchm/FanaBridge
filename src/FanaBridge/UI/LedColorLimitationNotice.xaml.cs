@@ -1,7 +1,7 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
-using FanaBridge.Profiles;
+using FanaBridge.Devices.Profiles;
 
 namespace FanaBridge.UI
 {

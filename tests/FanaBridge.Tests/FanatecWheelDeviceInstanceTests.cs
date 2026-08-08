@@ -3,13 +3,15 @@ using System.Collections.Generic;
 using System.Linq;
 using FanaBridge;
 using FanaBridge.Adapters;
-using FanaBridge.Profiles;
-using FanaBridge.Protocol;
+using FanaBridge.Devices;
+using FanaBridge.Devices.Identity;
+using FanaBridge.Devices.Profiles;
+using FanaBridge.Display.Protocol;
+using FanaBridge.Tests.TestDoubles;
 using FanaBridge.Transport;
 using GameReaderCommon;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins.Devices;
-using FanaBridge.Tests.TestDoubles;
 using Xunit;
 
 namespace FanaBridge.Tests

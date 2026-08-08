@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using FanaBridge.Adapters;
-using FanaBridge.Profiles;
+using FanaBridge.Devices.Profiles;
 using Xunit;
 
 namespace FanaBridge.Tests
