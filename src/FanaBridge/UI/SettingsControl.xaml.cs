@@ -13,6 +13,7 @@ using FanaBridge.Adapters;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using FanaBridge.Transport;
+using FanaBridge.Updater;
 using SimHub.Plugins.Devices;
 using Timer = System.Timers.Timer;
 
@@ -275,6 +276,7 @@ namespace FanaBridge.UI
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             Plugin.StateChanged += OnPluginStateChanged;
+            Plugin.UpdateStateChanged += OnUpdateStateChanged;
 
             // Capture the capabilities the LED module was built from at startup.
             // Only set once — tab reloads must not clobber the baseline.
@@ -294,6 +296,11 @@ namespace FanaBridge.UI
             _itmStatusTimer.Start();
 
             UpdateStatus();
+
+            // Events only cover FUTURE transitions — the startup update check
+            // normally finishes long before this page is first opened, so render
+            // the current snapshot immediately.
+            UpdateUpdateBanner();
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -303,6 +310,7 @@ namespace FanaBridge.UI
             UnwatchSimHubDevices();
             _itmStatusTimer?.Stop();
             Plugin.StateChanged -= OnPluginStateChanged;
+            Plugin.UpdateStateChanged -= OnUpdateStateChanged;
         }
 
         private System.Windows.Threading.DispatcherTimer _itmStatusTimer;
@@ -1050,6 +1058,259 @@ namespace FanaBridge.UI
         private void ChkEnableTuning_Changed(object sender, RoutedEventArgs e)
         {
             Plugin?.SaveSettings();
+        }
+
+        private void ChkEnableUpdateCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            // Live: the daily re-check timer re-reads the setting on each fire;
+            // the manual link works regardless.
+            Plugin?.SaveSettings();
+        }
+
+        // =====================================================================
+        // SELF-UPDATER  (banner + About affordances)
+        //
+        // Pure view over UpdateService's immutable snapshots: every render
+        // derives the whole banner + About line from the current snapshot, so
+        // events and the on-load render can never disagree. The service owns
+        // all sequencing (terminal ReadyToRestart, no re-entrancy) — this code
+        // never decides what is allowed, it only displays and forwards clicks.
+        // =====================================================================
+
+        private static readonly Brush UpdateBlueBg = HexBrush("#1A4488CC");
+        private static readonly Brush UpdateBlueBorder = HexBrush("#4488CC");
+        private static readonly Brush UpdateBlueText = HexBrush("#AADDFF");
+        private static readonly Brush UpdateAmberBg = HexBrush("#1AFFCC00");
+        private static readonly Brush UpdateAmberBorder = HexBrush("#FFCC00");
+        private static readonly Brush UpdateAmberText = HexBrush("#FFEEBB");
+
+        private static Brush HexBrush(string hex)
+        {
+            var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+            brush.Freeze();
+            return brush;
+        }
+
+        private void OnUpdateStateChanged()
+        {
+            // May fire from the update check's background thread; the control
+            // can also unload before the queued render runs — hence the guard.
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (IsLoaded)
+                    UpdateUpdateBanner();
+            }));
+        }
+
+        private void UpdateUpdateBanner()
+        {
+            var snapshot = Plugin?.Updates?.Snapshot;
+            if (snapshot == null)
+            {
+                borderUpdateAlert.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            var release = snapshot.Release;
+            switch (snapshot.Phase)
+            {
+                case UpdatePhase.Idle:
+                    txtUpdateCheckResult.Text = "";
+                    borderUpdateAlert.Visibility = Visibility.Collapsed;
+                    break;
+
+                case UpdatePhase.Checking:
+                    txtUpdateCheckResult.Text = "Checking…";
+                    borderUpdateAlert.Visibility = Visibility.Collapsed;
+                    break;
+
+                case UpdatePhase.UpToDate:
+                    txtUpdateCheckResult.Text = "You're up to date (" + BuildIdentity.Version + ").";
+                    borderUpdateAlert.Visibility = Visibility.Collapsed;
+                    break;
+
+                case UpdatePhase.CheckFailed:
+                    txtUpdateCheckResult.Text = "Check failed: " + (snapshot.FailureDetail ?? "unknown error");
+                    borderUpdateAlert.Visibility = Visibility.Collapsed;
+                    break;
+
+                case UpdatePhase.UpdateAvailable:
+                    // The banner sits directly above the manual-check line, so
+                    // it IS the outcome display — no text needed here.
+                    txtUpdateCheckResult.Text = "";
+                    StyleUpdateBanner(failed: false);
+                    runUpdateHeadline.Text = "Update available: FanaBridge " + release.Version;
+                    if (release.CanSelfInstall)
+                    {
+                        SetUpdateDetail(null);
+                        btnUpdateNow.Content = "Update";
+                    }
+                    else
+                    {
+                        SetUpdateDetail("One-click update isn't available for this release ("
+                            + release.InstallBlockedReason + ") — install it manually from the release page.");
+                        btnUpdateNow.Content = "Open release page";
+                    }
+                    btnUpdateNow.IsEnabled = true;
+                    borderUpdateAlert.Visibility = Visibility.Visible;
+                    break;
+
+                case UpdatePhase.Downloading:
+                case UpdatePhase.Applying:
+                    // These states (and the two below) are outcomes of banner
+                    // interaction, not of the manual check link — the banner
+                    // owns their messaging, the About line stays quiet.
+                    txtUpdateCheckResult.Text = "";
+                    StyleUpdateBanner(failed: false);
+                    runUpdateHeadline.Text = "Updating to FanaBridge " + release?.Version;
+                    SetUpdateDetail("Downloading and installing…");
+                    btnUpdateNow.Content = "Update";
+                    btnUpdateNow.IsEnabled = false;
+                    borderUpdateAlert.Visibility = Visibility.Visible;
+                    break;
+
+                case UpdatePhase.ReadyToRestart:
+                    txtUpdateCheckResult.Text = "";
+                    StyleUpdateBanner(failed: false);
+                    runUpdateHeadline.Text = "Update installed — restart SimHub to finish updating to FanaBridge "
+                        + release?.Version + ".";
+                    SetUpdateDetail(null);
+                    btnUpdateNow.Content = "Restart SimHub";
+                    btnUpdateNow.IsEnabled = true;
+                    borderUpdateAlert.Visibility = Visibility.Visible;
+                    OfferUpdateRestartOnce();
+                    break;
+
+                case UpdatePhase.Failed:
+                    txtUpdateCheckResult.Text = "";
+                    StyleUpdateBanner(failed: true);
+                    runUpdateHeadline.Text = "Automatic update failed";
+                    SetUpdateDetail(ComposeUpdateFailureDetail(snapshot));
+                    btnUpdateNow.Content = "Open release page";
+                    btnUpdateNow.IsEnabled = true;
+                    borderUpdateAlert.Visibility = Visibility.Visible;
+                    break;
+            }
+        }
+
+        private void SetUpdateDetail(string detail)
+        {
+            txtUpdateDetail.Text = detail ?? "";
+            txtUpdateDetail.Visibility = string.IsNullOrEmpty(detail)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+
+        private void StyleUpdateBanner(bool failed)
+        {
+            borderUpdateAlert.Background = failed ? UpdateAmberBg : UpdateBlueBg;
+            borderUpdateAlert.BorderBrush = failed ? UpdateAmberBorder : UpdateBlueBorder;
+            txtUpdateTitle.Foreground = failed ? UpdateAmberText : UpdateBlueText;
+            txtUpdateDetail.Foreground = failed ? UpdateAmberText : UpdateBlueText;
+        }
+
+        private static string ComposeUpdateFailureDetail(UpdateSnapshot snapshot)
+        {
+            string detail = snapshot.FailureDetail ?? "Unknown error.";
+            if (snapshot.AccessDenied)
+                return detail + " SimHub's folder isn't writable by your user account — download the "
+                    + "release zip and copy FanaBridge.dll (and the DevicesLogos images) next to "
+                    + "SimHub.exe manually.";
+            return detail + " You can install manually: download the release zip and copy its files "
+                + "next to SimHub.exe.";
+        }
+
+        private void OfferUpdateRestartOnce()
+        {
+            // The banner keeps its Restart button, so declining here isn't
+            // final — this just avoids re-prompting on every render. The flag
+            // lives on the plugin: SimHub creates a fresh control per page open
+            // while ReadyToRestart persists for the whole process.
+            if (Plugin.UpdateRestartPromptShown)
+                return;
+            Plugin.UpdateRestartPromptShown = true;
+
+            var result = MessageBox.Show(
+                "FanaBridge has been updated. Restart SimHub now to load the new version?",
+                "Update Installed",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (result == MessageBoxResult.Yes)
+                Plugin.PluginManager?.RequestApplicationExit(restart: true);
+        }
+
+        private void BtnUpdateNow_Click(object sender, RoutedEventArgs e)
+        {
+            var updates = Plugin?.Updates;
+            var snapshot = updates?.Snapshot;
+            if (snapshot == null)
+                return;
+
+            switch (snapshot.Phase)
+            {
+                case UpdatePhase.UpdateAvailable when snapshot.Release?.CanSelfInstall == true:
+                    // Fire-and-forget: phase transitions drive the UI, and the
+                    // service ignores re-entrant calls, so a double-click is safe.
+                    // Routed via the plugin so FinalizePlugin's cancel covers it.
+                    _ = Plugin.ApplyUpdateAsync();
+                    break;
+
+                case UpdatePhase.UpdateAvailable:
+                case UpdatePhase.Failed:
+                    OpenReleasePage(snapshot);
+                    break;
+
+                case UpdatePhase.ReadyToRestart:
+                    Plugin.PluginManager?.RequestApplicationExit(restart: true);
+                    break;
+            }
+        }
+
+        private void LnkReleaseNotes_Click(object sender, RoutedEventArgs e)
+        {
+            OpenReleasePage(Plugin?.Updates?.Snapshot);
+        }
+
+        private void OpenReleasePage(UpdateSnapshot snapshot)
+        {
+            const string fallback = "https://github.com/kelchm/FanaBridge/releases";
+
+            // The feed's html_url is remote data handed to the shell — only
+            // launch real web URLs, never other schemes.
+            string url = snapshot?.Release?.HtmlUrl;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri uri)
+                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                url = fallback;
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                SimHub.Logging.Current.Warn("FanaBridge: Failed to open release page: " + ex.Message);
+            }
+        }
+
+        private async void LnkCheckForUpdates_Click(object sender, RoutedEventArgs e)
+        {
+            var updates = Plugin?.Updates;
+            if (updates == null)
+            {
+                txtUpdateCheckResult.Text = "Updater unavailable.";
+                return;
+            }
+
+            txtUpdateCheckResult.Text = "Checking…";
+            // Routed via the plugin so FinalizePlugin's cancel covers it.
+            try { await Plugin.CheckForUpdatesAsync(); }
+            catch { /* CheckAsync converts failures to states */ }
+
+            // A debounced/no-op check fires no Changed event, which would leave
+            // "Checking…" on screen — re-render from the snapshot regardless.
+            if (IsLoaded)
+                UpdateUpdateBanner();
         }
 
         private void ChkEnableControlMapperIntegration_Changed(object sender, RoutedEventArgs e)

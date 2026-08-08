@@ -13,10 +13,10 @@
   <Target Name="CopyToSimHub" AfterTargets="Build" DependsOnTargets="MergePlugin"
           Condition="'$(IsSimHubPlugin)' == 'true' and '$(InstallToSimHub)' == 'true'">
     <Copy SourceFiles="$(TargetDir)merged\$(TargetFileName)" DestinationFolder="$(SimHubDir)" SkipUnchangedFiles="true" />
-    <!-- Clean up a satellite left by an earlier two-DLL dev install; the
-         merged plugin no longer references it, so a stale copy is inert but
+    <!-- Clean up satellites left by an earlier multi-DLL dev install; the
+         merged plugin no longer references them, so a stale copy is inert but
          confusing. -->
-    <Delete Files="$(SimHubDir)FanaBridge.Core.dll" ContinueOnError="true" />
+    <Delete Files="$(SimHubDir)FanaBridge.Core.dll;$(SimHubDir)FanaBridge.Updater.dll" ContinueOnError="true" />
     <Message Importance="high" Text="Installed $(TargetFileName) (merged) → $(SimHubDir)" />
   </Target>
 
