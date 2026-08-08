@@ -32,12 +32,8 @@ namespace FanaBridge.Adapters
     {
         private readonly DeviceConfig _config;
 
-        // The LED editor and everything persisted about this device. Both are
-        // built during construction and live as long as the instance does —
-        // they depend only on the device's registered capabilities, never on
-        // whether the plugin is running. SimHub creates and saves devices
-        // regardless of that, and a device that could not describe its own
-        // settings used to have them erased.
+        // Built at construction from registered capabilities, never runtime
+        // state — the lifecycle doc explains why that is load-bearing.
         private readonly IFanatecLedModuleHost _ledHost;
         private readonly FanatecDeviceSettings _settings;
         private readonly IDevicePanelFactory _panels;
@@ -50,10 +46,8 @@ namespace FanaBridge.Adapters
         // Display manager — null when the wheel has no display.
         private FanatecDisplayDriver _displayManager;
 
-        // The live view of the display settings. Never replaced: the display
-        // and ITM drivers read it every frame, and an open settings panel edits
-        // it directly, so swapping it would leave both looking at an object
-        // nothing updates any more.
+        // Never replaced: drivers read it every frame and an open panel edits
+        // it directly, so a swap would orphan both.
         private readonly DisplaySettings _displaySettings = new DisplaySettings();
 
         // ITM display driver — null until a wheel with an ITM display is driven.
@@ -152,17 +146,10 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// Builds the device, its LED editor and its settings owner.
+        /// Builds the device, its LED editor and its settings owner — from
+        /// registered capabilities only; nothing here touches hardware or the
+        /// plugin singleton (see the lifecycle doc, "Building it up front").
         /// </summary>
-        /// <remarks>
-        /// The editor is built here, from the device's registered capabilities,
-        /// rather than when a plugin first appears. SimHub constructs and saves
-        /// devices whether or not FanaBridge is enabled, and a device without an
-        /// editor could not describe its own LED settings — so saving it wrote a
-        /// document with none, over a file that had them.
-        ///
-        /// Nothing here touches hardware or the plugin singleton.
-        /// </remarks>
         internal FanatecWheelDeviceInstance(
             DeviceConfig config,
             IDevicePanelFactory panels,
@@ -271,73 +258,32 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// Whether this device is switched on <em>and</em> has something able to
-        /// drive it.
+        /// Whether this device is switched on <em>and</em> has something able
+        /// to drive it. HIDES the base property, deliberately: WPF resolves on
+        /// the runtime type (pane greys), while SimHub persists the user's real
+        /// choice through the base member. Overriding would write "off" into
+        /// their settings whenever the plugin was disabled. Pinned by
+        /// EnabledHidingProbeTests; rationale in
+        /// docs/device-settings-lifecycle.md ("Presenting availability").
         /// </summary>
-        /// <remarks>
-        /// SimHub greys out a device's settings pane by binding the hosting
-        /// control's IsEnabled to this property, so reporting false while the
-        /// plugin is not running presents the device as what it actually is:
-        /// present, but inert. The header shows "Disabled" for the same reason.
-        ///
-        /// It deliberately HIDES the base property rather than overriding it.
-        /// SimHub persists and restores the user's own on/off choice through a
-        /// DeviceInstance-typed reference, which binds to the base member at
-        /// compile time, while its WPF bindings resolve on the runtime type.
-        /// Overriding would therefore write "off" into the user's settings file
-        /// whenever the plugin was disabled, and leave the device genuinely
-        /// switched off next launch — something they never asked for. Hiding
-        /// lets the UI see one answer and persistence keep the real one.
-        ///
-        /// The seam is covered by EnabledHidingProbeTests: if a future SimHub
-        /// or WPF change collapsed the two, that is where it would show up.
-        ///
-        /// Note this also means the device cannot be switched on while the
-        /// plugin is off — the toggle will spring back. Enabling the plugin is
-        /// the way to get it back.
-        /// </remarks>
         public new bool Enabled
         {
             get => base.Enabled && PluginResolver() != null;
             set
             {
-                // Only WPF's two-way bindings reach this setter — every place
-                // SimHub reads or restores the switch goes through a
-                // DeviceInstance-typed reference and so writes the base member
-                // directly. That makes this purely the user clicking a toggle,
-                // and a click the UI is going to refuse must not quietly change
-                // what is stored: while nothing can drive the device the toggle
-                // reads false whatever the user chose, so every click would
-                // write true — switching a device they had deliberately turned
-                // off back on, and making it impossible to turn one off.
+                // Only WPF's toggle binding reaches this setter. A click the UI
+                // refuses to show must not rewrite the stored choice.
                 if (PluginResolver() != null)
                     base.Enabled = value;
 
-                // The base only notifies when its own value moved, so a click
-                // we declined — or one that set what was already set — would
-                // otherwise leave the toggle showing a state we are not in.
-                AnnounceEnabled(force: true);
+                AnnounceEnabled(force: true);   // declined or no-op clicks spring back
             }
         }
 
-        // ── Change notification for the hiding property ───────────────────
-        //
-        // Enabled answers from something SimHub knows nothing about, so nothing
-        // raises PropertyChanged when the plugin comes or goes. Every binding
-        // already made would keep showing the old answer: device tiles stay as
-        // they were, and an open settings pane only catches up when re-selecting
-        // it rebuilds the binding.
-        //
-        // The base raises through a compiler-generated member no derived class
-        // can call. Re-implementing the interface works instead — WPF subscribes
-        // through it, and interface dispatch resolves on the runtime type, so
-        // the subscription lands here. Base notifications are forwarded on so
-        // nothing SimHub raises is lost. See EnabledNotificationProbeTests.
-
-        // Hides the base event as the property does. Listing the interface again
-        // re-implements it against this member, so interface dispatch — which is
-        // how WPF subscribes — resolves here on the runtime type. The compiler's
-        // own accessors are already thread-safe.
+        // Hides the base event as the property does: the base raises through a
+        // compiler-generated member no derived class can call, and re-listing
+        // the interface points WPF's subscription here. Pinned by
+        // EnabledNotificationProbeTests.
         public new event PropertyChangedEventHandler PropertyChanged;
 
         // 1/0 once evaluated, -1 while unknown. Swapped atomically so exactly
@@ -374,30 +320,20 @@ namespace FanaBridge.Adapters
         {
             if (plugin == null)
             {
-                // Not Disabled, however tempting: SimHub reserves that for a
-                // device the user switched off, and enforces it — on every frame
-                // an enabled device reporting Disabled is moved to Scanning and
-                // asked again. Answering Disabled therefore never settles; it
-                // logs a status change per device per frame, which filled one
-                // user's log with 127,145 lines in a single session.
-                //
-                // Scanning is also the honest answer. The device is switched on
-                // and simply has nothing driving it, which is the same position
-                // it is in whenever the hardware is unreachable.
+                // Never Disabled: SimHub reserves that for the user's own
+                // switch and forces an enabled device claiming it back to
+                // Scanning every frame, so it never settles and floods the log
+                // (see the lifecycle doc, "Presenting availability").
                 return DeviceState.Scanning;
             }
 
-            // ARCHITECTURE: this reaches directly into wheelbase identity fields.
-            // When the peripheral model lands, bind to a peripheral snapshot (class
-            // + code + capabilities) instead, so a DeviceInstance can represent
-            // pedals/shifter (hosted or standalone), not just a base attachment.
+            // ARCHITECTURE: reaches into wheelbase identity fields; when the
+            // peripheral model lands, bind to a peripheral snapshot instead.
             var wheelbase = plugin.Wheelbase;
             if (wheelbase == null || !wheelbase.IsConnected)
                 return DeviceState.Scanning;
 
-            // While the attachment identity is settling (mid-transition), treat the
-            // device as not-yet-connected so no LED/display output is driven at a
-            // half-(re)connected wheel.
+            // Identity still settling: don't drive a half-(re)connected wheel.
             if (!wheelbase.IdentityStable)
                 return DeviceState.Scanning;
 
@@ -409,15 +345,9 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// Produces this device's persisted settings document.
+        /// Produces the persisted document. Complete or throw — SimHub rewrites
+        /// the file wholesale, and a throw leaves the existing file alone.
         /// </summary>
-        /// <remarks>
-        /// SimHub rewrites the file from this call, wholesale, with no merge
-        /// against what is on disk — so anything missing here is erased. This
-        /// only observes: it never repairs, reapplies or resets state on the way
-        /// out. When a complete document cannot be produced it throws, and
-        /// SimHub leaves the existing file (and its index entry) alone.
-        /// </remarks>
         public override JToken GetSettings(bool forTemplate, bool forDefaultSettings) =>
             _settings.Capture(forTemplate, forDefaultSettings);
 
@@ -485,36 +415,25 @@ namespace FanaBridge.Adapters
                 _registeredWithPlugin = true;
             }
 
-            // The plugin appearing or going away changes what Enabled answers
-            // without changing anything on this object, so nothing else would
-            // tell the UI to look again.
+            // Nothing else tells the UI when plugin availability moves.
             AnnounceEnabled();
 
-            // SimHub calls DataUpdate on every device whatever its on/off switch
-            // says — it only reads Enabled to force the state it reports — so a
-            // device that stops driving hardware when switched off has to stop
-            // itself; SimHub's own devices gate on the same call. Compiled in
-            // the base, its Enabled read binds to the base member: the user's
-            // own choice, not the presented value above, which is what we want.
+            // SimHub calls DataUpdate regardless of the device's own switch —
+            // honouring it is our job. ShouldBeRunning() is the SDK's gate and
+            // reads the base Enabled (the user's real choice).
             bool switchedOn = ShouldBeRunning();
 
             bool isConnected =
                 switchedOn && GetDeviceStateFor(currentPlugin) == DeviceState.Connected;
 
-            // Keep the LEDs tab's connection badge honest. It is dropped while
-            // nothing can drive the device — what SimHub shows for a device the
-            // user switched off, rather than claiming to search for hardware
-            // nobody is looking for — and otherwise says whether the wheel is
-            // there. The module cannot work the latter out for itself: it only
-            // refreshes while driving output, which stops the moment the wheel
-            // does.
+            // The LEDs tab badge: hidden while nothing can drive the device;
+            // connected state pushed because the module only refreshes its own
+            // copy while driving output — exactly when it can't notice a loss.
             _ledHost.SetStatus(
                 canDrive: switchedOn && currentPlugin != null,
                 connected: isConnected);
 
-            // Detect Connected → Scanning transition. The edge is recorded
-            // before it is acted on, so a teardown that somehow threw could
-            // never leave the edge armed to fire again every frame.
+            // Edge recorded before acting, so a throwing teardown can't re-arm it.
             bool lostConnection = _wasConnected && !isConnected;
             _wasConnected = isConnected;
 
@@ -745,18 +664,11 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// Stops driving the wheel and darkens it, resetting the state that a
-        /// later reconnect rebuilds from.
+        /// Stops driving the wheel and darkens it. Blanks unconditionally: a
+        /// write at a gone transport quietly fails, and unconditional blanking
+        /// is what keeps teardown correct from either racer (see the lifecycle
+        /// doc, "Teardown ordering").
         /// </summary>
-        /// <remarks>
-        /// The LEDs are blanked whatever the reason output stopped. When the
-        /// wheel itself went away that write quietly fails — the transport
-        /// converts every write failure into a false return — so it costs
-        /// nothing, and blanking unconditionally is what makes the plugin
-        /// teardown race benign: an update frame that observes the plugin
-        /// already unpublished takes this edge and darkens the wheel itself,
-        /// and the plugin's own BlankOutput then finds nothing left to do.
-        /// </remarks>
         private void StopDrivingHardware()
         {
             _ledHost.StopDriving();
@@ -841,19 +753,10 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// The device's settings tabs.
+        /// The device's settings tabs. Built without a plugin so the device
+        /// can always show what it stores; SimHub deliberately greys them while
+        /// nothing can drive it (via the hiding Enabled) — do not "fix" that.
         /// </summary>
-        /// <remarks>
-        /// None of these need a running plugin to be built: the tabs exist so
-        /// the device can always show — and describe, which is what saving is —
-        /// what it stores. Hiding them while FanaBridge was disabled left users
-        /// unable to see settings that were being saved regardless.
-        ///
-        /// Shown is not editable. While nothing can drive the device, SimHub
-        /// greys this pane through the hiding Enabled property, the same
-        /// treatment it gives a device the user switched off — deliberately, so
-        /// do not "fix" these controls to work there.
-        /// </remarks>
         public override IEnumerable<DeviceSettingControl> GetSettingsControls()
         {
             var ledEditControl = _ledHost.EditControl;

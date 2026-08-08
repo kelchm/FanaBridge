@@ -1,4 +1,4 @@
-using Newtonsoft.Json.Linq;
+﻿using Newtonsoft.Json.Linq;
 
 namespace FanaBridge.Adapters
 {
@@ -69,10 +69,8 @@ namespace FanaBridge.Adapters
                 target.Remove("encoderMode");
         }
 
-        // No ToDisplaySettings() here on purpose: the device's live DisplaySettings
-        // is never replaced — the display and ITM drivers read it every frame and an
-        // open panel edits it directly — so it is copied into field by field. A
-        // method handing out a fresh one would only invite someone to swap it.
+        // Deliberately no ToDisplaySettings(): the live DisplaySettings is
+        // never replaced, so it is copied into field by field.
 
         public FanatecSettingsSnapshot WithDisplay(DisplaySettings display) =>
             new FanatecSettingsSnapshot

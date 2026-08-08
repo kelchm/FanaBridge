@@ -12,21 +12,10 @@ using SimHub.Plugins.OutputPlugins.GraphicalDash.LedModules;
 namespace FanaBridge.Adapters
 {
     /// <summary>
-    /// The real LED settings module, built from a device's registered
-    /// capabilities rather than from whatever the runtime currently reports.
+    /// The real LED settings module, built from registered (override-resolved)
+    /// capabilities: construction is plugin-free and hardware-free, and SimHub
+    /// fixes the editor's slot count for the module's lifetime.
     /// </summary>
-    /// <remarks>
-    /// Construction touches no hardware and needs no plugin: SimHub's module
-    /// only allocates its editor state, and the channel drivers appear when
-    /// settings are applied. That is what lets a device keep a working editor,
-    /// and keep serializing a complete settings document, while FanaBridge is
-    /// disabled — the situation in which saves used to erase LED data.
-    ///
-    /// Sizing comes from the registered capabilities because SimHub fixes the
-    /// editor's slot count for the module's lifetime; see
-    /// FanatecDevicesRegistry, which resolves the user's profile override at
-    /// registration so those capabilities already reflect it.
-    /// </remarks>
     internal sealed class FanatecLedModuleHost : IFanatecLedModuleHost
     {
         private readonly LedModuleSettings<FanatecLedManager> _module;
@@ -91,11 +80,8 @@ namespace FanaBridge.Adapters
 
         public bool Apply(JObject source, bool isDefault)
         {
-            // Module-level state is written before the channels, so a channel
-            // failure would otherwise leave brightness and friends carrying
-            // values from a payload that was refused. Nothing resets those
-            // afterwards — LoadDefaults only rebuilds channel drivers — so a
-            // rejected apply has to put them back itself.
+            // Snapshot for rollback: a rejected payload must not leave
+            // module-level values (which nothing else resets) half-applied.
             var moduleLevelBefore = JToken.FromObject(_module);
             var driversBefore = ChannelDrivers();
 
@@ -215,25 +201,16 @@ namespace FanaBridge.Adapters
         {
             _module.IsEnabled = canDrive;
 
-            // The module refreshes this itself, but only from inside Display(),
-            // which we stop calling the moment the device is not connected. So
-            // it would sit on whatever it last saw -- reporting a wheel as
-            // connected long after it was unplugged. Both setters no-op when
-            // the value has not moved. IsConnected is never persisted;
-            // IsEnabled does round-trip through the saved ledModuleSettings
-            // blob (exactly as stock devices save it) and is overwritten here
-            // on the next frame, so the stored copy is churn, not state.
+            // Pushed because the module only refreshes its copy from inside
+            // Display(). IsConnected is [JsonIgnore]; IsEnabled round-trips
+            // through the save (as stock does) but is overwritten next frame.
             _module.IsConnected = connected;
         }
 
         public void StopDriving()
         {
-            // Close() is the SDK's own way to stop driving a device, and it does
-            // more than blank: it disposes the driver — the only thing that
-            // removes its subscription to a static update event — drops the
-            // reference, so the LEDs tab stops reporting a connection that is
-            // gone, and resets the retry backoff so a later reconnect rebuilds
-            // cleanly. A driver that was never built is a no-op.
+            // The SDK's own stop: blanks, disposes the driver (removing its
+            // static-event subscription), drops the reference, resets backoff.
             try
             {
                 _manager.Close();

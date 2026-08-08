@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Threading;
 using System.Windows.Controls;
@@ -13,18 +13,9 @@ namespace FanaBridge.Tests
     /// and another to SimHub's own code?
     /// </summary>
     /// <remarks>
-    /// SimHub greys out a device's settings pane by binding the hosting
-    /// control's IsEnabled to the device's Enabled property, and it also
-    /// persists that same property to the device's file. Reporting false while
-    /// the plugin is off would grey the pane, but would also write false into
-    /// the user's settings and leave the device genuinely switched off next
-    /// launch.
-    ///
-    /// SimHub reads the property through a DeviceInstance-typed reference,
-    /// which binds at compile time to the base member, while WPF resolves it
-    /// on the runtime type. If that difference holds, a hiding property can
-    /// answer the two callers differently. These pin whether it does — if any
-    /// of them fail, the approach is not available.
+    /// The mechanism FanatecWheelDeviceInstance.Enabled depends on; rationale
+    /// in docs/device-settings-lifecycle.md ("Presenting availability"). If any
+    /// of these fail, a SimHub or WPF change has collapsed the two views.
     /// </remarks>
     public class EnabledHidingProbeTests
     {

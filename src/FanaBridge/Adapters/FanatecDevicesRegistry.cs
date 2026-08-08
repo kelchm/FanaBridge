@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge.Profiles;
@@ -64,19 +64,12 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// Builds the deduplicated set of device configs that back the
-        /// registered descriptors — one per device match key. When multiple
-        /// profiles share the same match (e.g. built-in + user test variants),
-        /// the built-in profile wins the dedupe for the device's stable identity
-        /// (name, type ID) — but a persisted override for the same wheel and
-        /// module then replaces the config's profile and capabilities
-        /// (ApplyProfileOverrides), so the LED editor is sized for the override
-        /// at the next registration. Runtime output additionally follows the
-        /// currently-active profile via FanatecPlugin.ResolveCapsFor (see
-        /// FanatecLedManager.GetDriver and the display section of
-        /// FanatecWheelDeviceInstance.DataUpdate), so an override created
-        /// mid-session still takes effect live where it can — only editor
-        /// sizing waits for the restart.
+        /// Builds the deduplicated device configs, one per match key: the
+        /// built-in profile wins the dedupe for stable identity, then a
+        /// persisted override for the same wheel+module replaces profile and
+        /// capabilities, sizing the LED editor at registration. Runtime output
+        /// additionally follows the active profile live via ResolveCapsFor;
+        /// only editor sizing waits for a restart.
         ///
         /// Shared by descriptor registration (<see cref="GetDevices"/>) and the
         /// settings page's add-device prompt so both resolve a detected wheel

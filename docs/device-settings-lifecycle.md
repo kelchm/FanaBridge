@@ -79,6 +79,20 @@ LED output binds to the runtime at the moment it needs a driver, never to whiche
 
 When there is nothing to drive, it returns no driver rather than throwing — SimHub asks for one outside its own exception handling, so throwing escapes into the frame loop. It also keeps asking indefinitely, so a device idle while the plugin was down recovers when it comes back. Both the unavailable and the recovered states are logged once, not per frame.
 
+## Presenting availability to SimHub's UI
+
+SimHub greys a device's settings pane and labels its header by binding to the device's `Enabled` property, and it persists the same property as the user's on/off choice. Those two roles conflict for a device nothing can drive: the UI should show it as unavailable, but the stored choice must not change. The device resolves this by *hiding* the base property (`new`, not `override`): WPF resolves binding paths on the runtime type and sees "off while nothing can drive it", while every SimHub code path reads through a `DeviceInstance`-typed reference, which binds to the base member at compile time and keeps seeing the real choice. The setter declines writes while nothing can drive the device — only WPF's two-way toggle binding reaches it, and a click the UI refuses to show must not rewrite stored state.
+
+Because the hidden property answers from state SimHub cannot observe, nothing raises `PropertyChanged` when a plugin appears or disappears — and the base raises through a compiler-generated member a derived class cannot call. The device therefore hides the event too, which re-implements `INotifyPropertyChanged` against the derived member; WPF subscribes through the interface, so its subscription lands there, and base notifications are forwarded on. Availability transitions are announced from `DataUpdate`, which SimHub's device loop keeps calling regardless of plugin state, so the UI self-corrects within a frame.
+
+Both mechanisms are undocumented host behaviour, pinned by probe tests (`EnabledHidingProbeTests`, `EnabledNotificationProbeTests`) built on real WPF bindings — a future SimHub or WPF change fails there rather than silently reverting the UX.
+
+`GetDeviceState` reports `Scanning`, never `Disabled`, while the plugin is absent: SimHub reserves `Disabled` for a device the user switched off and forces an enabled device claiming it back to `Scanning` every frame, so the pair never settles and every flip is logged (127,145 lines in one recorded session).
+
+## Teardown ordering
+
+`FinalizePlugin` unpublishes the singleton first, then asks each device it was driving to blank itself while the transport is still alive. Frames are not joined, so each device carries an output gate serializing its drawing tail against `BlankOutput`; inside the gate a frame revalidates that its captured generation is still the published one. Whichever side runs first darkens the wheel, and the other finds nothing to do.
+
 ## Known gaps
 
 A settings panel left open while SimHub applies a different document to the same device shows the previous values until it is reopened. The stored settings and the hardware are correct; only the open panel is stale.

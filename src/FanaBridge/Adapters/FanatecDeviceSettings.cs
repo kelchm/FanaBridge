@@ -12,30 +12,11 @@ namespace FanaBridge.Adapters
     /// recognise.
     /// </summary>
     /// <remarks>
-    /// SimHub rewrites a device's settings file from a single call, wholesale,
-    /// with no merge against what is already on disk. Anything missing from
-    /// that call is erased — which is how disabling the plugin used to wipe LED
-    /// profiles, and how settings written by a newer build (or a feature branch)
-    /// were quietly dropped on every reload.
-    ///
-    /// So this type is the one place that decides what a saved document
-    /// contains, and it either produces a complete one or refuses:
-    ///
-    ///  • Typed values FanaBridge understands are held as an immutable snapshot.
-    ///  • Identity is derived from the device's profile, never echoed from input.
-    ///  • Everything else stays in a residual document and is written back
-    ///    untouched, so unrecognised settings survive a round trip.
-    ///  • Applying settings either commits all of it or none of it.
-    ///
-    /// That last rule is about this document. The LED module is a separate
-    /// object that can be left partly changed by a failed apply, which is why
-    /// such a failure stops the device saving rather than being retried: only a
-    /// complete apply, or a reset, makes the two agree again.
-    ///
-    /// Reads and writes are serialized on a private lock so a save taken while
-    /// settings are being applied sees either the whole old state or the whole
-    /// new one. SimHub's LED editor does its own internal synchronization and
-    /// is outside that boundary.
+    /// The one place that decides what a saved document contains: complete or
+    /// refuse, typed snapshot + module projection + verbatim residual +
+    /// profile-derived identity, all-or-nothing under one lock. The document
+    /// rules, failure policy and their rationale live in
+    /// docs/device-settings-lifecycle.md.
     /// </remarks>
     internal sealed class FanatecDeviceSettings
     {

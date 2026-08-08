@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -16,18 +16,9 @@ namespace FanaBridge.Tests
     /// Probe: can a device tell WPF that its hiding Enabled property changed?
     /// </summary>
     /// <remarks>
-    /// A hiding Enabled (see EnabledHidingProbeTests) answers from state SimHub
-    /// knows nothing about, so nothing raises PropertyChanged when that state
-    /// moves. Every binding already made keeps showing the old answer — the
-    /// device tiles in the list stay stale, and an open settings pane only
-    /// catches up when re-selecting it rebuilds the binding.
-    ///
-    /// The base class raises through a compiler-generated member a derived
-    /// class cannot call. What it can do is re-implement INotifyPropertyChanged:
-    /// WPF subscribes through the interface, which dispatches on the runtime
-    /// type, so a derived implementation intercepts the subscription. These pin
-    /// whether that actually holds — both that base notifications still arrive
-    /// and that a synthesised one does.
+    /// Companion to EnabledHidingProbeTests: pins that hiding the event
+    /// re-implements INotifyPropertyChanged (WPF's subscription lands on the
+    /// derived member) and that forwarded base notifications still arrive.
     /// </remarks>
     public class EnabledNotificationProbeTests
     {

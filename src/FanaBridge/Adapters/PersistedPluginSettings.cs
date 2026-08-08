@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json.Linq;
@@ -73,16 +73,10 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// Reads the overrides from the settings file, falling back through
-        /// SimHub's rolling backups exactly as SimHub itself does.
+        /// Reads the overrides, falling back through SimHub's rolling backups
+        /// so registration and the running plugin resolve the same profile —
+        /// the LED editor is sized from this for the whole session.
         /// </summary>
-        /// <remarks>
-        /// Matching that fallback matters: if the plugin recovers an override
-        /// from a backup while device registration only looked at a corrupt
-        /// primary file, the two disagree about which profile a device has —
-        /// and the LED editor, which is sized at registration, would be built
-        /// for the wrong one for the rest of the session.
-        /// </remarks>
         private static JObject ReadOverridesObject(string path)
         {
             foreach (var candidate in CandidatePaths(path))
