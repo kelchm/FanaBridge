@@ -119,6 +119,7 @@ namespace FanaBridge
 
         private UpdateService _updateService;
         private CancellationTokenSource _updaterCts;
+        private bool _updaterInitialized;
 
         /// <summary>
         /// When true, device instances skip all LED and display output so the
@@ -415,6 +416,16 @@ namespace FanaBridge
 
             SimHub.Logging.Current.Info(
                 $"FanaBridge: Init complete, connected={_connectionMonitor.IsConnected}");
+
+            // Very last, after ALL first-Init work (core + the registrations
+            // above): a FanaBridge.dll.old left by a self-update survives as a
+            // manual rollback copy until this (new) build has proven it can
+            // complete a full Init — only then does the updater sweep it.
+            if (!_updaterInitialized)
+            {
+                _updaterInitialized = true;
+                InitializeUpdater();
+            }
         }
 
         /// <summary>
@@ -500,17 +511,14 @@ namespace FanaBridge
 
             // Attempt initial connection
             _connectionMonitor.TryInitialConnect();
-
-            // Last step on purpose: a FanaBridge.dll.old left by a self-update
-            // survives as a manual rollback copy until this (new) build has
-            // proven it can construct its core.
-            InitializeUpdater();
         }
 
         /// <summary>
         /// Builds the self-updater, sweeps stale swap artifacts, and kicks the
         /// once-per-process background check (opt-out via
-        /// <see cref="FanatecPluginSettings.EnableUpdateCheck"/>). Strictly
+        /// <see cref="FanatecPluginSettings.EnableUpdateCheck"/>). Runs once,
+        /// at the END of the first <see cref="Init"/>, so the rollback copy
+        /// outlives every step that could fail a fresh build's load. Strictly
         /// best-effort: no failure in here may affect plugin init.
         /// </summary>
         private void InitializeUpdater()

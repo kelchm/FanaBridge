@@ -1155,6 +1155,7 @@ namespace FanaBridge.UI
 
                 case UpdatePhase.Downloading:
                 case UpdatePhase.Applying:
+                    txtUpdateCheckResult.Text = "Installing update…";
                     StyleUpdateBanner(failed: false);
                     txtUpdateTitle.Text = "Updating to FanaBridge " + release?.Version;
                     txtUpdateDetail.Text = "Downloading and installing…";
@@ -1163,6 +1164,7 @@ namespace FanaBridge.UI
                     break;
 
                 case UpdatePhase.ReadyToRestart:
+                    txtUpdateCheckResult.Text = "Update installed — restart SimHub.";
                     StyleUpdateBanner(failed: false);
                     txtUpdateTitle.Text = "Update installed";
                     txtUpdateDetail.Text = "Restart SimHub to finish updating to FanaBridge "
@@ -1174,6 +1176,7 @@ namespace FanaBridge.UI
                     break;
 
                 case UpdatePhase.Failed:
+                    txtUpdateCheckResult.Text = "Automatic update failed.";
                     StyleUpdateBanner(failed: true);
                     txtUpdateTitle.Text = "Automatic update failed";
                     txtUpdateDetail.Text = ComposeUpdateFailureDetail(snapshot);
