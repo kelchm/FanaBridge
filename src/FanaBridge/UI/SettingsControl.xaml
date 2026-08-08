@@ -12,35 +12,34 @@
             <!-- Self-updater banner. Hidden until the background release check
                  finds a newer version; from there it walks the update phases
                  (offer → downloading/installing → restart, or the amber failed
-                 state — palette swapped in code by StyleUpdateBanner). Same
-                 callout layout as the add-device alert below. Driven entirely
-                 by UpdateUpdateBanner from UpdateService snapshots. -->
+                 state — palette swapped in code by StyleUpdateBanner). Spans
+                 the section content width: one row of headline (+ inline
+                 release-notes link) and a right-aligned action button, with a
+                 muted detail line only for states that need one. Headline text
+                 goes through runUpdateHeadline — setting txtUpdateTitle.Text
+                 would wipe the inline hyperlink. Driven entirely by
+                 UpdateUpdateBanner from UpdateService snapshots. -->
             <Border x:Name="borderUpdateAlert" Visibility="Collapsed"
                     Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
-                    CornerRadius="4" Padding="12,10" Margin="0,4,0,10"
-                    HorizontalAlignment="Left" MaxWidth="700">
+                    CornerRadius="4" Padding="12,8" Margin="19,4,19,12">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock x:Name="txtUpdateGlyph" Grid.Column="0" Text="&#x2B06;" FontSize="18"
-                               Foreground="#4488CC" VerticalAlignment="Center" Margin="0,0,12,0" />
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
                         <TextBlock x:Name="txtUpdateTitle" Foreground="#AADDFF" FontSize="12"
-                                   FontWeight="SemiBold" TextWrapping="Wrap" />
-                        <TextBlock x:Name="txtUpdateDetail" Foreground="#AADDFF" Opacity="0.7"
-                                   FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
-                        <TextBlock FontSize="11" Margin="0,3,0,0">
-                            <Hyperlink Click="LnkReleaseNotes_Click"
-                                       Foreground="#4FC3F7" TextDecorations="None"
-                                       ToolTip="Open the release page on GitHub">
-                                Release notes
-                            </Hyperlink>
+                                   FontWeight="SemiBold" TextWrapping="Wrap">
+                            <Run x:Name="runUpdateHeadline" /><Run Text="   " /><Hyperlink
+                                Click="LnkReleaseNotes_Click"
+                                Foreground="#4FC3F7" TextDecorations="None" FontWeight="Normal"
+                                ToolTip="Open the release page on GitHub">Release notes</Hyperlink>
                         </TextBlock>
+                        <TextBlock x:Name="txtUpdateDetail" Foreground="#AADDFF" Opacity="0.7"
+                                   FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0"
+                                   Visibility="Collapsed" />
                     </StackPanel>
-                    <styles:SHButtonPrimary Grid.Column="2" x:Name="btnUpdateNow" Click="BtnUpdateNow_Click"
+                    <styles:SHButtonPrimary Grid.Column="1" x:Name="btnUpdateNow" Click="BtnUpdateNow_Click"
                                             VerticalAlignment="Center" Margin="16,0,0,0">
                         Update
                     </styles:SHButtonPrimary>

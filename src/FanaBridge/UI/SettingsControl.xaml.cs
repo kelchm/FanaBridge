@@ -1137,16 +1137,17 @@ namespace FanaBridge.UI
                 case UpdatePhase.UpdateAvailable:
                     txtUpdateCheckResult.Text = "Update available.";
                     StyleUpdateBanner(failed: false);
-                    txtUpdateTitle.Text = "Update available: FanaBridge " + release.Version;
+                    runUpdateHeadline.Text = "Update available: FanaBridge " + release.Version
+                        + " — you have " + BuildIdentity.Version + ".";
                     if (release.CanSelfInstall)
                     {
-                        txtUpdateDetail.Text = "You have " + BuildIdentity.Version + ".";
+                        SetUpdateDetail(null);
                         btnUpdateNow.Content = "Update";
                     }
                     else
                     {
-                        txtUpdateDetail.Text = "One-click update isn't available for this release ("
-                            + release.InstallBlockedReason + ") — install it manually from the release page.";
+                        SetUpdateDetail("One-click update isn't available for this release ("
+                            + release.InstallBlockedReason + ") — install it manually from the release page.");
                         btnUpdateNow.Content = "Open release page";
                     }
                     btnUpdateNow.IsEnabled = true;
@@ -1157,8 +1158,9 @@ namespace FanaBridge.UI
                 case UpdatePhase.Applying:
                     txtUpdateCheckResult.Text = "Installing update…";
                     StyleUpdateBanner(failed: false);
-                    txtUpdateTitle.Text = "Updating to FanaBridge " + release?.Version;
-                    txtUpdateDetail.Text = "Downloading and installing…";
+                    runUpdateHeadline.Text = "Updating to FanaBridge " + release?.Version;
+                    SetUpdateDetail("Downloading and installing…");
+                    btnUpdateNow.Content = "Update";
                     btnUpdateNow.IsEnabled = false;
                     borderUpdateAlert.Visibility = Visibility.Visible;
                     break;
@@ -1166,9 +1168,9 @@ namespace FanaBridge.UI
                 case UpdatePhase.ReadyToRestart:
                     txtUpdateCheckResult.Text = "Update installed — restart SimHub.";
                     StyleUpdateBanner(failed: false);
-                    txtUpdateTitle.Text = "Update installed";
-                    txtUpdateDetail.Text = "Restart SimHub to finish updating to FanaBridge "
+                    runUpdateHeadline.Text = "Update installed — restart SimHub to finish updating to FanaBridge "
                         + release?.Version + ".";
+                    SetUpdateDetail(null);
                     btnUpdateNow.Content = "Restart SimHub";
                     btnUpdateNow.IsEnabled = true;
                     borderUpdateAlert.Visibility = Visibility.Visible;
@@ -1178,8 +1180,8 @@ namespace FanaBridge.UI
                 case UpdatePhase.Failed:
                     txtUpdateCheckResult.Text = "Automatic update failed.";
                     StyleUpdateBanner(failed: true);
-                    txtUpdateTitle.Text = "Automatic update failed";
-                    txtUpdateDetail.Text = ComposeUpdateFailureDetail(snapshot);
+                    runUpdateHeadline.Text = "Automatic update failed";
+                    SetUpdateDetail(ComposeUpdateFailureDetail(snapshot));
                     btnUpdateNow.Content = "Open release page";
                     btnUpdateNow.IsEnabled = true;
                     borderUpdateAlert.Visibility = Visibility.Visible;
@@ -1187,12 +1189,18 @@ namespace FanaBridge.UI
             }
         }
 
+        private void SetUpdateDetail(string detail)
+        {
+            txtUpdateDetail.Text = detail ?? "";
+            txtUpdateDetail.Visibility = string.IsNullOrEmpty(detail)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+
         private void StyleUpdateBanner(bool failed)
         {
             borderUpdateAlert.Background = failed ? UpdateAmberBg : UpdateBlueBg;
             borderUpdateAlert.BorderBrush = failed ? UpdateAmberBorder : UpdateBlueBorder;
-            txtUpdateGlyph.Text = failed ? "⚠" : "⬆";
-            txtUpdateGlyph.Foreground = failed ? UpdateAmberBorder : UpdateBlueBorder;
             txtUpdateTitle.Foreground = failed ? UpdateAmberText : UpdateBlueText;
             txtUpdateDetail.Foreground = failed ? UpdateAmberText : UpdateBlueText;
         }
