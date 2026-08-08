@@ -1062,8 +1062,8 @@ namespace FanaBridge.UI
 
         private void ChkEnableUpdateCheck_Changed(object sender, RoutedEventArgs e)
         {
-            // Takes effect on the next SimHub launch (the startup check runs
-            // once per process); the manual link works regardless.
+            // Live: the daily re-check timer re-reads the setting on each fire;
+            // the manual link works regardless.
             Plugin?.SaveSettings();
         }
 

@@ -56,8 +56,9 @@ namespace FanaBridge
         // ---- Updates ----
 
         /// <summary>
-        /// Check GitHub for a newer FanaBridge release at startup (one API
-        /// request per SimHub launch). The manual "Check for updates" link in
+        /// Check GitHub for a newer FanaBridge release automatically: once at
+        /// startup, then every 24 h while SimHub runs (one API request per
+        /// check). Takes effect live. The manual "Check for updates" link in
         /// the settings UI works regardless.
         /// </summary>
         public bool EnableUpdateCheck { get; set; } = true;

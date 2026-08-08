@@ -120,6 +120,7 @@ namespace FanaBridge
         private UpdateService _updateService;
         private CancellationTokenSource _updaterCts;
         private bool _updaterInitialized;
+        private System.Timers.Timer _updateRecheckTimer;
 
         /// <summary>
         /// When true, device instances skip all LED and display output so the
@@ -570,6 +571,21 @@ namespace FanaBridge
                         }
                     });
                 }
+
+                // Rigs can leave SimHub running for weeks, so a launch-only
+                // check goes stale — re-check daily while running. The handler
+                // re-reads the setting (live opt-out, no restart needed), and
+                // the service's serialization + terminal ReadyToRestart make a
+                // redundant fire a no-op.
+                _updateRecheckTimer = new System.Timers.Timer(
+                    TimeSpan.FromHours(24).TotalMilliseconds)
+                { AutoReset = true };
+                _updateRecheckTimer.Elapsed += (s, e) =>
+                {
+                    if (Settings?.EnableUpdateCheck == true)
+                        _ = CheckForUpdatesAsync();
+                };
+                _updateRecheckTimer.Start();
             }
             catch (Exception ex)
             {
@@ -673,10 +689,12 @@ namespace FanaBridge
         {
             SimHub.Logging.Current.Info("FanaBridge: FinalizePlugin (final teardown)");
 
-            // Stop any in-flight update work — the startup check AND manual
-            // checks/applies from the settings UI share this token. A swap that
-            // already reached its commit point still runs to completion
-            // (UpdateService stops honoring the token past the last safe point).
+            // Stop any in-flight update work — the startup check, the daily
+            // re-check, and manual checks/applies from the settings UI all
+            // share this token. A swap that already reached its commit point
+            // still runs to completion (UpdateService stops honoring the token
+            // past the last safe point).
+            try { _updateRecheckTimer?.Stop(); _updateRecheckTimer?.Dispose(); } catch { /* best-effort */ }
             try { _updaterCts?.Cancel(); } catch { /* best-effort */ }
 
             // Unpublish FIRST: device DataUpdate frames can still be in flight

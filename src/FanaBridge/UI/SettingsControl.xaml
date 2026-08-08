@@ -282,7 +282,8 @@
                         </Hyperlink>
                     </TextBlock>
                     <CheckBox x:Name="chkEnableUpdateCheck" Margin="0,10,0,0"
-                              Content="Check for updates at startup"
+                              Content="Check for updates automatically"
+                              ToolTip="Checks at startup and once a day while SimHub runs."
                               IsChecked="{Binding EnableUpdateCheck}"
                               Checked="ChkEnableUpdateCheck_Changed" Unchecked="ChkEnableUpdateCheck_Changed" />
                     <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
