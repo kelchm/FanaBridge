@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using FanaBridge.Profiles;
 using SimHub.Plugins.Devices;
 
@@ -19,6 +20,13 @@ namespace FanaBridge.Adapters
     /// </summary>
     public class FanatecDevicesRegistry : IDeviceDescriptorsRegistry
     {
+        /// <summary>
+        /// Builds the settings panels for each device. Not resolved from the
+        /// plugin: SimHub shows a device's settings whether or not FanaBridge is
+        /// running. Overridable so tests can build instances without WPF.
+        /// </summary>
+        internal static readonly IDevicePanelFactory PanelFactory = new UI.DevicePanelFactory();
+
         public IEnumerable<DeviceDescriptor> GetDevices()
         {
             SimHub.Logging.Current.Info("FanatecDevicesRegistry: GetDevices() called");
@@ -42,7 +50,11 @@ namespace FanaBridge.Adapters
                     // PID (0x0001) just so SimHub sees a USB descriptor; the real
                     // matching is done in GetDeviceState() against the wheelbase identity.
                     DetectionDescriptor = new USBRequest(0x0EB7, 0x0001, true),
-                    Factory = () => new FanatecWheelDeviceInstance(capturedConfig),
+                    // The composition root for a device: it supplies the panel
+                    // factory so the settings tabs do not depend on the plugin
+                    // being enabled (SimHub shows them either way).
+                    Factory = () => new FanatecWheelDeviceInstance(
+                        capturedConfig, PanelFactory, null),
                     MaximumInstances = 1,
                     IsGeneric = false,
                     IsOEM = false,
@@ -52,15 +64,12 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// Builds the deduplicated set of device configs that back the
-        /// registered descriptors — one per device match key. When multiple
-        /// profiles share the same match (e.g. built-in + user test variants),
-        /// the built-in profile wins for the device descriptor (name, type ID,
-        /// LED editor sizing). The capabilities used at runtime — LED layout AND
-        /// display type / ITM device id — come from the currently-active profile
-        /// via FanatecPlugin.ResolveCapsFor (see FanatecLedManager.GetDriver and
-        /// the display section of FanatecWheelDeviceInstance.DataUpdate), so a
-        /// user override losing this dedupe still takes effect live.
+        /// Builds the deduplicated device configs, one per match key: the
+        /// built-in profile wins the dedupe for stable identity, then a
+        /// persisted override for the same wheel+module replaces profile and
+        /// capabilities, sizing the LED editor at registration. Runtime output
+        /// additionally follows the active profile live via ResolveCapsFor;
+        /// only editor sizing waits for a restart.
         ///
         /// Shared by descriptor registration (<see cref="GetDevices"/>) and the
         /// settings page's add-device prompt so both resolve a detected wheel
@@ -133,7 +142,83 @@ namespace FanaBridge.Adapters
                 configs[config.DeviceTypeId] = config;
             }
 
+            ApplyProfileOverrides(configs, verbose);
+
             return configs.Values;
+        }
+
+        /// <summary>
+        /// Swaps in the user's chosen profile for any device that has one.
+        /// </summary>
+        /// <remarks>
+        /// Dedupe above picks the built-in profile so a device's identity stays
+        /// stable, but the capabilities it carries also size the LED editor —
+        /// which is fixed for the lifetime of a device instance. Resolving the
+        /// override here (rather than only at runtime) is what lets a restart
+        /// actually produce an editor matching an override that changes the LED
+        /// layout, including one that adds LEDs to a display-only wheel.
+        ///
+        /// The override is only honoured when it resolves to a profile matching
+        /// the same wheel/module, since <see cref="DeviceConfig.DeviceTypeId"/>
+        /// is derived from those — a mismatched override would rename the device
+        /// and orphan its saved settings.
+        /// </remarks>
+        private static void ApplyProfileOverrides(
+            Dictionary<string, DeviceConfig> configs, bool verbose)
+        {
+            var overrides = PersistedPluginSettings.ReadProfileOverrides();
+            if (overrides.Count == 0)
+                return;
+
+            foreach (var key in configs.Keys.ToList())
+            {
+                var config = configs[key];
+                var matchKey = WheelProfileStore.MakeMatchKey(config.WheelCode, config.ModuleCode);
+                if (string.IsNullOrEmpty(matchKey))
+                    continue;
+
+                if (!overrides.TryGetValue(matchKey, out var overrideKey))
+                    continue;
+
+                var overridden = WheelProfileStore.ResolveOverrideKey(overrideKey);
+                if (overridden == null)
+                {
+                    if (verbose)
+                        SimHub.Logging.Current.Info(
+                            "FanatecDevicesRegistry: override '" + overrideKey + "' for " +
+                            matchKey + " did not resolve — using " + config.Profile.Id);
+                    continue;
+                }
+
+                var overriddenMatch = WheelProfileStore.MakeMatchKey(
+                    overridden.Match?.WheelType, overridden.Match?.ModuleType);
+                if (!string.Equals(overriddenMatch, matchKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Gated like the unresolved-override warning above: the
+                    // settings page re-runs this every refresh, and a mismatch
+                    // is permanent for the session, so it would repeat forever.
+                    if (verbose)
+                        SimHub.Logging.Current.Warn(
+                            "FanatecDevicesRegistry: override '" + overrideKey + "' matches " +
+                            (overriddenMatch ?? "nothing") + " but was stored for " + matchKey +
+                            " — ignoring so the device keeps its identity.");
+                    continue;
+                }
+
+                if (ReferenceEquals(overridden, config.Profile))
+                    continue;
+
+                configs[key] = new DeviceConfig
+                {
+                    Profile = overridden,
+                    Capabilities = new WheelCapabilities(overridden),
+                };
+
+                if (verbose)
+                    SimHub.Logging.Current.Info(
+                        "FanatecDevicesRegistry: device " + key + " uses override profile '" +
+                        overridden.Id + "' (" + overridden.Source + ")");
+            }
         }
 
         /// <summary>

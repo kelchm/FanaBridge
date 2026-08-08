@@ -1,17 +1,17 @@
 using System;
 using System.Windows.Controls;
 using FanaBridge.Profiles;
-using Newtonsoft.Json.Linq;
 
 namespace FanaBridge.Adapters
 {
     /// <summary>
-    /// Constructs the per-device WPF settings panels. Implemented on the UI side
-    /// and resolved through <see cref="FanatecPlugin.PanelFactory"/>, so Adapters
-    /// never references FanaBridge.UI — UI stays the top layer with nothing
-    /// below it depending on it. (SimHub instantiates DeviceInstances via the
-    /// registry's parameterless factory, so this rides the same PluginResolver
-    /// seam the generation guard uses rather than constructor injection.)
+    /// Constructs the per-device WPF settings panels.
+    ///
+    /// Injected when the device registry builds an instance, rather than
+    /// resolved from the plugin: SimHub shows a device's settings whether or not
+    /// FanaBridge is running, and routing this through the plugin singleton made
+    /// the Screen and Tuning tabs disappear while it was disabled — even though
+    /// nothing about editing stored settings needs the hardware.
     /// </summary>
     internal interface IDevicePanelFactory
     {
@@ -19,6 +19,6 @@ namespace FanaBridge.Adapters
         Control CreateScreenPanel(DisplaySettings settings, DisplayType display, byte itmDeviceId, Action settingsChanged);
 
         /// <summary>A bound Tuning settings panel.</summary>
-        Control CreateTuningPanel(JObject customSettings);
+        Control CreateTuningPanel(FanatecDeviceSettings settings);
     }
 }

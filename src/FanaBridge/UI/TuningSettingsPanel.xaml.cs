@@ -4,17 +4,14 @@ using System.Windows.Controls;
 using FanaBridge;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
-using Newtonsoft.Json.Linq;
+using FanaBridge.Adapters;
 
 namespace FanaBridge.UI
 {
     public partial class TuningSettingsPanel : UserControl
     {
-        private JObject _settings;
+        private FanatecDeviceSettings _settings;
         private bool _suppressEvents;
-
-        /// <summary>Fired when the user changes a setting. The parent should persist.</summary>
-        public event Action SettingsChanged;
 
         public TuningSettingsPanel()
         {
@@ -23,12 +20,12 @@ namespace FanaBridge.UI
         }
 
         /// <summary>
-        /// Binds the panel to a device-instance settings JObject.
+        /// Binds the panel to the device's settings owner.
         /// Call once after construction, before the panel is displayed.
         /// </summary>
-        public void Bind(JObject settings)
+        internal void Bind(FanatecDeviceSettings settings)
         {
-            _settings = settings ?? new JObject();
+            _settings = settings;
             UpdateEnabledState();
         }
 
@@ -44,7 +41,17 @@ namespace FanaBridge.UI
         /// </summary>
         private void UpdateEnabledState()
         {
-            bool enabled = FanatecPlugin.Instance?.Settings?.EnableTuning == true;
+            var plugin = FanatecPlugin.Instance;
+            bool enabled = plugin?.Settings?.EnableTuning == true;
+
+            // Without a plugin the flag reads false whether or not the user set
+            // it, so the stock hint would send someone to a settings page that
+            // is not there to tell them to turn on something already on.
+            txtDisabledHint.Text = plugin == null
+                ? "FanaBridge is not running, so these settings cannot be read from or " +
+                  "written to the wheel. Enable the plugin to use them."
+                : "Tuning features are disabled. Enable them in the FanaBridge plugin " +
+                  "settings under Experimental Features.";
 
             panelDisabled.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
             panelEnabled.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
@@ -76,15 +83,16 @@ namespace FanaBridge.UI
                         if (Enum.IsDefined(typeof(EncoderMode), raw))
                         {
                             modeTag = ((EncoderMode)raw).ToString();
-                            if (_settings != null)
-                                _settings["encoderMode"] = modeTag;
+                            _settings?.UpdateEncoderMode(modeTag);
                         }
                     }
                 }
 
                 // Fall back to persisted setting
-                if (modeTag == null && _settings != null)
-                    modeTag = (string)_settings["encoderMode"];
+                // Fall back to what was stored, so the panel still shows the
+                // user's choice when the wheel cannot be read.
+                if (modeTag == null)
+                    modeTag = _settings?.Current.EncoderMode;
 
                 modeTag = modeTag ?? "Encoder";
 
@@ -139,8 +147,7 @@ namespace FanaBridge.UI
             if (selected == null) return;
 
             string modeTag = (string)selected.Tag;
-            _settings["encoderMode"] = modeTag;
-            SettingsChanged?.Invoke();
+            _settings.UpdateEncoderMode(modeTag);
 
             // Send to hardware immediately
             try

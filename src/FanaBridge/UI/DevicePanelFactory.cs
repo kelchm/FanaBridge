@@ -2,7 +2,6 @@ using System;
 using System.Windows.Controls;
 using FanaBridge.Adapters;
 using FanaBridge.Profiles;
-using Newtonsoft.Json.Linq;
 
 namespace FanaBridge.UI
 {
@@ -18,10 +17,10 @@ namespace FanaBridge.UI
             return panel;
         }
 
-        public Control CreateTuningPanel(JObject customSettings)
+        public Control CreateTuningPanel(FanatecDeviceSettings settings)
         {
             var panel = new TuningSettingsPanel();
-            panel.Bind(customSettings);
+            panel.Bind(settings);
             return panel;
         }
     }

@@ -157,14 +157,6 @@ namespace FanaBridge
         /// </summary>
         internal void InstallWheelbaseForTest(FanatecWheelbase wheelbase) => _wheelbase = wheelbase;
 
-        /// <summary>
-        /// Factory for the per-device WPF settings panels. Lives here (the
-        /// composition root, which legitimately sees both Adapters and UI) so
-        /// DeviceInstances can build their tabs without Adapters referencing
-        /// FanaBridge.UI.
-        /// </summary>
-        internal Adapters.IDevicePanelFactory PanelFactory { get; } = new UI.DevicePanelFactory();
-
         /// <summary>Called by each <see cref="Adapters.FanatecWheelDeviceInstance"/> so the
         /// plugin can read the connected wheel's SimHub device name for the Control Mapper
         /// integration. Idempotent.</summary>
@@ -562,6 +554,26 @@ namespace FanaBridge
 
             if (_connectionMonitor?.IsConnected == true)
             {
+                // Darken whatever we were driving while the transport is still
+                // alive, so disabling FanaBridge leaves the wheel the way
+                // switching the device off does. Each device's output gate
+                // serializes this against any frame still in flight; see
+                // docs/device-settings-lifecycle.md. Copied out of the lock so
+                // no device work runs while holding the instance list.
+                List<Adapters.FanatecWheelDeviceInstance> instances;
+                lock (_deviceInstancesLock)
+                    instances = new List<Adapters.FanatecWheelDeviceInstance>(_deviceInstances);
+
+                foreach (var inst in instances)
+                {
+                    try { inst.BlankOutput(); }
+                    catch (Exception ex)
+                    {
+                        SimHub.Logging.Current.Warn(
+                            $"FanaBridge: blanking a device on finalize: {ex.Message}");
+                    }
+                }
+
                 try
                 {
                     _display.ClearDisplay();

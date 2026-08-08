@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using FanaBridge;
@@ -9,6 +9,7 @@ using FanaBridge.Transport;
 using GameReaderCommon;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins.Devices;
+using FanaBridge.Tests.TestDoubles;
 using Xunit;
 
 namespace FanaBridge.Tests
@@ -118,15 +119,428 @@ namespace FanaBridge.Tests
             return new FanatecWheelDeviceInstance(config);
         }
 
+        // Same device, but with the LED module stood in for so a test can see
+        // whether output was driven or blanked.
+        private static FanatecWheelDeviceInstance InstanceWithHost(
+            string wheelCode, IFanatecLedModuleHost host)
+        {
+            var profile = WheelProfileStore.FindByWheelType(wheelCode);
+            Assert.NotNull(profile);
+            var config = new DeviceConfig
+            {
+                Profile = profile,
+                Capabilities = new WheelCapabilities(profile),
+            };
+            return new FanatecWheelDeviceInstance(config, null, host);
+        }
+
         // ── GetDeviceState rows ────────────────────────────────────────────
 
         [Fact]
-        public void NoPlugin_ReportsDisabled()
+        public void NoPlugin_ReportsScanning_NotDisabled()
         {
+            // Disabled is SimHub's word for "the user switched this device off",
+            // and it overrides anything else claiming it: an enabled device
+            // reporting Disabled is moved to Scanning every frame and asked
+            // again, so the pair never settles and every flip is logged.
             var inst = InstanceFor("PSWBMW");
             inst.PluginResolver = () => null;
 
-            Assert.Equal(DeviceState.Disabled, inst.GetDeviceState());
+            Assert.Equal(DeviceState.Scanning, inst.GetDeviceState());
+        }
+
+        [Fact]
+        public void NoPlugin_ReportsTheSameStateEveryFrame()
+        {
+            // The flood was not the state itself but its instability: whatever
+            // is reported has to survive SimHub re-asking after it has forced
+            // the device to Scanning.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            var first = inst.GetDeviceState();
+            for (int frame = 0; frame < 5; frame++)
+                Assert.Equal(first, inst.GetDeviceState());
+
+            Assert.NotEqual(DeviceState.Disabled, first);
+        }
+
+        [Fact]
+        public void NoPlugin_PresentsAsNotEnabled_ToTheUiOnly()
+        {
+            // SimHub greys the settings pane from this property, so it reports
+            // false while nothing can drive the device -- but persistence reads
+            // it through a DeviceInstance-typed reference and must still see the
+            // user's own choice, or their device would come back switched off.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            Assert.False(inst.Enabled);
+            Assert.True(((DeviceInstance)inst).Enabled);
+        }
+
+        [Fact]
+        public void PluginPresent_PresentsAsEnabled()
+        {
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => PluginWithWheel("PSWBMW", out _);
+
+            Assert.True(inst.Enabled);
+        }
+
+        [Fact]
+        public void DeviceSwitchedOffByTheUser_StaysOff_EvenWithAPlugin()
+        {
+            // Hiding the property must not override the user's own choice.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => PluginWithWheel("PSWBMW", out _);
+
+            inst.Enabled = false;
+
+            Assert.False(inst.Enabled);
+            Assert.False(((DeviceInstance)inst).Enabled);   // and it is what gets stored
+        }
+
+        [Fact]
+        public void PluginGoingAway_TellsTheUiToLookAgain()
+        {
+            // Enabled answers from something SimHub knows nothing about, so
+            // without this every binding already made keeps showing the old
+            // answer -- the device tiles and their toggles stay as they were,
+            // and an open pane only greys once re-selecting it rebuilds it.
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var announced = new List<string>();
+            ((System.ComponentModel.INotifyPropertyChanged)inst).PropertyChanged +=
+                (_, e) => announced.Add(e.PropertyName);
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);   // establishes the baseline
+            announced.Clear();
+
+            inst.DataUpdate(null, ref data);
+            Assert.Empty(announced);           // nothing moved, nothing said
+
+            inst.PluginResolver = () => null;
+            inst.DataUpdate(null, ref data);
+            Assert.Contains(nameof(FanatecWheelDeviceInstance.Enabled), announced);
+
+            // Once per transition, not once per frame -- this runs at frame rate.
+            announced.Clear();
+            inst.DataUpdate(null, ref data);
+            Assert.Empty(announced);
+        }
+
+        [Fact]
+        public void SwitchingOnWithNothingToDriveIt_MakesTheToggleSpringBack()
+        {
+            // The base only notifies when its own value moves, and it is already
+            // true here, so without an unconditional announcement the toggle
+            // would sit in the "on" position the user just put it in.
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => null;
+
+            var announced = new List<string>();
+            ((System.ComponentModel.INotifyPropertyChanged)inst).PropertyChanged +=
+                (_, e) => announced.Add(e.PropertyName);
+
+            inst.Enabled = true;
+
+            Assert.Contains(nameof(FanatecWheelDeviceInstance.Enabled), announced);
+            Assert.False(inst.Enabled);
+        }
+
+        [Fact]
+        public void ClickingTheToggleWithNothingToDriveIt_LeavesTheStoredChoiceAlone()
+        {
+            // Only WPF reaches this setter, so a click the UI is going to refuse
+            // must not change what is stored. While nothing can drive the device
+            // the toggle reads false whatever the user chose, so honouring the
+            // click would write true -- switching on a device they deliberately
+            // switched off, and making it impossible to switch one off at all.
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+            inst.Enabled = false;                 // the user switches it off
+
+            inst.PluginResolver = () => null;     // ...then disables the plugin
+            inst.Enabled = true;                  // ...and clicks the toggle
+
+            Assert.False(((DeviceInstance)inst).Enabled);   // the stored choice stands
+        }
+
+        [Fact]
+        public void ClickingTheToggleWithAPluginPresent_StillStores()
+        {
+            var inst = InstanceFor("PSWBMW");
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            inst.Enabled = false;
+            Assert.False(((DeviceInstance)inst).Enabled);
+
+            inst.Enabled = true;
+            Assert.True(((DeviceInstance)inst).Enabled);
+        }
+
+        [Fact]
+        public void SimHubsOwnNotifications_StillReachTheUi()
+        {
+            // Intercepting the subscription must not cost us everything SimHub
+            // raises -- the device list binds to those.
+            var inst = InstanceFor("PSWBMW");
+
+            var announced = new List<string>();
+            ((System.ComponentModel.INotifyPropertyChanged)inst).PropertyChanged +=
+                (_, e) => announced.Add(e.PropertyName);
+
+            inst.SuspendWhenMonitorIsOff = !inst.SuspendWhenMonitorIsOff;
+
+            Assert.Contains(nameof(DeviceInstance.SuspendWhenMonitorIsOff), announced);
+        }
+
+        // ── Honouring the device's own on/off switch ───────────────────────
+
+        [Fact]
+        public void SwitchedOffDevice_StopsDrivingItsLeds()
+        {
+            // SimHub calls DataUpdate on every device whatever the switch says,
+            // so a device that keeps driving hardware when switched off is one
+            // the user cannot actually turn off.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+            Assert.True(host.DisplayCount > 0);
+
+            var drivenWhileOn = host.DisplayCount;
+            inst.Enabled = false;
+            inst.DataUpdate(null, ref data);
+
+            Assert.Equal(drivenWhileOn, host.DisplayCount);
+            // and the wheel is darkened rather than left on the last frame
+            Assert.Equal(1, host.StopDrivingCount);
+
+            // The blanking is an edge, not a per-frame write.
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(1, host.StopDrivingCount);
+        }
+
+        [Theory]
+        [InlineData(true, true, true)]     // switched on, plugin present
+        [InlineData(true, false, false)]   // switched on, but nothing to drive it
+        [InlineData(false, true, false)]   // switched off by the user
+        public void TheModuleIsToldWhetherItIsDrivingAnything(
+            bool switchedOn, bool pluginPresent, bool expected)
+        {
+            // SimHub hides the LEDs tab's connection badge while this is false,
+            // rather than claiming to search for hardware nobody is looking for.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => pluginPresent ? plugin : null;
+            inst.Enabled = switchedOn;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+
+            Assert.Equal(expected, host.CanDrive);
+        }
+
+        [Fact]
+        public void LosingTheWheel_TellsTheModuleItIsNoLongerConnected()
+        {
+            // The module caches this and only refreshes it from inside its own
+            // output path -- which stops the moment the wheel goes -- so left
+            // alone it reports a wheel as connected long after it was
+            // unplugged, while the header correctly says otherwise.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var withWheel = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => withWheel;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(true, host.ReportedConnected);
+
+            // The wheel goes away while FanaBridge keeps running.
+            var withoutWheel = PluginWithWheel(null, out _);
+            inst.PluginResolver = () => withoutWheel;
+            inst.DataUpdate(null, ref data);
+
+            Assert.Equal(false, host.ReportedConnected);
+            // ...and the badge stays visible to say so, rather than vanishing:
+            // FanaBridge really is looking for the wheel in this state.
+            Assert.Equal(true, host.CanDrive);
+        }
+
+        [Fact]
+        public void AThrowingTeardown_FiresTheEdgeOnce_AndTheFrameSurvives()
+        {
+            // Nothing enforces that a host's StopDriving cannot throw. If one
+            // did, the edge must not stay armed -- re-detecting the same
+            // disconnect every frame, logging and failing forever -- and the
+            // frame itself must come back for the next update.
+            var host = new FakeLedModuleHost { ThrowOnStopDriving = true };
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);          // connected
+
+            inst.Enabled = false;                     // take the edge, throwing
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(1, host.StopDrivingCount);
+
+            inst.DataUpdate(null, ref data);          // edge must not re-fire
+            Assert.Equal(1, host.StopDrivingCount);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task BlankOutput_WaitsOutAFrameAlreadyDrawing_AndBlanksAfterIt()
+        {
+            // The sharper half of the finalize race: a frame that captured the
+            // generation BEFORE it was unpublished and is mid-draw when the
+            // blank arrives. Without the output gate the blank lands first and
+            // the frame relights the wheel on a transport about to die.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);          // connected, drew once
+
+            var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            var frameDrawing = new System.Threading.ManualResetEventSlim();
+            var releaseFrame = new System.Threading.ManualResetEventSlim();
+            host.OnDisplay = () =>
+            {
+                frameDrawing.Set();
+                releaseFrame.Wait(5000);
+                order.Enqueue("draw");
+            };
+            host.OnStopDriving = () => order.Enqueue("blank");
+
+            var frame = System.Threading.Tasks.Task.Run(() =>
+            {
+                var d = new GameData();
+                inst.DataUpdate(null, ref d);
+            });
+            Assert.True(frameDrawing.Wait(5000));
+
+            inst.PluginResolver = () => null;         // finalize unpublishes...
+            var blank = System.Threading.Tasks.Task.Run(() => inst.BlankOutput());
+
+            releaseFrame.Set();
+            var both = System.Threading.Tasks.Task.WhenAll(frame, blank);
+            Assert.Same(both, await System.Threading.Tasks.Task.WhenAny(
+                both, System.Threading.Tasks.Task.Delay(5000)));
+
+            Assert.Equal(new[] { "draw", "blank" }, order.ToArray());
+        }
+
+        [Fact]
+        public void AFrameThatCapturedADyingGeneration_DoesNotRelightTheWheel()
+        {
+            // The other interleaving: the blank already ran, and a frame that
+            // captured the old generation reaches the output gate afterwards.
+            // The gate revalidates against the live singleton and skips.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+
+            // Alive for the frame's first two reads (top-of-frame capture and
+            // the Enabled announcement), unpublished by the revalidation.
+            int calls = 0;
+            inst.PluginResolver = () => ++calls <= 2 ? plugin : null;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+
+            Assert.Equal(0, host.DisplayCount);
+        }
+
+        [Fact]
+        public void FinalizeRace_TheFrameThatSeesThePluginGone_StillDarkensTheWheel()
+        {
+            // FinalizePlugin unpublishes the singleton before it blanks. A
+            // frame landing in that window takes the disconnect edge itself --
+            // and must blank, because BlankOutput afterwards sees the device as
+            // no longer driven and correctly does nothing. Whichever side wins
+            // the race, the wheel goes dark exactly once.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);          // connected, driving
+
+            inst.PluginResolver = () => null;         // finalize has unpublished
+            inst.DataUpdate(null, ref data);          // the in-flight frame
+            Assert.Equal(1, host.StopDrivingCount);   // ...darkens the wheel
+
+            inst.BlankOutput();                       // finalize's own pass
+            Assert.Equal(1, host.StopDrivingCount);   // nothing left to do
+        }
+
+        [Fact]
+        public void PluginGoingAway_DarkensTheDeviceItWasDriving()
+        {
+            // Disabling FanaBridge should leave the wheel the way switching the
+            // device off does. The device cannot notice on its own: by teardown
+            // its updates have stopped, so the plugin has to ask.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+            Assert.True(host.DisplayCount > 0);
+
+            inst.BlankOutput();
+
+            Assert.Equal(1, host.StopDrivingCount);
+        }
+
+        [Fact]
+        public void PluginGoingAway_LeavesAnUndrivenDeviceAlone()
+        {
+            // Nothing was lit, so there is nothing to darken -- and blanking it
+            // anyway would make teardown wait on a driver that never ran.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            inst.PluginResolver = () => null;
+
+            inst.BlankOutput();
+
+            Assert.Equal(0, host.StopDrivingCount);
+        }
+
+        [Fact]
+        public void SwitchedBackOn_ResumesDrivingItsLeds()
+        {
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            var data = new GameData();
+            inst.Enabled = false;
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(0, host.DisplayCount);
+
+            inst.Enabled = true;
+            inst.DataUpdate(null, ref data);
+
+            Assert.True(host.DisplayCount > 0);
         }
 
         [Fact]
@@ -249,7 +663,8 @@ namespace FanaBridge.Tests
         {
             // The A → null → A sequence (plugin torn down mid-restart): with no
             // current generation there is nothing to rebind against — the guard
-            // must neither rebind nor clear, and the state must report Disabled.
+            // must neither rebind nor clear, and the state reports Scanning
+            // (never Disabled; see NoPlugin_ReportsScanning_NotDisabled).
             var inst = InstanceFor("PSWBMW");
             var pluginA = PluginWithWheel(null, out _);
 
@@ -260,7 +675,7 @@ namespace FanaBridge.Tests
             inst.PluginResolver = () => null;
             inst.DataUpdate(null, ref data);
             Assert.Same(pluginA, inst.BoundPluginForTest);   // unchanged while gone
-            Assert.Equal(DeviceState.Disabled, inst.GetDeviceState());
+            Assert.Equal(DeviceState.Scanning, inst.GetDeviceState());
 
             inst.PluginResolver = () => pluginA;
             inst.DataUpdate(null, ref data);
@@ -282,49 +697,53 @@ namespace FanaBridge.Tests
             Assert.Same(pluginA, inst.BoundPluginForTest);
         }
 
+
         // ── Settings persistence (device settings wipe) ────────────────────
         //
         // SimHub rewrites each device's settings file from GetSettings() on every
-        // save, with no merge — and it does so even while the plugin is disabled,
-        // when the LED module cannot be built. These pin that such a save either
-        // reproduces the loaded document or fails outright, never writing a
-        // partial one. (Once the module owns the settings, roots this build does
-        // not recognise are still dropped; carrying them across is PR 2's job.)
+        // save, wholesale, and it does so even while the plugin is disabled.
+        // These cover the device's part of that: it must be able to describe its
+        // settings with no runtime at all, and must never hand SimHub a document
+        // it knows is incomplete. The composition rules themselves are pinned in
+        // FanatecDeviceSettingsTests.
 
-        /// <summary>A complete on-disk settings payload, shaped like a real one.</summary>
         private static JObject FullDocument() => new JObject
         {
-            ["ledModuleSettings"] = new JObject
-            {
-                ["Brightness"] = 80.0,
-                ["IndividualLEDsMode"] = false,
-            },
-            ["leds"] = new JObject
-            {
-                ["activeProfileId"] = "profile-abc",
-                ["profiles"] = new JArray { new JObject { ["Id"] = "profile-abc" } },
-            },
+            ["ledModuleSettings"] = new JObject { ["Brightness"] = 80.0 },
+            ["leds"] = new JObject { ["activeProfileId"] = "profile-abc" },
             ["buttons"] = new JObject { ["activeProfileId"] = "buttons-1" },
-            // Channels SimHub emits as null when no driver exists for them.
             ["encoders"] = JValue.CreateNull(),
             ["matrix"] = JValue.CreateNull(),
             ["raw"] = new JObject { ["activeProfileId"] = "raw-1" },
             ["wheelType"] = "PSWBMW",
             ["moduleType"] = "",
-            ["displayMode"] = "speed",
+            ["displayMode"] = "Speed",
             ["itmEnabled"] = true,
             ["itmShowLapTotal"] = false,
             ["itmShowPositionTotal"] = true,
             ["itmDefaultPage"] = 3,
-            // A root this build does not know about (a newer/older FanaBridge, or
-            // an unmerged feature branch). It must survive a round trip.
             ["futureExtension"] = new JObject { ["nested"] = "keep-me" },
         };
 
-        [Fact]
-        public void PluginUnavailable_GetSettings_ReturnsTheWholeDocument()
+        private static FanatecWheelDeviceInstance InstanceWith(
+            FakeLedModuleHost host, string wheelCode = "PSWBMW")
         {
-            var inst = InstanceFor("PSWBMW");
+            var profile = WheelProfileStore.FindByWheelType(wheelCode);
+            Assert.NotNull(profile);
+            var config = new DeviceConfig
+            {
+                Profile = profile,
+                Capabilities = new WheelCapabilities(profile),
+            };
+            return new FanatecWheelDeviceInstance(config, null, host);
+        }
+
+        [Fact]
+        public void PluginUnavailable_StillSerializesTheWholeDocument()
+        {
+            // The wipe: SimHub saved a device while FanaBridge was disabled and
+            // got back a document with no LED data, which replaced the file.
+            var inst = InstanceWith(new FakeLedModuleHost());
             inst.PluginResolver = () => null;
             var doc = FullDocument();
 
@@ -332,7 +751,7 @@ namespace FanaBridge.Tests
             var saved = inst.GetSettings(false, false);
 
             Assert.True(JToken.DeepEquals(doc, saved),
-                "Saving with the plugin disabled must reproduce the loaded document, got: " + saved);
+                "saving with no runtime must reproduce the loaded document, got: " + saved);
         }
 
         [Theory]
@@ -340,301 +759,265 @@ namespace FanaBridge.Tests
         [InlineData(true, false)]
         [InlineData(false, true)]
         [InlineData(true, true)]
-        public void PluginUnavailable_EveryFlagCombination_ReturnsTheWholeDocument(
+        public void PluginUnavailable_EveryFlagCombination_IsComplete(
             bool forTemplate, bool forDefaultSettings)
         {
-            var inst = InstanceFor("PSWBMW");
-            inst.PluginResolver = () => null;
-            var doc = FullDocument();
-
-            inst.SetSettings(doc, isDefault: false);
-            var saved = inst.GetSettings(forTemplate, forDefaultSettings);
-
-            Assert.True(JToken.DeepEquals(doc, saved),
-                $"flags({forTemplate},{forDefaultSettings}) must not drop settings, got: " + saved);
-        }
-
-        [Fact]
-        public void PluginUnavailable_UnknownRootsSurvive()
-        {
-            var inst = InstanceFor("PSWBMW");
+            var inst = InstanceWith(new FakeLedModuleHost());
             inst.PluginResolver = () => null;
 
             inst.SetSettings(FullDocument(), isDefault: false);
-            var saved = (JObject)inst.GetSettings(false, false)!;
+            var saved = (JObject)inst.GetSettings(forTemplate, forDefaultSettings)!;
 
+            Assert.NotNull(saved["ledModuleSettings"]);
             Assert.Equal("keep-me", (string?)saved["futureExtension"]?["nested"]);
         }
 
         [Fact]
-        public void PluginUnavailable_NullChannelsAreNotDropped()
+        public void PluginUnavailable_TheDeviceStillOwnsItsSettings()
         {
-            var inst = InstanceFor("PSWBMW");
+            // Editing what a device stores does not need its hardware. Hiding
+            // the settings while disabled left users unable to see settings
+            // that were still being saved.
+            var inst = InstanceWith(new FakeLedModuleHost());
             inst.PluginResolver = () => null;
 
-            inst.SetSettings(FullDocument(), isDefault: false);
-            var saved = (JObject)inst.GetSettings(false, false)!;
+            Assert.NotNull(inst.SettingsForTest);
+            Assert.Equal(DeviceState.Scanning, inst.GetDeviceState());
+        }
 
-            Assert.Equal(JTokenType.Null, saved["encoders"]?.Type);
-            Assert.Equal(JTokenType.Null, saved["matrix"]?.Type);
+        // A panel factory that yields placeholder controls, so tab composition
+        // can be asserted without standing up the real WPF panels.
+        private sealed class StubPanelFactory : IDevicePanelFactory
+        {
+            public System.Windows.Controls.Control CreateScreenPanel(
+                DisplaySettings settings, DisplayType display, byte itmDeviceId, Action settingsChanged)
+                => new System.Windows.Controls.ContentControl();
+
+            public System.Windows.Controls.Control CreateTuningPanel(FanatecDeviceSettings settings)
+                => new System.Windows.Controls.ContentControl();
         }
 
         [Fact]
-        public void FailedHydration_RefusesToSave()
+        public void PluginUnavailable_StillOffersEveryTab()
         {
-            // A payload the module cannot consume leaves it partially populated;
-            // saving it would overwrite a complete file with an incomplete one.
-            var inst = InstanceFor("PSWBMW");
-            var plugin = PluginWithWheel("PSWBMW", out _);
-            inst.PluginResolver = () => plugin;
-            inst.LedApplyForTest = (_, __) => false;   // module refuses the payload
+            // SimHub composes a device's settings pane once and caches it for
+            // the instance's lifetime, with nothing to rebuild it. A pane built
+            // while the plugin was away therefore used to stay empty for the
+            // rest of the session -- re-enabling did not bring the tabs back,
+            // only restarting SimHub did. Composition must not depend on the
+            // plugin at all.
+            //
+            // Runs on its own STA thread: the tabs are real WPF controls, and
+            // xUnit hands tests whichever pooled thread is free.
+            var titles = OnStaThread(() =>
+            {
+                var host = new FakeLedModuleHost
+                {
+                    EditControlForTest = new System.Windows.Controls.ContentControl(),
+                };
+                var profile = WheelProfileStore.FindByWheelType("PSWBMW");
+                var inst = new FanatecWheelDeviceInstance(
+                    new DeviceConfig
+                    {
+                        Profile = profile,
+                        Capabilities = new WheelCapabilities(profile),
+                    },
+                    new StubPanelFactory(),
+                    host);
+                inst.PluginResolver = () => null;
 
-            inst.SetSettings(FullDocument(), isDefault: false);
+                return inst.GetSettingsControls().Select(c => c.Title).ToList();
+            });
 
-            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
+            Assert.Contains("LEDs", titles);
+            Assert.Contains("Screen", titles);
+        }
+
+        /// <summary>Runs <paramref name="body"/> on a fresh STA thread, rethrowing anything it threw.</summary>
+        private static T OnStaThread<T>(Func<T> body)
+        {
+            T result = default!;
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo? failure = null;
+
+            var thread = new System.Threading.Thread(() =>
+            {
+                try { result = body(); }
+                catch (Exception ex)
+                { failure = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex); }
+            });
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+
+            failure?.Throw();
+            return result;
         }
 
         [Fact]
-        public void FailedHydration_ThenDefaults_SavesAgain()
+        public void RejectedSettings_BlockTheSave()
         {
-            // An explicit reset makes the module authoritative again.
-            var inst = InstanceFor("PSWBMW");
-            var plugin = PluginWithWheel("PSWBMW", out _);
-            inst.PluginResolver = () => plugin;
-            inst.LedApplyForTest = (_, __) => false;
-            inst.LedDefaultsForTest = () => { };
-
-            inst.SetSettings(FullDocument(), isDefault: false);
-            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
-
-            inst.LoadDefaultSettings();
-
-            // No longer refuses; the reset cleared the unapplied payload.
-            var saved = (JObject)inst.GetSettings(false, false)!;
-            Assert.Equal("PSWBMW", (string?)saved["wheelType"]);
-        }
-
-        [Fact]
-        public void SuccessfulHydration_DoesNotRefuseToSave()
-        {
-            var inst = InstanceFor("PSWBMW");
-            var plugin = PluginWithWheel("PSWBMW", out _);
-            inst.PluginResolver = () => plugin;
-            inst.LedApplyForTest = (_, __) => true;    // module accepts the payload
-
-            inst.SetSettings(FullDocument(), isDefault: false);
-
-            var saved = (JObject)inst.GetSettings(false, false)!;
-            Assert.Equal(3, (int?)saved["itmDefaultPage"]);
-        }
-
-        [Fact]
-        public void PluginArrivesAfterLoad_TheStashHydratesTheModule()
-        {
-            var inst = InstanceFor("PSWBMW");
-            FanatecPlugin? plugin = null;
-            inst.PluginResolver = () => plugin;
-            JObject? applied = null;
-            inst.LedApplyForTest = (doc, __) => { applied = doc; return true; };
-
-            // Loaded while disabled — nothing to apply to yet …
-            inst.SetSettings(FullDocument(), isDefault: false);
-            Assert.Null(applied);
-
-            // … then the plugin comes up and SimHub asks for the settings tab.
-            plugin = PluginWithWheel("PSWBMW", out _);
-            inst.GetDynamicButtonActions();   // any module-touching call builds it
-
-            // The stashed document — including its unknown roots — reached the module.
-            Assert.NotNull(applied);
-            Assert.Equal("keep-me", (string?)applied?["futureExtension"]?["nested"]);
-        }
-
-        [Fact]
-        public void FailedHydration_IsRetriedWhenTheDeviceIsNextTouched()
-        {
-            // A transient refusal must not strand the device for the session.
-            var inst = InstanceFor("PSWBMW");
-            var plugin = PluginWithWheel("PSWBMW", out _);
-            inst.PluginResolver = () => plugin;
-
-            var attempts = 0;
-            inst.LedApplyForTest = (_, __) => ++attempts > 1;   // fails once, then succeeds
-
-            inst.SetSettings(FullDocument(), isDefault: false);
-            inst.GetDynamicButtonActions();   // any module-touching call retries
-
-            var saved = (JObject)inst.GetSettings(false, false)!;
-            Assert.Equal(2, attempts);
-            Assert.Equal(3, (int?)saved["itmDefaultPage"]);
-        }
-
-        [Fact]
-        public void FailedHydration_IsRetriedOnSave_ForANeverConnectedDevice()
-        {
-            // A device that never becomes connected reaches no other path that
-            // would retry, so the save itself has to spend the budget.
-            var inst = InstanceFor("PSWBMW");
-            var plugin = PluginWithWheel("PSWBMW", out _);
-            inst.PluginResolver = () => plugin;
-
-            var attempts = 0;
-            inst.LedApplyForTest = (_, __) => ++attempts > 1;   // fails once, then succeeds
-
-            inst.SetSettings(FullDocument(), isDefault: false);
-
-            var saved = (JObject)inst.GetSettings(false, false)!;
-            Assert.Equal(2, attempts);
-            Assert.Equal(3, (int?)saved["itmDefaultPage"]);
-        }
-
-        [Fact]
-        public void RepeatedlyRejectedPayload_StillRefusesToSave()
-        {
-            var inst = InstanceFor("PSWBMW");
-            var plugin = PluginWithWheel("PSWBMW", out _);
-            inst.PluginResolver = () => plugin;
-            inst.LedApplyForTest = (_, __) => false;
-
-            inst.SetSettings(FullDocument(), isDefault: false);
-
-            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
-            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
-        }
-
-        [Fact]
-        public void RepeatedlyRejectedPayload_IsNotRetriedEveryFrame()
-        {
-            // A permanently malformed payload must not be re-parsed per frame.
-            var inst = InstanceFor("PSWBMW");
-            var plugin = PluginWithWheel("PSWBMW", out _);
-            inst.PluginResolver = () => plugin;
-
-            var attempts = 0;
-            inst.LedApplyForTest = (_, __) => { attempts++; return false; };
-
-            inst.SetSettings(FullDocument(), isDefault: false);
-            for (int i = 0; i < 5; i++)
-                inst.GetDynamicButtonActions();
-
-            Assert.Equal(2, attempts);   // the initial apply plus one retry
-            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
-        }
-
-        [Fact]
-        public void NewPayloadAfterRejection_GetsAFreshRetry()
-        {
-            var inst = InstanceFor("PSWBMW");
-            var plugin = PluginWithWheel("PSWBMW", out _);
-            inst.PluginResolver = () => plugin;
-
-            var accept = false;
-            var attempts = 0;
-            inst.LedApplyForTest = (_, __) => { attempts++; return accept; };
-
-            inst.SetSettings(FullDocument(), isDefault: false);  // 1: rejected
-            inst.GetDynamicButtonActions();                      // 2: retry, rejected
-            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
-            Assert.Equal(2, attempts);                           // budget spent
-
-            // A newly loaded payload is a fresh start: it is rejected once and
-            // still gets its own retry, rather than inheriting the exhausted
-            // budget of the payload it replaced.
-            inst.SetSettings(FullDocument(), isDefault: false);  // 3: rejected
-            Assert.Equal(3, attempts);
-
-            accept = true;
-            inst.GetDynamicButtonActions();                      // 4: retry, accepted
-
-            var saved = (JObject)inst.GetSettings(false, false)!;
-            Assert.Equal(4, attempts);
-            Assert.Equal(3, (int?)saved["itmDefaultPage"]);
-        }
-
-        [Fact]
-        public void PluginArrivingBetweenLoadAndSave_StillSavesEverything()
-        {
-            // The module cannot be built while the plugin is away, so the
-            // loaded payload is held rather than applied. A save taken after
-            // the plugin returns but before anything has rebuilt the module
-            // must still describe the whole document.
-            var inst = InstanceFor("PSWBMW");
-            FanatecPlugin? plugin = null;
-            inst.PluginResolver = () => plugin;
-            inst.LedApplyForTest = (_, __) => true;
-            var doc = FullDocument();
-
-            inst.SetSettings(doc, isDefault: false);
-            plugin = PluginWithWheel("PSWBMW", out _);
-
-            var saved = inst.GetSettings(false, false);
-
-            Assert.True(JToken.DeepEquals(doc, saved),
-                "a save in this order must still reproduce the document, got: " + saved);
-        }
-
-        [Fact]
-        public void PluginArrivesAfterLoad_FailedHydrationKeepsTheStash()
-        {
-            var inst = InstanceFor("PSWBMW");
-            FanatecPlugin? plugin = null;
-            inst.PluginResolver = () => plugin;
-            inst.LedApplyForTest = (_, __) => false;
-
-            inst.SetSettings(FullDocument(), isDefault: false);
-            plugin = PluginWithWheel("PSWBMW", out _);
-            inst.GetDynamicButtonActions();   // any module-touching call builds it
-
-            // Hydration failed, so the module must not become authoritative.
-            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
-        }
-
-        [Fact]
-        public void FreshDeviceWhileDisabled_SavesDefaultsWithoutThrowing()
-        {
-            // No prior document exists: emitting just the custom defaults is
-            // correct, and throwing would leave the new device without a file.
-            var inst = InstanceFor("PSWBMW");
+            // A module that could not take its settings holds partial state, so
+            // the stored file keeps the last complete copy instead.
+            var inst = InstanceWith(new FakeLedModuleHost { AcceptSettings = false });
             inst.PluginResolver = () => null;
 
-            inst.LoadDefaultSettings();
-            var saved = (JObject)inst.GetSettings(false, false)!;
-
-            Assert.Equal("PSWBMW", (string?)saved["wheelType"]);
-            Assert.Null(saved["ledModuleSettings"]);
+            Assert.Throws<InvalidOperationException>(
+                () => inst.SetSettings(FullDocument(), isDefault: false));
+            Assert.Throws<InvalidOperationException>(() => inst.GetSettings(false, false));
         }
 
         [Fact]
-        public void ResetWhileDisabled_DropsTheStashedLedPayload()
+        public void RejectedSettings_AlsoPauseLedOutput()
         {
-            var inst = InstanceFor("PSWBMW");
+            // Driving LEDs from half-applied settings would show the user
+            // something they never chose.
+            var host = new FakeLedModuleHost { AcceptSettings = false };
+            var inst = InstanceWith(host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+
+            Assert.Throws<InvalidOperationException>(
+                () => inst.SetSettings(FullDocument(), isDefault: false));
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+
+            Assert.True(inst.SettingsForTest.IsFaulted);
+            Assert.Equal(0, host.DisplayCount);
+        }
+
+        [Fact]
+        public void Defaults_AfterRejectedSettings_MakeTheDeviceSaveableAgain()
+        {
+            var host = new FakeLedModuleHost { AcceptSettings = false };
+            var inst = InstanceWith(host);
             inst.PluginResolver = () => null;
+            Assert.Throws<InvalidOperationException>(
+                () => inst.SetSettings(FullDocument(), isDefault: false));
+
+            host.AcceptSettings = true;
+            inst.LoadDefaultSettings();
+
+            Assert.NotNull(inst.GetSettings(false, false));
+        }
+
+        [Fact]
+        public void DataUpdate_WithoutEncoders_DoesNotThrowIntoSimHubsFrameLoop()
+        {
+            // The base class asks for a driver outside its own try/catch, so a
+            // driver that cannot be built must return nothing rather than throw.
+            var inst = InstanceWith(new FakeLedModuleHost());
+            var plugin = PluginWithWheel("PSWBMW", out _);   // connected, but no encoders
+            inst.PluginResolver = () => plugin;
 
             inst.SetSettings(FullDocument(), isDefault: false);
-            inst.LoadDefaultSettings();
 
-            var saved = (JObject)inst.GetSettings(false, false)!;
-            Assert.Null(saved["leds"]);
-            Assert.Null(saved["futureExtension"]);
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);   // must not throw
         }
 
         [Fact]
-        public void DisplayOnlyDevice_SerializesWithoutLedModule()
+        public void DisplayOnlyDevice_SerializesWithoutAnLedModule()
         {
-            var inst = InstanceFor("CSLSWGT3");
-            var plugin = PluginWithWheel("CSLSWGT3", out _);
-            inst.PluginResolver = () => plugin;
+            var profile = WheelProfileStore.FindByWheelType("CSLSWGT3");
+            Assert.NotNull(profile);
+            var inst = new FanatecWheelDeviceInstance(new DeviceConfig
+            {
+                Profile = profile,
+                Capabilities = new WheelCapabilities(profile),
+            });
+            inst.PluginResolver = () => null;
 
             inst.SetSettings(new JObject
             {
                 ["wheelType"] = "CSLSWGT3",
-                ["displayMode"] = "speed",
+                ["displayMode"] = "Speed",
                 ["itmDefaultPage"] = 2,
             }, isDefault: false);
 
             var saved = (JObject)inst.GetSettings(false, false)!;
-            Assert.Equal("speed", (string?)saved["displayMode"]);
+            Assert.Equal("Speed", (string?)saved["displayMode"]);
             Assert.Equal(2, (int?)saved["itmDefaultPage"]);
+        }
+
+        [Fact]
+        public void LoadedSettings_ReachTheLiveDisplayView()
+        {
+            // The display and ITM drivers read a live settings object every
+            // frame; settings that only landed in the document would never
+            // reach the hardware — so this asserts on that live object, not
+            // on what GetSettings re-serializes.
+            var inst = InstanceWith(new FakeLedModuleHost());
+            inst.PluginResolver = () => null;
+
+            var doc = FullDocument();
+            doc["displayMode"] = "Gear";
+            doc["itmDefaultPage"] = 5;
+            inst.SetSettings(doc, isDefault: false);
+
+            Assert.Equal("Gear", inst.DisplaySettingsForTest.DisplayMode);
+            Assert.Equal(5, inst.DisplaySettingsForTest.ItmDefaultPage);
+        }
+
+        [Fact]
+        public void SettingsRejectedBeforePublication_DisposeTheLedHost()
+        {
+            // SimHub abandons a device that throws on the way up without ever
+            // calling End(), so the host's subscription to a static event would
+            // outlive it -- once per failed attempt.
+            var host = new FakeLedModuleHost { AcceptSettings = false };
+            var inst = InstanceWith(host);
+            inst.PluginResolver = () => null;
+
+            Assert.Throws<InvalidOperationException>(
+                () => inst.SetSettings(FullDocument(), isDefault: false));
+
+            Assert.Equal(1, host.DisposeCount);
+        }
+
+        [Fact]
+        public void SettingsRejectedAfterPublication_KeepTheLedHost()
+        {
+            // Once SimHub owns the device it stays in the list and will call
+            // End() later, so a rejected reload must not tear its editor down --
+            // it only stops the device saving.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWith(host);
+            inst.PluginResolver = () => null;
+            inst.SetSettings(FullDocument(), isDefault: false);
+            inst.Init(null);
+
+            host.AcceptSettings = false;
+            Assert.Throws<InvalidOperationException>(
+                () => inst.SetSettings(FullDocument(), isDefault: false));
+
+            Assert.Equal(0, host.DisposeCount);
+        }
+
+        [Fact]
+        public void End_DisposesTheLedHost()
+        {
+            // Only disposal removes the LED manager's subscription to a static
+            // event, and SimHub never disposes it for us.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWith(host);
+            inst.PluginResolver = () => null;
+
+            inst.End();
+
+            Assert.Equal(1, host.DisposeCount);
+        }
+
+        [Fact]
+        public void End_DisposesTheLedHost_EvenIfEarlierCleanupFails()
+        {
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWith(host);
+            inst.PluginResolver = () => throw new InvalidOperationException("boom");
+
+            inst.End();
+
+            Assert.Equal(1, host.DisposeCount);
         }
     }
 }
