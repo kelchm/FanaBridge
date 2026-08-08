@@ -9,8 +9,21 @@
     <ScrollViewer>
         <StackPanel>
 
-            <!-- Connection Status -->
-            <styles:SHSection Title="DEVICE STATUS" ShowSeparator="True">
+            <!-- Top row: device status and about/updates side by side (50:50).
+                 About is short and the status chain doesn't need full width,
+                 and this keeps the update banner above the fold. -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+            <!-- Connection Status.
+                 Both top-row sections suppress their own separator: the row
+                 draws one continuous rule underneath instead of two stubs with
+                 a gap, and they sit at different heights anyway. -->
+            <styles:SHSection x:Name="sectionDeviceStatus" Grid.Column="0" Title="DEVICE STATUS" ShowSeparator="False">
                 <StackPanel>
                     <!-- Device chain: ● wheelbase › wheel/hub › module.
                          The status dot lives on the wheelbase node (the base is
@@ -113,6 +126,91 @@
                 </StackPanel>
             </styles:SHSection>
 
+            <!-- Column divider. Same look as the SHSection separator (1px,
+                 30% brush) — brush is bound to a section so it tracks the
+                 SimHub theme; SHSection's own 20px side margin supplies the
+                 gutter on both sides. -->
+            <Border Grid.Column="1" BorderThickness="1,0,0,0" Opacity="0.3" Margin="0,2,0,0"
+                    BorderBrush="{Binding SeparatorBrush, ElementName=sectionDeviceStatus}" />
+
+            <!-- About / updates -->
+            <styles:SHSection Grid.Column="2" Title="ABOUT" ShowSeparator="False">
+                <StackPanel>
+                    <!-- Self-updater banner, first thing under the ABOUT
+                         heading so the section leads with the actionable state
+                         when there is one (version identity and the check
+                         controls follow). Hidden until the release check finds
+                         a newer version; from there it walks the update phases
+                         (offer → downloading/installing → restart, or the
+                         amber failed state — palette swapped by
+                         StyleUpdateBanner). One row of headline (+ inline
+                         release-notes link) and a right-aligned action button;
+                         muted detail line only for states that need one.
+                         Headline text goes through runUpdateHeadline — setting
+                         txtUpdateTitle.Text would wipe the inline hyperlink.
+                         Driven entirely by UpdateUpdateBanner from
+                         UpdateService snapshots. -->
+                    <Border x:Name="borderUpdateAlert" Visibility="Collapsed"
+                            Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
+                            CornerRadius="4" Padding="12,8" Margin="0,2,0,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock x:Name="txtUpdateTitle" Foreground="#AADDFF" FontSize="12"
+                                           FontWeight="SemiBold" TextWrapping="Wrap">
+                                    <Run x:Name="runUpdateHeadline" /><Run Text="   " /><Hyperlink
+                                        Click="LnkReleaseNotes_Click"
+                                        Foreground="#4FC3F7" TextDecorations="None" FontWeight="Normal"
+                                        ToolTip="Open the release page on GitHub">Release notes</Hyperlink>
+                                </TextBlock>
+                                <TextBlock x:Name="txtUpdateDetail" Foreground="#AADDFF" Opacity="0.7"
+                                           FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0"
+                                           Visibility="Collapsed" />
+                            </StackPanel>
+                            <styles:SHButtonPrimary Grid.Column="1" x:Name="btnUpdateNow" Click="BtnUpdateNow_Click"
+                                                    VerticalAlignment="Center" Margin="16,0,0,0">
+                                Update
+                            </styles:SHButtonPrimary>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock x:Name="txtPluginVersion" Text="FanaBridge" FontSize="14" FontWeight="SemiBold" Margin="0,2" />
+                    <TextBlock x:Name="txtBuildInfo" Text="—" Foreground="#888" Margin="0,2" />
+                    <TextBlock Margin="0,2">
+                        <Hyperlink NavigateUri="https://github.com/kelchm/FanaBridge" RequestNavigate="RepoLink_RequestNavigate">
+                            github.com/kelchm/FanaBridge
+                        </Hyperlink>
+                    </TextBlock>
+
+                    <CheckBox x:Name="chkEnableUpdateCheck" Margin="0,10,0,0"
+                              Content="Check for updates automatically"
+                              ToolTip="Checks at startup and once a day while SimHub runs."
+                              IsChecked="{Binding EnableUpdateCheck}"
+                              Checked="ChkEnableUpdateCheck_Changed" Unchecked="ChkEnableUpdateCheck_Changed" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock FontSize="11" Foreground="#AAAAAA">
+                            <Hyperlink Click="LnkCheckForUpdates_Click"
+                                       Foreground="#4FC3F7" TextDecorations="None"
+                                       ToolTip="Query GitHub for the latest FanaBridge release">
+                                Check for updates now
+                            </Hyperlink>
+                        </TextBlock>
+                        <TextBlock x:Name="txtUpdateCheckResult" FontSize="11" Foreground="#AAAAAA"
+                                   Margin="10,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                </StackPanel>
+            </styles:SHSection>
+            </Grid>
+
+            <!-- One continuous rule under the whole top row. Geometry copies
+                 SHSection's separator (20px template margin + 2) so it lines up
+                 with the separators of the sections below. -->
+            <Border BorderThickness="0,1,0,0" Opacity="0.3" Margin="22,15,22,10"
+                    BorderBrush="{Binding SeparatorBrush, ElementName=sectionDeviceStatus}" />
+
             <!-- Wheel Profile -->
             <styles:SHSection Title="WHEEL PROFILE" ShowSeparator="True">
                 <StackPanel>
@@ -210,8 +308,8 @@
                 </StackPanel>
             </styles:SHSection>
 
-            <!-- Experimental Features -->
-            <styles:SHSection Title="EXPERIMENTAL FEATURES" ShowSeparator="True">
+            <!-- Experimental Features (last section — no trailing separator) -->
+            <styles:SHSection Title="EXPERIMENTAL FEATURES" ShowSeparator="False">
                 <StackPanel>
                     <CheckBox x:Name="chkEnableTuning"
                               Content="Enable tuning features (encoder mode, etc.)"
@@ -231,77 +329,6 @@
                     <TextBlock x:Name="txtControlMapperStatus"
                                TextWrapping="Wrap" Margin="20,4,0,0" FontSize="11"
                                Visibility="Collapsed" />
-                </StackPanel>
-            </styles:SHSection>
-
-            <!-- About -->
-            <styles:SHSection Title="ABOUT" ShowSeparator="False">
-                <StackPanel>
-                    <TextBlock x:Name="txtPluginVersion" Text="FanaBridge" FontSize="14" FontWeight="SemiBold" Margin="0,2" />
-                    <TextBlock x:Name="txtBuildInfo" Text="—" Foreground="#888" Margin="0,2" />
-                    <TextBlock Margin="0,2">
-                        <Hyperlink NavigateUri="https://github.com/kelchm/FanaBridge" RequestNavigate="RepoLink_RequestNavigate">
-                            github.com/kelchm/FanaBridge
-                        </Hyperlink>
-                    </TextBlock>
-
-                    <!-- Self-updater banner. Lives here so everything update-
-                         related shares one surface (installed version above,
-                         auto-check preference + manual check below) — accepted
-                         trade-off: it can sit below the fold on small windows.
-                         Hidden until the release check finds a newer version;
-                         from there it walks the update phases (offer →
-                         downloading/installing → restart, or the amber failed
-                         state — palette swapped by StyleUpdateBanner). One row
-                         of headline (+ inline release-notes link) and a
-                         right-aligned action button; muted detail line only
-                         for states that need one. Headline text goes through
-                         runUpdateHeadline — setting txtUpdateTitle.Text would
-                         wipe the inline hyperlink. Driven entirely by
-                         UpdateUpdateBanner from UpdateService snapshots. -->
-                    <Border x:Name="borderUpdateAlert" Visibility="Collapsed"
-                            Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
-                            CornerRadius="4" Padding="12,8" Margin="0,10,0,2">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                <TextBlock x:Name="txtUpdateTitle" Foreground="#AADDFF" FontSize="12"
-                                           FontWeight="SemiBold" TextWrapping="Wrap">
-                                    <Run x:Name="runUpdateHeadline" /><Run Text="   " /><Hyperlink
-                                        Click="LnkReleaseNotes_Click"
-                                        Foreground="#4FC3F7" TextDecorations="None" FontWeight="Normal"
-                                        ToolTip="Open the release page on GitHub">Release notes</Hyperlink>
-                                </TextBlock>
-                                <TextBlock x:Name="txtUpdateDetail" Foreground="#AADDFF" Opacity="0.7"
-                                           FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0"
-                                           Visibility="Collapsed" />
-                            </StackPanel>
-                            <styles:SHButtonPrimary Grid.Column="1" x:Name="btnUpdateNow" Click="BtnUpdateNow_Click"
-                                                    VerticalAlignment="Center" Margin="16,0,0,0">
-                                Update
-                            </styles:SHButtonPrimary>
-                        </Grid>
-                    </Border>
-
-                    <CheckBox x:Name="chkEnableUpdateCheck" Margin="0,10,0,0"
-                              Content="Check for updates automatically"
-                              ToolTip="Checks at startup and once a day while SimHub runs."
-                              IsChecked="{Binding EnableUpdateCheck}"
-                              Checked="ChkEnableUpdateCheck_Changed" Unchecked="ChkEnableUpdateCheck_Changed" />
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                        <TextBlock FontSize="11" Foreground="#AAAAAA">
-                            <Hyperlink Click="LnkCheckForUpdates_Click"
-                                       Foreground="#4FC3F7" TextDecorations="None"
-                                       ToolTip="Query GitHub for the latest FanaBridge release">
-                                Check for updates now
-                            </Hyperlink>
-                        </TextBlock>
-                        <TextBlock x:Name="txtUpdateCheckResult" FontSize="11" Foreground="#AAAAAA"
-                                   Margin="10,0,0,0" VerticalAlignment="Center" />
-                    </StackPanel>
                 </StackPanel>
             </styles:SHSection>
 
