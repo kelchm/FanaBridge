@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using FanaBridge;
 using FanaBridge.Profiles;
@@ -27,34 +28,27 @@ namespace FanaBridge.Adapters
     /// for all HID access. Reports Connected only when the singleton's
     /// current wheel identity matches this instance's wheel type.
     /// </summary>
-    public class FanatecWheelDeviceInstance : DeviceInstance
+    public class FanatecWheelDeviceInstance : DeviceInstance, INotifyPropertyChanged
     {
         private readonly DeviceConfig _config;
-        private JObject _customSettings = new JObject();
 
-        // LED module — null when wheel has no LEDs.
-        private LedModuleSettings<FanatecLedManager> _ledModule;
-        private FanatecLedManager _manager;
+        // Built at construction from registered capabilities, never runtime
+        // state — the lifecycle doc explains why that is load-bearing.
+        private readonly IFanatecLedModuleHost _ledHost;
+        private readonly FanatecDeviceSettings _settings;
+        private readonly IDevicePanelFactory _panels;
 
-        private bool _ledModuleInitialized;
-
-        // LED settings/defaults that arrived while the module didn't exist yet
-        // (SimHub can deliver SetSettings/LoadDefaultSettings before FanatecPlugin
-        // finishes Init). Applied by EnsureLedModuleInitialized right after the
-        // module is built, so an early payload is deferred instead of dropped.
-        private JObject _pendingLedSettings;
-        private bool _pendingLedSettingsIsDefault;
-        private bool _pendingLedDefaults;
-        // Whether the pending payload has already been retried since it was
-        // stashed. A payload the module rejects blocks saving (see GetSettings),
-        // so it gets one more chance on the next call that touches the module —
-        // enough to clear a transient failure without retrying a permanently
-        // malformed payload on every frame.
-        private bool _pendingLedRetried;
+        // Whether SimHub has taken ownership of this device. Until it has, a
+        // failure means the instance is abandoned without End() ever running,
+        // so it has to clean up after itself (see GuardBeforePublication).
+        private bool _published;
 
         // Display manager — null when the wheel has no display.
         private FanatecDisplayDriver _displayManager;
-        private DisplaySettings _displaySettings = new DisplaySettings();
+
+        // Never replaced: drivers read it every frame and an open panel edits
+        // it directly, so a swap would orphan both.
+        private readonly DisplaySettings _displaySettings = new DisplaySettings();
 
         // ITM display driver — null until a wheel with an ITM display is driven.
         private ItmDisplayDriver _itmDisplay;
@@ -68,8 +62,9 @@ namespace FanaBridge.Adapters
         // resets the display cold with no trace on the ITM channel, so the ITM
         // lifecycle must restart from bring-up.
         private int _itmWheelChangeCount;
-        // True once the legacy page has been blanked after switching to mode "None",
-        // so it is cleared once on the transition rather than every frame.
+        // True once the 7-segment display (the legacy page on ITM wheels) has been
+        // blanked after switching to mode "None", so it is cleared once on the
+        // transition rather than every frame.
         private bool _legacyBlanked;
         // Tracks the settings page's display test so the handback edge (test just
         // ended) can blank the residue and reset the driver's value latches.
@@ -77,6 +72,10 @@ namespace FanaBridge.Adapters
 
         // Track connection state transitions for cleanup on disconnect.
         private bool _wasConnected;
+
+        // Serializes hardware output against teardown: a frame that captured a
+        // generation being finalized must not draw after BlankOutput ran.
+        private readonly object _outputGate = new object();
 
         // Registered once with the plugin so it can read this device's display name
         // for the Control Mapper integration. Lazy (in DataUpdate) so it doesn't
@@ -97,15 +96,18 @@ namespace FanaBridge.Adapters
         // drive the null→A, A→A, A→B, and connected→scanning transitions.
         internal Func<FanatecPlugin> PluginResolver = () => FanatecPlugin.Instance;
 
-        // Test seams for the two LED-module operations that can fail. SimHub's
-        // LED profile subsystem reads the running host, so it cannot run in a
-        // unit test — these let tests drive the success/failure outcomes the
-        // persistence logic branches on. Null in production.
-        internal Func<JObject, bool, bool> LedApplyForTest;
-        internal Action LedDefaultsForTest;
-
         /// <summary>Test hook: the generation the cached drivers were built against.</summary>
         internal FanatecPlugin BoundPluginForTest => _boundPlugin;
+
+        /// <summary>Test hook: this device's settings owner.</summary>
+        internal FanatecDeviceSettings SettingsForTest => _settings;
+
+        /// <summary>
+        /// Test hook: the live settings object the display and ITM drivers read
+        /// every frame — what loaded settings must reach, over and above the
+        /// persisted document.
+        /// </summary>
+        internal DisplaySettings DisplaySettingsForTest => _displaySettings;
 
         // ITM status snapshot for the Device Status panel / diagnostics. Composed on the
         // DataUpdate thread (the only thread that mutates the lifecycle) and read from the
@@ -140,8 +142,64 @@ namespace FanaBridge.Adapters
         internal string ItmStatusDescription => _itmDisplay == null ? null : _itmStatusSnapshot;
 
         public FanatecWheelDeviceInstance(DeviceConfig config)
+            : this(config, null, null)
+        {
+        }
+
+        /// <summary>
+        /// Builds the device, its LED editor and its settings owner — from
+        /// registered capabilities only; nothing here touches hardware or the
+        /// plugin singleton (see the lifecycle doc, "Building it up front").
+        /// </summary>
+        internal FanatecWheelDeviceInstance(
+            DeviceConfig config,
+            IDevicePanelFactory panels,
+            IFanatecLedModuleHost ledHost)
         {
             _config = config;
+            _panels = panels;
+
+            _ledHost = ledHost ?? CreateLedHost(config);
+            _settings = new FanatecDeviceSettings(config, _ledHost);
+            _settings.Changed += OnSettingsChanged;
+
+            // Everything SimHub raises has to reach subscribers of the hiding
+            // event, or a device that hides one property would go quiet on all
+            // the others. Self-referential, so it cannot keep this alive.
+            base.PropertyChanged += ForwardBaseNotification;
+
+            // Start from defaults so the device is coherent even if SimHub never
+            // delivers settings (a freshly added device).
+            ApplySnapshotToDisplaySettings();
+        }
+
+        private IFanatecLedModuleHost CreateLedHost(DeviceConfig config)
+        {
+            if (config.Capabilities.AllLedCount == 0)
+                return new NoLedModuleHost();
+
+            return new FanatecLedModuleHost(
+                config, () => PluginResolver(), ResolveCurrentCapabilities);
+        }
+
+        /// <summary>
+        /// Mirrors the committed settings into the object the display and ITM
+        /// drivers read, and pushes them to the display driver.
+        /// </summary>
+        private void OnSettingsChanged(object sender, EventArgs e)
+        {
+            ApplySnapshotToDisplaySettings();
+            _displayManager?.UpdateSettings(_displaySettings);
+        }
+
+        private void ApplySnapshotToDisplaySettings()
+        {
+            var current = _settings.Current;
+            _displaySettings.DisplayMode = current.DisplayMode;
+            _displaySettings.ItmEnabled = current.ItmEnabled;
+            _displaySettings.ItmShowLapTotal = current.ItmShowLapTotal;
+            _displaySettings.ItmShowPositionTotal = current.ItmShowPositionTotal;
+            _displaySettings.ItmDefaultPage = current.ItmDefaultPage;
         }
 
         // ── LED module setup ─────────────────────────────────────────────
@@ -156,157 +214,6 @@ namespace FanaBridge.Adapters
             return plugin == null ? WheelCapabilities.None : plugin.ResolveCapsFor(_config);
         }
 
-        /// <summary>
-        /// Lazily creates the LedModuleSettings for this device.
-        /// A single module handles all LED types (Rev, Flag, Button/Encoder)
-        /// through the unified <see cref="FanatecLedDriver"/>.
-        /// </summary>
-        private void EnsureLedModuleInitialized()
-        {
-            if (_ledModuleInitialized)
-            {
-                RetryPendingLedSettings();
-                return;
-            }
-
-            // Without the shared encoders we can't build a module at all. Leave
-            // the initialized flag unset so the next call retries — latching it
-            // here would permanently kill this instance's LED module just
-            // because it raced ahead of plugin Init.
-            var plugin = PluginResolver();
-            if (plugin == null) return;
-
-            _ledModuleInitialized = true;
-            _boundPlugin = plugin;
-
-            // Resolve the caps for THIS descriptor (live caps only when the
-            // connected wheel matches us; otherwise our registration caps).
-            var caps = plugin.ResolveCapsFor(_config);
-            int allLeds = caps.AllLedCount;
-
-            if (allLeds == 0) return;
-
-            _manager = new FanatecLedManager(_config, plugin.Leds, plugin.LegacyLeds);
-            var manager = _manager;
-            var options = new LedModuleOptions
-            {
-                DeviceName = caps.ShortName ?? caps.Name,
-                LedCount = caps.RevFlagCount,
-                ButtonsCount = caps.ButtonLedCount,
-                EncodersCount = 0,  // all non-rev/flag LEDs are "buttons" in SimHub
-                RawLedCount = allLeds,
-                LedDriver = manager,
-                EnableBrightnessSection = true,
-                ShowConnectionStatus = true,
-                VID = FanatecWheelbase.FANATEC_VENDOR_ID,
-            };
-
-            // Wheels whose LEDs can't render the picker's range get a note in the
-            // LEDs tab. The picker stays stock — constraining it would break
-            // gradients and imported profiles without fixing anything, since those
-            // never pass through it.
-            //
-            // The factory is installed unconditionally and the notice resolves
-            // capabilities itself when the tab is opened. This method runs once, and
-            // usually before identity has settled or a user profile override has
-            // been applied — deciding here would miss wheels whose real profile
-            // arrives later, and could never correct itself.
-            options.ExtraSettingsControlFactory =
-                _ => new UI.LedColorLimitationNotice(() => ResolveCurrentCapabilities());
-
-            _ledModule = new LedModuleSettings<FanatecLedManager>(options);
-            _ledModule.IsEmbedded = true;
-            _ledModule.IsEnabled = true;
-
-            SimHub.Logging.Current.Info(
-                "FanatecWheelDeviceInstance[" + caps.Name + "]: LED module created (" +
-                "revRgb=" + caps.RevRgbCount + ", flagRgb=" + caps.FlagRgbCount +
-                ", buttonRgb=" + caps.ButtonRgbCount + ", buttonAuxIntensity=" + caps.ButtonAuxIntensityCount +
-                ", total=" + allLeds + ")");
-
-            // Apply anything SimHub delivered before the module existed. The stash
-            // is dropped only once the payload is fully applied — a failed apply
-            // leaves a half-populated module, and the stash is then the only
-            // complete copy of the user's settings (see GetSettings).
-            if (_pendingLedSettings != null)
-            {
-                if (ApplyLedSettings(_pendingLedSettings, _pendingLedSettingsIsDefault))
-                    _pendingLedSettings = null;
-            }
-            else if (_pendingLedDefaults)
-            {
-                _ledModule.LoadDefaults();
-            }
-            _pendingLedDefaults = false;
-        }
-
-        /// <summary>
-        /// Gives a payload the module previously rejected one more chance.
-        /// </summary>
-        /// <remarks>
-        /// While a payload is pending against an existing module the device
-        /// cannot save at all, so a failure that was only transient must not
-        /// strand it for the rest of the session. One retry is enough for that
-        /// without re-parsing a permanently malformed payload on every frame —
-        /// this runs from the per-frame update path.
-        /// </remarks>
-        private void RetryPendingLedSettings()
-        {
-            if (_ledModule == null || _pendingLedSettings == null || _pendingLedRetried)
-                return;
-
-            _pendingLedRetried = true;
-
-            if (ApplyLedSettings(_pendingLedSettings, _pendingLedSettingsIsDefault))
-            {
-                _pendingLedSettings = null;
-                SimHub.Logging.Current.Info(
-                    "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                    "]: pending LED settings applied on retry — saving is enabled again");
-            }
-            else
-            {
-                SimHub.Logging.Current.Warn(
-                    "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                    "]: pending LED settings were rejected again — this device will not " +
-                    "save until its settings are reloaded or reset, so the stored file " +
-                    "keeps the last complete copy");
-            }
-        }
-
-        /// <summary>
-        /// Applies a saved settings payload to the LED module (module-level
-        /// state such as brightness first, then per-channel profile data).
-        /// Returns false when the payload was not fully applied, so callers can
-        /// keep the pending copy rather than trusting a half-populated module.
-        /// </summary>
-        private bool ApplyLedSettings(JObject obj, bool isDefault)
-        {
-            if (LedApplyForTest != null)
-                return LedApplyForTest(obj, isDefault);
-
-            try
-            {
-                // Restore module-level state (brightness, IndividualLEDsMode, etc.)
-                // before passing channel profiles, matching LedModuleDevice.SetSettings.
-                var moduleToken = obj["ledModuleSettings"];
-                if (moduleToken != null)
-                    Newtonsoft.Json.JsonConvert.PopulateObject(moduleToken.ToString(), _ledModule);
-
-                // Per-channel profile data (leds, buttons, raw, …)
-                var dict = new Dictionary<string, JToken>();
-                foreach (var prop in obj.Properties())
-                    dict[prop.Name] = prop.Value;
-                _ledModule.SetSettings(dict, isDefault);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                SimHub.Logging.Current.Warn(
-                    "FanatecWheelDeviceInstance: SetSettings(LED) failed: " + ex.Message);
-                return false;
-            }
-        }
 
         /// <summary>
         /// Drops every driver bound to a previous plugin generation so it is
@@ -322,7 +229,7 @@ namespace FanaBridge.Adapters
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                 "]: Plugin generation changed — rebinding drivers to the current hardware core");
 
-            _manager?.Close();
+            _ledHost.StopDriving();
 
             // Display/ITM drivers hold their encoder for life — recreate them
             // lazily (DataUpdate builds them on demand from the live plugin).
@@ -348,56 +255,86 @@ namespace FanaBridge.Adapters
             SimHub.Logging.Current.Info(
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: LoadDefaultSettings");
 
-            EnsureLedModuleInitialized();
+            GuardBeforePublication(_settings.LoadDefaults);
+        }
 
-            _customSettings = new JObject
+        /// <summary>
+        /// Whether this device is switched on <em>and</em> has something able
+        /// to drive it. HIDES the base property, deliberately: WPF resolves on
+        /// the runtime type (pane greys), while SimHub persists the user's real
+        /// choice through the base member. Overriding would write "off" into
+        /// their settings whenever the plugin was disabled. Pinned by
+        /// EnabledHidingProbeTests; rationale in
+        /// docs/device-settings-lifecycle.md ("Presenting availability").
+        /// </summary>
+        public new bool Enabled
+        {
+            get => base.Enabled && PluginResolver() != null;
+            set
             {
-                ["wheelType"] = _config.WheelCode ?? "",
-                ["moduleType"] = _config.ModuleCode ?? "",
-                ["displayMode"] = DisplaySettings.DefaultMode,
-                ["itmEnabled"] = DisplaySettings.DefaultItmEnabled,
-                ["itmShowLapTotal"] = DisplaySettings.DefaultShowLapTotal,
-                ["itmShowPositionTotal"] = DisplaySettings.DefaultShowPositionTotal,
-                ["itmDefaultPage"] = DisplaySettings.DefaultItmDefaultPage,
-            };
-            _displaySettings = new DisplaySettings();
+                // Only WPF's toggle binding reaches this setter. A click the UI
+                // refuses to show must not rewrite the stored choice.
+                if (PluginResolver() != null)
+                    base.Enabled = value;
 
-            if (_ledModule != null)
-            {
-                if (LedDefaultsForTest != null)
-                    LedDefaultsForTest();
-                else
-                    _ledModule.LoadDefaults();
-                // An explicit reset makes the module authoritative again: any
-                // payload left over from a failed apply is now obsolete.
-                _pendingLedSettings = null;
-            }
-            else
-            {
-                // Module not buildable yet — remember that defaults were requested
-                // so EnsureLedModuleInitialized applies them on creation.
-                _pendingLedDefaults = true;
-                _pendingLedSettings = null;
+                AnnounceEnabled(force: true);   // declined or no-op clicks spring back
             }
         }
 
-        public override DeviceState GetDeviceState()
-        {
-            var plugin = PluginResolver();
-            if (plugin == null)
-                return DeviceState.Disabled;
+        // Hides the base event as the property does: the base raises through a
+        // compiler-generated member no derived class can call, and re-listing
+        // the interface points WPF's subscription here. Pinned by
+        // EnabledNotificationProbeTests.
+        public new event PropertyChangedEventHandler PropertyChanged;
 
-            // ARCHITECTURE: this reaches directly into wheelbase identity fields.
-            // When the peripheral model lands, bind to a peripheral snapshot (class
-            // + code + capabilities) instead, so a DeviceInstance can represent
-            // pedals/shifter (hosted or standalone), not just a base attachment.
+        // 1/0 once evaluated, -1 while unknown. Swapped atomically so exactly
+        // one caller sees each transition: the UI thread writes it through the
+        // setter while the update thread polls it every frame.
+        private int _announcedEnabled = -1;
+
+        // Named rather than a lambda so End() can unsubscribe it again.
+        private void ForwardBaseNotification(object sender, PropertyChangedEventArgs e) =>
+            PropertyChanged?.Invoke(this, e);
+
+        /// <summary>
+        /// Tells the UI to re-read <see cref="Enabled"/> when the answer has
+        /// moved (or unconditionally, when the user just acted on it).
+        /// </summary>
+        private void AnnounceEnabled(bool force = false)
+        {
+            int now = Enabled ? 1 : 0;
+            if (System.Threading.Interlocked.Exchange(ref _announcedEnabled, now) == now && !force)
+                return;
+
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
+        }
+
+        public override DeviceState GetDeviceState() =>
+            GetDeviceStateFor(PluginResolver());
+
+        /// <summary>
+        /// The device state as seen by one specific plugin generation.
+        /// DataUpdate passes the generation it captured at the top of the
+        /// frame, so state and drivers can never come from different ones.
+        /// </summary>
+        private DeviceState GetDeviceStateFor(FanatecPlugin plugin)
+        {
+            if (plugin == null)
+            {
+                // Never Disabled: SimHub reserves that for the user's own
+                // switch and forces an enabled device claiming it back to
+                // Scanning every frame, so it never settles and floods the log
+                // (see the lifecycle doc, "Presenting availability").
+                return DeviceState.Scanning;
+            }
+
+            // ARCHITECTURE: reaches into wheelbase identity fields; when the
+            // peripheral model lands, bind to a peripheral snapshot instead.
             var wheelbase = plugin.Wheelbase;
             if (wheelbase == null || !wheelbase.IsConnected)
                 return DeviceState.Scanning;
 
-            // While the attachment identity is settling (mid-transition), treat the
-            // device as not-yet-connected so no LED/display output is driven at a
-            // half-(re)connected wheel.
+            // Identity still settling: don't drive a half-(re)connected wheel.
             if (!wheelbase.IdentityStable)
                 return DeviceState.Scanning;
 
@@ -409,135 +346,54 @@ namespace FanaBridge.Adapters
         }
 
         /// <summary>
-        /// Produces this device's persisted settings document.
+        /// Produces the persisted document. Complete or throw — SimHub rewrites
+        /// the file wholesale, and a throw leaves the existing file alone.
         /// </summary>
-        /// <remarks>
-        /// SimHub rewrites every device's settings file from this method on each
-        /// save, with no merge against what is already on disk — so anything
-        /// missing here is erased. The plugin can be disabled or still starting
-        /// while SimHub loads and saves devices, in which case the LED module
-        /// does not exist and the loaded payload lives in
-        /// <see cref="_pendingLedSettings"/>; it is echoed back verbatim rather
-        /// than emitting a document without LED data.
-        ///
-        /// A module coexisting with a pending payload means hydration failed, so
-        /// the module holds partial state. That case throws: SimHub catches
-        /// per-device save failures and leaves the existing file (and its index
-        /// entry) untouched, which is the safe outcome.
-        /// </remarks>
-        public override JToken GetSettings(bool forTemplate, bool forDefaultSettings)
+        public override JToken GetSettings(bool forTemplate, bool forDefaultSettings) =>
+            _settings.Capture(forTemplate, forDefaultSettings);
+
+        public override void SetSettings(JToken settings, bool isDefault) =>
+            GuardBeforePublication(() => _settings.Apply(settings, isDefault));
+
+        public override void Init(PluginManager pluginManager)
         {
-            var result = new JObject();
+            GuardBeforePublication(() => base.Init(pluginManager));
 
-            // A device that never becomes connected reaches no other path that
-            // would retry, so spend the budget here rather than refuse every
-            // save for the rest of the session over a failure that may have
-            // been momentary. Bounded by the same flag, so this stays one
-            // attempt per loaded payload.
-            RetryPendingLedSettings();
-
-            if (_ledModule != null)
-            {
-                if (_pendingLedSettings != null)
-                {
-                    throw new InvalidOperationException(
-                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: refusing to " +
-                        "save — the loaded LED settings were not applied to the module, so the " +
-                        "document would be incomplete.");
-                }
-
-                // Serialize the module object itself (brightness, IndividualLEDsMode, etc.)
-                // under "ledModuleSettings" — matches how LedModuleDevice does it.
-                // Failures propagate: a partial document here would overwrite a
-                // complete file on disk.
-                result["ledModuleSettings"] = JToken.FromObject(_ledModule);
-
-                // Per-channel profile data (leds, buttons, raw, …)
-                var ledDict = _ledModule.GetSettings(forTemplate, forDefaultSettings);
-                if (ledDict != null)
-                {
-                    foreach (var kvp in ledDict)
-                    {
-                        result[kvp.Key] = kvp.Value ?? JValue.CreateNull();
-                    }
-                }
-            }
-            else if (_pendingLedSettings != null)
-            {
-                // Module not buildable (plugin disabled or still starting). Echo the
-                // document SimHub gave us — no edit path exists while the module is
-                // absent, so this is still the user's complete, current payload.
-                foreach (var prop in _pendingLedSettings.Properties())
-                {
-                    result[prop.Name] = prop.Value.DeepClone();
-                }
-            }
-
-            // Custom settings (display mode, wheel/module identity)
-            if (_customSettings != null)
-            {
-                foreach (var prop in _customSettings.Properties())
-                {
-                    result[prop.Name] = prop.Value.DeepClone();
-                }
-            }
-
-            return result;
+            // Past this point SimHub owns the instance and will call End() on it,
+            // so failures no longer need to clean up here.
+            _published = true;
         }
 
-        public override void SetSettings(JToken settings, bool isDefault)
+        /// <summary>
+        /// Cleans up if the device fails before SimHub takes ownership of it.
+        /// </summary>
+        /// <remarks>
+        /// SimHub builds a device, gives it its settings, initializes it, and only
+        /// then adds it to its list — and it does not call End() on one that threw
+        /// on the way. Since the LED host is built with the device, an instance
+        /// abandoned there would keep the manager's subscription to a static event
+        /// alive for the rest of the session, once per failed attempt.
+        ///
+        /// After publication the opposite applies: the device stays in SimHub's
+        /// list, so its host must survive and simply refuse to save.
+        /// </remarks>
+        private void GuardBeforePublication(Action action)
         {
-            if (!(settings is JObject obj))
+            if (_published)
+            {
+                action();
                 return;
-
-            EnsureLedModuleInitialized();
-
-            // Extract custom settings
-            _customSettings = new JObject();
-            foreach (var key in new[] { "wheelType", "moduleType", "displayMode", "itmEnabled",
-                                        "itmShowLapTotal", "itmShowPositionTotal", "itmDefaultPage" })
-            {
-                if (obj[key] != null)
-                    _customSettings[key] = obj[key].DeepClone();
             }
 
-            if (_ledModule != null)
+            try
             {
-                // Keep the payload when the module refuses it: the module is then
-                // partially populated and this copy is the only complete one.
-                // GetSettings refuses to save while both exist.
-                if (ApplyLedSettings(obj, isDefault))
-                {
-                    _pendingLedSettings = null;
-                }
-                else
-                {
-                    _pendingLedSettings = (JObject)obj.DeepClone();
-                    _pendingLedSettingsIsDefault = isDefault;
-                    _pendingLedRetried = false;
-                }
-                _pendingLedDefaults = false;
+                action();
             }
-            else
+            catch
             {
-                // Module not buildable yet (plugin still initializing) — keep the
-                // payload so EnsureLedModuleInitialized can apply it on creation.
-                _pendingLedSettings = (JObject)obj.DeepClone();
-                _pendingLedSettingsIsDefault = isDefault;
-                _pendingLedRetried = false;
-                _pendingLedDefaults = false;
+                _ledHost.Dispose();
+                throw;
             }
-
-            _displaySettings = new DisplaySettings
-            {
-                DisplayMode = (string)_customSettings["displayMode"] ?? DisplaySettings.DefaultMode,
-                ItmEnabled = (bool?)_customSettings["itmEnabled"] ?? DisplaySettings.DefaultItmEnabled,
-                ItmShowLapTotal = (bool?)_customSettings["itmShowLapTotal"] ?? DisplaySettings.DefaultShowLapTotal,
-                ItmShowPositionTotal = (bool?)_customSettings["itmShowPositionTotal"] ?? DisplaySettings.DefaultShowPositionTotal,
-                ItmDefaultPage = (byte?)_customSettings["itmDefaultPage"] ?? DisplaySettings.DefaultItmDefaultPage,
-            };
-
-            _displayManager?.UpdateSettings(_displaySettings);
         }
 
         public override void DataUpdate(PluginManager pluginManager, ref GameData data)
@@ -560,33 +416,64 @@ namespace FanaBridge.Adapters
                 _registeredWithPlugin = true;
             }
 
-            bool isConnected = GetDeviceState() == DeviceState.Connected;
+            // Nothing else tells the UI when plugin availability moves.
+            AnnounceEnabled();
 
-            // Detect Connected → Scanning transition
-            if (_wasConnected && !isConnected)
+            // SimHub calls DataUpdate regardless of the device's own switch —
+            // honouring it is our job. ShouldBeRunning() is the SDK's gate and
+            // reads the base Enabled (the user's real choice).
+            bool switchedOn = ShouldBeRunning();
+
+            bool isConnected =
+                switchedOn && GetDeviceStateFor(currentPlugin) == DeviceState.Connected;
+
+            // The LEDs tab badge: hidden while nothing can drive the device;
+            // connected state pushed because the module only refreshes its own
+            // copy while driving output — exactly when it can't notice a loss.
+            _ledHost.SetStatus(
+                canDrive: switchedOn && currentPlugin != null,
+                connected: isConnected);
+
+            // Edge recorded before acting, so a throwing teardown can't re-arm it.
+            bool lostConnection = _wasConnected && !isConnected;
+            _wasConnected = isConnected;
+
+            if (lostConnection)
             {
                 SimHub.Logging.Current.Info(
                     "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
-                    "]: Lost connection");
+                    "]: " + (switchedOn ? "Lost connection" : "Switched off"));
 
-                _displayManager?.Clear();
-                _itmDisplay?.Stop();
-                _itmWasRunning = false;
-                _itmStatusSnapshot = null;   // don't show a stale ITM row while disconnected
-                // Reset one-shot latches so a reconnect starts clean: errors can log again
-                // and the legacy page can re-blank when the mode is "None".
-                _itmErrorLogged = false;
-                _legacyBlanked = false;
+                try
+                {
+                    StopDrivingHardware();
+                }
+                catch (Exception ex)
+                {
+                    LogCleanupFailure("stopping output on disconnect", ex);
+                }
             }
-
-            _wasConnected = isConnected;
 
             if (!isConnected)
                 return;
 
-            EnsureLedModuleInitialized();
+            lock (_outputGate)
+            {
+                // Unpublished since the top of the frame: whoever unpublished it
+                // blanks the wheel, and this frame must not relight it.
+                if (!ReferenceEquals(PluginResolver(), currentPlugin))
+                    return;
 
-            var plugin = PluginResolver();
+                DriveHardware(currentPlugin, ref data);
+            }
+        }
+
+        /// <summary>
+        /// One frame of display/ITM/LED output, entirely from the frame's
+        /// captured generation. Callers hold <see cref="_outputGate"/>.
+        /// </summary>
+        private void DriveHardware(FanatecPlugin plugin, ref GameData data)
+        {
             var device = plugin?.Transport;
             if (device == null || !device.IsConnected)
                 return;
@@ -604,8 +491,14 @@ namespace FanaBridge.Adapters
             // latches, so the live gear/speed repaints immediately instead of
             // waiting for the next value change.
             bool displayTest = plugin.DisplayTestActive;
-            if (!displayTest && _displayTestWasActive)
+            if (!displayTest && _displayTestWasActive
+                && _displaySettings.DisplayMode != DisplaySettings.ModeNone)
+            {
+                // In mode "None" the blank-once path clears the test residue and
+                // releases ownership, with retry — clearing here would double the
+                // write and could release ownership on a declined clear.
                 _displayManager?.Clear();
+            }
             _displayTestWasActive = displayTest;
 
             // Resolve THIS descriptor's caps override-aware — the same rule the
@@ -716,22 +609,7 @@ namespace FanaBridge.Adapters
                     // adds col01 traffic interleaved with col03 ITM, which can destabilise the
                     // firmware under load, so it is opt-in — the "Legacy Display Mode" dropdown,
                     // where "None" leaves it off.
-                    if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
-                    {
-                        if (_displayManager == null)
-                            _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
-                        if (!displayTest)
-                            _displayManager.Update(data);
-                        _legacyBlanked = false;
-                    }
-                    else if (_displayManager != null && !_legacyBlanked && !displayTest)
-                    {
-                        // Switched to None — blank the legacy page once. Only latch
-                        // when the blanking write was accepted, so a transient
-                        // transport failure gets retried instead of leaving the
-                        // page frozen on its last value.
-                        _legacyBlanked = _displayManager.Clear();
-                    }
+                    UpdateSegmentDisplay(plugin, data, displayTest);
                 }
                 catch (Exception ex)
                 {
@@ -746,31 +624,116 @@ namespace FanaBridge.Adapters
             }
             else if (displayType != DisplayType.None)
             {
-                if (_displayManager == null)
-                {
-                    _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
-                    SimHub.Logging.Current.Info(
-                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
-                }
-
-                if (!displayTest)
-                    _displayManager.Update(data);
+                // Same drive (and mode-"None" gate) as the ITM legacy page: "None"
+                // stops all display writes so another application can own the screen
+                // while FanaBridge keeps driving the LEDs.
+                UpdateSegmentDisplay(plugin, data, displayTest);
             }
 
             // ── LEDs ─────────────────────────────────────────────────────
             // Hot-swap the driver if the active profile changed (e.g. user
             // picked a different override in the settings dropdown).
-            if (_manager != null)
-            {
-                // Use the per-descriptor resolution, not the global caps — a
-                // non-matching device resolves to its own registration profile
-                // and so never hot-swaps to the connected wheel's profile.
-                var currentCaps = plugin.ResolveCapsFor(_config);
-                if (currentCaps?.Profile != null)
-                    _manager.HotSwapIfNeeded(currentCaps);
-            }
+            // Use the per-descriptor resolution, not the global caps — a
+            // non-matching device resolves to its own registration profile
+            // and so never hot-swaps to the connected wheel's profile.
+            var currentCaps = plugin.ResolveCapsFor(_config);
+            if (currentCaps?.Profile != null)
+                _ledHost.HotSwapIfNeeded(currentCaps);
 
-            _ledModule?.Display();
+            // Settings the module could not fully take leave it partially
+            // populated, so driving LEDs from it would show something the user
+            // never chose. Output resumes once a later load or a reset makes it
+            // trustworthy again -- the same condition that unblocks saving.
+            if (!_settings.IsFaulted)
+                _ledHost.Display();
+        }
+
+        /// <summary>
+        /// Stops driving the wheel and darkens it. Blanks unconditionally: a
+        /// write at a gone transport quietly fails, and unconditional blanking
+        /// is what keeps teardown correct from either racer (see the lifecycle
+        /// doc, "Teardown ordering").
+        /// </summary>
+        private void StopDrivingHardware()
+        {
+            _ledHost.StopDriving();
+
+            // Skip the display blank in mode "None" — the display isn't ours, and
+            // on an identity transition the transport may still be live.
+            if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+                _displayManager?.Clear();
+            _itmDisplay?.Stop();
+            _itmWasRunning = false;
+            _itmStatusSnapshot = null;   // don't show a stale ITM row while disconnected
+            // Reset one-shot latches so a reconnect starts clean: errors can log again
+            // and the legacy page can re-blank when the mode is "None".
+            _itmErrorLogged = false;
+            _legacyBlanked = false;
+        }
+
+        /// <summary>
+        /// Darkens this device on the plugin's way out, while its transport is
+        /// still alive. See docs/device-settings-lifecycle.md for the teardown
+        /// ordering this participates in.
+        /// </summary>
+        internal void BlankOutput()
+        {
+            // The gate waits out a frame already drawing, so the blank always
+            // lands after the last lit write.
+            lock (_outputGate)
+            {
+                // Skip devices that were not being driven: nothing is lit, and
+                // teardown should not pay their drivers' bounded refresh wait.
+                if (!_wasConnected)
+                    return;
+
+                _wasConnected = false;
+
+                try
+                {
+                    StopDrivingHardware();
+                }
+                catch (Exception ex)
+                {
+                    LogCleanupFailure("blanking output", ex);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Drives the 7-segment gear/speed display (the legacy page on ITM wheels),
+        /// honouring mode "None": any other mode runs the display driver each frame;
+        /// "None" blanks the display once on the transition — retried until the write
+        /// is accepted — and then never writes again, leaving the display free for
+        /// the firmware or another application.
+        /// </summary>
+        private void UpdateSegmentDisplay(FanatecPlugin plugin, GameData data, bool displayTest)
+        {
+            if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+            {
+                // No encoder means this generation cannot reach a display at all;
+                // a driver built around one could only throw.
+                if (_displayManager == null && plugin.Display != null)
+                {
+                    _displayManager = new FanatecDisplayDriver(plugin.Display, _displaySettings);
+                    SimHub.Logging.Current.Info(
+                        "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created display manager");
+                }
+                if (!displayTest)
+                    _displayManager?.Update(data);
+                _legacyBlanked = false;
+            }
+            else if (_displayManager != null && !_legacyBlanked && !displayTest)
+            {
+                // Switched to None — blank once. Only latch when the blanking write
+                // was accepted, so a transient transport failure gets retried instead
+                // of leaving the display frozen on its last value.
+                _legacyBlanked = _displayManager.Clear();
+                // The accepted blank hands the display off: release ownership so
+                // shutdown cleanup won't blank another application's content later.
+                if (_legacyBlanked)
+                    plugin.Display?.Release();
+            }
         }
 
         public override void End()
@@ -778,24 +741,54 @@ namespace FanaBridge.Adapters
             SimHub.Logging.Current.Info(
                 "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: End called");
 
-            PluginResolver()?.UnregisterDeviceInstance(this);
-            _displayManager?.Clear();
-            _itmDisplay?.Stop();
-            _ledModule?.FinalizeModule();
+            // Each step is independent: an earlier failure must not skip the
+            // LED host's cleanup, which is the only thing that removes its
+            // subscription to a static event SimHub never unhooks for us.
+            try { PluginResolver()?.UnregisterDeviceInstance(this); }
+            catch (Exception ex) { LogCleanupFailure("unregistering the device", ex); }
+
+            // Mode "None" means the display isn't ours — the exit blank would stomp
+            // whatever the firmware or another application has on it.
+            if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+            {
+                try { _displayManager?.Clear(); }
+                catch (Exception ex) { LogCleanupFailure("clearing the display", ex); }
+            }
+
+            try { _itmDisplay?.Stop(); }
+            catch (Exception ex) { LogCleanupFailure("stopping the ITM display", ex); }
+
+            _settings.Changed -= OnSettingsChanged;
+
+            // Let go of the UI's subscription. Forwarding is a self-reference so
+            // it cannot keep this object alive, but a device SimHub has finished
+            // with should not still be talking to bindings.
+            base.PropertyChanged -= ForwardBaseNotification;
+            PropertyChanged = null;
+
+            _ledHost.Dispose();
+        }
+
+        private void LogCleanupFailure(string what, Exception ex)
+        {
+            SimHub.Logging.Current.Warn(
+                "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: " +
+                what + " failed during shutdown: " + ex.Message);
         }
 
         public override IEnumerable<DynamicButtonAction> GetDynamicButtonActions()
         {
-            EnsureLedModuleInitialized();
-            return _ledModule?.GetDynamicActions() ?? Enumerable.Empty<DynamicButtonAction>();
+            return _ledHost.GetDynamicActions();
         }
 
+        /// <summary>
+        /// The device's settings tabs. Built without a plugin so the device
+        /// can always show what it stores; SimHub deliberately greys them while
+        /// nothing can drive it (via the hiding Enabled) — do not "fix" that.
+        /// </summary>
         public override IEnumerable<DeviceSettingControl> GetSettingsControls()
         {
-            EnsureLedModuleInitialized();
-
-            // LED settings tab
-            var ledEditControl = _ledModule?.EditControl;
+            var ledEditControl = _ledHost.EditControl;
             if (ledEditControl != null)
             {
                 yield return new DeviceSettingControl(
@@ -806,28 +799,15 @@ namespace FanaBridge.Adapters
                     true);
             }
 
-            // Screen/Tuning tabs are built through the plugin's panel factory so
-            // this Adapters class never references FanaBridge.UI. No current
-            // plugin generation → tabs omitted, consistent with the LED tab's
-            // degradation via EnsureLedModuleInitialized.
-            var panels = PluginResolver()?.PanelFactory;
+            if (_panels == null)
+                yield break;
 
             // Screen settings tab (only for wheels with a display)
-            if (panels != null && _config.Capabilities.Display != DisplayType.None)
+            if (_config.Capabilities.Display != DisplayType.None)
             {
-                var screenPanel = panels.CreateScreenPanel(
+                var screenPanel = _panels.CreateScreenPanel(
                     _displaySettings, _config.Capabilities.Display, _config.Capabilities.ItmDeviceId,
-                    settingsChanged: () =>
-                    {
-                        // Sync back to JObject for persistence.
-                        _customSettings["displayMode"] = _displaySettings.DisplayMode;
-                        _customSettings["itmEnabled"] = _displaySettings.ItmEnabled;
-                        _customSettings["itmShowLapTotal"] = _displaySettings.ItmShowLapTotal;
-                        _customSettings["itmShowPositionTotal"] = _displaySettings.ItmShowPositionTotal;
-                        _customSettings["itmDefaultPage"] = _displaySettings.ItmDefaultPage;
-                        _displayManager?.UpdateSettings(_displaySettings);
-                        // ITM driver reads _displaySettings live each frame.
-                    });
+                    settingsChanged: () => _settings.UpdateDisplay(_displaySettings));
 
                 yield return new DeviceSettingControl(
                     screenPanel,
@@ -838,10 +818,10 @@ namespace FanaBridge.Adapters
             }
 
             // Tuning settings tab (only for wheels with encoders)
-            if (panels != null && _config.Capabilities.HasEncoders)
+            if (_config.Capabilities.HasEncoders)
             {
                 yield return new DeviceSettingControl(
-                    panels.CreateTuningPanel(_customSettings),
+                    _panels.CreateTuningPanel(_settings),
                     2,
                     "Tuning",
                     DeviceSettingControlKind.None,

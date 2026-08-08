@@ -1,3 +1,4 @@
+using System;
 using FanaBridge.Profiles;
 using FanaBridge.Protocol;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.PSE;
@@ -29,22 +30,37 @@ namespace FanaBridge.Adapters
     {
         private readonly DeviceConfig _config;
 
-        // Last-known encoders — refreshed from FanatecPlugin.Instance on every
-        // driver build so a rebuilt driver always targets the live hardware
-        // core, even if the plugin was replaced since construction (issue #37).
-        // The constructor values only seed the fallback for the (unexpected)
-        // case where Instance is null at build time.
-        private LedEncoder _leds;
-        private LegacyLedEncoder _legacyLeds;
+        // Resolves the current plugin generation on every driver build, so a
+        // rebuilt driver always targets the live hardware core even if the
+        // plugin was replaced since construction (issue #37). Injected rather
+        // than read from the singleton so the owning device instance and its
+        // manager always agree on which generation they are talking to.
+        private readonly Func<FanatecPlugin> _pluginResolver;
 
-        // Track which profile the current driver was built from,
-        // so HotSwapIfNeeded can detect changes.
+        // The profile the current driver was built from, and the profile last
+        // seen at the source. Kept apart because a driver that fails to rebuild
+        // leaves _lastDriverProfile stale: comparing against that alone would
+        // tear the driver down and log on every frame until the rebuild starts
+        // succeeding again.
         private WheelProfile _lastDriverProfile;
+        private WheelProfile _lastObservedProfile;
+
+        // Whether the "no driver" state has already been reported, so the
+        // unavailable/available transitions log once rather than per frame.
+        private bool _noDriverReported;
+
+        /// <summary>
+        /// Keep asking for a driver forever. The base class otherwise stops
+        /// after a handful of attempts, which for this late-bound manager would
+        /// mean a device that was idle while the plugin was down never recovers
+        /// when it comes back.
+        /// </summary>
+        public override int? ReConnectAttempts => null;
 
         /// <summary>
         /// Parameterless constructor required by the <c>new()</c> constraint on
         /// <c>LedModuleSettings&lt;T&gt;</c>.  Not used at runtime — the
-        /// <see cref="FanatecLedManager(DeviceConfig, LedEncoder, LegacyLedEncoder)"/>
+        /// <see cref="FanatecLedManager(DeviceConfig, Func{FanatecPlugin})"/>
         /// constructor is called explicitly and the instance is passed to LedModuleSettings.
         /// </summary>
         public FanatecLedManager()
@@ -58,11 +74,10 @@ namespace FanaBridge.Adapters
         /// <paramref name="config"/> — live caps when this descriptor is the
         /// connected wheel, otherwise its registration caps.
         /// </summary>
-        public FanatecLedManager(DeviceConfig config, LedEncoder leds, LegacyLedEncoder legacyLeds)
+        public FanatecLedManager(DeviceConfig config, Func<FanatecPlugin> pluginResolver)
         {
             _config = config;
-            _leds = leds;
-            _legacyLeds = legacyLeds;
+            _pluginResolver = pluginResolver ?? (() => FanatecPlugin.Instance);
         }
 
         // ── LedsGenericManager<T> overrides ──────────────────────────────
@@ -75,31 +90,71 @@ namespace FanaBridge.Adapters
         /// </summary>
         public override FanatecLedDriver GetDriver()
         {
-            var plugin = FanatecPlugin.Instance;
-            if (plugin != null)
+            try
             {
-                // Re-resolve the encoders so a rebuilt driver binds to the live
-                // hardware core rather than whichever generation constructed us.
-                _leds = plugin.Leds ?? _leds;
-                _legacyLeds = plugin.LegacyLeds ?? _legacyLeds;
+                // Bind only to the current generation's encoders. Keeping the
+                // previous ones as a fallback would hand the driver a transport
+                // belonging to a disposed generation (issue #37).
+                var plugin = _pluginResolver();
+                var leds = plugin?.Leds;
+                var legacyLeds = plugin?.LegacyLeds;
+
+                if (plugin == null || leds == null || legacyLeds == null)
+                {
+                    // Nothing to drive yet. Returning null pauses output; the
+                    // driver constructor would otherwise throw, and this runs
+                    // outside the base class's guarded section.
+                    ReportNoDriver("no active plugin generation");
+                    return null;
+                }
+
+                var caps = plugin.ResolveCapsFor(_config) ?? WheelCapabilities.None;
+                var driver = new FanatecLedDriver(caps, leds, legacyLeds);
+
+                _lastDriverProfile = caps.Profile;
+
+                if (_noDriverReported)
+                {
+                    _noDriverReported = false;
+                    SimHub.Logging.Current.Info(
+                        "FanatecLedManager: runtime available again for " +
+                        (caps.Name ?? "device") + " — LED output resuming");
+                }
+
+                SimHub.Logging.Current.Info(
+                    "FanatecLedManager: Created driver for " + (caps.Name ?? "unknown") +
+                    " (" + caps.AllLedCount + " LEDs: revRgb=" + caps.RevRgbCount +
+                    ", flagRgb=" + caps.FlagRgbCount + ", buttonRgb=" + caps.ButtonRgbCount +
+                    ", buttonAuxIntensity=" + caps.ButtonAuxIntensityCount +
+                    ", legacyRevOnOff=" + caps.LegacyRevOnOffCount +
+                    ", legacyRev3Bit=" + caps.LegacyRev3BitCount +
+                    ", legacyFlag3Bit=" + caps.LegacyFlag3BitCount +
+                    ", legacyRevStripe=" + caps.LegacyRevStripeCount + ")");
+
+                return driver;
             }
+            catch (Exception ex)
+            {
+                ReportNoDriver(ex.Message);
+                return null;
+            }
+        }
 
-            var caps = plugin?.ResolveCapsFor(_config) ?? WheelCapabilities.None;
-            _lastDriverProfile = caps.Profile;
+        /// <summary>
+        /// Records that no driver could be built, logging only on the
+        /// transition so a device left without a runtime doesn't write a line
+        /// per frame.
+        /// </summary>
+        private void ReportNoDriver(string reason)
+        {
+            if (_noDriverReported)
+                return;
 
-            var driver = new FanatecLedDriver(caps, _leds, _legacyLeds);
-
+            _noDriverReported = true;
             SimHub.Logging.Current.Info(
-                "FanatecLedManager: Created driver for " + (caps.Name ?? "unknown") +
-                " (" + caps.AllLedCount + " LEDs: revRgb=" + caps.RevRgbCount +
-                ", flagRgb=" + caps.FlagRgbCount + ", buttonRgb=" + caps.ButtonRgbCount +
-                ", buttonAuxIntensity=" + caps.ButtonAuxIntensityCount +
-                ", legacyRevOnOff=" + caps.LegacyRevOnOffCount +
-                ", legacyRev3Bit=" + caps.LegacyRev3BitCount +
-                ", legacyFlag3Bit=" + caps.LegacyFlag3BitCount +
-                ", legacyRevStripe=" + caps.LegacyRevStripeCount + ")");
-
-            return driver;
+                "FanatecLedManager: no LED driver for " +
+                (_config?.Capabilities?.Name ?? "device") + " — " + reason +
+                "; output paused until it returns");
         }
 
         /// <summary>
@@ -109,7 +164,12 @@ namespace FanaBridge.Adapters
         /// </summary>
         public void HotSwapIfNeeded(WheelCapabilities currentCaps)
         {
-            if (currentCaps?.Profile == null || currentCaps.Profile == _lastDriverProfile)
+            if (currentCaps?.Profile == null || currentCaps.Profile == _lastObservedProfile)
+                return;
+
+            _lastObservedProfile = currentCaps.Profile;
+
+            if (currentCaps.Profile == _lastDriverProfile)
                 return;
 
             SimHub.Logging.Current.Info(

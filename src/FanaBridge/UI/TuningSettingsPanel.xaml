@@ -12,7 +12,8 @@
 
             <!-- Shown when tuning is disabled -->
             <StackPanel x:Name="panelDisabled" Visibility="Visible">
-                <TextBlock Text="Tuning features are disabled. Enable them in the FanaBridge plugin settings under Experimental Features."
+                <TextBlock x:Name="txtDisabledHint"
+                           Text="Tuning features are disabled. Enable them in the FanaBridge plugin settings under Experimental Features."
                            TextWrapping="Wrap" Opacity="0.6" />
             </StackPanel>
 

@@ -46,13 +46,14 @@
                 </StackPanel>
             </styles:SHSubSection>
 
-            <!-- 7-segment display mode. Title becomes "Legacy Display Mode" (with a "None"
-                 option) on ITM wheels; plain "Display Mode" on basic wheels. -->
+            <!-- 7-segment display mode. Title becomes "Legacy Display Mode" on ITM wheels;
+                 plain "Display Mode" on basic wheels. "None" turns the drive off entirely,
+                 leaving the display to the firmware or another application. -->
             <styles:SHSubSection x:Name="sectionDisplayMode" Title="Display Mode">
                 <ComboBox x:Name="cmbDisplayMode"
                           SelectionChanged="CmbDisplayMode_SelectionChanged"
                           Width="200" HorizontalAlignment="Left">
-                    <ComboBoxItem x:Name="cmbItemNone" Content="None" Tag="None" Visibility="Collapsed" />
+                    <ComboBoxItem Content="None" Tag="None" />
                     <ComboBoxItem Content="Gear" Tag="Gear" />
                     <ComboBoxItem Content="Speed" Tag="Speed" />
                     <ComboBoxItem Content="Gear + Speed" Tag="GearAndSpeed" />

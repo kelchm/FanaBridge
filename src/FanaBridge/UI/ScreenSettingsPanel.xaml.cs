@@ -35,8 +35,6 @@ namespace FanaBridge.UI
             // only the mode selector.
             bool isItm = displayType == DisplayType.Itm;
 
-            // "None" (legacy page off) is an ITM-only choice; hide it on basic wheels.
-            cmbItemNone.Visibility = isItm ? Visibility.Visible : Visibility.Collapsed;
             SelectByTag(cmbDisplayMode, _settings.DisplayMode ?? DisplaySettings.DefaultMode);
             chkEnableItm.IsChecked = _settings.ItmEnabled;
             chkShowLapTotal.IsChecked = _settings.ItmShowLapTotal;

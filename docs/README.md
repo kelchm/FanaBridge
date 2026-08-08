@@ -19,6 +19,7 @@ Documentation specific to the FanaBridge plugin:
 | Document | Description |
 |----------|-------------|
 | [Supported Devices](supported-devices.md) | Wheels and hub + module combos with built-in FanaBridge profiles — tested vs. unverified, and their LED/display capabilities |
+| [Device Settings Lifecycle](device-settings-lifecycle.md) | How a device decides what to store, why the LED editor is built up front, and the rules that keep a save from erasing settings |
 
 ## Conventions
 
