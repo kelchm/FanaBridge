@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Automatic update checks and one-click updates.** FanaBridge now checks GitHub for new releases and offers to install them, with a restart of SimHub to finish. Can be turned off in About. ([#96](https://github.com/kelchm/FanaBridge/pull/96), closes [#95](https://github.com/kelchm/FanaBridge/issues/95))
 - **A wheel's segment display can now be left to another application.** Display Mode "None" stops FanaBridge writing to it, so Fanatec's own software can drive the display while FanaBridge keeps the LEDs. The option previously existed only for the legacy page of ITM wheels. ([#97](https://github.com/kelchm/FanaBridge/pull/97))
 
 ### Fixed
