@@ -403,6 +403,70 @@ namespace FanaBridge.Tests
         }
 
         [Fact]
+        public async System.Threading.Tasks.Task BlankOutput_WaitsOutAFrameAlreadyDrawing_AndBlanksAfterIt()
+        {
+            // The sharper half of the finalize race: a frame that captured the
+            // generation BEFORE it was unpublished and is mid-draw when the
+            // blank arrives. Without the output gate the blank lands first and
+            // the frame relights the wheel on a transport about to die.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            inst.PluginResolver = () => plugin;
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);          // connected, drew once
+
+            var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            var frameDrawing = new System.Threading.ManualResetEventSlim();
+            var releaseFrame = new System.Threading.ManualResetEventSlim();
+            host.OnDisplay = () =>
+            {
+                frameDrawing.Set();
+                releaseFrame.Wait(5000);
+                order.Enqueue("draw");
+            };
+            host.OnStopDriving = () => order.Enqueue("blank");
+
+            var frame = System.Threading.Tasks.Task.Run(() =>
+            {
+                var d = new GameData();
+                inst.DataUpdate(null, ref d);
+            });
+            Assert.True(frameDrawing.Wait(5000));
+
+            inst.PluginResolver = () => null;         // finalize unpublishes...
+            var blank = System.Threading.Tasks.Task.Run(() => inst.BlankOutput());
+
+            releaseFrame.Set();
+            var both = System.Threading.Tasks.Task.WhenAll(frame, blank);
+            Assert.Same(both, await System.Threading.Tasks.Task.WhenAny(
+                both, System.Threading.Tasks.Task.Delay(5000)));
+
+            Assert.Equal(new[] { "draw", "blank" }, order.ToArray());
+        }
+
+        [Fact]
+        public void AFrameThatCapturedADyingGeneration_DoesNotRelightTheWheel()
+        {
+            // The other interleaving: the blank already ran, and a frame that
+            // captured the old generation reaches the output gate afterwards.
+            // The gate revalidates against the live singleton and skips.
+            var host = new FakeLedModuleHost();
+            var inst = InstanceWithHost("PSWBMW", host);
+            var plugin = PluginWithWheel("PSWBMW", out _);
+
+            // Alive for the frame's first two reads (top-of-frame capture and
+            // the Enabled announcement), unpublished by the revalidation.
+            int calls = 0;
+            inst.PluginResolver = () => ++calls <= 2 ? plugin : null;
+
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+
+            Assert.Equal(0, host.DisplayCount);
+        }
+
+        [Fact]
         public void FinalizeRace_TheFrameThatSeesThePluginGone_StillDarkensTheWheel()
         {
             // FinalizePlugin unpublishes the singleton before it blanks. A

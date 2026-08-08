@@ -25,7 +25,7 @@ namespace FanaBridge.Adapters
         /// plugin: SimHub shows a device's settings whether or not FanaBridge is
         /// running. Overridable so tests can build instances without WPF.
         /// </summary>
-        internal static IDevicePanelFactory PanelFactory = new UI.DevicePanelFactory();
+        internal static readonly IDevicePanelFactory PanelFactory = new UI.DevicePanelFactory();
 
         public IEnumerable<DeviceDescriptor> GetDevices()
         {

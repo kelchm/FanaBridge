@@ -101,7 +101,15 @@ namespace FanaBridge.Tests.TestDoubles
             _applied = new JObject();
         }
 
-        public void Display() => DisplayCount++;
+        /// <summary>Optional hooks so a test can observe or block these calls.</summary>
+        public Action? OnDisplay { get; set; }
+        public Action? OnStopDriving { get; set; }
+
+        public void Display()
+        {
+            DisplayCount++;
+            OnDisplay?.Invoke();
+        }
 
         /// <summary>
         /// The real host never lets StopDriving throw, but nothing enforces
@@ -113,6 +121,7 @@ namespace FanaBridge.Tests.TestDoubles
         public void StopDriving()
         {
             StopDrivingCount++;
+            OnStopDriving?.Invoke();
             if (ThrowOnStopDriving)
                 throw new InvalidOperationException("stop driving failed");
         }

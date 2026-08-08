@@ -555,24 +555,22 @@ namespace FanaBridge
             if (_connectionMonitor?.IsConnected == true)
             {
                 // Darken whatever we were driving while the transport is still
-                // alive. Disabling FanaBridge should leave the wheel the way
-                // switching the device off does, rather than frozen on the last
-                // frame drawn. Device update frames are stopping but not joined
-                // (see the Instance comment above): a straggler that observes
-                // the null Instance darkens the wheel itself on its disconnect
-                // edge and this loop then finds nothing to do — either order
-                // blanks exactly once. This pass exists for the devices whose
-                // frames have already stopped and will never see that edge.
+                // alive, so disabling FanaBridge leaves the wheel the way
+                // switching the device off does. Each device's output gate
+                // serializes this against any frame still in flight; see
+                // docs/device-settings-lifecycle.md. Copied out of the lock so
+                // no device work runs while holding the instance list.
+                List<Adapters.FanatecWheelDeviceInstance> instances;
                 lock (_deviceInstancesLock)
+                    instances = new List<Adapters.FanatecWheelDeviceInstance>(_deviceInstances);
+
+                foreach (var inst in instances)
                 {
-                    foreach (var inst in _deviceInstances)
+                    try { inst.BlankOutput(); }
+                    catch (Exception ex)
                     {
-                        try { inst.BlankOutput(); }
-                        catch (Exception ex)
-                        {
-                            SimHub.Logging.Current.Warn(
-                                $"FanaBridge: blanking a device on finalize: {ex.Message}");
-                        }
+                        SimHub.Logging.Current.Warn(
+                            $"FanaBridge: blanking a device on finalize: {ex.Message}");
                     }
                 }
 

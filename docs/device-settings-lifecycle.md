@@ -6,7 +6,7 @@ This exists because getting it wrong destroys user data. In August 2026 a user's
 
 ## What SimHub does
 
-Three behaviours of SimHub 9.11.21 shape everything here. They were verified against the pinned build and the plugin depends on them.
+Three behaviours of SimHub shape everything here. They were established against 9.11.21 and have held unchanged under the currently pinned 9.11.22, where this design was manually validated.
 
 **A device's settings file is rewritten from a single call, wholesale.** SimHub asks a device to serialize itself and writes the result over the file. There is no merge against what is already on disk, so anything the device does not include is erased. A device cannot repair this later — by the time it notices, the previous contents are gone.
 

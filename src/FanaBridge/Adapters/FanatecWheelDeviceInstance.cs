@@ -78,6 +78,10 @@ namespace FanaBridge.Adapters
         // Track connection state transitions for cleanup on disconnect.
         private bool _wasConnected;
 
+        // Serializes hardware output against teardown: a frame that captured a
+        // generation being finalized must not draw after BlankOutput ran.
+        private readonly object _outputGate = new object();
+
         // Registered once with the plugin so it can read this device's display name
         // for the Control Mapper integration. Lazy (in DataUpdate) so it doesn't
         // depend on construction-vs-plugin-Init ordering.
@@ -533,13 +537,23 @@ namespace FanaBridge.Adapters
             if (!isConnected)
                 return;
 
-            // The generation resolved at the top of the frame — deliberately not
-            // resolved again. A second read could observe a newer plugin than
-            // _boundPlugin records, so the display/ITM drivers built below would
-            // belong to a generation the guard has not seen yet, and the next
-            // frame would tear down drivers that were built correctly. One
-            // generation per frame, by construction.
-            var plugin = currentPlugin;
+            lock (_outputGate)
+            {
+                // Unpublished since the top of the frame: whoever unpublished it
+                // blanks the wheel, and this frame must not relight it.
+                if (!ReferenceEquals(PluginResolver(), currentPlugin))
+                    return;
+
+                DriveHardware(currentPlugin, ref data);
+            }
+        }
+
+        /// <summary>
+        /// One frame of display/ITM/LED output, entirely from the frame's
+        /// captured generation. Callers hold <see cref="_outputGate"/>.
+        /// </summary>
+        private void DriveHardware(FanatecPlugin plugin, ref GameData data)
+        {
             var device = plugin?.Transport;
             if (device == null || !device.IsConnected)
                 return;
@@ -759,32 +773,30 @@ namespace FanaBridge.Adapters
 
         /// <summary>
         /// Darkens this device on the plugin's way out, while its transport is
-        /// still alive.
+        /// still alive. See docs/device-settings-lifecycle.md for the teardown
+        /// ordering this participates in.
         /// </summary>
-        /// <remarks>
-        /// Disabling FanaBridge should leave a wheel the way switching the
-        /// device off does. Nothing else can do this: by the time SimHub tears
-        /// the plugin down, DataUpdate has stopped being called and the
-        /// transport is about to go, so the device never sees an edge it could
-        /// act on. The plugin calls this for each device it is driving.
-        /// </remarks>
         internal void BlankOutput()
         {
-            // Only a device that was actually being driven has anything lit.
-            // Skipping the rest also avoids their LED drivers' bounded wait for
-            // an in-flight refresh, which teardown should not pay for.
-            if (!_wasConnected)
-                return;
-
-            _wasConnected = false;
-
-            try
+            // The gate waits out a frame already drawing, so the blank always
+            // lands after the last lit write.
+            lock (_outputGate)
             {
-                StopDrivingHardware();
-            }
-            catch (Exception ex)
-            {
-                LogCleanupFailure("blanking output", ex);
+                // Skip devices that were not being driven: nothing is lit, and
+                // teardown should not pay their drivers' bounded refresh wait.
+                if (!_wasConnected)
+                    return;
+
+                _wasConnected = false;
+
+                try
+                {
+                    StopDrivingHardware();
+                }
+                catch (Exception ex)
+                {
+                    LogCleanupFailure("blanking output", ex);
+                }
             }
         }
 
