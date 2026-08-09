@@ -20,6 +20,7 @@ namespace FanaBridge.Tests.Contracts
             ("src/FanaBridge.Core", "FanaBridge.Core"),
             ("src/FanaBridge", "FanaBridge"),
             ("src/FanaBridge.Updater", "FanaBridge.Updater"),
+            ("tests/FanaBridge.Tests", "FanaBridge.Tests"),
         };
 
         private static readonly XNamespace XamlNs = "http://schemas.microsoft.com/winfx/2006/xaml";
