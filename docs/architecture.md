@@ -36,6 +36,8 @@ Enforced at compile time via **IDE0130** (`dotnet_style_namespace_match_folder =
 
 XAML `x:Class` values follow the same path rule and are checked by a contract test (the C# analyzer does not cover markup).
 
+Domain folders and their matching namespaces are a **navigational taxonomy**, not directional boundaries. Cross-domain references within a project are expected (e.g. Devices ↔ Transport in Core). The only compiler-enforced directional boundaries are the assembly references: Core references nothing internal, Updater references nothing internal, and the plugin references both.
+
 ## Test tree
 
 `tests/FanaBridge.Tests` mirrors the product projects:

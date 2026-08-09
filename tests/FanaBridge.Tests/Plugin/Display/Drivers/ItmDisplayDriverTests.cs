@@ -15,7 +15,7 @@ namespace FanaBridge.Tests.Plugin.Display.Drivers
     /// Driver-level tests: telemetry→value mapping, ParamDefs suffixes, send pacing, and the
     /// post-sync repaint (immediate values + tight double-tap, then defs), all riding on the
     /// lifecycle controller. The lifecycle itself (states, recovery ladder, deadlines) is
-    /// covered exhaustively in <see cref="ItmLifecycleControllerTests"/>.
+    /// covered exhaustively in <see cref="FanaBridge.Tests.Core.Display.Session.ItmLifecycleControllerTests"/>.
     /// </summary>
     public class ItmDisplayDriverTests
     {

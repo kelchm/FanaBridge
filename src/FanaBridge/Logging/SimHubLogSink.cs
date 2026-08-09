@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using FanaBridge.Core.Logging;
 
 namespace FanaBridge.Logging
 {

@@ -129,7 +129,7 @@ namespace FanaBridge.Core.Display.Protocol
     /// reference: Enable (<c>FF 02 02</c>), ParamDefs (<c>FF 05 03</c>), ValueUpdate
     /// (<c>FF 05 01</c>), and the PageSet frame (<c>FF 05 04</c>).
     ///
-    /// This is a pure framing layer — like <see cref="LedEncoder"/> and
+    /// This is a pure framing layer — like <see cref="FanaBridge.Core.Leds.LedEncoder"/> and
     /// <see cref="DisplayEncoder"/>, it builds and writes reports but holds no display
     /// state. Page selection, telemetry-to-parameter mapping, and the firmware-safety rate
     /// limits (e.g. value-update pacing) are the caller's

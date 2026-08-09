@@ -5,7 +5,7 @@ namespace FanaBridge.Core.Transport
     /// <summary>
     /// The connect-lifecycle surface of a device transport, layered on top of
     /// <see cref="IDeviceTransport"/> (the send/read surface the encoders and
-    /// protocol readers use). <see cref="FanatecWheelbase"/> orchestrates against
+    /// protocol readers use). <see cref="FanaBridge.Core.Devices.FanatecWheelbase"/> orchestrates against
     /// this interface rather than the concrete <see cref="FanatecTransport"/>,
     /// so its identity state machine (drain → settle → commit, SRM precedence,
     /// disconnect reset) is unit-testable with a fake transport — the layer where
