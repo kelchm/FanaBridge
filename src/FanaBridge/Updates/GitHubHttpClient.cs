@@ -4,7 +4,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace FanaBridge.Plugin.Updates
+namespace FanaBridge.Updates
 {
     /// <summary>
     /// HTTP seams for the self-updater: the two fetch delegates

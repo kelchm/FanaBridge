@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Plugin.Display;
-using FanaBridge.Plugin.Leds;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Display;
+using FanaBridge.Leds;
 using Newtonsoft.Json.Linq;
 
-namespace FanaBridge.Plugin.Settings
+namespace FanaBridge.Settings
 {
     /// <summary>
     /// Owns everything a device persists: FanaBridge's own settings, the LED

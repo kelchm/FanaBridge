@@ -1,4 +1,4 @@
-namespace FanaBridge.Devices.Identity
+namespace FanaBridge.Core.Devices.Identity
 {
     /// <summary>
     /// Settles raw wheel/hub + module identity readings before they are committed.

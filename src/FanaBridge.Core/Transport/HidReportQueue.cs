@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 
-namespace FanaBridge.Transport
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// Bounded FIFO of HID input reports, bridging the blocking reader thread to

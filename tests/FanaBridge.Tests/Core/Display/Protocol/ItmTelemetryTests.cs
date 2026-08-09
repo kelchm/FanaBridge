@@ -1,5 +1,5 @@
 using System;
-using FanaBridge.Display.Protocol;
+using FanaBridge.Core.Display.Protocol;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Display.Protocol

@@ -1,7 +1,7 @@
 using System.Linq;
-using FanaBridge.Display.Catalog;
-using FanaBridge.Display.Protocol;
-using FanaBridge.Plugin.Display.Drivers;
+using FanaBridge.Core.Display.Catalog;
+using FanaBridge.Core.Display.Protocol;
+using FanaBridge.Display.Drivers;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Display.Catalog

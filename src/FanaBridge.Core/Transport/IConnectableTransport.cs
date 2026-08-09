@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge.Transport
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// The connect-lifecycle surface of a device transport, layered on top of

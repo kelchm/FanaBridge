@@ -4,19 +4,18 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using FanaBridge.Core.Devices;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Display.Protocol;
+using FanaBridge.Core.Leds;
+using FanaBridge.ControlMapper;
 using FanaBridge.Devices;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Display.Protocol;
-using FanaBridge.Leds;
-using FanaBridge.Plugin;
-using FanaBridge.Plugin.ControlMapper;
-using FanaBridge.Plugin.Devices;
-using FanaBridge.Plugin.Diagnostics;
-using FanaBridge.Plugin.Settings;
-using FanaBridge.Plugin.UI;
-using FanaBridge.Plugin.Updates;
-using FanaBridge.Transport;
-using FanaBridge.Tuning;
+using FanaBridge.Diagnostics;
+using FanaBridge.Settings;
+using FanaBridge.UI.Settings;
+using FanaBridge.Updates;
+using FanaBridge.Core.Transport;
+using FanaBridge.Core.Tuning;
 using FanaBridge.Updater;
 using GameReaderCommon;
 using SimHub.Plugins;
@@ -271,8 +270,8 @@ namespace FanaBridge
         // Detects the vendor's app/service running alongside FanaBridge — the same
         // display, no arbitration, so it's a warning the user needs to see instead of
         // chasing phantom ITM flicker. TTL-cached; edges are logged once.
-        private readonly Diagnostics.FanatecSoftwareMonitor _fanatecSoftware =
-            new Diagnostics.FanatecSoftwareMonitor(
+        private readonly Core.Diagnostics.FanatecSoftwareMonitor _fanatecSoftware =
+            new Core.Diagnostics.FanatecSoftwareMonitor(
                 log: msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg));
 
         /// <summary>

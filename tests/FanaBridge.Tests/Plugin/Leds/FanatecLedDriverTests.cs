@@ -3,10 +3,11 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using BA63Driver.Mapper;
-using FanaBridge.Devices.Profiles;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Leds;
 using FanaBridge.Leds;
-using FanaBridge.Plugin.Leds;
-using FanaBridge.Transport;
+using FanaBridge.Tests.TestDoubles;
+using FanaBridge.Core.Transport;
 using Newtonsoft.Json;
 using Xunit;
 

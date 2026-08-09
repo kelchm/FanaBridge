@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge.Leds
+namespace FanaBridge.Core.Leds
 {
     /// <summary>
     /// RGB color helper with RGB565 conversion and predefined colors.

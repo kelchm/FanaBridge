@@ -1,4 +1,4 @@
-namespace FanaBridge.Display.Protocol
+namespace FanaBridge.Core.Display.Protocol
 {
     /// <summary>
     /// 7-segment display encoding table.

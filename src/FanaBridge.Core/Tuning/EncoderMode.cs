@@ -1,4 +1,4 @@
-namespace FanaBridge.Tuning
+namespace FanaBridge.Core.Tuning
 {
     /// <summary>
     /// Encoder operating mode for Fanatec button modules.

@@ -1,4 +1,4 @@
-using FanaBridge.Transport;
+using FanaBridge.Core.Transport;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Transport

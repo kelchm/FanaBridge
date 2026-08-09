@@ -1,6 +1,6 @@
-using FanaBridge.Transport;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Devices.Identity
+namespace FanaBridge.Core.Devices.Identity
 {
     /// <summary>
     /// Replicates the kernel filter's engage sequence (FWFUProtocolUsbBulkOrInterruptTransfer)

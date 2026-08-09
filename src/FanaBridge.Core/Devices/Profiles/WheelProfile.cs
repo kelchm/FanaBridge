@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
 
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// A complete wheel profile — the single source of truth for a device's
@@ -104,17 +104,17 @@ namespace FanaBridge.Devices.Profiles
             {
                 if (Enum.TryParse(Display, true, out DisplayType dt))
                     return dt;
-                return FanaBridge.Devices.Profiles.DisplayType.None;
+                return FanaBridge.Core.Devices.Profiles.DisplayType.None;
             }
         }
 
         /// <summary>
         /// ITM display wire id (which device the wheel's ITM screen is: 1 base, 3 wheel OLED,
-        /// 4 Bentley). Defaults to <see cref="FanaBridge.Display.Protocol.ItmEncoder.DefaultDeviceId"/>
+        /// 4 Bentley). Defaults to <see cref="FanaBridge.Core.Display.Protocol.ItmEncoder.DefaultDeviceId"/>
         /// (3) when omitted — correct for PBME and GTSWX.
         /// </summary>
         [JsonIgnore]
-        public byte ItmDeviceId => ItmDeviceIdRaw ?? FanaBridge.Display.Protocol.ItmEncoder.DefaultDeviceId;
+        public byte ItmDeviceId => ItmDeviceIdRaw ?? FanaBridge.Core.Display.Protocol.ItmEncoder.DefaultDeviceId;
 
         /// <summary>Total LED count across all channels.</summary>
         [JsonIgnore]

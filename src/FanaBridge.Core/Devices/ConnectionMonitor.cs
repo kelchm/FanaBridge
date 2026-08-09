@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge.Devices
+namespace FanaBridge.Core.Devices
 {
     /// <summary>
     /// Encapsulates the Fanatec device connection state machine:

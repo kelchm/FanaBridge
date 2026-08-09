@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// Identifies a specific selectable device configuration — a standalone

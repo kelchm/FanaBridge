@@ -1,4 +1,4 @@
-using FanaBridge.Plugin.Devices;
+using FanaBridge.Devices;
 using Xunit;
 
 namespace FanaBridge.Tests.Plugin.Devices

@@ -1,7 +1,7 @@
 using System;
-using FanaBridge.Transport;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Display.Protocol
+namespace FanaBridge.Core.Display.Protocol
 {
     /// <summary>
     /// Encodes and sends display control reports for the Fanatec

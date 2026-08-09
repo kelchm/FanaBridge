@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge.Transport
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// The one request→response primitive over a per-family report stream:

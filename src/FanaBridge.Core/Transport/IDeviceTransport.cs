@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge.Transport
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// Low-level HID transport abstraction for all protocol encoders

@@ -1,6 +1,5 @@
 using System.Collections.Generic;
-using FanaBridge.Plugin.ControlMapper;
-using FanaBridge.Tests.CmFakes;
+using FanaBridge.ControlMapper;
 using SimHub.Plugins.OutputPlugins.ControlRemapper.Variants;
 using Xunit;
 

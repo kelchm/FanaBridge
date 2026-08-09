@@ -1,4 +1,4 @@
-using FanaBridge.Plugin.ControlMapper;
+using FanaBridge.ControlMapper;
 using Xunit;
 
 namespace FanaBridge.Tests.Plugin.ControlMapper

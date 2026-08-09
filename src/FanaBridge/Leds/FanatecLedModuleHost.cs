@@ -2,14 +2,14 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Controls;
-using FanaBridge.Devices;
-using FanaBridge.Devices.Profiles;
+using FanaBridge.Core.Devices;
+using FanaBridge.Core.Devices.Profiles;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.LedModules;
 
-namespace FanaBridge.Plugin.Leds
+namespace FanaBridge.Leds
 {
     /// <summary>
     /// The real LED settings module, built from registered (override-resolved)
@@ -51,7 +51,7 @@ namespace FanaBridge.Plugin.Leds
                     // resolves capabilities when the tab is opened, so it reflects
                     // the wheel that is actually connected.
                     ExtraSettingsControlFactory =
-                        _ => new UI.LedColorLimitationNotice(currentCapabilities),
+                        _ => new UI.Devices.LedColorLimitationNotice(currentCapabilities),
                 };
 
                 _module = new LedModuleSettings<FanatecLedManager>(options)

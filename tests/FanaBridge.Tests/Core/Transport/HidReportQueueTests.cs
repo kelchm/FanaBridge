@@ -1,7 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Threading.Tasks;
-using FanaBridge.Transport;
+using FanaBridge.Core.Transport;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Transport

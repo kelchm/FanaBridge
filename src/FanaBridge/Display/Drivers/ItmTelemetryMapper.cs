@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Display.Protocol;
+using FanaBridge.Core.Display.Protocol;
 using GameReaderCommon;
 
-namespace FanaBridge.Plugin.Display.Drivers
+namespace FanaBridge.Display.Drivers
 {
     /// <summary>
     /// Maps SimHub <see cref="GameData"/> telemetry to encoded <see cref="ItmValue"/> entries

@@ -1,4 +1,4 @@
-using FanaBridge.Diagnostics;
+using FanaBridge.Core.Diagnostics;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Diagnostics

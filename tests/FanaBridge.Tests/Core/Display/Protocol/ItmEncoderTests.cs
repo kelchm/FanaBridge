@@ -1,7 +1,8 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Display.Protocol;
-using FanaBridge.Transport;
+using FanaBridge.Core.Display.Protocol;
+using FanaBridge.Tests.TestDoubles;
+using FanaBridge.Core.Transport;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Display.Protocol

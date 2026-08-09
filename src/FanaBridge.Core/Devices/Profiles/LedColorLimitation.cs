@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// A way in which a wheel's LEDs cannot show what SimHub's color picker offers.

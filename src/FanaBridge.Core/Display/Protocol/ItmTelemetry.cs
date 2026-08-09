@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Display.Catalog;
-using FanaBridge.Transport;
+using FanaBridge.Core.Display.Catalog;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Display.Protocol
+namespace FanaBridge.Core.Display.Protocol
 {
     /// <summary>
     /// A page's <b>content identity</b> — the fixed parameter layout the firmware renders (SPEED

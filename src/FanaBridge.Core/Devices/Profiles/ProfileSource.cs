@@ -1,4 +1,4 @@
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// Indicates whether a profile was shipped with the plugin or created by the user.

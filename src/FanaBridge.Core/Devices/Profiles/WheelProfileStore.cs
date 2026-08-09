@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading;
 using Newtonsoft.Json;
 
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// Loads <see cref="WheelProfile"/> definitions and provides lookup by
@@ -126,7 +126,7 @@ namespace FanaBridge.Devices.Profiles
             foreach (string resourceName in assembly.GetManifestResourceNames())
             {
                 // Embedded resource names follow: {RootNamespace}.{RelativePath}.{filename}
-                // e.g. "FanaBridge.Resources.Profiles.PSWBMW.json"
+                // e.g. "FanaBridge.Core.Resources.Profiles.PSWBMW.json"
                 if (!resourceName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
                     continue;
                 if (resourceName.IndexOf(".Profiles.", StringComparison.OrdinalIgnoreCase) < 0)

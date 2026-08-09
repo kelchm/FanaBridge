@@ -1,4 +1,4 @@
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// Pixel encoding for the Color LED channel (subcmd 0x02).

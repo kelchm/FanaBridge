@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
-using FanaBridge.Devices.Profiles;
+using FanaBridge.Core.Devices.Profiles;
 using Newtonsoft.Json;
 using Xunit;
 

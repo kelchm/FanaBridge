@@ -1,5 +1,5 @@
 using System;
-using FanaBridge.Devices;
+using FanaBridge.Core.Devices;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Devices

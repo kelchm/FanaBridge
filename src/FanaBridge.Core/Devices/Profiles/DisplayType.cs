@@ -1,4 +1,4 @@
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// The type of display available on a wheel or button module.

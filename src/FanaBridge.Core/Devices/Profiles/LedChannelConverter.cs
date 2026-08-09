@@ -1,7 +1,7 @@
 using System;
 using Newtonsoft.Json;
 
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// JSON converter for <see cref="LedChannel"/> that accepts both v1 and v2

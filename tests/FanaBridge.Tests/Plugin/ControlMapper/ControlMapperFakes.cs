@@ -6,7 +6,7 @@ using SimHub.Plugins.OutputPlugins.ControlRemapper.Variants;
 // its FULL NAME from the PluginManager's assembly, so the fake must live at
 // exactly SimHub.Plugins.OutputPlugins.ControlRemapper.ControlMapperPlugin.
 
-namespace FanaBridge.Tests.CmFakes
+namespace FanaBridge.Tests.Plugin.ControlMapper
 {
     /// <summary>Surface used by tests to reach the fake plugin's worker without
     /// naming the shadowing <c>ControlMapperPlugin</c> type directly.</summary>
@@ -148,6 +148,7 @@ namespace FanaBridge.Tests.CmFakes
     }
 }
 
+#pragma warning disable IDE0130 // frozen reflection target: the bridge resolves this exact SimHub FQN
 namespace SimHub.Plugins.OutputPlugins.ControlRemapper
 {
     /// <summary>
@@ -155,17 +156,18 @@ namespace SimHub.Plugins.OutputPlugins.ControlRemapper
     /// bridge's <c>assembly.GetType("...ControlMapperPlugin")</c> lookup resolves
     /// to it inside the test assembly. Exposes the internal <c>remapperWorker</c>
     /// field the bridge reads. Created only via reflection (see
-    /// <see cref="FanaBridge.Tests.CmFakes.CmFake"/>), never by name.
+    /// <see cref="FanaBridge.Tests.Plugin.ControlMapper.CmFake"/>), never by name.
     /// </summary>
-    public class ControlMapperPlugin : FanaBridge.Tests.CmFakes.IFakeControlMapper
+    public class ControlMapperPlugin : FanaBridge.Tests.Plugin.ControlMapper.IFakeControlMapper
     {
-        internal FanaBridge.Tests.CmFakes.FakeRemapperWorker remapperWorker
-            = new FanaBridge.Tests.CmFakes.FakeRemapperWorker();
-        public FanaBridge.Tests.CmFakes.FakeRemapperWorker Worker => remapperWorker;
+        internal FanaBridge.Tests.Plugin.ControlMapper.FakeRemapperWorker remapperWorker
+            = new FanaBridge.Tests.Plugin.ControlMapper.FakeRemapperWorker();
+        public FanaBridge.Tests.Plugin.ControlMapper.FakeRemapperWorker Worker => remapperWorker;
 
         // Public field at the exact name the bridge reflects for the diagnostic.
-        public FanaBridge.Tests.CmFakes.FakeSettings controlMapperPluginSettings
-            = new FanaBridge.Tests.CmFakes.FakeSettings();
-        public FanaBridge.Tests.CmFakes.FakeSettings Settings => controlMapperPluginSettings;
+        public FanaBridge.Tests.Plugin.ControlMapper.FakeSettings controlMapperPluginSettings
+            = new FanaBridge.Tests.Plugin.ControlMapper.FakeSettings();
+        public FanaBridge.Tests.Plugin.ControlMapper.FakeSettings Settings => controlMapperPluginSettings;
     }
 }
+#pragma warning restore IDE0130

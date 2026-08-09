@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Transport;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Tests
+namespace FanaBridge.Tests.TestDoubles
 {
     /// <summary>
     /// Scriptable <see cref="IReportStream"/> for transport fakes: enqueue frames

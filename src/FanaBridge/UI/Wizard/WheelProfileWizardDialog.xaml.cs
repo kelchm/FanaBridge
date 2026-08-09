@@ -8,16 +8,16 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using FanaBridge;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Display.Protocol;
-using FanaBridge.Leds;
-using FanaBridge.Transport;
-using FanaBridge.Tuning;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Display.Protocol;
+using FanaBridge.Core.Leds;
+using FanaBridge.Core.Transport;
+using FanaBridge.Core.Tuning;
 using Microsoft.Win32;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 
-namespace FanaBridge.Plugin.UI
+namespace FanaBridge.UI.Wizard
 {
     /// <summary>
     /// Standalone probe-based wizard dialog that discovers a wheel's LED and

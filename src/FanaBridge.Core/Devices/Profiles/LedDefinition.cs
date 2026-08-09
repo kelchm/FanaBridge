@@ -1,6 +1,6 @@
 using Newtonsoft.Json;
 
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// Describes a single physical LED on the device.

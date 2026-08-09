@@ -1,12 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Plugin.Settings;
-using FanaBridge.Plugin.UI;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Settings;
+using FanaBridge.UI.Devices;
 using SimHub.Plugins.Devices;
 
-namespace FanaBridge.Plugin.Devices
+namespace FanaBridge.Devices
 {
     /// <summary>
     /// Registers one DeviceDescriptor per loaded <see cref="WheelProfile"/> so each
@@ -27,7 +27,7 @@ namespace FanaBridge.Plugin.Devices
         /// plugin: SimHub shows a device's settings whether or not FanaBridge is
         /// running. Overridable so tests can build instances without WPF.
         /// </summary>
-        internal static readonly IDevicePanelFactory PanelFactory = new UI.DevicePanelFactory();
+        internal static readonly IDevicePanelFactory PanelFactory = new DevicePanelFactory();
 
         public IEnumerable<DeviceDescriptor> GetDevices()
         {

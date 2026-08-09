@@ -1,4 +1,4 @@
-using FanaBridge.Leds;
+using FanaBridge.Core.Leds;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Leds

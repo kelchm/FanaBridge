@@ -1,7 +1,7 @@
 using System;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Plugin.Display;
-using FanaBridge.Plugin.Settings;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Display;
+using FanaBridge.Settings;
 using FanaBridge.Tests.TestDoubles;
 using Newtonsoft.Json.Linq;
 using Xunit;

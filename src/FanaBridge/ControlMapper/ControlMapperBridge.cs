@@ -6,7 +6,7 @@ using System.Reflection;
 using System.Text;
 using SimHub.Plugins.OutputPlugins.ControlRemapper.Variants;
 
-namespace FanaBridge.Plugin.ControlMapper
+namespace FanaBridge.ControlMapper
 {
     /// <summary>
     /// Reflection plumbing that registers a <see cref="FanaBridgeVariantProvider"/>

@@ -2,8 +2,8 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
-using FanaBridge.Display.Protocol;
-using FanaBridge.Plugin.Display.Drivers;
+using FanaBridge.Core.Display.Protocol;
+using FanaBridge.Display.Drivers;
 using GameReaderCommon;
 using Xunit;
 

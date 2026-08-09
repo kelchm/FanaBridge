@@ -1,7 +1,8 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Transport;
-using FanaBridge.Tuning;
+using FanaBridge.Tests.TestDoubles;
+using FanaBridge.Core.Transport;
+using FanaBridge.Core.Tuning;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Tuning

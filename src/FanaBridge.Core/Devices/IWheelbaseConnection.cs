@@ -1,4 +1,4 @@
-namespace FanaBridge.Devices
+namespace FanaBridge.Core.Devices
 {
     /// <summary>
     /// Connection-check surface of a <see cref="FanatecWheelbase"/>, used by

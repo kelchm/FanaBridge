@@ -1,10 +1,10 @@
 using System.Collections.Generic;
 using System.Linq;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Plugin.UI;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.UI.Wizard;
 using Xunit;
 
-namespace FanaBridge.Tests.Plugin.UI
+namespace FanaBridge.Tests.Plugin.UI.Wizard
 {
     public class WizardStateTests
     {

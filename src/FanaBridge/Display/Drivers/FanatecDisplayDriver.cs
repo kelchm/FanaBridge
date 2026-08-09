@@ -1,9 +1,9 @@
 using System;
-using FanaBridge.Display.Protocol;
-using FanaBridge.Plugin.Display;
+using FanaBridge.Core.Display.Protocol;
+using FanaBridge.Display;
 using GameReaderCommon;
 
-namespace FanaBridge.Plugin.Display.Drivers
+namespace FanaBridge.Display.Drivers
 {
     /// <summary>
     /// Maps telemetry data to the Fanatec 3-digit 7-segment display.

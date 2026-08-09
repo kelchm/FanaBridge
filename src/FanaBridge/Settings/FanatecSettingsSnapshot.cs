@@ -1,7 +1,7 @@
-﻿using FanaBridge.Plugin.Display;
+﻿using FanaBridge.Display;
 using Newtonsoft.Json.Linq;
 
-namespace FanaBridge.Plugin.Settings
+namespace FanaBridge.Settings
 {
     /// <summary>
     /// The FanaBridge-owned settings of one device, as an immutable value.

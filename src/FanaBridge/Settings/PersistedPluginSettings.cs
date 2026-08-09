@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json.Linq;
 
-namespace FanaBridge.Plugin.Settings
+namespace FanaBridge.Settings
 {
     /// <summary>
     /// Reads the plugin's persisted settings without a running plugin.

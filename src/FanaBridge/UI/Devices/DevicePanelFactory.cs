@@ -1,10 +1,11 @@
 using System;
 using System.Windows.Controls;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Plugin.Display;
-using FanaBridge.Plugin.Settings;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Display;
+using FanaBridge.Settings;
+using FanaBridge.UI.Settings;
 
-namespace FanaBridge.Plugin.UI
+namespace FanaBridge.UI.Devices
 {
     /// <summary>UI-side implementation of the device settings-panel factory.</summary>
     internal sealed class DevicePanelFactory : IDevicePanelFactory

@@ -1,5 +1,5 @@
-using FanaBridge.Devices;
-using FanaBridge.Transport;
+using FanaBridge.Core.Devices;
+using FanaBridge.Core.Transport;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Devices

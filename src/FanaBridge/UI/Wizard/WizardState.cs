@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Tuning;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Tuning;
 
-namespace FanaBridge.Plugin.UI
+namespace FanaBridge.UI.Wizard
 {
     // ── Wizard sections (replace magic step numbers) ─────────────────────
 

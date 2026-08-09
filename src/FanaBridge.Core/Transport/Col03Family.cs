@@ -1,4 +1,4 @@
-namespace FanaBridge.Transport
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// The frame families multiplexed on the col03 input endpoint, as routed by

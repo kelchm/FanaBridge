@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using FanaBridge.Devices.Identity;
-using FanaBridge.Transport;
+using FanaBridge.Core.Devices.Identity;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Diagnostics
+namespace FanaBridge.Core.Diagnostics
 {
     /// <summary>
     /// One-shot, read-only identity capture run at diagnostics time so a SINGLE detection report from

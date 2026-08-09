@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace FanaBridge.Plugin.Settings
+namespace FanaBridge.Settings
 {
     /// <summary>
     /// Plugin settings. Must be JSON-serializable (public fields/properties, no complex types).

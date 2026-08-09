@@ -1,4 +1,4 @@
-using FanaBridge.Devices.Profiles;
+using FanaBridge.Core.Devices.Profiles;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Devices.Profiles

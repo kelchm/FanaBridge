@@ -1,11 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Windows.Controls;
-using FanaBridge.Devices.Profiles;
+using FanaBridge.Core.Devices.Profiles;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
 
-namespace FanaBridge.Plugin.Leds
+namespace FanaBridge.Leds
 {
     /// <summary>
     /// The LED settings module, behind an interface so persistence is testable

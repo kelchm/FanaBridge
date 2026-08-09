@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FanaBridge.Leds;
-using FanaBridge.Transport;
+using FanaBridge.Core.Leds;
+using FanaBridge.Tests.TestDoubles;
+using FanaBridge.Core.Transport;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Leds

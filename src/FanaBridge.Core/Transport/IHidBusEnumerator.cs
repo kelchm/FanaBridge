@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using HidSharp;
 
-namespace FanaBridge.Transport
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// A lightweight snapshot of one HID device on the bus, with the descriptor

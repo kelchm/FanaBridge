@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
-using FanaBridge.Transport;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Display.Protocol
+namespace FanaBridge.Core.Display.Protocol
 {
     /// <summary>
     /// A single telemetry value for an ITM ValueUpdate entry (col03 <c>FF 05 01</c>).

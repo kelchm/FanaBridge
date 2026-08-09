@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge.Diagnostics
+namespace FanaBridge.Core.Diagnostics
 {
     /// <summary>
     /// Detects whether the Fanatec app/service is running alongside FanaBridge. Both drive

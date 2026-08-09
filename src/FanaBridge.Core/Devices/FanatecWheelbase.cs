@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FanaBridge.Devices.Identity;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Transport;
+using FanaBridge.Core.Devices.Identity;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Devices
+namespace FanaBridge.Core.Devices
 {
     /// <summary>
     /// Represents a connected Fanatec wheelbase — the root of all communication.

@@ -1,4 +1,4 @@
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// Hardware communication channel for a single LED.

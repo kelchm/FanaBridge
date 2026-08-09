@@ -5,10 +5,10 @@ using System.Threading.Tasks;
 using BA63Driver.Base;
 using BA63Driver.Interfaces;
 using BA63Driver.Mapper;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Leds;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Leds;
 
-namespace FanaBridge.Plugin.Leds
+namespace FanaBridge.Leds
 {
     /// <summary>
     /// Unified BA63-compatible driver for all Fanatec LED types.

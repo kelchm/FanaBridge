@@ -1,6 +1,6 @@
 using System.Linq;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Display.Protocol;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Display.Protocol;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Devices.Profiles

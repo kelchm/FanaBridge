@@ -1,7 +1,7 @@
 using System;
-using FanaBridge.Transport;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Devices.Identity
+namespace FanaBridge.Core.Devices.Identity
 {
     /// <summary>
     /// The col03 <c>FF 08</c> system-report codec — the wire-level side of identity.

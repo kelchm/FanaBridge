@@ -1,4 +1,4 @@
-namespace FanaBridge.Devices.Identity
+namespace FanaBridge.Core.Devices.Identity
 {
     /// <summary>
     /// Decodes wheelbase + attachment + module identity from the col03 <c>FF 08</c>

@@ -1,4 +1,4 @@
-namespace FanaBridge.Plugin.Display
+namespace FanaBridge.Display
 {
     /// <summary>
     /// Type-safe display configuration.

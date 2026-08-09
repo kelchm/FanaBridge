@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Transport;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Leds
+namespace FanaBridge.Core.Leds
 {
     /// <summary>
     /// Encodes and sends LED control reports for Fanatec wheels.

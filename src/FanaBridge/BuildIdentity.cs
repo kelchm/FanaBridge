@@ -1,7 +1,7 @@
 using System;
 using System.Reflection;
 
-namespace FanaBridge.Plugin
+namespace FanaBridge
 {
     /// <summary>
     /// Build identity of the plugin assembly, read from attributes embedded at

@@ -1,6 +1,6 @@
 using System.Linq;
 
-namespace FanaBridge.Devices.Profiles
+namespace FanaBridge.Core.Devices.Profiles
 {
     /// <summary>
     /// Runtime view of a wheel's hardware capabilities, computed from a

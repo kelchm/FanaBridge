@@ -1,4 +1,4 @@
-using FanaBridge.Devices.Identity;
+using FanaBridge.Core.Devices.Identity;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Devices.Identity

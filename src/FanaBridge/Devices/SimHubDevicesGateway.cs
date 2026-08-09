@@ -3,7 +3,7 @@ using System.Linq;
 using SimHub.Plugins;
 using SimHub.Plugins.Devices;
 
-namespace FanaBridge.Plugin.Devices
+namespace FanaBridge.Devices
 {
     /// <summary>
     /// Read-and-check access to SimHub's Devices plugin for the settings

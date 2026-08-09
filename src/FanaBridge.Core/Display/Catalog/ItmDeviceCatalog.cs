@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using FanaBridge.Display.Protocol;
+using FanaBridge.Core.Display.Protocol;
 
-namespace FanaBridge.Display.Catalog
+namespace FanaBridge.Core.Display.Catalog
 {
     /// <summary>
     /// One slot in an ITM device's page set: the on-wire page number, which page content

@@ -1,3 +1,5 @@
+// Exception: namespace FanaBridge (not FanaBridge.Core.Logging) so unqualified Log.* from both assemblies resolves via the shared root ancestor.
+#pragma warning disable IDE0130 // Log must live in root FanaBridge so unqualified Log.* resolves from both Core and plugin
 namespace FanaBridge
 {
     /// <summary>

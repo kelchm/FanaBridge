@@ -18,6 +18,7 @@ Documentation specific to the FanaBridge plugin:
 
 | Document | Description |
 |----------|-------------|
+| [Architecture](architecture.md) | Layers, namespace rule, test-tree convention, and frozen names |
 | [Supported Devices](supported-devices.md) | Wheels and hub + module combos with built-in FanaBridge profiles — tested vs. unverified, and their LED/display capabilities |
 | [Device Settings Lifecycle](device-settings-lifecycle.md) | How a device decides what to store, why the LED editor is built up front, and the rules that keep a save from erasing settings |
 

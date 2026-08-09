@@ -3,20 +3,20 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using FanaBridge;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Display.Session;
-using FanaBridge.Plugin.Display;
-using FanaBridge.Plugin.Display.Drivers;
-using FanaBridge.Plugin.Leds;
-using FanaBridge.Plugin.Settings;
-using FanaBridge.Plugin.UI;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Display.Session;
+using FanaBridge.Display;
+using FanaBridge.Display.Drivers;
+using FanaBridge.Leds;
+using FanaBridge.Settings;
+using FanaBridge.UI.Devices;
 using GameReaderCommon;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
 using SimHub.Plugins.Devices;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.LedModules;
 
-namespace FanaBridge.Plugin.Devices
+namespace FanaBridge.Devices
 {
     /// <summary>
     /// DeviceInstance for a specific Fanatec wheel type.

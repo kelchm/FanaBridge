@@ -1,8 +1,8 @@
 using System;
 using System.Threading;
-using FanaBridge.Transport;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Tuning
+namespace FanaBridge.Core.Tuning
 {
     /// <summary>
     /// Manages the Fanatec tuning configuration protocol (col03, cmd class 0x03).

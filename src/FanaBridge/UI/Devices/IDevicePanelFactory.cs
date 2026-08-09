@@ -1,10 +1,10 @@
 using System;
 using System.Windows.Controls;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Plugin.Display;
-using FanaBridge.Plugin.Settings;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Display;
+using FanaBridge.Settings;
 
-namespace FanaBridge.Plugin.UI
+namespace FanaBridge.UI.Devices
 {
     /// <summary>
     /// Constructs the per-device WPF settings panels.

@@ -1,7 +1,7 @@
 using System;
-using FanaBridge.Transport;
+using FanaBridge.Core.Transport;
 
-namespace FanaBridge.Devices.Identity
+namespace FanaBridge.Core.Devices.Identity
 {
     /// <summary>
     /// SRM Conversion Kit identity, recovered from the kit's private <c>DE FA AD</c> → <c>0xDD</c>

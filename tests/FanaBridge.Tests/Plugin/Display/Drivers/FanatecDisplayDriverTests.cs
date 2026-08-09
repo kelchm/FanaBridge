@@ -1,9 +1,10 @@
 using System;
 using System.Collections.Generic;
-using FanaBridge.Display.Protocol;
-using FanaBridge.Plugin.Display;
-using FanaBridge.Plugin.Display.Drivers;
-using FanaBridge.Transport;
+using FanaBridge.Core.Display.Protocol;
+using FanaBridge.Display;
+using FanaBridge.Display.Drivers;
+using FanaBridge.Tests.TestDoubles;
+using FanaBridge.Core.Transport;
 using GameReaderCommon;
 using Xunit;
 

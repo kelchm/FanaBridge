@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Plugin.Devices;
-using FanaBridge.Plugin.Settings;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Devices;
+using FanaBridge.Settings;
 using Xunit;
 
 namespace FanaBridge.Tests.Plugin.Devices

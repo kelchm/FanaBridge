@@ -5,7 +5,7 @@ using System.Reflection;
 using System.Text;
 using Xunit;
 
-namespace FanaBridge.Tests
+namespace FanaBridge.Tests.Contracts
 {
     /// <summary>
     /// Guards against drift in the public enum metadata of SimHub's
@@ -20,6 +20,7 @@ namespace FanaBridge.Tests
     public class SimHubEnumSnapshotTests
     {
         private const string DllName = "SimHub.FanatecManaged.dll";
+        // Fixture stays at tests/FanaBridge.Tests/Snapshots/ (project root); csproj copies it to output.
         private const string SnapshotRelativePath = "Snapshots\\SimHub.FanatecManaged.enums.txt";
 
         [SkippableFact]

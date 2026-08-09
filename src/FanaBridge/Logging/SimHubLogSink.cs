@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace FanaBridge
+namespace FanaBridge.Logging
 {
     /// <summary>Forwards the core's <see cref="Log"/> seam to SimHub's logger.</summary>
     internal sealed class SimHubLogSink : ILogSink
@@ -22,12 +22,4 @@ namespace FanaBridge
         [ModuleInitializer]
         internal static void Install() => Log.Sink = new SimHubLogSink();
     }
-}
-
-// The C# 9 module-initializer feature is compiler-only; net48 just lacks the
-// attribute type. Declaring it internally is the standard polyfill.
-namespace System.Runtime.CompilerServices
-{
-    [AttributeUsage(AttributeTargets.Method, Inherited = false)]
-    internal sealed class ModuleInitializerAttribute : Attribute { }
 }

@@ -1,5 +1,5 @@
 
-namespace FanaBridge.Transport
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// The per-family input queues behind one col03 connection. The transport's

@@ -1,10 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FanaBridge.Devices;
-using FanaBridge.Devices.Identity;
-using FanaBridge.Devices.Profiles;
-using FanaBridge.Transport;
+using FanaBridge.Core.Devices;
+using FanaBridge.Core.Devices.Identity;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Tests.TestDoubles;
+using FanaBridge.Core.Transport;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Devices

@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace FanaBridge.Devices.Identity
+namespace FanaBridge.Core.Devices.Identity
 {
     /// <summary>
     /// Reference tables mapping the raw FF 08 system-report bytes to FanaBridge
