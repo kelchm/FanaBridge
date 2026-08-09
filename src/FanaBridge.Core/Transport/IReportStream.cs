@@ -1,6 +1,6 @@
 using System;
 
-namespace FanaBridge.Transport
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// One family of inbound HID reports (e.g. col03 FF 08 identity), fed by the

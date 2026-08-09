@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using HidSharp;
 
-namespace FanaBridge.Transport
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// A lightweight snapshot of one HID device on the bus, with the descriptor
@@ -34,7 +34,7 @@ namespace FanaBridge.Transport
 
     /// <summary>
     /// Seam over HID bus enumeration (<c>DeviceList.Local</c> is a process-global
-    /// static that cannot be faked). <see cref="FanatecWheelbase"/> consumes this
+    /// static that cannot be faked). <see cref="FanaBridge.Core.Devices.FanatecWheelbase"/> consumes this
     /// for discovery so base-PID selection — which has historically bitten on
     /// interface-shape edge cases — is table-testable.
     /// </summary>

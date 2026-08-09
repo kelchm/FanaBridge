@@ -31,6 +31,10 @@ csharp_new_line_before_finally = true
 # The codebase uses block-scoped namespaces; keep new files consistent.
 csharp_style_namespace_declarations = block_scoped:suggestion
 dotnet_sort_system_directives_first = true
+# Namespace must equal project root + relative folder path (issue #102).
+# Deliberate exceptions disable IDE0130 in-file with a one-line reason.
+dotnet_style_namespace_match_folder = true
+dotnet_diagnostic.IDE0130.severity = error
 
 # ── this. / var ──────────────────────────────────────────────────────
 dotnet_style_qualification_for_field = false:suggestion

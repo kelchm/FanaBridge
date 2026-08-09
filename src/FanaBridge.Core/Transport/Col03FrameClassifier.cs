@@ -1,6 +1,6 @@
-using FanaBridge.Transport;
+using FanaBridge.Core.Devices.Identity;
 
-namespace FanaBridge.Protocol
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// The single home for col03 frame-family wire signatures. The transport's

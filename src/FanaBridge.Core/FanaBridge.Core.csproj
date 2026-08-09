@@ -3,11 +3,12 @@
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <OutputType>Library</OutputType>
-    <!-- Keeps namespaces AND embedded-resource names
-         ("FanaBridge.Resources.Profiles.*.json", loaded reflectively by
-         WheelProfileStore) identical to the pre-split single assembly.
-         Do not change. -->
-    <RootNamespace>FanaBridge</RootNamespace>
+    <!-- Truthful project root. Embedded profile resources are matched by a
+         ".Profiles." substring filter (WheelProfileStore), so manifest names
+         shifting to FanaBridge.Core.Resources.Profiles.* still load; the frozen
+         thing is the "Profiles" path segment in the manifest name, not
+         RootNamespace or the full Resources/Profiles/ path. -->
+    <RootNamespace>FanaBridge.Core</RootNamespace>
     <AssemblyName>FanaBridge.Core</AssemblyName>
     <Description>FanaBridge device stack (SimHub-free): HID transport, Fanatec protocol, wheel profiles</Description>
     <Product>FanaBridge</Product>
@@ -45,11 +46,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- FanaBridge: ConverterCaptureProbe (plugin-side Diagnostics/) uses the
-         internal Col03FrameClassifier — the only cross-assembly internal use.
-         FanaBridge.Tests: internal ctors, interfaces, and test hooks across
-         Transport/Protocol/Profiles. -->
-    <InternalsVisibleTo Include="FanaBridge" />
+    <!-- FanaBridge.Tests: internal ctors, interfaces, and test hooks across
+         Core domains. -->
     <InternalsVisibleTo Include="FanaBridge.Tests" />
   </ItemGroup>
 

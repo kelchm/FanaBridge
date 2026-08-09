@@ -2,10 +2,11 @@ using System;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using FanaBridge.Core.Devices;
 using HidSharp;
 using Microsoft.Win32.SafeHandles;
 
-namespace FanaBridge.Transport
+namespace FanaBridge.Core.Transport
 {
     /// <summary>
     /// HID transport layer for Fanatec wheel hardware.

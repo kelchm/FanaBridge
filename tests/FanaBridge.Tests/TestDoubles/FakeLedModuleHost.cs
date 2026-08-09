@@ -2,8 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Controls;
-using FanaBridge.Adapters;
-using FanaBridge.Profiles;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Leds;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
 

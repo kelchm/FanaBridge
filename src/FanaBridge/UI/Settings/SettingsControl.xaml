@@ -1,0 +1,337 @@
+<UserControl x:Class="FanaBridge.UI.Settings.SettingsControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:styles="clr-namespace:SimHub.Plugins.Styles;assembly=SimHub.Plugins"
+             xmlns:ui="clr-namespace:SimHub.Plugins.UI;assembly=SimHub.Plugins"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d">
+    <ScrollViewer>
+        <StackPanel>
+
+            <!-- Top row: device status and about/updates side by side (50:50).
+                 About is short and the status chain doesn't need full width,
+                 and this keeps the update banner above the fold. -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+            <!-- Connection Status.
+                 Both top-row sections suppress their own separator: the row
+                 draws one continuous rule underneath instead of two stubs with
+                 a gap, and they sit at different heights anyway. -->
+            <styles:SHSection x:Name="sectionDeviceStatus" Grid.Column="0" Title="DEVICE STATUS" ShowSeparator="False">
+                <StackPanel>
+                    <!-- Device chain: ● wheelbase › wheel/hub › module.
+                         The status dot lives on the wheelbase node (the base is
+                         what connects). The wheelbase node is always present so
+                         the panel height stays constant across states; the wheel
+                         and module nodes are shown/hidden to mirror the stack. -->
+                    <StackPanel Orientation="Horizontal" Margin="0,2,0,12">
+                        <StackPanel VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="dotStatus" Width="9" Height="9" Fill="#E0A800"
+                                         VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock x:Name="txtBaseName" Text="Checking…" FontWeight="SemiBold" FontSize="14" />
+                            </StackPanel>
+                            <TextBlock x:Name="txtBaseCaption" Text="Wheelbase" Foreground="#888888" FontSize="11"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                        <TextBlock x:Name="connBaseWheel" Text="›" Foreground="#888888" FontSize="20"
+                                   VerticalAlignment="Center" Margin="14,0,14,0" />
+                        <StackPanel x:Name="nodeWheel" VerticalAlignment="Center">
+                            <TextBlock x:Name="txtWheelChain" Text="—" FontWeight="SemiBold" FontSize="14" />
+                            <TextBlock x:Name="txtWheelKind" Text="Wheel" Foreground="#888888" FontSize="11" />
+                        </StackPanel>
+                        <TextBlock x:Name="connWheelModule" Text="›" Foreground="#888888" FontSize="20"
+                                   VerticalAlignment="Center" Margin="14,0,14,0" />
+                        <StackPanel x:Name="nodeModule" VerticalAlignment="Center">
+                            <TextBlock x:Name="txtModuleChain" Text="—" FontWeight="SemiBold" FontSize="14" />
+                            <TextBlock Text="Module" Foreground="#888888" FontSize="11" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Connection detail / failure reason — full width, wraps instead of
+                         overflowing the device-chain row. -->
+                    <TextBlock x:Name="txtStatusDetail" Foreground="#E0A800" FontSize="11"
+                               TextWrapping="Wrap" Margin="0,0,0,10" Visibility="Collapsed" />
+
+                    <!-- Capabilities — styled like a chain node (value + caption) -->
+                    <StackPanel Margin="0,0,0,2">
+                        <TextBlock x:Name="txtCapabilities" Text="—" TextWrapping="Wrap" />
+                        <TextBlock Text="Capabilities" Foreground="#888888" FontSize="11" />
+                    </StackPanel>
+
+                    <!-- ITM display lifecycle state (only while an ITM display is driven).
+                         Refreshed on a light timer — the state machine moves without
+                         StateChanged firing (page switches, recovery, game exits). -->
+                    <StackPanel x:Name="panelItmStatus" Margin="0,8,0,2" Visibility="Collapsed">
+                        <TextBlock x:Name="txtItmStatus" Text="—" TextWrapping="Wrap" />
+                        <TextBlock Text="ITM Display" Foreground="#888888" FontSize="11" />
+                    </StackPanel>
+
+                    <!-- Co-driver warning: the vendor app/service writes the same display
+                         with no arbitration; there is no wire-level way to detect it. -->
+                    <TextBlock x:Name="txtItmCoDriver" Foreground="#E0A800" FontSize="11"
+                               TextWrapping="Wrap" Margin="0,4,0,4" Visibility="Collapsed" />
+
+                    <!-- Shown when the attached wheel resolves to a registered SimHub
+                         device the user hasn't added yet — LED/display output never
+                         starts without the device. Sits below the status readout
+                         (chain + capabilities) with the actions, so it doesn't split
+                         them apart. Laid out as a callout bar: glyph, headline +
+                         muted detail, action button; left-anchored and width-capped
+                         so it doesn't sprawl on wide windows. Texts and button
+                         visibility are driven by UpdateAddDevicePrompt. -->
+                    <Border x:Name="borderAddDeviceAlert" Visibility="Collapsed"
+                            Background="#1AFFCC00" BorderBrush="#FFCC00" BorderThickness="1"
+                            CornerRadius="4" Padding="12,10" Margin="0,10,0,2"
+                            HorizontalAlignment="Left" MaxWidth="700">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="&#x26A0;" FontSize="18" Foreground="#FFCC00"
+                                       VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock x:Name="txtAddDeviceTitle" Foreground="#FFEEBB" FontSize="12"
+                                           FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock x:Name="txtAddDeviceDetail" Foreground="#FFEEBB" Opacity="0.7"
+                                           FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <styles:SHButtonPrimary Grid.Column="2" x:Name="btnAddDevice" Click="BtnAddDevice_Click"
+                                                    VerticalAlignment="Center" Margin="16,0,0,0"
+                                                    ToolTip="Add the detected wheel or hub/module combo to SimHub's device list. SimHub switches to its Devices page once added.">
+                                Add to SimHub
+                            </styles:SHButtonPrimary>
+                        </Grid>
+                    </Border>
+                    <StackPanel Orientation="Horizontal" Margin="0,8">
+                        <styles:SHButtonPrimary x:Name="btnReconnect" Click="BtnReconnect_Click" HorizontalAlignment="Left">
+                            Reconnect
+                        </styles:SHButtonPrimary>
+                        <TextBlock VerticalAlignment="Center" Margin="12,0,0,0" Foreground="#AAAAAA" FontSize="11">
+                          <Hyperlink Click="BtnCopyDiagnostics_Click"
+                                      Foreground="#4FC3F7" TextDecorations="None"
+                                      ToolTip="Copy a detailed, read-only detection report to the clipboard for pasting into a GitHub issue">
+                              Copy Debug Info
+                          </Hyperlink>
+                        </TextBlock>
+                    </StackPanel>
+                </StackPanel>
+            </styles:SHSection>
+
+            <!-- Column divider. Same look as the SHSection separator (1px,
+                 30% brush) — brush is bound to a section so it tracks the
+                 SimHub theme; SHSection's own 20px side margin supplies the
+                 gutter on both sides. -->
+            <Border Grid.Column="1" BorderThickness="1,0,0,0" Opacity="0.3" Margin="0,2,0,0"
+                    BorderBrush="{Binding SeparatorBrush, ElementName=sectionDeviceStatus}" />
+
+            <!-- About / updates -->
+            <styles:SHSection Grid.Column="2" Title="ABOUT" ShowSeparator="False">
+                <StackPanel>
+                    <!-- Self-updater banner, first thing under the ABOUT
+                         heading so the section leads with the actionable state
+                         when there is one (version identity and the check
+                         controls follow). Hidden until the release check finds
+                         a newer version; from there it walks the update phases
+                         (offer → downloading/installing → restart, or the
+                         amber failed state — palette swapped by
+                         StyleUpdateBanner). One row of headline (+ inline
+                         release-notes link) and a right-aligned action button;
+                         muted detail line only for states that need one.
+                         Headline text goes through runUpdateHeadline — setting
+                         txtUpdateTitle.Text would wipe the inline hyperlink.
+                         Driven entirely by UpdateUpdateBanner from
+                         UpdateService snapshots. -->
+                    <Border x:Name="borderUpdateAlert" Visibility="Collapsed"
+                            Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
+                            CornerRadius="4" Padding="12,8" Margin="0,2,0,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock x:Name="txtUpdateTitle" Foreground="#AADDFF" FontSize="12"
+                                           FontWeight="SemiBold" TextWrapping="Wrap">
+                                    <Run x:Name="runUpdateHeadline" /><Run Text="   " /><Hyperlink
+                                        Click="LnkReleaseNotes_Click"
+                                        Foreground="#4FC3F7" TextDecorations="None" FontWeight="Normal"
+                                        ToolTip="Open the release page on GitHub">Release notes</Hyperlink>
+                                </TextBlock>
+                                <TextBlock x:Name="txtUpdateDetail" Foreground="#AADDFF" Opacity="0.7"
+                                           FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0"
+                                           Visibility="Collapsed" />
+                            </StackPanel>
+                            <styles:SHButtonPrimary Grid.Column="1" x:Name="btnUpdateNow" Click="BtnUpdateNow_Click"
+                                                    VerticalAlignment="Center" Margin="16,0,0,0">
+                                Update
+                            </styles:SHButtonPrimary>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock x:Name="txtPluginVersion" Text="FanaBridge" FontSize="14" FontWeight="SemiBold" Margin="0,2" />
+                    <TextBlock x:Name="txtBuildInfo" Text="—" Foreground="#888" Margin="0,2" />
+                    <TextBlock Margin="0,2">
+                        <Hyperlink NavigateUri="https://github.com/kelchm/FanaBridge" RequestNavigate="RepoLink_RequestNavigate">
+                            github.com/kelchm/FanaBridge
+                        </Hyperlink>
+                    </TextBlock>
+
+                    <CheckBox x:Name="chkEnableUpdateCheck" Margin="0,10,0,0"
+                              Content="Check for updates automatically"
+                              ToolTip="Checks at startup and once a day while SimHub runs."
+                              IsChecked="{Binding EnableUpdateCheck}"
+                              Checked="ChkEnableUpdateCheck_Changed" Unchecked="ChkEnableUpdateCheck_Changed" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock FontSize="11" Foreground="#AAAAAA">
+                            <Hyperlink Click="LnkCheckForUpdates_Click"
+                                       Foreground="#4FC3F7" TextDecorations="None"
+                                       ToolTip="Query GitHub for the latest FanaBridge release">
+                                Check for updates now
+                            </Hyperlink>
+                        </TextBlock>
+                        <TextBlock x:Name="txtUpdateCheckResult" FontSize="11" Foreground="#AAAAAA"
+                                   Margin="10,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                </StackPanel>
+            </styles:SHSection>
+            </Grid>
+
+            <!-- One continuous rule under the whole top row. Geometry copies
+                 SHSection's separator (20px template margin + 2) so it lines up
+                 with the separators of the sections below. -->
+            <Border BorderThickness="0,1,0,0" Opacity="0.3" Margin="22,15,22,10"
+                    BorderBrush="{Binding SeparatorBrush, ElementName=sectionDeviceStatus}" />
+
+            <!-- Wheel Profile -->
+            <styles:SHSection Title="WHEEL PROFILE" ShowSeparator="True">
+                <StackPanel>
+                    <TextBlock x:Name="txtProfileHint" TextWrapping="Wrap" Margin="0,0,0,8"
+                               Text="Connect a wheel to manage profiles." />
+                    <!-- Shown when the active profile is unverified (not tested on hardware) -->
+                    <Border x:Name="borderUnverifiedAlert" Visibility="Collapsed"
+                            Background="#1AFFCC00" BorderBrush="#FFCC00" BorderThickness="1"
+                            CornerRadius="4" Padding="10,8" Margin="0,0,0,12">
+                        <TextBlock Foreground="#FFEEBB" FontSize="12" TextWrapping="Wrap">
+                            &#x26A0;  This wheel profile has not been tested on hardware. You may experience issues.
+                            <Hyperlink Click="BtnReportIssue_Click"
+                                       Foreground="#4FC3F7" TextDecorations="None"
+                                       ToolTip="Open a GitHub issue to share feedback on this profile">
+                                Share feedback on GitHub
+                            </Hyperlink>
+                        </TextBlock>
+                    </Border>
+
+                    <StackPanel x:Name="panelProfilePicker" Visibility="Collapsed">
+                        <!-- Shown when the connected wheel has no matching profile -->
+                        <Border x:Name="borderNoProfileAlert" Visibility="Collapsed"
+                                Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
+                                CornerRadius="4" Padding="10,8" Margin="0,0,0,12">
+                            <TextBlock Foreground="#AADDFF" FontSize="12" TextWrapping="Wrap">
+                                &#x2139;  This wheel doesn't have a FanaBridge profile yet. Click <Bold>New Profile Wizard</Bold> to create one — it only takes a few minutes.
+                            </TextBlock>
+                        </Border>
+                        <!-- Shown when multiple profiles match (built-in + user override) -->
+                        <TextBlock x:Name="txtMultipleProfilesHint" Visibility="Collapsed"
+                                   TextWrapping="Wrap" Margin="0,0,0,8"
+                                   Text="Multiple profiles available:" />
+                        <StackPanel x:Name="panelProfileCombo" Orientation="Horizontal">
+                            <ComboBox x:Name="cboProfile" Width="420"
+                                      SelectionChanged="CboProfile_SelectionChanged" />
+                            <Button x:Name="btnDeleteProfile" Click="BtnDeleteProfile_Click"
+                                    IsEnabled="False" Margin="6,0,0,0" Padding="6,4"
+                                    Background="Transparent" BorderBrush="Transparent"
+                                    Foreground="#FF6666" FontSize="14" Cursor="Hand"
+                                    Content="&#x1F5D1;" ToolTip="Delete the selected custom profile" />
+                        </StackPanel>
+                        <TextBlock x:Name="txtProfileSource" Text="" Margin="0,4,0,0"
+                                   Foreground="#AAAAAA" FontSize="11" />
+                        <Border x:Name="txtContributeProfile" Visibility="Collapsed"
+                                Background="#1A4488CC" BorderBrush="#4488CC" BorderThickness="1"
+                                CornerRadius="4" Padding="10,6" Margin="0,10,0,0"
+                                HorizontalAlignment="Left">
+                            <TextBlock Foreground="#AADDFF" FontSize="12">
+                                &#x2139;  This profile could help others!
+                                <Hyperlink Click="BtnContributeProfile_Click"
+                                           Foreground="#4FC3F7" TextDecorations="None"
+                                           ToolTip="Open a pre-filled GitHub issue to share this profile">
+                                    Share it on GitHub
+                                </Hyperlink>
+                            </TextBlock>
+                        </Border>
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0"
+                                    VerticalAlignment="Center">
+                            <styles:SHButtonPrimary x:Name="btnCreateProfile" Click="BtnCreateProfile_Click"
+                                                    HorizontalAlignment="Left"
+                                                    ToolTip="Probe your wheel's hardware to create a new profile">
+                                New Profile Wizard
+                            </styles:SHButtonPrimary>
+                            <TextBlock VerticalAlignment="Center" Margin="12,0,0,0"
+                                       Foreground="#AAAAAA" FontSize="11">
+                                <Hyperlink Click="BtnOpenProfilesFolder_Click"
+                                           Foreground="#4FC3F7" TextDecorations="None"
+                                           ToolTip="Open the folder containing custom profile files">
+                                    Open Profiles Folder
+                                </Hyperlink>
+                            </TextBlock>
+                        </StackPanel>
+                        <TextBlock x:Name="txtRestartNotice" Visibility="Collapsed"
+                                   TextWrapping="Wrap" Margin="0,8,0,0"
+                                   Foreground="#FFDDAA" FontStyle="Italic"
+                                   Text="&#x26A0;  LED and display output is active immediately. Restart SimHub to update the device name and LED editor slot count." />
+                    </StackPanel>
+                </StackPanel>
+            </styles:SHSection>
+
+            <!-- Quick Display Test -->
+            <styles:SHSection Title="DISPLAY TEST" ShowSeparator="True">
+                <StackPanel>
+                    <TextBlock Text="Send a string to the 3-digit 7-segment display. Longer strings scroll automatically." Margin="0,0,0,6" />
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBox x:Name="txtDisplayTest" Width="200" VerticalContentAlignment="Center" Margin="0,0,8,0" />
+                        <styles:SHButtonPrimary x:Name="btnSendDisplay" Click="BtnSendDisplay_Click" Content="Send" VerticalAlignment="Center" />
+                        <styles:SHButtonPrimary x:Name="btnStopScroll" Click="BtnStopScroll_Click" Margin="8,0,0,0" Visibility="Collapsed" Content="Stop" VerticalAlignment="Center" />
+                        <styles:SHButtonPrimary x:Name="btnClearDisplay" Click="BtnClearDisplay_Click" Margin="8,0,0,0" Content="Clear" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Scroll speed (ms): " VerticalAlignment="Center" />
+                        <TextBox x:Name="txtScrollSpeed" Width="50" Text="250" VerticalContentAlignment="Center" LostFocus="TxtScrollSpeed_LostFocus" />
+                    </StackPanel>
+                </StackPanel>
+            </styles:SHSection>
+
+            <!-- Experimental Features (last section — no trailing separator) -->
+            <styles:SHSection Title="EXPERIMENTAL FEATURES" ShowSeparator="False">
+                <StackPanel>
+                    <CheckBox x:Name="chkEnableTuning"
+                              Content="Enable tuning features (encoder mode, etc.)"
+                              IsChecked="{Binding EnableTuning}"
+                              Checked="ChkEnableTuning_Changed" Unchecked="ChkEnableTuning_Changed" />
+                    <TextBlock Text="Tuning writes directly to device firmware settings via USB HID. Disabled by default."
+                               TextWrapping="Wrap" Margin="20,4,0,0" Opacity="0.6" FontSize="11" />
+
+                    <CheckBox x:Name="chkEnableControlMapperIntegration"
+                              Margin="0,12,0,0"
+                              Content="Control Mapper Integration"
+                              IsChecked="{Binding EnableControlMapperIntegration}"
+                              Checked="ChkEnableControlMapperIntegration_Changed"
+                              Unchecked="ChkEnableControlMapperIntegration_Changed" />
+                    <TextBlock TextWrapping="Wrap" Margin="20,4,0,0" Opacity="0.6" FontSize="11"
+                               Text="Supplies FanaBridge's wheel identity to SimHub's Control Mapper, extending its per-rim recognition to Fanatec wheels and bases SimHub can't identify on its own (Podium DD, newer wheels). Requires Control Mapper's &quot;Recognize Individual Wheels&quot; setting." />
+                    <TextBlock x:Name="txtControlMapperStatus"
+                               TextWrapping="Wrap" Margin="20,4,0,0" FontSize="11"
+                               Visibility="Collapsed" />
+                </StackPanel>
+            </styles:SHSection>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
