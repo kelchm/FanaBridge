@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Xunit;
 
@@ -25,9 +26,13 @@ namespace FanaBridge.Tests.Contracts
             ("tests/FanaBridge.Tests", "FanaBridge.Tests"),
         };
 
-        // Deliberate IDE0130 exceptions only. Contracts/ is excluded from the
-        // scan so this file (and siblings) may name the diagnostic without
-        // becoming allowlist entries.
+        // Deliberate IDE0130 exceptions only. The scan matches actual #pragma
+        // directives, so prose mentions of the diagnostic (like this file's)
+        // never count and no directory is exempt.
+        private static readonly Regex Ide0130Pragma = new Regex(
+            @"^\s*#pragma\s+warning\s+(disable|restore)\b[^\r\n]*\bIDE0130\b",
+            RegexOptions.Multiline);
+
         private static readonly string[] Ide0130Allowlist =
         {
             "src/FanaBridge.Core/Logging/Log.cs",
@@ -51,11 +56,23 @@ namespace FanaBridge.Tests.Contracts
                 Assert.True(File.Exists(csprojPath), $"Missing csproj: {projectDir}");
 
                 XDocument doc = XDocument.Load(csprojPath);
-                string? actual = doc.Descendants()
+                var declared = doc.Descendants()
                     .Where(e => e.Name.LocalName == "RootNamespace")
                     .Select(e => e.Value)
-                    .FirstOrDefault();
+                    .ToList();
 
+                // MSBuild property evaluation is last-one-wins, so a duplicate
+                // element later in the file would silently become the effective
+                // value. Exactly one declaration (or none) keeps the pin honest.
+                if (declared.Count > 1)
+                {
+                    violations.Add(
+                        $"{projectDir}: {declared.Count} RootNamespace declarations " +
+                        $"('{string.Join("', '", declared)}') — exactly one is allowed");
+                    continue;
+                }
+
+                string? actual = declared.SingleOrDefault();
                 if (actual == null)
                 {
                     // MSBuild default when omitted: project file name without extension.
@@ -96,16 +113,13 @@ namespace FanaBridge.Tests.Contracts
                 {
                     string norm = file.Replace('\\', '/');
                     if (norm.Contains("/bin/") || norm.Contains("/obj/")) continue;
-                    // Contract tests name IDE0130 in prose; exclude so the
-                    // allowlist stays only the production suppressions.
-                    if (norm.Contains("/Contracts/")) continue;
 
                     string relative = file.Substring(repoRoot.Length)
                         .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                         .Replace('\\', '/');
 
                     string text = File.ReadAllText(file);
-                    if (!text.Contains("IDE0130")) continue;
+                    if (!Ide0130Pragma.IsMatch(text)) continue;
 
                     if (Ide0130Allowlist.Contains(relative, StringComparer.Ordinal))
                         foundOnAllowlist.Add(relative);
@@ -120,9 +134,9 @@ namespace FanaBridge.Tests.Contracts
 
             var messages = new List<string>();
             if (offenders.Count > 0)
-                messages.Add("Unexpected IDE0130 mentions:\n" + string.Join("\n", offenders));
+                messages.Add("Unexpected IDE0130 pragma directives:\n" + string.Join("\n", offenders));
             if (missing.Count > 0)
-                messages.Add("Allowlisted files no longer contain IDE0130 (dormant entries):\n" +
+                messages.Add("Allowlisted files no longer contain an IDE0130 pragma (dormant entries):\n" +
                              string.Join("\n", missing));
 
             Assert.True(messages.Count == 0, string.Join("\n\n", messages));
