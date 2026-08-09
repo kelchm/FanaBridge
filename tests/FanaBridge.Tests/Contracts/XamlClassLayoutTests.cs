@@ -29,6 +29,7 @@ namespace FanaBridge.Tests.Contracts
         {
             string repoRoot = FindRepoRoot();
             var violations = new List<string>();
+            int scanned = 0;
 
             foreach (var (projectRoot, nsRoot) in Projects)
             {
@@ -52,6 +53,7 @@ namespace FanaBridge.Tests.Contracts
                         continue;
                     }
                     if (classes.Count == 0) continue;
+                    scanned++;
 
                     string under = relative.Substring(projectRoot.Length).TrimStart('/');
                     int slash = under.LastIndexOf('/');
@@ -68,6 +70,8 @@ namespace FanaBridge.Tests.Contracts
                 }
             }
 
+            Assert.True(scanned > 0,
+                "no XAML with x:Class found — the contract test is not scanning src/");
             Assert.True(violations.Count == 0,
                 "XAML x:Class layout violations:\n" + string.Join("\n", violations));
         }

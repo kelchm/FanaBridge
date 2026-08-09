@@ -45,7 +45,7 @@ XAML `x:Class` values follow the same path rule and are checked by a contract te
 - `Updater/` → `FanaBridge.Tests.Updater…`
 - `Contracts/` → repo-wide / external-contract tests (XAML layout, SimHub enum snapshot)
 
-Domain-local fakes live next to their domain; multi-domain doubles live under `TestDoubles/`.
+Domain-local fakes live next to their domain; multi-domain doubles live under `TestDoubles/`. A third layout exception lives in the test tree: the Control Mapper reflection shim (see `tests/FanaBridge.Tests/README.md` for conventions and details).
 
 ## Frozen names
 
@@ -59,3 +59,6 @@ These strings are invisible to the C# namespace analyzer but **breaking to renam
 | **`FanatecPlugin.FanaBridgeSettings.json`** | On-disk settings file under SimHub `PluginsData/Common/`. |
 | **`AttachDelegate` / `AddEvent` keys** | Property and event names registered with SimHub (`FanaBridge.*` properties, `DeviceConnected`, `DeviceDisconnected`, `WheelChanged`, …). Dashboards and automations bind to these strings. |
 | **`Fanatec_<wheel>[_<module>]`** | `DeviceTypeID` format for SimHub device descriptors (and `Fanatec_Module_<module>` parents for hub logos). |
+| **`FS_WHEEL_SWTYPE_<code>`** | Control Mapper variant ids (`FanaBridgeVariantProvider`); persisted in users' Control Mapper settings. |
+
+Not frozen, for the record: SimHub's `ResolveCache.json` stores plugin/registry FQNs, but the cache is hash-invalidated whenever `FanaBridge.dll` changes on disk, so those entries rebuild on every update — cache state, not durable state.
