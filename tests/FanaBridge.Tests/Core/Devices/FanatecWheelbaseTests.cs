@@ -4,6 +4,7 @@ using System.Linq;
 using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Identity;
 using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Display.Protocol;
 using FanaBridge.Tests.TestDoubles;
 using FanaBridge.Core.Transport;
 using Xunit;
