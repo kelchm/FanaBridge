@@ -73,6 +73,27 @@ namespace FanaBridge.Tests.Plugin.UI.Wizard
         }
 
         [Fact]
+        public void SerializeProfile_IgnoresProcessWideDefaultValueHandling()
+        {
+            var previous = JsonConvert.DefaultSettings;
+            JsonConvert.DefaultSettings = () => new JsonSerializerSettings
+            {
+                DefaultValueHandling = DefaultValueHandling.Ignore,
+            };
+            try
+            {
+                var first = Led(Serialize(ProfileWithZeroValues()), 0);
+                Assert.Equal("revRgb", first.Value<string>("channel"));
+                Assert.Equal(0, first.Value<int?>("hwIndex"));
+                Assert.Equal("rev", first.Value<string>("role"));
+            }
+            finally
+            {
+                JsonConvert.DefaultSettings = previous;
+            }
+        }
+
+        [Fact]
         public void SerializeProfile_StillOmitsNulls()
         {
             var json = Serialize(ProfileWithZeroValues());
@@ -101,7 +122,7 @@ namespace FanaBridge.Tests.Plugin.UI.Wizard
         {
             var original = ProfileWithZeroValues();
             original.VerifiedRaw = false;
-            original.ColorFormatRaw = "Rgb555";
+            original.ColorFormatRaw = "rgb555";
             original.ItmDeviceIdRaw = 4;
 
             var loaded = JsonConvert.DeserializeObject<WheelProfile>(
