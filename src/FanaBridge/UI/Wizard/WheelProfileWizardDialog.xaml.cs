@@ -1482,11 +1482,27 @@ namespace FanaBridge.UI.Wizard
 
         private static void SaveProfile(WheelProfile profile, string filePath)
         {
+            File.WriteAllText(filePath, SerializeProfile(profile));
+
+            SimHub.Logging.Current.Info(
+                "WheelProfileWizard: Saved profile to " + filePath);
+        }
+
+        /// <summary>
+        /// Serializes a wizard-built profile to the JSON written to disk. Only
+        /// nulls are omitted: zero-valued fields such as <c>hwIndex: 0</c>,
+        /// <c>channel: revRgb</c> and <c>role: rev</c> are required by the schema
+        /// and must be written. <c>DefaultValueHandling.Include</c> is set
+        /// explicitly so a process-wide <see cref="JsonConvert.DefaultSettings"/>
+        /// can't turn omission back on.
+        /// </summary>
+        internal static string SerializeProfile(WheelProfile profile)
+        {
             var settings = new JsonSerializerSettings
             {
                 Formatting = Formatting.Indented,
                 NullValueHandling = NullValueHandling.Ignore,
-                DefaultValueHandling = DefaultValueHandling.Ignore,
+                DefaultValueHandling = DefaultValueHandling.Include,
                 Converters =
                 {
                     new Newtonsoft.Json.Converters.StringEnumConverter(
@@ -1494,11 +1510,7 @@ namespace FanaBridge.UI.Wizard
                 },
             };
 
-            string json = JsonConvert.SerializeObject(profile, settings);
-            File.WriteAllText(filePath, json);
-
-            SimHub.Logging.Current.Info(
-                "WheelProfileWizard: Saved profile to " + filePath);
+            return JsonConvert.SerializeObject(profile, settings);
         }
     }
 }
