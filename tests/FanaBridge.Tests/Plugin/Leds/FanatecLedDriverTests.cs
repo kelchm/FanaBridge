@@ -393,7 +393,7 @@ namespace FanaBridge.Tests.Plugin.Leds
             var white = Frame(Color.White);
 
             Assert.True(driver.SendLeds(white, forceRefresh: true));   // fails
-            WaitForWrites(Writes, 1);
+            WaitForFailedWrite(driver, Writes);
 
             // Identical frames inside the retry interval don't write again.
             var until = DateTime.UtcNow + TimeSpan.FromMilliseconds(200);
@@ -432,7 +432,7 @@ namespace FanaBridge.Tests.Plugin.Leds
 
             var sinceFirst = System.Diagnostics.Stopwatch.StartNew();
             Assert.True(driver.SendLeds(state, forceRefresh: true));   // fails
-            WaitForWrites(Writes, 1);
+            WaitForFailedWrite(driver, Writes);
 
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
             while (Writes() < 2 && DateTime.UtcNow < deadline)
@@ -448,14 +448,16 @@ namespace FanaBridge.Tests.Plugin.Leds
                 "retried after " + elapsed.TotalMilliseconds + " ms, inside the 100 ms interval");
         }
 
-        // Waits for a write task to reach the transport, so a test's timing
-        // window starts after the write rather than racing it.
-        private static void WaitForWrites(Func<int> writes, int expected)
+        // Waits until the first write has failed and the driver has recorded
+        // it, so a test's timing window starts after the failure rather than
+        // racing the write task.
+        private static void WaitForFailedWrite(FanatecLedDriver driver, Func<int> writes)
         {
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-            while (writes() < expected && DateTime.UtcNow < deadline)
+            while ((writes() < 1 || !driver.RetryPending) && DateTime.UtcNow < deadline)
                 Thread.Sleep(1);
-            Assert.Equal(expected, writes());
+            Assert.Equal(1, writes());
+            Assert.True(driver.RetryPending, "the failed write was never recorded");
         }
     }
 }

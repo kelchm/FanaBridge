@@ -81,6 +81,9 @@ namespace FanaBridge.Leds
         // failure would be skipped and the LEDs left stale until telemetry moved.
         private volatile bool _retryPending;
 
+        /// <summary>Whether the last write failed and a retry is due. For tests.</summary>
+        internal bool RetryPending => _retryPending;
+
         // While _retryPending is set, an unchanged frame is resent at most this
         // often. A channel that keeps failing would otherwise retry its USB write,
         // and re-arm the transport's failure warning, on every frame. Changed
