@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using FanaBridge.Core.Transport;
 
@@ -72,28 +73,66 @@ namespace FanaBridge.Tests.TestDoubles
     /// its decisive point before the test releases the other side: unguarded
     /// code has already run to completion, guarded code is waiting on the lock.
     /// </summary>
-    internal static class ContendedCall
+    internal sealed class ContendedCall
     {
-        public static Thread StartAndWaitUntilBlockedOrDone(Action action, TimeSpan timeout)
+        // How long the call must stay blocked before it counts as waiting on
+        // the lock, so a brief runtime-internal wait isn't mistaken for it.
+        private static readonly TimeSpan BlockedFor = TimeSpan.FromMilliseconds(50);
+
+        private readonly Thread _thread;
+        private readonly ManualResetEventSlim _started = new ManualResetEventSlim();
+        private Exception? _error;
+
+        private ContendedCall(Action action)
         {
-            var started = new ManualResetEventSlim();
-            var thread = new Thread(() => { started.Set(); action(); }) { IsBackground = true };
-            thread.Start();
-            if (!started.Wait(timeout))
+            _thread = new Thread(() =>
+            {
+                _started.Set();
+                // Captured rather than left unhandled: on a raw thread that would
+                // take down the test host instead of failing the test.
+                try { action(); }
+                catch (Exception ex) { _error = ex; }
+            }) { IsBackground = true };
+        }
+
+        public bool IsAlive => _thread.IsAlive;
+
+        /// <summary>Waits for the call to finish and rethrows anything it threw.</summary>
+        public bool Join(TimeSpan timeout)
+        {
+            if (!_thread.Join(timeout))
+                return false;
+            if (_error != null)
+                throw new InvalidOperationException("the contended call threw", _error);
+            return true;
+        }
+
+        public static ContendedCall StartAndWaitUntilBlockedOrDone(Action action, TimeSpan timeout)
+        {
+            var call = new ContendedCall(action);
+            call._thread.Start();
+            if (!call._started.Wait(timeout))
                 throw new TimeoutException("the call never started");
 
-            var deadline = DateTime.UtcNow + timeout;
-            int blockedPolls = 0;
-            // Require the blocked state to hold for a few polls, so a brief
-            // runtime-internal wait isn't mistaken for waiting on the lock.
-            while (thread.IsAlive && blockedPolls < 20)
+            var deadline = Stopwatch.StartNew();
+            var blocked = new Stopwatch();
+            while (call._thread.IsAlive)
             {
-                if (DateTime.UtcNow > deadline)
+                if (deadline.Elapsed > timeout)
                     throw new TimeoutException("the call neither finished nor blocked");
-                blockedPolls = (thread.ThreadState & ThreadState.WaitSleepJoin) != 0 ? blockedPolls + 1 : 0;
-                Thread.Sleep(2);
+
+                if ((call._thread.ThreadState & System.Threading.ThreadState.WaitSleepJoin) != 0)
+                {
+                    if (!blocked.IsRunning) blocked.Start();
+                    else if (blocked.Elapsed >= BlockedFor) break;
+                }
+                else
+                {
+                    blocked.Reset();
+                }
+                Thread.Sleep(1);
             }
-            return thread;
+            return call;
         }
     }
 }

@@ -393,6 +393,7 @@ namespace FanaBridge.Tests.Plugin.Leds
             var white = Frame(Color.White);
 
             Assert.True(driver.SendLeds(white, forceRefresh: true));   // fails
+            WaitForWrites(Writes, 1);
 
             // Identical frames inside the retry interval don't write again.
             var until = DateTime.UtcNow + TimeSpan.FromMilliseconds(200);
@@ -414,6 +415,47 @@ namespace FanaBridge.Tests.Plugin.Leds
             driver.Dispose();
 
             Assert.Equal(2, Writes());
+        }
+
+        [Fact]
+        public void SendLeds_RetriesAnUnchangedFrame_OnceTheRetryIntervalHasPassed()
+        {
+            var caps = Caps(("revRgb", 9));
+            var transport = new RecordingTransport { FailNext = 1 };
+            var driver = BuildDriver(caps, transport);
+            driver.RetryInterval = TimeSpan.FromMilliseconds(100);
+
+            var raw = new Color[caps.AllLedCount];
+            for (int i = 0; i < raw.Length; i++) raw[i] = Color.White;
+            var state = new LedDeviceState(new Color[0], new Color[0], new Color[0], new Color[0], raw);
+            int Writes() => transport.Col03.Count(r => r[2] == 0x00);
+
+            var sinceFirst = System.Diagnostics.Stopwatch.StartNew();
+            Assert.True(driver.SendLeds(state, forceRefresh: true));   // fails
+            WaitForWrites(Writes, 1);
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (Writes() < 2 && DateTime.UtcNow < deadline)
+            {
+                Assert.True(driver.SendLeds(state, forceRefresh: false));
+                Thread.Sleep(1);
+            }
+            var elapsed = sinceFirst.Elapsed;
+            driver.Dispose();
+
+            Assert.Equal(2, Writes());
+            Assert.True(elapsed >= TimeSpan.FromMilliseconds(90),
+                "retried after " + elapsed.TotalMilliseconds + " ms, inside the 100 ms interval");
+        }
+
+        // Waits for a write task to reach the transport, so a test's timing
+        // window starts after the write rather than racing it.
+        private static void WaitForWrites(Func<int> writes, int expected)
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (writes() < expected && DateTime.UtcNow < deadline)
+                Thread.Sleep(1);
+            Assert.Equal(expected, writes());
         }
     }
 }

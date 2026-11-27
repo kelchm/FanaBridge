@@ -73,7 +73,7 @@ namespace FanaBridge.Leds
         // Async write state — mirrors the typical SimHub driver pattern.
         // SendLeds kicks off a Task.Run; if the previous write is still
         // in-flight the frame is dropped rather than blocking.
-        private Task _refreshTask;
+        private volatile Task _refreshTask;
 
         // Set by the write task when any encoder call reports a failed write,
         // read on the frame thread. The state comparer latches each frame before
