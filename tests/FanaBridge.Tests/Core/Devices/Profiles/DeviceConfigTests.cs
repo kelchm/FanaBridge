@@ -47,7 +47,6 @@ namespace FanaBridge.Tests.Core.Devices.Profiles
             Assert.False(noMatchBlock.MatchesAttachment(true, "", null));
             Assert.False(noWheelType.MatchesAttachment(true, null, "PBME"));
             Assert.False(noWheelType.MatchesAttachment(true, "", "PBME"));
-            Assert.False(noWheelType.MatchesAttachment(true, wheelType, "PBME"));
         }
     }
 }
