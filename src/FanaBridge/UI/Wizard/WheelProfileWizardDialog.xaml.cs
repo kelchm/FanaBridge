@@ -1492,7 +1492,9 @@ namespace FanaBridge.UI.Wizard
         /// Serializes a wizard-built profile to the JSON written to disk. Only
         /// nulls are omitted: zero-valued fields such as <c>hwIndex: 0</c>,
         /// <c>channel: revRgb</c> and <c>role: rev</c> are required by the schema
-        /// and must be written.
+        /// and must be written. <c>DefaultValueHandling.Include</c> is set
+        /// explicitly so a process-wide <see cref="JsonConvert.DefaultSettings"/>
+        /// can't turn omission back on.
         /// </summary>
         internal static string SerializeProfile(WheelProfile profile)
         {
@@ -1500,6 +1502,7 @@ namespace FanaBridge.UI.Wizard
             {
                 Formatting = Formatting.Indented,
                 NullValueHandling = NullValueHandling.Ignore,
+                DefaultValueHandling = DefaultValueHandling.Include,
                 Converters =
                 {
                     new Newtonsoft.Json.Converters.StringEnumConverter(
