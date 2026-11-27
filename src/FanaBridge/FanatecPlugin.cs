@@ -30,9 +30,16 @@ namespace FanaBridge
         /// <summary>
         /// Singleton reference so DeviceInstance wrappers can access the shared
         /// hardware without owning their own HID connections.
-        /// Set during Init(), cleared during FinalizePlugin().
+        /// Set during Init(), cleared during FinalizePlugin(). Volatile: device
+        /// frames read it on SimHub's threads while Init and FinalizePlugin
+        /// publish and unpublish it on another.
         /// </summary>
-        public static FanatecPlugin Instance { get; private set; }
+        public static FanatecPlugin Instance
+        {
+            get => _instance;
+            private set => _instance = value;
+        }
+        private static volatile FanatecPlugin _instance;
 
         public FanatecPluginSettings Settings { get; set; }
 
