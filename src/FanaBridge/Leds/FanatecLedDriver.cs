@@ -74,6 +74,12 @@ namespace FanaBridge.Leds
         // in-flight the frame is dropped rather than blocking.
         private Task _refreshTask;
 
+        // Set by the write task when any encoder call reports a failed write,
+        // read on the frame thread. The state comparer latches each frame before
+        // its write has finished, so without this an identical frame after a
+        // failure would be skipped and the LEDs left stale until telemetry moved.
+        private volatile bool _retryPending;
+
         public FanatecLedDriver(WheelCapabilities caps, LedEncoder leds, LegacyLedEncoder legacyLeds)
         {
             _caps = caps ?? throw new ArgumentNullException(nameof(caps));
@@ -174,7 +180,8 @@ namespace FanaBridge.Leds
                 return false;
 
             // Skip unchanged frames — avoid color conversion and USB I/O
-            if (!stateComparer.HasChanged(state) && !forceRefresh)
+            // ...unless the last write failed, in which case resend the same state.
+            if (!stateComparer.HasChanged(state) && !forceRefresh && !_retryPending)
                 return true;
 
             // Drop this frame if the previous write is still in flight
@@ -288,26 +295,31 @@ namespace FanaBridge.Leds
             {
                 try
                 {
+                    // &= (not &&) so one failed channel doesn't skip the others.
+                    bool ok = true;
+
                     if (_caps.HasRevRgb)
-                        _leds.SetRevLedColors(revRgbColors);
+                        ok &= _leds.SetRevLedColors(revRgbColors);
 
                     if (_caps.HasFlagRgb)
-                        _leds.SetFlagLedColors(flagRgbColors);
+                        ok &= _leds.SetFlagLedColors(flagRgbColors);
 
                     if (sendButtonLeds)
-                        _leds.SetButtonLedState(buttonRgbBuf, intensities);
+                        ok &= _leds.SetButtonLedState(buttonRgbBuf, intensities);
 
                     if (sendLegacyRevOnOff && _legacyLeds != null)
-                        _legacyLeds.SetLegacyRevOnOff(legacyRevOnOffBuf);
+                        ok &= _legacyLeds.SetLegacyRevOnOff(legacyRevOnOffBuf);
 
                     if (sendLegacyRev3Bit && _legacyLeds != null)
-                        _legacyLeds.SetLegacyRev3Bit(legacyRev3BitBuf);
+                        ok &= _legacyLeds.SetLegacyRev3Bit(legacyRev3BitBuf);
 
                     if (sendLegacyFlag3Bit && _legacyLeds != null)
-                        _legacyLeds.SetLegacyFlag3Bit(legacyFlag3BitBuf);
+                        ok &= _legacyLeds.SetLegacyFlag3Bit(legacyFlag3BitBuf);
 
                     if (sendLegacyRevStripe && _legacyLeds != null)
-                        _legacyLeds.SetRevStripeColor(capturedRevStripeColor);
+                        ok &= _legacyLeds.SetRevStripeColor(capturedRevStripeColor);
+
+                    _retryPending = !ok;
                 }
                 catch (Exception ex)
                 {

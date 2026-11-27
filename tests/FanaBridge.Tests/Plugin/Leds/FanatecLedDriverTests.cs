@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Threading;
 using BA63Driver.Mapper;
 using FanaBridge.Core.Devices.Profiles;
 using FanaBridge.Core.Leds;
@@ -30,8 +31,24 @@ namespace FanaBridge.Tests.Plugin.Leds
             public bool IsConnected { get; set; } = true;
             public int Col03MaxInputReportLength => 64;
 
-            public bool SendCol01(byte[] data) { lock (_lock) { _col01.Add((byte[])data.Clone()); } return true; }
-            public bool SendCol03(byte[] data) { lock (_lock) { _col03.Add((byte[])data.Clone()); } return true; }
+            // The next N writes (either interface) are recorded but report failure,
+            // as the real transport does when a HID write throws.
+            public int FailNext { get { lock (_lock) { return _failNext; } } set { lock (_lock) { _failNext = value; } } }
+            private int _failNext;
+
+            public bool SendCol01(byte[] data) => Record(_col01, data);
+            public bool SendCol03(byte[] data) => Record(_col03, data);
+
+            private bool Record(List<byte[]> log, byte[] data)
+            {
+                lock (_lock)
+                {
+                    log.Add((byte[])data.Clone());
+                    if (_failNext == 0) return true;
+                    _failNext--;
+                    return false;
+                }
+            }
             public IReportStream IdentityReports => FakeReportStream.Empty;
             public IReportStream ItmReports => FakeReportStream.Empty;
             public IReportStream SrmReports => FakeReportStream.Empty;
@@ -320,6 +337,41 @@ namespace FanaBridge.Tests.Plugin.Leds
                 var t = RunAllWhite(caps);
                 Assert.False(Col01Has(t, 0x06), "stripe preference (0x06) must not be sent");
             }
+        }
+
+        // ── Write-failure retry (#79) ────────────────────────────────────
+
+        [Theory]
+        [InlineData("revRgb", 9, false, 0x00)]          // col03
+        [InlineData("legacyRev3Bit", 9, true, 0x0A)]    // col01
+        public void SendLeds_IdenticalFrameAfterFailedWrite_IsRetried(
+            string channel, int count, bool col01, byte subcmd)
+        {
+            var caps = Caps((channel, count));
+            var transport = new RecordingTransport { FailNext = 1 };
+            var driver = BuildDriver(caps, transport);
+            var raw = new Color[caps.AllLedCount];
+            for (int i = 0; i < raw.Length; i++) raw[i] = Color.White;
+            var state = new LedDeviceState(new Color[0], new Color[0], new Color[0], new Color[0], raw);
+
+            int Writes() => col01 ? transport.Col01.Count(r => r[3] == subcmd)
+                                  : transport.Col03.Count(r => r[2] == subcmd);
+
+            // First frame's write fails without throwing.
+            Assert.True(driver.SendLeds(state, forceRefresh: true));
+
+            // Keep feeding the identical frame. Frames that land while the failed
+            // write is still in flight are dropped, so poll until the retry goes
+            // out; without the retry it never does and the deadline fails the test.
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (Writes() < 2 && DateTime.UtcNow < deadline)
+            {
+                Assert.True(driver.SendLeds(state, forceRefresh: false));
+                Thread.Sleep(1);
+            }
+            driver.Dispose();
+
+            Assert.Equal(2, Writes());
         }
     }
 }
