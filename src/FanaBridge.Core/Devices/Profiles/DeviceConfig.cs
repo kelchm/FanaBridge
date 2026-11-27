@@ -11,25 +11,37 @@ namespace FanaBridge.Core.Devices.Profiles
         /// <summary>The wheel profile this config was built from.</summary>
         public WheelProfile Profile { get; set; }
 
+        /// <summary>
+        /// The profile this device is named after, when it differs from
+        /// <see cref="Profile"/>; null means <see cref="Profile"/> names it.
+        /// SimHub matches a saved device by exact, case-sensitive DeviceTypeID,
+        /// so registration keeps the ID's spelling from one profile even when
+        /// another profile for the same attachment is the active one.
+        /// </summary>
+        public WheelProfile IdentityProfile { get; set; }
+
+        private WheelProfile Identity => IdentityProfile ?? Profile;
+
         /// <summary>Resolved capabilities (computed view of the profile).</summary>
         public WheelCapabilities Capabilities { get; set; }
 
         /// <summary>
         /// Stable identifier for SimHub's DeviceTypeID.
-        /// Derived from the profile's match criteria.
+        /// Derived from the identity profile's match criteria.
         /// Format: "Fanatec_{wheelType}" or "Fanatec_{wheelType}_{moduleType}".
         /// </summary>
         public string DeviceTypeId
         {
             get
             {
-                if (Profile?.Match == null)
-                    return "Fanatec_" + (Profile?.Id ?? "Unknown");
+                var identity = Identity;
+                if (identity?.Match == null)
+                    return "Fanatec_" + (identity?.Id ?? "Unknown");
 
-                if (!string.IsNullOrEmpty(Profile.Match.ModuleType))
-                    return "Fanatec_" + Profile.Match.WheelType + "_" + Profile.Match.ModuleType;
+                if (!string.IsNullOrEmpty(identity.Match.ModuleType))
+                    return "Fanatec_" + identity.Match.WheelType + "_" + identity.Match.ModuleType;
 
-                return "Fanatec_" + Profile.Match.WheelType;
+                return "Fanatec_" + identity.Match.WheelType;
             }
         }
 
@@ -43,17 +55,18 @@ namespace FanaBridge.Core.Devices.Profiles
         {
             get
             {
-                if (Profile?.Match == null || string.IsNullOrEmpty(Profile.Match.ModuleType))
+                var identity = Identity;
+                if (identity?.Match == null || string.IsNullOrEmpty(identity.Match.ModuleType))
                     return null;
-                return "Fanatec_Module_" + Profile.Match.ModuleType;
+                return "Fanatec_Module_" + identity.Match.ModuleType;
             }
         }
 
-        /// <summary>Profile-match wheel code (e.g. "PSWBMW", "PHUB") from the profile.</summary>
-        public string WheelCode => Profile?.Match?.WheelType;
+        /// <summary>Profile-match wheel code (e.g. "PSWBMW", "PHUB") from the identity profile.</summary>
+        public string WheelCode => Identity?.Match?.WheelType;
 
-        /// <summary>Button-module code, resolved from the profile match criteria, or null.</summary>
-        public string ModuleCode => string.IsNullOrEmpty(Profile?.Match?.ModuleType) ? null : Profile.Match.ModuleType;
+        /// <summary>Button-module code, resolved from the identity profile's match criteria, or null.</summary>
+        public string ModuleCode => string.IsNullOrEmpty(Identity?.Match?.ModuleType) ? null : Identity.Match.ModuleType;
 
         /// <summary>
         /// Whether this descriptor matches the wheel/hub + module currently

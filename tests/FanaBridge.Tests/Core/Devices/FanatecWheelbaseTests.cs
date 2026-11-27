@@ -588,13 +588,36 @@ namespace FanaBridge.Tests.Core.Devices
             bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
             Assert.True(wb.AutoConnect());
 
+            // A second profile for the same wheel, so the override has something
+            // to choose that auto-resolution would not.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb81-wheelbase-override.json", "PSWBMW_OVERRIDE", "PSWBMW");
+            profiles.Reload();
+
             string? requestedKey = null;
-            wb.ProfileOverrideResolver = key => { requestedKey = key; return "PHUB"; };
+            wb.ProfileOverrideResolver = key => { requestedKey = key; return "PSWBMW_OVERRIDE:User"; };
 
             CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
 
             Assert.Equal("PSWBMW", requestedKey);            // asked with the match key
-            Assert.Equal("PHUB", wb.CurrentCapabilities.Profile?.Id);   // override won
+            Assert.Equal("PSWBMW_OVERRIDE", wb.CurrentCapabilities.Profile?.Id);   // override won
+        }
+
+        [Fact]
+        public void ProfileOverrideResolver_ForADifferentWheel_IsIgnored()
+        {
+            // Registration ignores an override whose match differs from the
+            // attachment; runtime must too, or the active profile would differ
+            // from the one the device's LED editor was sized from.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            wb.ProfileOverrideResolver = _ => "PHUB:BuiltIn";
+
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+
+            Assert.Equal("PSWBMW", wb.CurrentCapabilities.Profile?.Id);
         }
 
         [Fact]

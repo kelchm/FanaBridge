@@ -5,6 +5,7 @@ using System.Linq;
 using FanaBridge.Core.Devices.Profiles;
 using FanaBridge.Devices;
 using FanaBridge.Settings;
+using FanaBridge.Tests.TestDoubles;
 using Xunit;
 
 namespace FanaBridge.Tests.Plugin.Devices
@@ -142,6 +143,41 @@ namespace FanaBridge.Tests.Plugin.Devices
             // pass whether or not the override was wrongly applied.
             Assert.NotEqual(otherWheel.Id, config.Profile.Id);
             Assert.Equal("CSLSWGT3", config.WheelCode);
+        }
+
+        [Fact]
+        public void Override_WithoutTheAttachedModule_IsIgnored()
+        {
+            // The bare hub's profile must not be applied to the hub + module
+            // device, at registration any more than at runtime.
+            WriteSettings("PHUB_PBMR", "PHUB:BuiltIn");
+
+            var config = ConfigFor("Fanatec_PHUB_PBMR");
+
+            Assert.NotNull(config);
+            Assert.Equal("PHUB_PBMR", config.Profile.Id);
+        }
+
+        [Fact]
+        public void DeviceResolvingToABareProfile_IsNotRegistered_UntilAnOverridePicksAnother()
+        {
+            // The built-in PHUB is bare. A user profile for the same hub names a
+            // device, but without an override the hub resolves to the built-in
+            // (its id is the match key) — so registering the user profile's LED
+            // layout would size an editor for a profile that never drives it.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb81-hub-leds.json", "PHUB_FB81", "PHUB");
+            profiles.Reload();
+            PersistedPluginSettings.SettingsPathResolver =
+                () => Path.Combine(Path.GetTempPath(), "fanabridge-does-not-exist.json");
+
+            Assert.Null(ConfigFor("Fanatec_PHUB"));
+
+            WriteSettings("PHUB", "PHUB_FB81:User");
+
+            var config = ConfigFor("Fanatec_PHUB");
+            Assert.NotNull(config);
+            Assert.Equal("PHUB_FB81", config.Profile.Id);
         }
 
         [Fact]

@@ -667,7 +667,7 @@ namespace FanaBridge.Tests.Plugin.Devices
         {
             var inst = InstanceFor("PSWBMW");
             var pluginA = PluginWithWheel(null, out _);
-            var pluginB = PluginWithWheel("PSWBMW", out _, "CSLESWP1X");
+            var pluginB = PluginWithWheel("PSWBMW", out _);
 
             var data = new GameData();
             inst.PluginResolver = () => pluginA;
@@ -679,9 +679,39 @@ namespace FanaBridge.Tests.Plugin.Devices
             // not through the generation that still owns the cached drivers.
             inst.PluginResolver = () => pluginB;
 
+            // pluginA has no wheel, so it would answer with the registered
+            // capabilities; only pluginB's live resolution is this instance.
             var caps = inst.ResolveCurrentCapabilities();
-            Assert.Equal("CSLESWP1X", caps.Profile?.Id);
-            Assert.True(caps.HasLegacyRevStripe);
+            Assert.Same(pluginB.CurrentCapabilities, caps);
+            Assert.Equal("PSWBMW", caps.Profile?.Id);
+        }
+
+        [Fact]
+        public void SameIdUserProfile_WinsInEveryResolutionPath()
+        {
+            // Issue #81: the id index, runtime resolution, registration and the
+            // per-device capability lookup must all pick the same profile. The
+            // user profile spells the wheel code in lower case, so it also shows
+            // the device keeps the built-in's DeviceTypeID spelling.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb81-same-id.json", "PSWBMW", "pswbmw", revLeds: 5);
+            profiles.Reload();
+            var user = WheelProfileStore.GetById("PSWBMW", ProfileSource.User);
+            Assert.NotNull(user);
+
+            Assert.Same(user, WheelProfileStore.GetById("PSWBMW"));
+            Assert.Same(user, WheelProfileStore.FindByWheelType("PSWBMW"));
+
+            var config = Assert.Single(FanatecDevicesRegistry.BuildConfigs(),
+                c => c.WheelCode == "PSWBMW");
+            Assert.Equal("Fanatec_PSWBMW", config.DeviceTypeId);
+            Assert.Same(user, config.Profile);
+            Assert.Equal(5, config.Capabilities.AllLedCount);
+
+            var attached = PluginWithWheel("PSWBMW", out _);
+            Assert.Same(user, attached.ResolveCapsFor(config).Profile);
+            var detached = PluginWithWheel(null, out _);
+            Assert.Same(user, detached.ResolveCapsFor(config).Profile);
         }
 
         [Fact]

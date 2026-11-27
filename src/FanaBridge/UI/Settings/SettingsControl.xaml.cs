@@ -608,19 +608,21 @@ namespace FanaBridge.UI.Settings
                 ? WheelProfileStore.MakeMatchKey(wheelCode, moduleCode)
                 : null;
 
-            // Get ALL profiles that match this wheel (built-in + user, even duplicates)
+            // Every profile resolution could pick for this attachment (built-in
+            // + user, even when they share an ID), in load order.
             var all = WheelProfileStore.FindAllForWheel(wheelCode, moduleCode);
-
-            // Determine which profile auto-resolution would pick (no override)
-            var autoResolved = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null);
-            string autoOverrideKey = autoResolved != null
-                ? WheelProfileStore.MakeOverrideKey(autoResolved)
-                : null;
 
             // Current override (if any) from settings
             string currentOverride = null;
             if (matchKey != null)
                 Plugin.Settings.ProfileOverrides?.TryGetValue(matchKey, out currentOverride);
+
+            // Select what resolution actually picks with that override, so a
+            // stale or mismatched override shows the profile really in use.
+            var effective = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, currentOverride);
+            string effectiveOverrideKey = effective != null
+                ? WheelProfileStore.MakeOverrideKey(effective)
+                : null;
 
             if (all.Count == 0)
             {
@@ -667,17 +669,8 @@ namespace FanaBridge.UI.Settings
                     };
                     cboProfile.Items.Add(item);
 
-                    // Select: explicit override wins, otherwise the auto-resolved one
-                    if (!string.IsNullOrEmpty(currentOverride))
-                    {
-                        if (string.Equals(overrideKey, currentOverride, StringComparison.OrdinalIgnoreCase))
-                            selectedIndex = i;
-                    }
-                    else
-                    {
-                        if (string.Equals(overrideKey, autoOverrideKey, StringComparison.OrdinalIgnoreCase))
-                            selectedIndex = i;
-                    }
+                    if (string.Equals(overrideKey, effectiveOverrideKey, StringComparison.OrdinalIgnoreCase))
+                        selectedIndex = i;
                 }
 
                 cboProfile.SelectedIndex = selectedIndex;
