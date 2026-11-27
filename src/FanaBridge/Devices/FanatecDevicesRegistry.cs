@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Profiles;
 using FanaBridge.Settings;
 using FanaBridge.UI.Devices;
@@ -38,16 +39,12 @@ namespace FanaBridge.Devices
                 // Capture for closure
                 var capturedConfig = config;
 
-                yield return new DeviceDescriptor
+                var descriptor = new DeviceDescriptor
                 {
                     Name = config.Capabilities.ShortName ?? config.Capabilities.Name,
                     Brand = "Fanatec",
                     DeviceTypeID = config.DeviceTypeId,
                     ParentDeviceTypeID = config.ParentDeviceTypeId,
-                    // All Fanatec wheelbases share VID 0x0EB7. We use an arbitrary
-                    // PID (0x0001) just so SimHub sees a USB descriptor; the real
-                    // matching is done in GetDeviceState() against the wheelbase identity.
-                    DetectionDescriptor = new USBRequest(0x0EB7, 0x0001, true),
                     // The composition root for a device: it supplies the panel
                     // factory so the settings tabs do not depend on the plugin
                     // being enabled (SimHub shows them either way).
@@ -58,7 +55,36 @@ namespace FanaBridge.Devices
                     IsOEM = false,
                     IsDeprecated = false,
                 };
+                ApplyDetection(descriptor, capturedConfig, () => FanatecPlugin.Instance);
+                yield return descriptor;
             }
+        }
+
+        /// <summary>
+        /// Lists the device under the Add-device picker's "Devices found on your
+        /// system" only while its wheel or hub + module is attached: the USB ID
+        /// says a Fanatec base is connected, and <c>CompatibilityTest</c> picks
+        /// the attached device. SimHub asks for the devices each time the picker
+        /// opens, so the base's product ID is current; with no base, no USB ID.
+        /// </summary>
+        internal static void ApplyDetection(
+            DeviceDescriptor descriptor, DeviceConfig config, Func<FanatecPlugin> resolvePlugin)
+        {
+            int productId = 0;
+            try { productId = resolvePlugin()?.Wheelbase?.ConnectedProductId ?? 0; }
+            catch (Exception) { }
+
+            if (productId > 0)
+                descriptor.DetectionDescriptor = new USBRequest(
+                    FanatecWheelbase.FANATEC_VENDOR_ID, productId, true);
+
+            // Runs off the UI thread; a throw would cost other devices their
+            // place in the found list.
+            descriptor.CompatibilityTest = () =>
+            {
+                try { return FanatecWheelDeviceInstance.IsAttached(resolvePlugin(), config); }
+                catch (Exception) { return false; }
+            };
         }
 
         private static readonly object DecisionLogLock = new object();

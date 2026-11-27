@@ -323,30 +323,33 @@ namespace FanaBridge.Devices
         /// </summary>
         private DeviceState GetDeviceStateFor(FanatecPlugin plugin)
         {
-            if (plugin == null)
-            {
-                // Never Disabled: SimHub reserves that for the user's own
-                // switch and forces an enabled device claiming it back to
-                // Scanning every frame, so it never settles and floods the log
-                // (see the lifecycle doc, "Presenting availability").
-                return DeviceState.Scanning;
-            }
+            // Never Disabled: SimHub reserves that for the user's own switch and
+            // forces an enabled device claiming it back to Scanning every frame,
+            // so it never settles and floods the log (see the lifecycle doc,
+            // "Presenting availability").
+            return IsAttached(plugin, _config) ? DeviceState.Connected : DeviceState.Scanning;
+        }
 
+        /// <summary>
+        /// Whether <paramref name="config"/> is the wheel or hub + module that
+        /// <paramref name="plugin"/>'s wheelbase has attached, with a settled
+        /// identity. Shared by device state and the Add-device picker so the two
+        /// can't disagree.
+        /// </summary>
+        internal static bool IsAttached(FanatecPlugin plugin, DeviceConfig config)
+        {
             // ARCHITECTURE: reaches into wheelbase identity fields; when the
             // peripheral model lands, bind to a peripheral snapshot instead.
-            var wheelbase = plugin.Wheelbase;
+            var wheelbase = plugin?.Wheelbase;
             if (wheelbase == null || !wheelbase.IsConnected)
-                return DeviceState.Scanning;
+                return false;
 
             // Identity still settling: don't drive a half-(re)connected wheel.
             if (!wheelbase.IdentityStable)
-                return DeviceState.Scanning;
+                return false;
 
-            if (!_config.MatchesAttachment(
-                    wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode))
-                return DeviceState.Scanning;
-
-            return DeviceState.Connected;
+            return config.MatchesAttachment(
+                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
         }
 
         /// <summary>
