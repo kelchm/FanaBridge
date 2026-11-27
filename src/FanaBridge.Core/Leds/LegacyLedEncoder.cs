@@ -37,6 +37,13 @@ namespace FanaBridge.Core.Leds
 
         private readonly IDeviceTransport _transport;
 
+        // Guards the pooled report buffer and all tracking state below. The
+        // driver's write task and its Clear() can overlap (Clear's wait on the
+        // task is bounded), and the transport lock only serializes each send —
+        // two callers interleaving buffer fills would put a torn frame on the
+        // wire. Taken before the transport lock, never inside it.
+        private readonly object _sync = new object();
+
         // ── Dirty tracking ─────────────────────────────────────────────────
         private ushort _lastBitmask = 0xFFFF; // Sentinel — forces first send
         private ushort _lastRevStripeColor = 0xFFFF;
@@ -73,39 +80,42 @@ namespace FanaBridge.Core.Leds
         {
             if (onOff == null || onOff.Length == 0 || onOff.Length > 9) return false;
 
-            ConsumePendingForceDirty();
-
-            // Pack the 9-LED bitmask in the wire's RGB333 bit order:
-            //   byte[4] = LED0 (bit 0)
-            //   byte[5] = LED1(bit7) | LED2(bit6) | ... | LED8(bit0)
-            // LED0 sits alone in the low byte; LEDs 1-8 pack into the high byte
-            // most-significant-first.
-            byte dataLo = (byte)(onOff[0] ? 0x01 : 0x00);
-            byte dataHi = 0;
-            for (int i = 1; i < onOff.Length && i <= 8; i++)
+            lock (_sync)
             {
-                if (onOff[i])
-                    dataHi |= (byte)(1 << (8 - i));
+                ConsumePendingForceDirty();
+
+                // Pack the 9-LED bitmask in the wire's RGB333 bit order:
+                //   byte[4] = LED0 (bit 0)
+                //   byte[5] = LED1(bit7) | LED2(bit6) | ... | LED8(bit0)
+                // LED0 sits alone in the low byte; LEDs 1-8 pack into the high byte
+                // most-significant-first.
+                byte dataLo = (byte)(onOff[0] ? 0x01 : 0x00);
+                byte dataHi = 0;
+                for (int i = 1; i < onOff.Length && i <= 8; i++)
+                {
+                    if (onOff[i])
+                        dataHi |= (byte)(1 << (8 - i));
+                }
+
+                ushort bitmask = (ushort)((dataHi << 8) | dataLo);
+
+                // Dirty check
+                if (bitmask == _lastBitmask)
+                    return true;
+
+                // A bitmask write can itself make the driver stack switch the rim into
+                // pattern mode, and it overwrites the shared 0x08 payload. The next
+                // stripe write therefore has to restore both color mode and color, even
+                // when the requested color matches the one sent before this pattern.
+                _revStripeColorModeAsserted = false;
+                _lastRevStripeColor = 0xFFFF;
+
+                // Send bitmask: [RID, F8, 09, 08, data_lo, data_hi, 00, 00]
+                bool ok = SendLedData(dataLo, dataHi);
+                if (ok)
+                    _lastBitmask = bitmask;
+                return ok;
             }
-
-            ushort bitmask = (ushort)((dataHi << 8) | dataLo);
-
-            // Dirty check
-            if (bitmask == _lastBitmask)
-                return true;
-
-            // A bitmask write can itself make the driver stack switch the rim into
-            // pattern mode, and it overwrites the shared 0x08 payload. The next
-            // stripe write therefore has to restore both color mode and color, even
-            // when the requested color matches the one sent before this pattern.
-            _revStripeColorModeAsserted = false;
-            _lastRevStripeColor = 0xFFFF;
-
-            // Send bitmask: [RID, F8, 09, 08, data_lo, data_hi, 00, 00]
-            bool ok = SendLedData(dataLo, dataHi);
-            if (ok)
-                _lastBitmask = bitmask;
-            return ok;
         }
 
         /// <summary>
@@ -124,51 +134,54 @@ namespace FanaBridge.Core.Leds
         /// </remarks>
         public bool SetRevStripeColor(ushort rgb333)
         {
-            ConsumePendingForceDirty();
-
-            rgb333 = SnapToPalette(rgb333);
-
-            // The cached color is meaningful only while color mode is still known
-            // to hold. Bitmask writes invalidate both facts above.
-            if (rgb333 == _lastRevStripeColor && _revStripeColorModeAsserted)
-                return true;
-
-            // Entering color mode or writing color data invalidates the cached
-            // bitmask state that shares this 0x08 payload. Do this before sending
-            // so partial success cannot leave a later bitmask shortcut armed.
-            _lastBitmask = 0xFFFF;
-
-            // Enable the stripe once per connection, and assert color mode whenever
-            // a bitmask write has made its interpretation of 0x08 uncertain.
-            //
-            // 0x06 is a stored preference rather than a per-frame control, so it is
-            // sent once and never with the disable value — a user whose stripe is
-            // switched off has no other way to turn it back on from here, but
-            // flipping it off again on every clear would be trampling their setting.
-            //
-            // 0x07 recovers a rim another application left interpreting 0x08 as an
-            // on/off pattern; nothing in a color write alone undoes that.
-            if (!_revStripeEnabled)
+            lock (_sync)
             {
-                if (!SendRevStripeEnable())
-                    return false;
-                _revStripeEnabled = true;
+                ConsumePendingForceDirty();
+
+                rgb333 = SnapToPalette(rgb333);
+
+                // The cached color is meaningful only while color mode is still known
+                // to hold. Bitmask writes invalidate both facts above.
+                if (rgb333 == _lastRevStripeColor && _revStripeColorModeAsserted)
+                    return true;
+
+                // Entering color mode or writing color data invalidates the cached
+                // bitmask state that shares this 0x08 payload. Do this before sending
+                // so partial success cannot leave a later bitmask shortcut armed.
+                _lastBitmask = 0xFFFF;
+
+                // Enable the stripe once per connection, and assert color mode whenever
+                // a bitmask write has made its interpretation of 0x08 uncertain.
+                //
+                // 0x06 is a stored preference rather than a per-frame control, so it is
+                // sent once and never with the disable value — a user whose stripe is
+                // switched off has no other way to turn it back on from here, but
+                // flipping it off again on every clear would be trampling their setting.
+                //
+                // 0x07 recovers a rim another application left interpreting 0x08 as an
+                // on/off pattern; nothing in a color write alone undoes that.
+                if (!_revStripeEnabled)
+                {
+                    if (!SendRevStripeEnable())
+                        return false;
+                    _revStripeEnabled = true;
+                }
+
+                if (!_revStripeColorModeAsserted)
+                {
+                    if (!SendRevLedMode(false))
+                        return false;
+                    _revStripeColorModeAsserted = true;
+                }
+
+                byte dataHi = (byte)((rgb333 >> 8) & 0xFF);
+                byte dataLo = (byte)(rgb333 & 0xFF);
+
+                bool ok = SendLedData(dataLo, dataHi);
+                if (ok)
+                    _lastRevStripeColor = rgb333;
+                return ok;
             }
-
-            if (!_revStripeColorModeAsserted)
-            {
-                if (!SendRevLedMode(false))
-                    return false;
-                _revStripeColorModeAsserted = true;
-            }
-
-            byte dataHi = (byte)((rgb333 >> 8) & 0xFF);
-            byte dataLo = (byte)(rgb333 & 0xFF);
-
-            bool ok = SendLedData(dataLo, dataHi);
-            if (ok)
-                _lastRevStripeColor = rgb333;
-            return ok;
         }
 
         /// <summary>
@@ -184,29 +197,32 @@ namespace FanaBridge.Core.Leds
         {
             if (rgbBools == null || rgbBools.Length == 0 || rgbBools.Length > 27) return false;
 
-            ConsumePendingForceDirty();
-
-            // Pack 27 booleans into 4 bytes, LSB-first
-            uint packed = 0;
-            for (int i = 0; i < rgbBools.Length; i++)
+            lock (_sync)
             {
-                if (rgbBools[i] != 0)
-                    packed |= 1u << i;
+                ConsumePendingForceDirty();
+
+                // Pack 27 booleans into 4 bytes, LSB-first
+                uint packed = 0;
+                for (int i = 0; i < rgbBools.Length; i++)
+                {
+                    if (rgbBools[i] != 0)
+                        packed |= 1u << i;
+                }
+
+                // Dirty check
+                if (packed == _lastRev3BitPacked)
+                    return true;
+
+                // Send: [RID, F8, 09, 0A, data0, data1, data2, data3]
+                bool ok = SendLedRgbData(
+                    (byte)(packed & 0xFF),
+                    (byte)((packed >> 8) & 0xFF),
+                    (byte)((packed >> 16) & 0xFF),
+                    (byte)((packed >> 24) & 0xFF));
+                if (ok)
+                    _lastRev3BitPacked = packed;
+                return ok;
             }
-
-            // Dirty check
-            if (packed == _lastRev3BitPacked)
-                return true;
-
-            // Send: [RID, F8, 09, 0A, data0, data1, data2, data3]
-            bool ok = SendLedRgbData(
-                (byte)(packed & 0xFF),
-                (byte)((packed >> 8) & 0xFF),
-                (byte)((packed >> 16) & 0xFF),
-                (byte)((packed >> 24) & 0xFF));
-            if (ok)
-                _lastRev3BitPacked = packed;
-            return ok;
         }
 
         /// <summary>
@@ -223,29 +239,32 @@ namespace FanaBridge.Core.Leds
         {
             if (rgbBools == null || rgbBools.Length == 0 || rgbBools.Length > 18) return false;
 
-            ConsumePendingForceDirty();
-
-            // Pack 18 booleans into 4 bytes, LSB-first
-            uint packed = 0;
-            for (int i = 0; i < rgbBools.Length; i++)
+            lock (_sync)
             {
-                if (rgbBools[i] != 0)
-                    packed |= 1u << i;
+                ConsumePendingForceDirty();
+
+                // Pack 18 booleans into 4 bytes, LSB-first
+                uint packed = 0;
+                for (int i = 0; i < rgbBools.Length; i++)
+                {
+                    if (rgbBools[i] != 0)
+                        packed |= 1u << i;
+                }
+
+                // Dirty check
+                if (packed == _lastFlag3BitPacked)
+                    return true;
+
+                // Send: [RID, F8, 09, 0B, d0, d1, d2, d3]
+                bool ok = SendFlagRgbData(
+                    (byte)(packed & 0xFF),
+                    (byte)((packed >> 8) & 0xFF),
+                    (byte)((packed >> 16) & 0xFF),
+                    (byte)((packed >> 24) & 0xFF));
+                if (ok)
+                    _lastFlag3BitPacked = packed;
+                return ok;
             }
-
-            // Dirty check
-            if (packed == _lastFlag3BitPacked)
-                return true;
-
-            // Send: [RID, F8, 09, 0B, d0, d1, d2, d3]
-            bool ok = SendFlagRgbData(
-                (byte)(packed & 0xFF),
-                (byte)((packed >> 8) & 0xFF),
-                (byte)((packed >> 16) & 0xFF),
-                (byte)((packed >> 24) & 0xFF));
-            if (ok)
-                _lastFlag3BitPacked = packed;
-            return ok;
         }
 
         /// <summary>
@@ -253,23 +272,26 @@ namespace FanaBridge.Core.Leds
         /// </summary>
         public void Clear()
         {
-            // Each channel has to be zeroed on its own subcommand — a 0x08 frame does
-            // nothing for LEDs addressed via 0x0A or 0x0B, which would otherwise stay
-            // lit at their last color. Untouched channels are left alone so we don't
-            // write to hardware the profile never claimed.
-            //
-            // Nothing else is sent: turning LEDs off is not a reason to touch the
-            // rim's white LED or its stored preferences.
-            if (_lastBitmask != 0xFFFF || _lastRevStripeColor != 0xFFFF)
-                SendLedData(0x00, 0x00);
+            lock (_sync)
+            {
+                // Each channel has to be zeroed on its own subcommand — a 0x08 frame does
+                // nothing for LEDs addressed via 0x0A or 0x0B, which would otherwise stay
+                // lit at their last color. Untouched channels are left alone so we don't
+                // write to hardware the profile never claimed.
+                //
+                // Nothing else is sent: turning LEDs off is not a reason to touch the
+                // rim's white LED or its stored preferences.
+                if (_lastBitmask != 0xFFFF || _lastRevStripeColor != 0xFFFF)
+                    SendLedData(0x00, 0x00);
 
-            if (_lastRev3BitPacked != 0xFFFFFFFF)
-                SendLedRgbData(0x00, 0x00, 0x00, 0x00);
+                if (_lastRev3BitPacked != 0xFFFFFFFF)
+                    SendLedRgbData(0x00, 0x00, 0x00, 0x00);
 
-            if (_lastFlag3BitPacked != 0xFFFFFFFF)
-                SendFlagRgbData(0x00, 0x00, 0x00, 0x00);
+                if (_lastFlag3BitPacked != 0xFFFFFFFF)
+                    SendFlagRgbData(0x00, 0x00, 0x00, 0x00);
 
-            ForceDirty();
+                ForceDirty();
+            }
         }
 
         /// <summary>

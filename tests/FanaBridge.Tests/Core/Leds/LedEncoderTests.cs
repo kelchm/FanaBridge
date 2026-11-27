@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using FanaBridge.Core.Leds;
 using FanaBridge.Tests.TestDoubles;
 using FanaBridge.Core.Transport;
@@ -164,6 +165,48 @@ namespace FanaBridge.Tests.Core.Leds
             t.Col03Reports.Clear();
             encoder.SetRevLedColors(colors);
             Assert.Empty(t.Col03Reports);       // flag consumed — back to dirty tracking
+        }
+
+        // ── Concurrent callers (#80) ───────────────────────────────────
+
+        [Fact]
+        public async Task ConcurrentClear_CannotRewriteReportWhileRefreshIsBeingSent()
+        {
+            // The refresh's write blocks inside the transport; a clear arrives
+            // meanwhile, as the driver's Clear() does when its wait on the
+            // refresh task times out. The clear must wait for the refresh rather
+            // than refill the shared report buffer under it.
+            var t = new GatedTransport { GateOnWrite = 1 };
+            var encoder = new LedEncoder(t);
+            var lit = Enumerable.Repeat((ushort)0xF800, 9).ToArray();
+
+            var refresh = Task.Run(() => encoder.SetRevLedColors(lit));
+            Assert.True(t.Entered.Wait(TimeSpan.FromSeconds(5)), "refresh never reached the transport");
+
+            var clear = Task.Run(() => encoder.SetRevLedColors(new ushort[9]));
+            // Unguarded, the clear finishes here having rewritten the buffer. The
+            // bounded wait only gives it the chance to; with the lock it stays blocked.
+            bool clearRanDuringRefresh = await Task.WhenAny(clear, Task.Delay(500)) == clear;
+
+            t.Release();
+            Assert.True(await refresh);
+            Assert.True(await clear);
+
+            Assert.False(clearRanDuringRefresh, "clear ran while the refresh held the report buffer");
+
+            // The refresh's report reached the wire intact...
+            var sent = t.GatedWrite;
+            Assert.Equal(0x00, sent[2]);
+            for (int i = 0; i < lit.Length; i++)
+            {
+                Assert.Equal(0xF8, sent[3 + i * 2]);
+                Assert.Equal(0x00, sent[4 + i * 2]);
+            }
+
+            // ...and the clear still followed it.
+            var last = t.Writes.Last();
+            Assert.Equal(0x00, last[2]);
+            Assert.All(last.Skip(3), b => Assert.Equal(0, b));
         }
     }
 }

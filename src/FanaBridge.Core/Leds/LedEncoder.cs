@@ -41,12 +41,20 @@ namespace FanaBridge.Core.Leds
 
         private readonly IDeviceTransport _transport;
 
+        // Guards the pooled report buffer and the dirty-tracking state below.
+        // The encoder is shared between the LED driver's write task and other
+        // callers (the driver's Clear, the profile wizard), and the transport
+        // lock only serializes each send — two callers interleaving buffer fills
+        // would put a torn frame on the wire. Always taken before the transport
+        // lock (BeginBatch / SendCol03), never inside it.
+        private readonly object _sync = new object();
+
         // ── Dirty tracking — skip redundant HID writes ───────────────────
         // Color tracking keyed by subcmd; missing entry = dirty (forces send).
-        // Only ever touched from send paths: ForceDirty is called cross-thread
-        // (WheelChanged can fire from the settings UI while a driver send task is
-        // in flight), so it must not mutate this dictionary directly — a concurrent
-        // Clear against TryGetValue/insert corrupts it on net48.
+        // Only touched from send paths under _sync: ForceDirty is called cross-
+        // thread (WheelChanged can fire from the settings UI while a driver send
+        // task is in flight), so it must not mutate this dictionary directly — a
+        // concurrent Clear against TryGetValue/insert corrupts it on net48.
         private readonly Dictionary<byte, ushort[]> _lastColors = new Dictionary<byte, ushort[]>();
         // Button intensity tracking (separate: unique staging protocol, byte[] payload)
         private byte[] _lastIntensities;
@@ -79,6 +87,7 @@ namespace FanaBridge.Core.Leds
             if (colors != null && colors.Length > MAX_BUTTON_LEDS) return false;
             if (intensityPayload == null || intensityPayload.Length != INTENSITY_PAYLOAD_SIZE) return false;
 
+            lock (_sync)
             using (_transport.BeginBatch())
             {
                 ConsumePendingForceDirty();
@@ -208,44 +217,47 @@ namespace FanaBridge.Core.Leds
             int count = colors.Length;
             if (count == 0 || count > MAX_RGB565_PER_REPORT) return false;
 
-            ConsumePendingForceDirty();
-
-            // Dirty check: missing entry or size mismatch forces a send
-            ushort[] last;
-            if (_lastColors.TryGetValue(subcmd, out last) && last.Length == count)
+            lock (_sync)
             {
-                bool changed = false;
+                ConsumePendingForceDirty();
+
+                // Dirty check: missing entry or size mismatch forces a send
+                ushort[] last;
+                if (_lastColors.TryGetValue(subcmd, out last) && last.Length == count)
+                {
+                    bool changed = false;
+                    for (int i = 0; i < count; i++)
+                    {
+                        if (colors[i] != last[i]) { changed = true; break; }
+                    }
+                    if (!changed) return true;
+                }
+
+                // Reuse pooled buffer — zero the payload region then fill
+                Array.Clear(_reportBuf, 0, REPORT_LENGTH);
+                _reportBuf[0] = 0xFF;
+                _reportBuf[1] = 0x01;
+                _reportBuf[2] = subcmd;
+
                 for (int i = 0; i < count; i++)
                 {
-                    if (colors[i] != last[i]) { changed = true; break; }
+                    int offset = HEADER_SIZE + (i * 2);
+                    _reportBuf[offset]     = (byte)((colors[i] >> 8) & 0xFF);
+                    _reportBuf[offset + 1] = (byte)(colors[i] & 0xFF);
                 }
-                if (!changed) return true;
-            }
 
-            // Reuse pooled buffer — zero the payload region then fill
-            Array.Clear(_reportBuf, 0, REPORT_LENGTH);
-            _reportBuf[0] = 0xFF;
-            _reportBuf[1] = 0x01;
-            _reportBuf[2] = subcmd;
-
-            for (int i = 0; i < count; i++)
-            {
-                int offset = HEADER_SIZE + (i * 2);
-                _reportBuf[offset]     = (byte)((colors[i] >> 8) & 0xFF);
-                _reportBuf[offset + 1] = (byte)(colors[i] & 0xFF);
-            }
-
-            bool ok = _transport.SendCol03(_reportBuf);
-            if (ok)
-            {
-                if (last == null || last.Length != count)
+                bool ok = _transport.SendCol03(_reportBuf);
+                if (ok)
                 {
-                    last = new ushort[count];
-                    _lastColors[subcmd] = last;
+                    if (last == null || last.Length != count)
+                    {
+                        last = new ushort[count];
+                        _lastColors[subcmd] = last;
+                    }
+                    Array.Copy(colors, last, count);
                 }
-                Array.Copy(colors, last, count);
+                return ok;
             }
-            return ok;
         }
 
         private bool SendButtonColorReport(ushort[] colors, bool commit)
