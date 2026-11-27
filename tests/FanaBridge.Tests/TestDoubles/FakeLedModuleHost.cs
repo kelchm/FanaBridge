@@ -135,7 +135,15 @@ namespace FanaBridge.Tests.TestDoubles
             CanDrive = canDrive;
             ReportedConnected = connected;
         }
-        public void HotSwapIfNeeded(WheelCapabilities currentCaps) { }
+        /// <summary>The capabilities the device last offered for a hot-swap.</summary>
+        public WheelCapabilities? LastHotSwapCaps { get; private set; }
+        public int HotSwapCount { get; private set; }
+
+        public void HotSwapIfNeeded(WheelCapabilities currentCaps)
+        {
+            HotSwapCount++;
+            LastHotSwapCaps = currentCaps;
+        }
 
         public IEnumerable<DynamicButtonAction> GetDynamicActions() =>
             Enumerable.Empty<DynamicButtonAction>();

@@ -174,27 +174,40 @@ namespace FanaBridge
         public WheelCapabilities CurrentCapabilities => _wheelbase?.CurrentCapabilities ?? WheelCapabilities.None;
 
         /// <summary>
-        /// Resolves the capabilities a specific device descriptor should use.
-        /// Returns the live, currently-active capabilities (which respect any
-        /// user override) only when the connected wheel actually matches this
-        /// <paramref name="config"/>; otherwise returns the config's own
-        /// registration capabilities. <see cref="CurrentCapabilities"/> is
-        /// global, so unrelated device instances must NOT consume it directly —
-        /// this is the single guard that prevents the connected wheel's caps
-        /// from leaking into every descriptor.
+        /// Resolves the capabilities a specific device descriptor should use, from
+        /// the attachment published right now. See
+        /// <see cref="ResolveCapsFor(DeviceConfig, AttachmentSnapshot)"/>.
         /// </summary>
-        public WheelCapabilities ResolveCapsFor(DeviceConfig config)
+        public WheelCapabilities ResolveCapsFor(DeviceConfig config) =>
+            ResolveCapsFor(config, _wheelbase?.Attachment);
+
+        /// <summary>
+        /// Resolves the capabilities a device descriptor should use against one
+        /// attachment snapshot. When the attachment matches
+        /// <paramref name="config"/>, the answer is that attachment's live
+        /// capabilities (which respect any user override), even when no profile
+        /// matches it any more: then the device has nothing to drive and its
+        /// output stops. Otherwise it is the config's own registration
+        /// capabilities. <see cref="CurrentCapabilities"/> is global, so
+        /// unrelated device instances must NOT consume it directly — this is the
+        /// single guard that prevents the connected wheel's caps from leaking
+        /// into every descriptor.
+        /// </summary>
+        /// <remarks>
+        /// The identity and the capabilities come from the same snapshot, so a
+        /// matching attachment can never be answered with the previous
+        /// attachment's capabilities. A caller that also decides whether the
+        /// device is attached should pass the snapshot it decided that from.
+        /// </remarks>
+        internal static WheelCapabilities ResolveCapsFor(DeviceConfig config, AttachmentSnapshot attachment)
         {
             if (config == null)
                 return WheelCapabilities.None;
 
-            var wheelbase = _wheelbase;
-            var current = CurrentCapabilities;
-            if (current?.Profile != null && wheelbase != null
-                && config.MatchesAttachment(
-                    wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode))
+            if (attachment != null
+                && config.MatchesAttachment(attachment.WheelDetected, attachment.WheelCode, attachment.ModuleCode))
             {
-                return current;
+                return attachment.Capabilities;
             }
 
             return config.Capabilities ?? WheelCapabilities.None;
@@ -206,14 +219,20 @@ namespace FanaBridge
         /// identity without a SimHub host. Production cores are built only by
         /// InitializeCore.
         /// </summary>
-        internal void InstallWheelbaseForTest(FanatecWheelbase wheelbase, bool withDisplayEncoder = false)
+        internal void InstallWheelbaseForTest(
+            FanatecWheelbase wheelbase, bool withDisplayEncoder = false, bool withLedEncoders = false)
         {
             _wheelbase = wheelbase;
-            // Real init builds the encoders in InitializeCore. Display tests opt in
-            // to an encoder wired to the (fake) transport; everything else leaves it
-            // null so the no-encoder guards keep being exercised.
+            // Real init builds the encoders in InitializeCore. Display and LED
+            // tests opt in to encoders wired to the (fake) transport; everything
+            // else leaves them null so the no-encoder guards keep being exercised.
             if (withDisplayEncoder)
                 _display = new DisplayEncoder(wheelbase.Transport);
+            if (withLedEncoders)
+            {
+                _leds = new LedEncoder(wheelbase.Transport);
+                _legacyLeds = new LegacyLedEncoder(wheelbase.Transport);
+            }
         }
 
         /// <summary>Called by each <see cref="FanatecWheelDeviceInstance"/> so the

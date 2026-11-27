@@ -30,7 +30,7 @@ namespace FanaBridge.Tests.Plugin.Devices
     /// Runs against the PluginResolver seam plus a wheelbase built on the
     /// injected-transport seam — no SimHub host, no hardware.
     /// </summary>
-    public class FanatecWheelDeviceInstanceTests
+    public partial class FanatecWheelDeviceInstanceTests
     {
         static FanatecWheelDeviceInstanceTests()
         {

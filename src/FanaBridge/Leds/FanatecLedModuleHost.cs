@@ -48,8 +48,8 @@ namespace FanaBridge.Leds
                     // in the LEDs tab. The picker stays stock — constraining it
                     // would break gradients and imported profiles without fixing
                     // anything, since those never pass through it. The notice
-                    // resolves capabilities when the tab is opened, so it reflects
-                    // the wheel that is actually connected.
+                    // resolves capabilities while the tab is open, so it reflects
+                    // the profile that is actually driving the wheel.
                     ExtraSettingsControlFactory =
                         _ => new UI.Devices.LedColorLimitationNotice(currentCapabilities),
                 };

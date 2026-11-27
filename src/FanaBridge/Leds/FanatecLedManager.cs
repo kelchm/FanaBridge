@@ -40,9 +40,11 @@ namespace FanaBridge.Leds
         // seen at the source. Kept apart because a driver that fails to rebuild
         // leaves _lastDriverProfile stale: comparing against that alone would
         // tear the driver down and log on every frame until the rebuild starts
-        // succeeding again.
+        // succeeding again. Null is a real observation (the attachment has no
+        // profile), so whether anything has been observed is tracked separately.
         private WheelProfile _lastDriverProfile;
         private WheelProfile _lastObservedProfile;
+        private bool _hasObserved;
 
         // Whether the "no driver" state has already been reported, so the
         // unavailable/available transitions log once rather than per frame.
@@ -108,6 +110,14 @@ namespace FanaBridge.Leds
                 }
 
                 var caps = plugin.ResolveCapsFor(_config) ?? WheelCapabilities.None;
+
+                // What the driver is built from counts as observed, so the next
+                // HotSwapIfNeeded acts on any change after it, including to "no
+                // profile", whichever of the two saw the source first.
+                Observe(caps.Profile);
+
+                // With no profile this is a driver with no LEDs: output stops,
+                // and a profile appearing later hot-swaps to a real driver.
                 var driver = new FanatecLedDriver(caps, leds, legacyLeds);
 
                 _lastDriverProfile = caps.Profile;
@@ -160,23 +170,39 @@ namespace FanaBridge.Leds
         /// If the active profile changed, tears down the current driver so
         /// the base class recreates it via <see cref="GetDriver"/> on the
         /// next frame.  Safe to call every frame — no-ops when unchanged.
+        /// Caps with no profile are a change too: the driver is rebuilt with
+        /// no LEDs, which stops output.
         /// </summary>
-        public void HotSwapIfNeeded(WheelCapabilities currentCaps)
+        /// <returns>Whether a rebuild was triggered.</returns>
+        public bool HotSwapIfNeeded(WheelCapabilities currentCaps)
         {
-            if (currentCaps?.Profile == null || currentCaps.Profile == _lastObservedProfile)
-                return;
+            var profile = currentCaps?.Profile;
+            if (!Observe(profile))
+                return false;
 
-            _lastObservedProfile = currentCaps.Profile;
+            if (profile == _lastDriverProfile)
+                return false;
 
-            if (currentCaps.Profile == _lastDriverProfile)
-                return;
-
-            SimHub.Logging.Current.Info(
-                "FanatecLedManager: Active profile changed to '" +
-                (currentCaps.Name ?? "?") + "' — triggering driver rebuild");
+            SimHub.Logging.Current.Info(profile == null
+                ? "FanatecLedManager: No profile for " + (_config?.Capabilities?.Name ?? "device") +
+                  " any more — stopping LED output"
+                : "FanatecLedManager: Active profile changed to '" +
+                  (currentCaps.Name ?? "?") + "' — triggering driver rebuild");
 
             Close();
             // _lastDriverProfile will be updated in the next GetDriver() call
+            return true;
+        }
+
+        /// <summary>Records a profile seen at the source; true when it differs from the last one.</summary>
+        private bool Observe(WheelProfile profile)
+        {
+            if (_hasObserved && profile == _lastObservedProfile)
+                return false;
+
+            _hasObserved = true;
+            _lastObservedProfile = profile;
+            return true;
         }
 
         // IsConnected() and GetPhysicalMapper() are sealed in the base class

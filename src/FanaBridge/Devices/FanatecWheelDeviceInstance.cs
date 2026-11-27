@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using FanaBridge;
+using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Profiles;
 using FanaBridge.Core.Display.Session;
 using FanaBridge.Display;
@@ -318,8 +319,9 @@ namespace FanaBridge.Devices
 
         /// <summary>
         /// The device state as seen by one specific plugin generation.
-        /// DataUpdate passes the generation it captured at the top of the
-        /// frame, so state and drivers can never come from different ones.
+        /// DataUpdate makes the same check against the generation and the
+        /// attachment it captured at the top of the frame, so state and
+        /// drivers can never come from different ones.
         /// </summary>
         private DeviceState GetDeviceStateFor(FanatecPlugin plugin)
         {
@@ -333,20 +335,27 @@ namespace FanaBridge.Devices
         /// <summary>
         /// The attachment check shared by device state and the Add-device picker.
         /// </summary>
-        internal static bool IsAttached(FanatecPlugin plugin, DeviceConfig config)
+        internal static bool IsAttached(FanatecPlugin plugin, DeviceConfig config) =>
+            IsAttached(plugin, plugin?.Wheelbase?.Attachment, config);
+
+        /// <summary>
+        /// The attachment check against one snapshot, so a frame can decide
+        /// whether it is attached and what to drive from the same attachment.
+        /// </summary>
+        private static bool IsAttached(FanatecPlugin plugin, AttachmentSnapshot attachment, DeviceConfig config)
         {
-            // ARCHITECTURE: reaches into wheelbase identity fields; when the
+            // ARCHITECTURE: reads the wheelbase's attachment snapshot; when the
             // peripheral model lands, bind to a peripheral snapshot instead.
             var wheelbase = plugin?.Wheelbase;
-            if (wheelbase == null || !wheelbase.IsConnected)
+            if (wheelbase == null || attachment == null || !wheelbase.IsConnected)
                 return false;
 
             // Identity still settling: don't drive a half-(re)connected wheel.
-            if (!wheelbase.IdentityStable)
+            if (!attachment.IdentityStable)
                 return false;
 
             return config.MatchesAttachment(
-                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
+                attachment.WheelDetected, attachment.WheelCode, attachment.ModuleCode);
         }
 
         /// <summary>
@@ -428,8 +437,13 @@ namespace FanaBridge.Devices
             // reads the base Enabled (the user's real choice).
             bool switchedOn = ShouldBeRunning();
 
-            bool isConnected =
-                switchedOn && GetDeviceStateFor(currentPlugin) == DeviceState.Connected;
+            // One attachment snapshot for the whole frame: whether this device is
+            // attached and what it drives come from the same attachment, so a
+            // wheel change can't pair this device's state with another wheel's
+            // capabilities.
+            var attachment = currentPlugin?.Wheelbase?.Attachment;
+
+            bool isConnected = switchedOn && IsAttached(currentPlugin, attachment, _config);
 
             // The LEDs tab badge: hidden while nothing can drive the device;
             // connected state pushed because the module only refreshes its own
@@ -468,15 +482,15 @@ namespace FanaBridge.Devices
                 if (!ReferenceEquals(PluginResolver(), currentPlugin))
                     return;
 
-                DriveHardware(currentPlugin, ref data);
+                DriveHardware(currentPlugin, attachment, ref data);
             }
         }
 
         /// <summary>
         /// One frame of display/ITM/LED output, entirely from the frame's
-        /// captured generation. Callers hold <see cref="_outputGate"/>.
+        /// captured generation and attachment. Callers hold <see cref="_outputGate"/>.
         /// </summary>
-        private void DriveHardware(FanatecPlugin plugin, ref GameData data)
+        private void DriveHardware(FanatecPlugin plugin, AttachmentSnapshot attachment, ref GameData data)
         {
             var device = plugin?.Transport;
             if (device == null || !device.IsConnected)
@@ -487,6 +501,17 @@ namespace FanaBridge.Devices
             if (plugin.WizardActive)
                 return;
 
+            // Resolve THIS descriptor's caps override-aware, from the frame's
+            // attachment — one answer for the display and the LEDs below.
+            // Registration caps froze the built-in profile's display type and ITM
+            // device id, so a user override changing either was honored by LEDs
+            // but silently ignored by the display drivers — restart or not,
+            // because the registry's dedupe keeps the built-in for registration.
+            // An attachment left with no profile resolves to no display and no
+            // LEDs, which stops this device's output.
+            var caps = FanatecPlugin.ResolveCapsFor(_config, attachment);
+            var displayType = caps.Display;
+
             // ── Display ──────────────────────────────────────────────────
             // While the settings page's display test owns the 7-segment display,
             // skip the legacy col01 drive so the test text isn't overwritten each
@@ -496,26 +521,21 @@ namespace FanaBridge.Devices
             // waiting for the next value change.
             bool displayTest = plugin.DisplayTestActive;
             if (!displayTest && _displayTestWasActive
-                && _displaySettings.DisplayMode != DisplaySettings.ModeNone)
+                && _displaySettings.DisplayMode != DisplaySettings.ModeNone
+                && displayType != DisplayType.None)
             {
-                // In mode "None" the blank-once path clears the test residue and
-                // releases ownership, with retry — clearing here would double the
-                // write and could release ownership on a declined clear.
+                // In mode "None", or with no display to drive, the blank-once path
+                // clears the test residue and releases ownership, with retry —
+                // clearing here would double the write and could release ownership
+                // on a declined clear.
                 _displayManager?.Clear();
             }
             _displayTestWasActive = displayTest;
 
-            // Resolve THIS descriptor's caps override-aware — the same rule the
-            // LED pipeline already follows via ResolveCapsFor (the single guard).
-            // Registration caps froze the built-in profile's display type and ITM
-            // device id, so a user override changing either was honored by LEDs
-            // but silently ignored by the display drivers — restart or not,
-            // because the registry's dedupe keeps the built-in for registration.
-            var displayCaps = plugin.ResolveCapsFor(_config);
-            var displayType = displayCaps.Display;
-
-            // Switched away from ITM (e.g. override to a basic-display profile):
-            // stop the session so the next Itm selection re-runs bring-up.
+            // Switched away from ITM (e.g. override to a basic-display profile, or
+            // the attachment's last profile deleted): stop the session so the next
+            // Itm selection re-runs bring-up. Nothing is sent, so the screen keeps
+            // its last frame, as it does when the device is switched off.
             if (displayType != DisplayType.Itm && _itmDisplay != null)
             {
                 _itmDisplay.Stop();
@@ -527,18 +547,18 @@ namespace FanaBridge.Devices
             {
                 // Override retargeted the ITM display id — the driver's deviceId
                 // is ctor-fixed, so hot-swap it like the LED pipeline does.
-                if (_itmDisplay != null && _itmDeviceId != displayCaps.ItmDeviceId)
+                if (_itmDisplay != null && _itmDeviceId != caps.ItmDeviceId)
                 {
                     _itmDisplay.Stop();
                     _itmDisplay = null;
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                         "]: ITM display id changed (" + _itmDeviceId + " → " +
-                        displayCaps.ItmDeviceId + ") — rebuilding ITM driver");
+                        caps.ItmDeviceId + ") — rebuilding ITM driver");
                 }
                 if (_itmDisplay == null)
                 {
-                    _itmDeviceId = displayCaps.ItmDeviceId;
+                    _itmDeviceId = caps.ItmDeviceId;
                     _itmDisplay = new ItmDisplayDriver(plugin.Itm,
                         log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
                         deviceId: _itmDeviceId);
@@ -633,16 +653,22 @@ namespace FanaBridge.Devices
                 // while FanaBridge keeps driving the LEDs.
                 UpdateSegmentDisplay(plugin, data, displayTest);
             }
+            else
+            {
+                // No display to drive any more (the attachment's profile is gone):
+                // blank what this device last showed and hand the display off,
+                // exactly as switching to mode "None" does.
+                HandOffSegmentDisplay(plugin, displayTest);
+            }
 
             // ── LEDs ─────────────────────────────────────────────────────
             // Hot-swap the driver if the active profile changed (e.g. user
-            // picked a different override in the settings dropdown).
-            // Use the per-descriptor resolution, not the global caps — a
+            // picked a different override in the settings dropdown, or deleted
+            // the attachment's last profile, which swaps to a driver with no
+            // LEDs). Use the per-descriptor resolution, not the global caps — a
             // non-matching device resolves to its own registration profile
             // and so never hot-swaps to the connected wheel's profile.
-            var currentCaps = plugin.ResolveCapsFor(_config);
-            if (currentCaps?.Profile != null)
-                _ledHost.HotSwapIfNeeded(currentCaps);
+            _ledHost.HotSwapIfNeeded(caps);
 
             // Settings the module could not fully take leave it partially
             // populated, so driving LEDs from it would show something the user
@@ -727,17 +753,30 @@ namespace FanaBridge.Devices
                     _displayManager?.Update(data);
                 _legacyBlanked = false;
             }
-            else if (_displayManager != null && !_legacyBlanked && !displayTest)
+            else
             {
-                // Switched to None — blank once. Only latch when the blanking write
-                // was accepted, so a transient transport failure gets retried instead
-                // of leaving the display frozen on its last value.
-                _legacyBlanked = _displayManager.Clear();
-                // The accepted blank hands the display off: release ownership so
-                // shutdown cleanup won't blank another application's content later.
-                if (_legacyBlanked)
-                    plugin.Display?.Release();
+                HandOffSegmentDisplay(plugin, displayTest);
             }
+        }
+
+        /// <summary>
+        /// Blanks the 7-segment display once and releases it, so FanaBridge stops
+        /// writing it and shutdown cleanup leaves it alone. Used on the switch to
+        /// mode "None" and when the attachment no longer has a display to drive.
+        /// </summary>
+        private void HandOffSegmentDisplay(FanatecPlugin plugin, bool displayTest)
+        {
+            if (_displayManager == null || _legacyBlanked || displayTest)
+                return;
+
+            // Only latch when the blanking write was accepted, so a transient
+            // transport failure gets retried instead of leaving the display frozen
+            // on its last value.
+            _legacyBlanked = _displayManager.Clear();
+            // The accepted blank hands the display off: release ownership so
+            // shutdown cleanup won't blank another application's content later.
+            if (_legacyBlanked)
+                plugin.Display?.Release();
         }
 
         public override void End()
