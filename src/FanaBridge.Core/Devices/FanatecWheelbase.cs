@@ -116,6 +116,19 @@ namespace FanaBridge.Core.Devices
         private readonly object _publishLock = new object();
         private volatile AttachmentSnapshot _attachment = AttachmentSnapshot.Empty;
 
+        // Bumped under _publishLock at the start of every RefreshCapabilities, which
+        // callers make after the profile store or the overrides change. A resolution
+        // that started before a bump may have read the old profiles, so neither an
+        // identity commit nor a refresh publishes one: each re-reads this under the
+        // lock and resolves again if it moved.
+        private volatile int _capabilitySourceVersion;
+
+        /// <summary>
+        /// Test hook: runs on the resolving thread after an attachment's profile has
+        /// been read from the store and before the result is published.
+        /// </summary>
+        internal Action<AttachmentSnapshot> CapabilitiesResolvedForTest;
+
         // ── Connection state ─────────────────────────────────────────────
 
         /// <summary>
@@ -273,21 +286,6 @@ namespace FanaBridge.Core.Devices
         /// identity commit path (the drain/tick thread).
         /// </summary>
         public int WheelChangeCount { get; private set; }
-
-        private void RaiseWheelChanged(bool identityChanged)
-        {
-            if (identityChanged)
-            {
-                WheelChangeCount++;
-                // An identity change invalidates any buffered ITM subscription reports: they
-                // were pushed by the PREVIOUS attachment, and feeding them to the restarted
-                // ITM lifecycle could falsely confirm the new wheel's bring-up against the
-                // old wheel's page.
-                lock (_itmLock)
-                    _itmReports.Clear();
-            }
-            WheelChanged?.Invoke(this);
-        }
 
         // ── Configuration ────────────────────────────────────────────────
 
@@ -630,8 +628,7 @@ namespace FanaBridge.Core.Devices
                 identityStable: identityStable,
                 capabilities: WheelCapabilities.None);
 
-            PublishNewAttachment(identity, ResolveCapabilities(identity, "Wheel changed"));
-            RaiseWheelChanged(identityChanged: true);
+            CommitAttachment(identity, "Wheel changed");
         }
 
         // Commit a fixed SRM converter identity from the DE FA channel (a one-shot — no settler). Rim +
@@ -655,20 +652,56 @@ namespace FanaBridge.Core.Devices
                 identityStable: true,                        // fixed identity — always settled
                 capabilities: WheelCapabilities.None);
 
-            PublishNewAttachment(identity, ResolveCapabilities(identity, "SRM converter identified"));
-            RaiseWheelChanged(identityChanged: true);
+            CommitAttachment(identity, "SRM converter identified");
             Log.Info(string.Format(
                 "FanatecWheelbase: SRM Conversion Kit — Wheel={0} (id 0x{1:X2}), Module={2}, KitFw={3}",
                 identity.WheelCode ?? "unknown", wire, identity.ModuleCode ?? "(none)", identity.SrmKitFirmware ?? "?"));
         }
 
-        // Publishes an identity as the next attachment generation. A capability
-        // refresh still resolving for the previous generation sees the bump and
-        // discards its result (see RefreshCapabilities).
-        private void PublishNewAttachment(AttachmentSnapshot identity, WheelCapabilities capabilities)
+        // Attachment changes are rate-limited by the settle window and profile
+        // changes by the user, so a resolution that loses this many times in a row
+        // is not going to win; stop rather than spin.
+        private const int ResolveAttempts = 3;
+
+        // Publishes a committed identity, with its capabilities, as the next
+        // attachment generation, then raises WheelChanged. A capability refresh
+        // still resolving for the previous generation sees the bump and discards
+        // its result (see RefreshCapabilities).
+        private void CommitAttachment(AttachmentSnapshot identity, string logContext)
         {
-            lock (_publishLock)
-                _attachment = identity.AsGeneration(_attachment.Generation + 1, capabilities);
+            for (int attempt = 1; ; attempt++)
+            {
+                int version = _capabilitySourceVersion;
+                var capabilities = ResolveCapabilities(identity, logContext);
+
+                lock (_publishLock)
+                {
+                    // The profiles changed while resolving, so the result may describe
+                    // a profile that is gone: resolve again, unless that keeps
+                    // happening. The identity has to be published either way.
+                    bool stale = version != _capabilitySourceVersion;
+                    if (!stale || attempt >= ResolveAttempts)
+                    {
+                        if (stale)
+                            Log.Warn("FanatecWheelbase: " + logContext + " — the profiles kept changing " +
+                                     "while resolving; published the result of attempt " + attempt);
+                        _attachment = identity.AsGeneration(_attachment.Generation + 1, capabilities);
+                        break;
+                    }
+                }
+
+                Log.Info("FanatecWheelbase: " + logContext + " — the profiles changed while resolving; " +
+                         "resolving again");
+            }
+
+            WheelChangeCount++;
+            // An identity change invalidates any buffered ITM subscription reports: they
+            // were pushed by the PREVIOUS attachment, and feeding them to the restarted
+            // ITM lifecycle could falsely confirm the new wheel's bring-up against the
+            // old wheel's page.
+            lock (_itmLock)
+                _itmReports.Clear();
+            WheelChanged?.Invoke(this);
         }
 
         private void PublishIdentityStable(bool identityStable)
@@ -676,11 +709,6 @@ namespace FanaBridge.Core.Devices
             lock (_publishLock)
                 _attachment = _attachment.WithIdentityStable(identityStable);
         }
-
-        // Attachment changes are rate-limited by the settle window, so a refresh
-        // that loses to a new attachment this many times in a row is not going
-        // to win; give up rather than spin.
-        private const int RefreshAttempts = 3;
 
         /// <summary>
         /// Forces a re-evaluation of capabilities against the current profile store.
@@ -690,15 +718,38 @@ namespace FanaBridge.Core.Devices
         /// <remarks>
         /// Runs on the caller's thread (the settings UI) while identity commits run
         /// on the frame thread. The result is published only if the attachment it
-        /// was resolved for is still the current one. Otherwise it is discarded and
-        /// the current attachment is resolved again, because that attachment's own
-        /// capabilities may have been resolved before the store changed.
+        /// was resolved for is still the current one and no later refresh has
+        /// started. Otherwise it is discarded and the current attachment is
+        /// resolved again, because that attachment's own capabilities may have
+        /// been resolved before the store changed.
+        ///
+        /// Every call first marks the profiles as changed, even with nothing
+        /// attached, so an identity commit resolving at the same time resolves
+        /// again rather than publishing a profile that was just deleted.
         /// </remarks>
         public void RefreshCapabilities()
         {
-            for (int attempt = 0; attempt < RefreshAttempts; attempt++)
+            AttachmentSnapshot resolvedFor;
+            int version;
+            // Together under the lock: a commit that publishes before this either
+            // is the attachment read here or sees the bump and resolves again.
+            lock (_publishLock)
             {
-                var resolvedFor = _attachment;
+                version = ++_capabilitySourceVersion;
+                resolvedFor = _attachment;
+            }
+
+            for (int attempt = 0; attempt < ResolveAttempts; attempt++)
+            {
+                if (attempt > 0)
+                {
+                    lock (_publishLock)
+                    {
+                        version = _capabilitySourceVersion;
+                        resolvedFor = _attachment;
+                    }
+                }
+
                 if (!resolvedFor.WheelDetected)
                     return;
 
@@ -708,7 +759,7 @@ namespace FanaBridge.Core.Devices
                 lock (_publishLock)
                 {
                     var current = _attachment;
-                    if (current.Generation == resolvedFor.Generation)
+                    if (current.Generation == resolvedFor.Generation && version == _capabilitySourceVersion)
                     {
                         // Built on the current snapshot rather than the one resolved
                         // for: the settling flag may have moved since.
@@ -719,16 +770,16 @@ namespace FanaBridge.Core.Devices
 
                 if (published)
                 {
-                    RaiseWheelChanged(identityChanged: false);   // same attachment — profiles re-resolved only
+                    WheelChanged?.Invoke(this);   // same attachment — profiles re-resolved only
                     return;
                 }
 
-                Log.Info("FanatecWheelbase: RefreshCapabilities — the attachment changed while resolving; " +
-                         "discarded the result for the previous attachment");
+                Log.Info("FanatecWheelbase: RefreshCapabilities — the attachment or the profiles changed " +
+                         "while resolving; discarded the result");
             }
 
-            Log.Warn("FanatecWheelbase: RefreshCapabilities — the attachment kept changing; gave up after " +
-                     RefreshAttempts + " attempts");
+            Log.Warn("FanatecWheelbase: RefreshCapabilities — the attachment or the profiles kept changing; " +
+                     "gave up after " + ResolveAttempts + " attempts");
         }
 
         /// <summary>
@@ -786,6 +837,7 @@ namespace FanaBridge.Core.Devices
                 overrideId ?? "(auto)",
                 capabilities.Name ?? "(none)"));
 
+            CapabilitiesResolvedForTest?.Invoke(identity);
             return capabilities;
         }
 
@@ -803,7 +855,8 @@ namespace FanaBridge.Core.Devices
             ProductName = null;
             // A new (empty) generation, so a refresh resolving for the attachment
             // that was connected can't publish into whatever connects next.
-            PublishNewAttachment(AttachmentSnapshot.Empty, WheelCapabilities.None);
+            lock (_publishLock)
+                _attachment = AttachmentSnapshot.Empty.AsGeneration(_attachment.Generation + 1, WheelCapabilities.None);
             _pendingSrm = null;
             LastRawReport = null;
             // LastConnectError is intentionally left intact — it reflects the most

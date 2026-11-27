@@ -276,6 +276,125 @@ namespace FanaBridge.Tests.Plugin.Devices
             Assert.Same(config.Capabilities, plugin.ResolveCapsFor(config));
         }
 
+        // ── A profile change racing a publish ─────────────────────────────
+
+        // Pauses the first resolution for the given wheel after it has read the
+        // profile store and before it publishes, on whichever thread resolves.
+        private static void PauseResolution(
+            FanatecWheelbase wheelbase, string wheelCode, ManualResetEventSlim resolved, ManualResetEventSlim release)
+        {
+            int armed = 1;
+            wheelbase.CapabilitiesResolvedForTest = identity =>
+            {
+                if (identity.WheelCode == wheelCode && Interlocked.Exchange(ref armed, 0) == 1)
+                {
+                    resolved.Set();
+                    release.Wait(TimeSpan.FromSeconds(10));
+                }
+            };
+        }
+
+        [Fact]
+        public async Task AProfileDeletedWhileAWheelCommits_IsNotPublishedForIt()
+        {
+            using var profiles = new TempUserProfiles();
+            WriteLastProfile(profiles);
+            profiles.Reload();
+            var config = Assert.Single(FanatecDevicesRegistry.BuildConfigs(), c => c.WheelCode == "CSSWUH");
+
+            var plugin = AttachedPlugin(WheelFrame("PSWBMW"), out var wheelbase, out var transport, out var clock);
+
+            using var resolved = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            PauseResolution(wheelbase, "CSSWUH", resolved, release);
+
+            // The hub settles on the frame thread, and its commit resolves the
+            // profile that is about to be deleted...
+            transport.Identity.Enqueue(BareHubFrame("CSSWUH"));
+            clock.T += 10;
+            wheelbase.UpdateIdentity();
+            clock.T += 250;
+            var commit = Task.Run(() => wheelbase.UpdateIdentity());
+            Assert.True(resolved.Wait(TimeSpan.FromSeconds(10)));
+
+            // ...while the settings page deletes it. Its refresh still sees the
+            // outgoing wheel, so on its own it can't correct the commit.
+            Assert.True(WheelProfileStore.DeleteUserProfile(LastProfileId));
+            wheelbase.RefreshCapabilities();
+
+            release.Set();
+            await Finished(commit);
+            Assert.True(await commit);
+
+            var attachment = wheelbase.Attachment;
+            Assert.Equal("CSSWUH", attachment.WheelCode);
+            Assert.Null(attachment.Capabilities.Profile);
+            Assert.Null(plugin.ResolveCapsFor(config).Profile);
+        }
+
+        [Fact]
+        public async Task AProfileDeletedWhileTheBaseHasNoWheel_IsNotPublishedForTheNextOne()
+        {
+            // With nothing attached a refresh has nothing to resolve, so only the
+            // commit can notice that the profiles changed under it.
+            using var profiles = new TempUserProfiles();
+            WriteLastProfile(profiles);
+            profiles.Reload();
+
+            var plugin = AttachedPlugin(Ff08(0x0C, 0x00), out var wheelbase, out var transport, out var clock);
+            Assert.False(wheelbase.Attachment.WheelDetected);
+
+            using var resolved = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            PauseResolution(wheelbase, "CSSWUH", resolved, release);
+
+            transport.Identity.Enqueue(BareHubFrame("CSSWUH"));
+            clock.T += 10;
+            wheelbase.UpdateIdentity();
+            clock.T += 250;
+            var commit = Task.Run(() => wheelbase.UpdateIdentity());
+            Assert.True(resolved.Wait(TimeSpan.FromSeconds(10)));
+
+            Assert.True(WheelProfileStore.DeleteUserProfile(LastProfileId));
+            wheelbase.RefreshCapabilities();
+
+            release.Set();
+            await Finished(commit);
+
+            Assert.Equal("CSSWUH", wheelbase.Attachment.WheelCode);
+            Assert.Null(wheelbase.Attachment.Capabilities.Profile);
+        }
+
+        [Fact]
+        public async Task TwoRefreshes_TheOlderResolutionDoesNotOverwriteTheNewer()
+        {
+            using var profiles = new TempUserProfiles();
+            WriteLastProfile(profiles);
+            profiles.Reload();
+
+            var plugin = AttachedPlugin(BareHubFrame("CSSWUH"), out var wheelbase, out _, out _);
+            Assert.Equal(LastProfileId, wheelbase.Attachment.Capabilities.Profile?.Id);
+
+            using var resolved = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            PauseResolution(wheelbase, "CSSWUH", resolved, release);
+
+            // A refresh (an unrelated settings save) resolves the profile...
+            var older = Task.Run(() => wheelbase.RefreshCapabilities());
+            Assert.True(resolved.Wait(TimeSpan.FromSeconds(10)));
+
+            // ...then the profile is deleted and refreshed again, for the same
+            // attachment, before the first one publishes.
+            Assert.True(WheelProfileStore.DeleteUserProfile(LastProfileId));
+            wheelbase.RefreshCapabilities();
+            Assert.Null(wheelbase.Attachment.Capabilities.Profile);
+
+            release.Set();
+            await Finished(older);
+
+            Assert.Null(wheelbase.Attachment.Capabilities.Profile);
+        }
+
         // ── LED driver hot-swap ───────────────────────────────────────────
 
         [Fact]
