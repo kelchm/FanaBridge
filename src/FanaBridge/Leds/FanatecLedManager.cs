@@ -160,12 +160,10 @@ namespace FanaBridge.Leds
         /// If the active profile changed, tears down the current driver so
         /// the base class recreates it via <see cref="GetDriver"/> on the
         /// next frame.  Safe to call every frame — no-ops when unchanged.
-        /// The profile going away (no profile resolves any more) is a change
-        /// too: the rebuilt driver has no LEDs, so output stops.
         /// </summary>
         public void HotSwapIfNeeded(WheelCapabilities currentCaps)
         {
-            if (currentCaps == null || currentCaps.Profile == _lastObservedProfile)
+            if (currentCaps?.Profile == null || currentCaps.Profile == _lastObservedProfile)
                 return;
 
             _lastObservedProfile = currentCaps.Profile;

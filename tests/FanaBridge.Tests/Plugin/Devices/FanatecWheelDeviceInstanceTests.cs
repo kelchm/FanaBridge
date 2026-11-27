@@ -717,31 +717,6 @@ namespace FanaBridge.Tests.Plugin.Devices
             Assert.Same(user, detached.ResolveCapsFor(config).Profile);
         }
 
-        [Fact]
-        public void DeletingAnAttachmentsLastProfile_StopsTheMatchingDevicesOutput()
-        {
-            // A hub has no built-in profile, so a user LED profile is its only
-            // one. Once it is deleted, the attached device must stop driving it
-            // instead of falling back to the profile it was registered with.
-            using var profiles = new TempUserProfiles();
-            using var settings = NoPersistedSettings();
-            profiles.Write("fb81-hub.json", "FB81_UH", "CSSWUH", revLeds: 3);
-            profiles.Reload();
-            var config = Assert.Single(FanatecDevicesRegistry.BuildConfigs(),
-                c => c.DeviceTypeId == "Fanatec_CSSWUH");
-            var plugin = PluginWithWire(0x04, out var wheelbase);   // CSSWUH, no module
-            Assert.Equal("FB81_UH", plugin.ResolveCapsFor(config).Profile?.Id);
-
-            Assert.True(WheelProfileStore.DeleteUserProfile("FB81_UH"));
-            wheelbase.RefreshCapabilities();
-
-            var caps = plugin.ResolveCapsFor(config);
-            Assert.Null(caps.Profile);
-            Assert.Equal(0, caps.AllLedCount);
-            // The registered device keeps its configuration (SimHub keeps its settings).
-            Assert.Equal(3, config.Capabilities.AllLedCount);
-        }
-
         // Points the registration-time settings reader at a file that doesn't
         // exist, so no persisted override from the machine leaks into a test.
         private static IDisposable NoPersistedSettings()
@@ -755,25 +730,6 @@ namespace FanaBridge.Tests.Plugin.Devices
         {
             public void Dispose() =>
                 PersistedPluginSettings.SettingsPathResolver = PersistedPluginSettings.DefaultSettingsPath;
-        }
-
-        // A plugin generation whose wheelbase reports the given attachment wire
-        // byte (a hub here), with no module.
-        private static FanatecPlugin PluginWithWire(byte wire, out FanatecWheelbase wheelbase)
-        {
-            var t = new FakeTransport();
-            var clock = new Clock();
-            wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);
-            Assert.True(wheelbase.AutoConnect());
-            t.Identity.Enqueue(Ff08(0x0C, wire));
-            clock.T += 10;
-            wheelbase.UpdateIdentity();
-            clock.T += 250;
-            Assert.True(wheelbase.UpdateIdentity());
-
-            var plugin = new FanatecPlugin();
-            plugin.InstallWheelbaseForTest(wheelbase, withDisplayEncoder: false);
-            return plugin;
         }
 
         [Fact]
