@@ -753,7 +753,7 @@ namespace FanaBridge.UI.Settings
             wheelbase.RefreshCapabilities();
 
             // Show restart notice if the device name changed from what SimHub registered
-            UpdateRestartNotice();
+            UpdateRestartNotice(prompt: true);
         }
 
         // What the restart notice last evaluated against, so the page's
@@ -761,15 +761,20 @@ namespace FanaBridge.UI.Settings
         private WheelCapabilities _noticeCaps;
         private WheelCapabilities _noticeRegistered;
 
+        // The device type the "new device" notice is waiting on, while it shows.
+        // Opening SimHub's Add device list (9.13+) loads it without a restart,
+        // and nothing else raises an event when that happens.
+        private string _noticeAwaitingDeviceTypeId;
+
         /// <summary>
         /// Shows the restart notice when the attached device's SimHub device
         /// can't reflect the active profile without a restart: its tabs or its
         /// name are stale, or SimHub hasn't loaded a device for the profile yet.
-        /// <paramref name="prompt"/> also offers the restart dialog; it's set
+        /// <paramref name="prompt"/> also offers the restart dialog. Pass it
         /// only after the user changed or created a profile, never for a
         /// passive refresh.
         /// </summary>
-        private void UpdateRestartNotice(bool prompt = true)
+        private void UpdateRestartNotice(bool prompt = false)
         {
             var caps = Plugin?.CurrentCapabilities;
 
@@ -778,6 +783,7 @@ namespace FanaBridge.UI.Settings
             var registered = Plugin?.GetAttachedDeviceRegistrationCaps();
             _noticeCaps = caps;
             _noticeRegistered = registered;
+            _noticeAwaitingDeviceTypeId = null;
 
             if (caps?.Name == null)
             {
@@ -791,17 +797,19 @@ namespace FanaBridge.UI.Settings
                 // this profile's device to add yet, e.g. the first profile for
                 // a wheel, made in the wizard this session. Otherwise the
                 // add-device prompt covers it.
-                if (!NewDeviceNeedsRestart())
+                string awaiting = DeviceAwaitingRestart();
+                if (awaiting == null)
                 {
                     txtRestartNotice.Visibility = Visibility.Collapsed;
                     return;
                 }
 
+                _noticeAwaitingDeviceTypeId = awaiting;
                 ShowRestartNotice("Restart SimHub to make a device for this profile available to add.");
                 if (prompt && !_restartPromptDismissed)
                     PromptRestart(
                         "This profile needs a new SimHub device",
-                        "SimHub hasn't loaded it yet, so it can't be added until SimHub restarts.");
+                        "SimHub hasn't loaded it yet. Restarting SimHub makes it available to add.");
                 return;
             }
 
@@ -843,30 +851,42 @@ namespace FanaBridge.UI.Settings
                 || !ReferenceEquals(Plugin.GetAttachedDeviceRegistrationCaps(), _noticeRegistered))
             {
                 UpdateRestartNotice(prompt: false);
+                return;
+            }
+
+            // The awaited device became addable without a restart: hand over to
+            // the add-device prompt.
+            if (_noticeAwaitingDeviceTypeId != null)
+            {
+                var devices = SimHubDevicesGateway.Resolve(Plugin.PluginManager);
+                if (devices != null && SimHubDevicesGateway.HasDescriptor(devices, _noticeAwaitingDeviceTypeId))
+                    UpdateStatus();
             }
         }
 
         /// <summary>
-        /// True when the attached wheel or hub + module has a registered device
-        /// config that SimHub doesn't have a descriptor for yet, so its device
-        /// can't be added until SimHub restarts.
+        /// The DeviceTypeID of the attached wheel or hub + module's registered
+        /// device config when SimHub doesn't have a descriptor for it yet, so it
+        /// can't be added until SimHub reloads its device list; otherwise null.
         /// </summary>
-        private bool NewDeviceNeedsRestart()
+        private string DeviceAwaitingRestart()
         {
             var wheelbase = Plugin?.Wheelbase;
             if (wheelbase == null || !Plugin.IsDeviceConnected || !wheelbase.IdentityStable
                 || !wheelbase.WheelDetected)
-                return false;
+                return null;
 
             var devices = SimHubDevicesGateway.Resolve(Plugin.PluginManager);
             if (devices == null)
-                return false;
+                return null;
 
             var config = FanatecDevicesRegistry.FindConfigForAttachment(
                 wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
 
             return config?.Profile != null && !config.Profile.IsBare
-                && !SimHubDevicesGateway.HasDescriptor(devices, config.DeviceTypeId);
+                && !SimHubDevicesGateway.HasDescriptor(devices, config.DeviceTypeId)
+                ? config.DeviceTypeId
+                : null;
         }
 
         private void ShowRestartNotice(string text)
@@ -949,7 +969,7 @@ namespace FanaBridge.UI.Settings
             // Re-resolve and update UI
             Plugin.SaveSettings();
             wheelbase.RefreshCapabilities();
-            UpdateRestartNotice();
+            UpdateRestartNotice(prompt: true);
             UpdateStatus();
         }
 
@@ -1124,7 +1144,8 @@ namespace FanaBridge.UI.Settings
             // profile shows up immediately in the picker. Offer the restart
             // dialog only if the wizard saved something.
             UpdateStatus();
-            UpdateRestartNotice(prompt: saved);
+            if (saved)
+                UpdateRestartNotice(prompt: true);
         }
 
         // =====================================================================

@@ -98,9 +98,10 @@ namespace FanaBridge.Core.Devices.Profiles
         /// Returns a human-readable reason string, or null if no restart is needed.
         /// </summary>
         /// <remarks>
-        /// Output switches live either way: the device instance resolves its
+        /// Most output switches live: the device instance resolves its
         /// capabilities override-aware each frame and hot-swaps the LED and ITM
-        /// drivers. What doesn't switch is the device's tabs. SimHub builds the
+        /// drivers. A device registered without LEDs can't start driving them,
+        /// though, and the device's tabs never switch. SimHub builds the
         /// LED editor (sized from the LED counts), the Screen tab (shown for a
         /// display, with the controls and page catalog for its type and ITM
         /// device) and the Tuning tab (shown for encoders) once per device, and
