@@ -14,7 +14,7 @@ namespace FanaBridge.ArtifactSmoke
     /// ILRepack output in this process, reaching it only through reflection, and
     /// checks what the merge can break but the unit suite (which runs against
     /// the separate development assemblies) cannot see: the plugin entry type,
-    /// the embedded wheel profiles, the BAML resource keys, and WPF construction
+    /// the embedded wheel profiles, the WPF resource keys, and WPF construction
     /// of the plugin's controls. Exit code is the number of failed checks.
     ///
     /// Usage: FanaBridge.ArtifactSmoke.exe &lt;merged FanaBridge.dll&gt; [SimHub dir]
@@ -44,6 +44,12 @@ namespace FanaBridge.ArtifactSmoke
                 Console.Error.WriteLine("Merged artifact not found. Build with -p:MergePlugin=true first.");
                 return 2;
             }
+            if (string.IsNullOrWhiteSpace(_simHubDir) || !File.Exists(Path.Combine(_simHubDir, "SimHub.Plugins.dll")))
+            {
+                Console.Error.WriteLine("SimHub assemblies not found in '" + _simHubDir +
+                                        "'. Pass the SimHub install directory as the second argument.");
+                return 2;
+            }
 
             AppDomain.CurrentDomain.AssemblyResolve += Resolve;
 
@@ -52,8 +58,8 @@ namespace FanaBridge.ArtifactSmoke
             {
                 Check("Plugin entry type", CheckPluginEntry);
                 Check("Built-in wheel profiles", CheckProfiles);
-                Check("BAML resource keys", CheckBaml);
-                Check("WPF construction: SettingsControl", () => Construct("FanaBridge.UI.Settings.SettingsControl"));
+                Check("WPF resource keys", CheckWpfResources);
+                Check("WPF construction: SettingsControl", ConstructSettingsControl);
                 Check("WPF construction: ScreenSettingsPanel", () => Construct("FanaBridge.UI.Settings.ScreenSettingsPanel"));
                 Check("WPF construction: TuningSettingsPanel", () => Construct("FanaBridge.UI.Settings.TuningSettingsPanel"));
                 Check("WPF construction: LedColorLimitationNotice", ConstructLedNotice);
@@ -89,12 +95,14 @@ namespace FanaBridge.ArtifactSmoke
             // Load a private copy from a directory holding nothing else, so no
             // development assembly can be probed next to it, and the profile
             // store's user directory (created beside the DLL) starts empty.
+            // Read the input first: it may be the copy a previous run left there.
+            byte[] image = File.ReadAllBytes(merged);
             string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "artifact-under-test");
             if (Directory.Exists(dir))
                 Directory.Delete(dir, recursive: true);
             Directory.CreateDirectory(dir);
             string copy = Path.Combine(dir, Path.GetFileName(merged));
-            File.Copy(merged, copy);
+            File.WriteAllBytes(copy, image);
 
             var asm = Assembly.LoadFrom(copy);
             if (asm.GetName().Name != "FanaBridge")
@@ -176,13 +184,17 @@ namespace FanaBridge.ArtifactSmoke
             return loaded.Count + " built-in profiles loaded";
         }
 
-        private static string CheckBaml()
+        private static string CheckWpfResources()
         {
-            var expected = MetadataList("ExpectedXaml")
-                .Select(x => Path.ChangeExtension(x.Replace('\\', '/'), ".baml").ToLowerInvariant())
-                .ToList();
-            if (expected.Count == 0)
+            var xaml = MetadataList("ExpectedXaml");
+            if (xaml.Count == 0)
                 throw new SmokeFailure("no expected XAML files were embedded in this harness at build time");
+
+            // Each compiled page as BAML, plus each <Resource> item such as the
+            // plugin icon, under WPF's resource id for its path.
+            var expected = xaml.Select(x => ResourceId(Path.ChangeExtension(x, ".baml")))
+                .Concat(MetadataList("ExpectedWpfResources").Select(ResourceId))
+                .ToList();
 
             const string container = "FanaBridge.g.resources";
             var keys = new HashSet<string>(StringComparer.Ordinal);
@@ -197,9 +209,14 @@ namespace FanaBridge.ArtifactSmoke
             var missing = expected.Where(k => !keys.Contains(k)).ToList();
             if (missing.Count > 0)
                 throw new SmokeFailure("missing from " + container + ": " + string.Join(", ", missing) +
-                                       " (present: " + string.Join(", ", keys.Where(k => k.EndsWith(".baml"))) + ")");
-            return expected.Count + " BAML keys present";
+                                       " (present: " + string.Join(", ", keys) + ")");
+            return expected.Count + " resource keys present";
         }
+
+        // WPF's resource id for a project-relative path: forward slashes,
+        // URI-escaped (a space becomes %20), lower-cased.
+        private static string ResourceId(string relativePath) =>
+            Uri.EscapeUriString(relativePath.Replace('\\', '/')).ToLowerInvariant();
 
         private static string Construct(string typeName, params object[] ctorArgs)
         {
@@ -211,23 +228,31 @@ namespace FanaBridge.ArtifactSmoke
         private static string ConstructLedNotice()
         {
             Type caps = RequireType("FanaBridge.Core.Devices.Profiles.WheelCapabilities");
-            object none = caps.GetProperty("None", BindingFlags.Public | BindingFlags.Static)!.GetValue(null);
+            object none = (caps.GetProperty("None", BindingFlags.Public | BindingFlags.Static)
+                           ?? throw new SmokeFailure(caps.FullName + ".None is missing")).GetValue(null);
             var resolve = Expression.Lambda(
                 typeof(Func<>).MakeGenericType(caps), Expression.Constant(none, caps)).Compile();
             return Construct("FanaBridge.UI.Devices.LedColorLimitationNotice", resolve);
         }
 
-        private static string ConstructWizard()
+        private static string ConstructSettingsControl() =>
+            // The constructor SimHub's settings page uses (GetWPFSettingsControl).
+            Construct("FanaBridge.UI.Settings.SettingsControl", PluginWithWheelbase());
+
+        private static string ConstructWizard() =>
+            Construct("FanaBridge.UI.Wizard.WheelProfileWizardDialog", PluginWithWheelbase());
+
+        // A plugin with an unconnected wheelbase. The wizard reads the wheel
+        // identity from it, and it only exists after Init, so install one the
+        // same way the unit suite does.
+        private static object PluginWithWheelbase()
         {
-            // The wizard reads the wheel identity from the plugin's wheelbase,
-            // which only exists after Init; install an unconnected one the same
-            // way the unit suite does.
             Type pluginType = RequireType("FanaBridge.FanatecPlugin");
             object plugin = Activator.CreateInstance(pluginType);
             object wheelbase = Activator.CreateInstance(RequireType("FanaBridge.Core.Devices.FanatecWheelbase"));
-            pluginType.GetMethod("InstallWheelbaseForTest", BindingFlags.NonPublic | BindingFlags.Instance)!
+            RequireMethod(pluginType, "InstallWheelbaseForTest", BindingFlags.NonPublic | BindingFlags.Instance)
                 .Invoke(plugin, new[] { wheelbase, false });
-            return Construct("FanaBridge.UI.Wizard.WheelProfileWizardDialog", plugin);
+            return plugin;
         }
 
         // ── Plumbing ─────────────────────────────────────────────────────
@@ -264,7 +289,7 @@ namespace FanaBridge.ArtifactSmoke
             // resource manager probing for localized resources; none ship.
             if (name.EndsWith(".resources", StringComparison.OrdinalIgnoreCase))
                 return null;
-            if (name == "FanaBridge")
+            if (string.Equals(name, "FanaBridge", StringComparison.OrdinalIgnoreCase))
                 return _plugin;
             if (name.StartsWith("FanaBridge.", StringComparison.OrdinalIgnoreCase))
             {
@@ -287,12 +312,19 @@ namespace FanaBridge.ArtifactSmoke
             _plugin!.GetType(fullName, throwOnError: false)
             ?? throw new SmokeFailure(fullName + " is not in the merged assembly");
 
+        private static MethodInfo RequireMethod(Type type, string name, BindingFlags flags) =>
+            type.GetMethod(name, flags)
+            ?? throw new SmokeFailure(type.FullName + "." + name + " is missing; this check calls it by name");
+
         private static object? Invoke(Type type, string method) =>
-            type.GetMethod(method, BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)!
+            (type.GetMethod(method, BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)
+             ?? throw new SmokeFailure(type.FullName + "." + method + "() is missing; this check calls it by name"))
                 .Invoke(null, null);
 
         private static object? Get(object target, string property) =>
-            target.GetType().GetProperty(property)!.GetValue(target);
+            (target.GetType().GetProperty(property)
+             ?? throw new SmokeFailure(target.GetType().FullName + "." + property + " is missing; this check reads it by name"))
+                .GetValue(target);
 
         private static string Metadata(string key) =>
             typeof(Program).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()

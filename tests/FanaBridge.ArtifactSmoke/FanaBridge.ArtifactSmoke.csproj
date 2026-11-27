@@ -29,6 +29,8 @@
                      Exclude="..\..\src\FanaBridge.Core\Resources\Profiles\*.schema.json" />
     <ExpectedXaml Include="..\..\src\FanaBridge\**\*.xaml"
                   Exclude="..\..\src\FanaBridge\bin\**;..\..\src\FanaBridge\obj\**" />
+    <!-- FanaBridge.csproj's <Resource> items, loaded by pack URI (the plugin icon). -->
+    <ExpectedWpfResource Include="..\..\src\FanaBridge\Resources\Images\*" />
   </ItemGroup>
 
   <Target Name="EmbedArtifactExpectations" BeforeTargets="GetAssemblyAttributes">
@@ -40,6 +42,10 @@
       <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
         <_Parameter1>ExpectedXaml</_Parameter1>
         <_Parameter2>@(ExpectedXaml->'%(RecursiveDir)%(Filename)%(Extension)')</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>ExpectedWpfResources</_Parameter1>
+        <_Parameter2>@(ExpectedWpfResource->'Resources\Images\%(Filename)%(Extension)')</_Parameter2>
       </AssemblyAttribute>
       <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
         <_Parameter1>SimHubDir</_Parameter1>
