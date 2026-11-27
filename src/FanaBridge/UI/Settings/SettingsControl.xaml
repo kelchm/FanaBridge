@@ -286,7 +286,7 @@
                         <TextBlock x:Name="txtRestartNotice" Visibility="Collapsed"
                                    TextWrapping="Wrap" Margin="0,8,0,0"
                                    Foreground="#FFDDAA" FontStyle="Italic"
-                                   Text="&#x26A0;  Output has already switched. Restart SimHub to update this device's name, LED editor, and Screen and Tuning tabs." />
+                                   Text="&#x26A0;  Restart SimHub to update this device's name, LED editor, and Screen and Tuning tabs." />
                     </StackPanel>
                 </StackPanel>
             </styles:SHSection>

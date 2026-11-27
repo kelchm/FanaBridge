@@ -112,7 +112,11 @@ namespace FanaBridge.Core.Devices.Profiles
                 return null;
 
             if (RevFlagCount != registered.RevFlagCount || ButtonLedCount != registered.ButtonLedCount)
-                return "LED count changed (" + registered.AllLedCount + " → " + AllLedCount + ")";
+            {
+                return AllLedCount == registered.AllLedCount
+                    ? "LED layout changed"
+                    : "LED count changed (" + registered.AllLedCount + " → " + AllLedCount + ")";
+            }
 
             if (Display != registered.Display)
                 return "Display changed (" + DisplayLabel(registered.Display) + " → " + DisplayLabel(Display) + ")";

@@ -91,7 +91,25 @@ namespace FanaBridge.Tests.Core.Devices.Profiles
                     .ToList(),
             });
 
-            Assert.NotNull(nineRev.GetRestartReason(noLeds));
+            Assert.Equal("LED count changed (0 → 9)", nineRev.GetRestartReason(noLeds));
+        }
+
+        [Fact]
+        public void GetRestartReason_SameTotalInDifferentGroups_IsALayoutChange()
+        {
+            // SimHub sizes the LED editor by group (rev/flag and buttons), so
+            // moving an LED between groups needs a restart even when the total
+            // stays the same, and "12 → 12" would read as a false alarm.
+            WheelCapabilities Split(int rev, int buttons) => new WheelCapabilities(new WheelProfile
+            {
+                Leds = System.Linq.Enumerable.Range(0, rev)
+                    .Select(i => new LedDefinition { Channel = LedChannel.RevRgb, HwIndex = i })
+                    .Concat(System.Linq.Enumerable.Range(0, buttons)
+                        .Select(i => new LedDefinition { Channel = LedChannel.ButtonRgb, HwIndex = i, Role = LedRole.Button }))
+                    .ToList(),
+            });
+
+            Assert.Equal("LED layout changed", Split(12, 0).GetRestartReason(Split(9, 3)));
         }
     }
 }

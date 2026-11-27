@@ -281,7 +281,11 @@ namespace FanaBridge.UI.Settings
                 {
                     Interval = TimeSpan.FromSeconds(2)
                 };
-                _itmStatusTimer.Tick += (s, a) => UpdateItmStatus();
+                _itmStatusTimer.Tick += (s, a) =>
+                {
+                    UpdateItmStatus();
+                    RefreshRestartNoticeIfStale();
+                };
             }
             _itmStatusTimer.Start();
 
@@ -524,7 +528,11 @@ namespace FanaBridge.UI.Settings
             if (_promptRetryTimer == null)
             {
                 _promptRetryTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-                _promptRetryTimer.Tick += (s, e) => UpdateAddDevicePrompt();
+                _promptRetryTimer.Tick += (s, e) =>
+                {
+                    UpdateAddDevicePrompt();
+                    UpdateRestartNotice(prompt: false);
+                };
             }
 
             _promptRetryTimer.Start();
@@ -569,7 +577,11 @@ namespace FanaBridge.UI.Settings
 
         private void OnSimHubDevicesChanged(object sender, NotifyCollectionChangedEventArgs e)
         {
-            Dispatcher.BeginInvoke(new Action(UpdateAddDevicePrompt));
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                UpdateAddDevicePrompt();
+                UpdateRestartNotice(prompt: false);
+            }));
         }
 
         // =====================================================================
@@ -744,33 +756,63 @@ namespace FanaBridge.UI.Settings
             UpdateRestartNotice();
         }
 
+        // What the restart notice last evaluated against, so the page's
+        // status timer can re-run it only when either side has moved.
+        private WheelCapabilities _noticeCaps;
+        private WheelCapabilities _noticeRegistered;
+
         /// <summary>
-        /// Shows the restart notice when the active profile differs from what
-        /// the attached device's SimHub device was built from, in a way its tabs
-        /// or its name in the Devices list can't follow without a restart.
+        /// Shows the restart notice when the attached device's SimHub device
+        /// can't reflect the active profile without a restart: its tabs or its
+        /// name are stale, or SimHub hasn't loaded a device for the profile yet.
         /// <paramref name="prompt"/> also offers the restart dialog; it's set
-        /// only after the user changed profiles, never for a passive refresh.
+        /// only after the user changed or created a profile, never for a
+        /// passive refresh.
         /// </summary>
         private void UpdateRestartNotice(bool prompt = true)
         {
             var caps = Plugin?.CurrentCapabilities;
 
             // The baseline is the device instance's own registration
-            // capabilities, the ones SimHub built its tabs from. Not added, or
-            // nothing attached: there's nothing stale to restart for.
+            // capabilities, the ones SimHub built its tabs from.
             var registered = Plugin?.GetAttachedDeviceRegistrationCaps();
-            if (caps?.Name == null || registered == null)
+            _noticeCaps = caps;
+            _noticeRegistered = registered;
+
+            if (caps?.Name == null)
             {
                 txtRestartNotice.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            if (registered == null)
+            {
+                // Not added. Restarting only helps when SimHub doesn't have
+                // this profile's device to add yet, e.g. the first profile for
+                // a wheel, made in the wizard this session. Otherwise the
+                // add-device prompt covers it.
+                if (!NewDeviceNeedsRestart())
+                {
+                    txtRestartNotice.Visibility = Visibility.Collapsed;
+                    return;
+                }
+
+                ShowRestartNotice("Restart SimHub to make a device for this profile available to add.");
+                if (prompt && !_restartPromptDismissed)
+                    PromptRestart(
+                        "This profile needs a new SimHub device",
+                        "SimHub hasn't loaded it yet, so it can't be added until SimHub restarts.");
                 return;
             }
 
             string restartReason = caps.GetRestartReason(registered);
             if (restartReason != null)
             {
-                txtRestartNotice.Visibility = Visibility.Visible;
+                ShowRestartNotice("Restart SimHub to update this device's name, LED editor, and Screen and Tuning tabs.");
                 if (prompt && !_restartPromptDismissed)
-                    PromptRestart(restartReason);
+                    PromptRestart(
+                        restartReason,
+                        "SimHub builds this device's LED editor, Screen and Tuning tabs, and its name in the Devices list once, and only rebuilds them when it restarts.");
                 return;
             }
 
@@ -781,18 +823,63 @@ namespace FanaBridge.UI.Settings
             bool nameChanged = registeredName != null
                 && !string.Equals(currentName, registeredName, StringComparison.OrdinalIgnoreCase);
 
-            txtRestartNotice.Visibility = nameChanged
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+            if (nameChanged)
+                ShowRestartNotice("Restart SimHub to update this device's name in the Devices list.");
+            else
+                txtRestartNotice.Visibility = Visibility.Collapsed;
         }
 
-        private void PromptRestart(string reason)
+        /// <summary>
+        /// Re-runs the notice when the live or the registered capabilities have
+        /// changed since it last ran. Neither raises an event of its own when a
+        /// device first registers with the plugin, so the status timer calls this.
+        /// </summary>
+        private void RefreshRestartNoticeIfStale()
+        {
+            if (Plugin == null)
+                return;
+
+            if (!ReferenceEquals(Plugin.CurrentCapabilities, _noticeCaps)
+                || !ReferenceEquals(Plugin.GetAttachedDeviceRegistrationCaps(), _noticeRegistered))
+            {
+                UpdateRestartNotice(prompt: false);
+            }
+        }
+
+        /// <summary>
+        /// True when the attached wheel or hub + module has a registered device
+        /// config that SimHub doesn't have a descriptor for yet, so its device
+        /// can't be added until SimHub restarts.
+        /// </summary>
+        private bool NewDeviceNeedsRestart()
+        {
+            var wheelbase = Plugin?.Wheelbase;
+            if (wheelbase == null || !Plugin.IsDeviceConnected || !wheelbase.IdentityStable
+                || !wheelbase.WheelDetected)
+                return false;
+
+            var devices = SimHubDevicesGateway.Resolve(Plugin.PluginManager);
+            if (devices == null)
+                return false;
+
+            var config = FanatecDevicesRegistry.FindConfigForAttachment(
+                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
+
+            return config?.Profile != null && !config.Profile.IsBare
+                && !SimHubDevicesGateway.HasDescriptor(devices, config.DeviceTypeId);
+        }
+
+        private void ShowRestartNotice(string text)
+        {
+            txtRestartNotice.Text = "⚠  " + text;
+            txtRestartNotice.Visibility = Visibility.Visible;
+        }
+
+        private void PromptRestart(string reason, string detail)
         {
             var result = System.Windows.MessageBox.Show(
                 reason + ".\n\n" +
-                "Output has already switched, but SimHub only rebuilds this " +
-                "device's LED editor, Screen and Tuning tabs, and its name in " +
-                "the Devices list, when it restarts.\n\n" +
+                detail + "\n\n" +
                 "Restart SimHub now?",
                 "Restart Required",
                 System.Windows.MessageBoxButton.YesNo,
@@ -1030,13 +1117,14 @@ namespace FanaBridge.UI.Settings
 
             var dialog = new WheelProfileWizardDialog(Plugin);
             dialog.Owner = Window.GetWindow(this);
-            dialog.ShowDialog();
+            bool saved = dialog.ShowDialog() == true;
 
             // The wizard calls Reload() + RefreshCapabilities() before closing.
             // Refresh the UI now that the dialog is dismissed so the new
-            // profile shows up immediately in the picker.
+            // profile shows up immediately in the picker. Offer the restart
+            // dialog only if the wizard saved something.
             UpdateStatus();
-            UpdateRestartNotice();
+            UpdateRestartNotice(prompt: saved);
         }
 
         // =====================================================================
