@@ -100,28 +100,99 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
             Assert.Equal(2, worker.UpdateControllerListCalls); // re-enumerated again on re-add
         }
 
+        private static int CountFanaBridge(List<IVariantProvider> list)
+        {
+            int n = 0;
+            foreach (var p in list) if (p is FanaBridgeVariantProvider) n++;
+            return n;
+        }
+
+        private static void AssertInertPlaceholder(IVariantProvider p)
+        {
+            Assert.IsNotType<FanaBridgeVariantProvider>(p);
+            Assert.IsNotType<FakeStockProvider>(p);
+            Assert.Null(p.GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+        }
+
         [Fact]
-        public void EnsureRegistered_NeutralizesStaleFanaBridgeProvider_WithoutShrinkingList()
+        public void EnsureRegistered_ReusesTrailingStaleFanaBridgeSlot()
         {
             var stock = new FakeStockProvider("x");
             var (bridge, pm, helper, worker) = NewSetup(stock: stock);
-            // A previous plugin instance left its own provider behind.
-            helper.Snapshot().Add(new FanaBridgeVariantProvider());
-            Assert.Equal(2, helper.Snapshot().Count);
+            // A previous plugin instance left its own provider behind, last.
+            var stale = new FanaBridgeVariantProvider();
+            helper.Snapshot().Add(stale);
 
             Assert.True(bridge.EnsureRegistered(pm));
 
-            // The stale entry keeps its slot as an inert placeholder (the list never
-            // shrinks, #132), and exactly one FanaBridge provider remains, last.
+            // Ours takes the stale provider's slot: same length, never shorter (#132).
             List<IVariantProvider> list = helper.Snapshot();
-            Assert.Equal(3, list.Count);
+            Assert.Equal(2, list.Count);
             Assert.Same(stock, list[0]);
-            Assert.IsNotType<FanaBridgeVariantProvider>(list[1]);
-            Assert.Null(list[1].GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
-            Assert.IsType<FanaBridgeVariantProvider>(list[2]);
-            int fanaCount = 0;
-            foreach (var p in list) if (p is FanaBridgeVariantProvider) fanaCount++;
-            Assert.Equal(1, fanaCount);
+            Assert.IsType<FanaBridgeVariantProvider>(list[1]);
+            Assert.NotSame(stale, list[1]);
+            Assert.Equal(1, CountFanaBridge(list));
+        }
+
+        [Fact]
+        public void EnsureRegistered_OursNotLast_LeavesPlaceholderAndAppends()
+        {
+            var stock = new FakeStockProvider("x");
+            var other = new FakeStockProvider("y");
+            var (bridge, pm, helper, worker) = NewSetup(stock: stock);
+            Assert.True(bridge.EnsureRegistered(pm));
+            var ours = helper.Snapshot()[1];
+            helper.Snapshot().Add(other); // [stock, ours, other]
+
+            Assert.True(bridge.EnsureRegistered(pm));
+
+            // [stock, inert, other, ours]: every entry keeps its slot and ours goes last.
+            List<IVariantProvider> list = helper.Snapshot();
+            Assert.Equal(4, list.Count);
+            Assert.Same(stock, list[0]);
+            AssertInertPlaceholder(list[1]);
+            Assert.Same(other, list[2]);
+            Assert.Same(ours, list[3]);
+            Assert.Equal(1, CountFanaBridge(list));
+        }
+
+        [Fact]
+        public void EnsureRegistered_Rebuild_PublishesNewList_LeavesOldUnmodified()
+        {
+            var stock = new FakeStockProvider("x");
+            var (bridge, pm, helper, worker) = NewSetup(stock: stock);
+            List<IVariantProvider> before = helper.Snapshot();
+
+            Assert.True(bridge.EnsureRegistered(pm));
+
+            // A lookup in progress may still be walking the old list, so it must be
+            // swapped out, never mutated.
+            Assert.NotSame(before, helper.Snapshot());
+            Assert.Single(before);
+            Assert.Same(stock, before[0]);
+        }
+
+        [Fact]
+        public void RepeatedPluginReloads_DoNotGrowTheList()
+        {
+            var stock = new FakeStockProvider("x");
+            var (bridge, pm, helper, worker) = NewSetup(stock: stock);
+            Assert.True(bridge.EnsureRegistered(pm));
+
+            // Each reload: the old instance retires, and a new bridge registers against
+            // the same retained Control Mapper list.
+            for (int i = 0; i < 3; i++)
+            {
+                bridge.Retire();
+                bridge = new ControlMapperBridge();
+                Assert.True(bridge.EnsureRegistered(pm));
+
+                List<IVariantProvider> list = helper.Snapshot();
+                Assert.Equal(2, list.Count);
+                Assert.Same(stock, list[0]);
+                Assert.True(((FanaBridgeVariantProvider)list[1]).IsActive);
+                Assert.Equal(1, CountFanaBridge(list));
+            }
         }
 
         [Fact]
@@ -131,18 +202,108 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
             var (bridge, pm, helper, worker) = NewSetup(stock: stock);
             Assert.True(bridge.EnsureRegistered(pm));
             List<IVariantProvider> before = helper.Snapshot();
+            IVariantProvider[] contents = before.ToArray();
 
             bridge.Unregister();
 
             // Control Mapper reads the list lock-free and re-reads it during a lookup,
-            // so unregistering must not swap in a shorter list (#132).
+            // so unregistering must not touch the list at all (#132).
             Assert.False(bridge.IsRegistered);
             List<IVariantProvider> list = helper.Snapshot();
             Assert.Same(before, list);
-            Assert.Equal(2, list.Count);
-            Assert.Same(stock, list[0]);
+            Assert.Equal(contents, list.ToArray());
             var ours = Assert.IsType<FanaBridgeVariantProvider>(list[1]);
             Assert.False(ours.IsActive);
+        }
+
+        [Fact]
+        public void Unregister_ThenEviction_EnsureRegisteredAppendsActiveProvider()
+        {
+            var stock = new FakeStockProvider("x");
+            var (bridge, pm, helper, worker) = NewSetup(stock: stock);
+            Assert.True(bridge.EnsureRegistered(pm));
+            bridge.Unregister();
+
+            // Control Mapper rebuilds its list without us while we're off.
+            helper.ResetToStockOnly(stock);
+
+            Assert.True(bridge.EnsureRegistered(pm));
+
+            List<IVariantProvider> list = helper.Snapshot();
+            Assert.Equal(2, list.Count);
+            Assert.Same(stock, list[0]);
+            Assert.True(Assert.IsType<FanaBridgeVariantProvider>(list[1]).IsActive);
+            Assert.True(bridge.IsRegistered);
+            Assert.Equal(2, worker.UpdateControllerListCalls);
+        }
+
+        [Fact]
+        public void Retire_DeactivatesAndBlocksReRegistration()
+        {
+            var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
+            Assert.True(bridge.EnsureRegistered(pm));
+            List<IVariantProvider> before = helper.Snapshot();
+
+            bridge.Retire();
+
+            Assert.False(bridge.EnsureRegistered(pm));
+            Assert.False(bridge.IsRegistered);
+            Assert.False(bridge.IsGivenUp);
+            Assert.Same(before, helper.Snapshot());
+            Assert.False(((FanaBridgeVariantProvider)before[1]).IsActive);
+            Assert.Equal(1, worker.UpdateControllerListCalls); // no re-enumerate after retiring
+
+            // Evicted after retiring: still doesn't come back.
+            helper.ResetToStockOnly(before[0]);
+            Assert.False(bridge.EnsureRegistered(pm));
+            Assert.Single(helper.Snapshot());
+        }
+
+        [Fact]
+        public void EnsureRegistered_AfterReactivation_DoesNotReEnumerateAgain()
+        {
+            var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
+            Assert.True(bridge.EnsureRegistered(pm));
+            bridge.Unregister();
+            Assert.True(bridge.EnsureRegistered(pm));    // re-activates and re-enumerates
+            Assert.Equal(2, worker.UpdateControllerListCalls);
+
+            Assert.True(bridge.EnsureRegistered(pm));    // steady state
+
+            Assert.Equal(2, worker.UpdateControllerListCalls);
+        }
+
+        [Fact]
+        public void GetVariant_AnswersOnlyWhileActive()
+        {
+            var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
+            Assert.True(bridge.EnsureRegistered(pm));
+            var ours = (FanaBridgeVariantProvider)helper.Snapshot()[1];
+            ours.ResolveVariant = (vid, pid) => "FS_WHEEL_SWTYPE_TEST";
+
+            Assert.Equal("FS_WHEEL_SWTYPE_TEST", ours.GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+
+            bridge.Unregister();
+            Assert.Null(ours.GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+
+            Assert.True(bridge.EnsureRegistered(pm));
+            Assert.Equal("FS_WHEEL_SWTYPE_TEST", ours.GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+        }
+
+        [Fact]
+        public void DescribeResolution_MarksInactiveProviderAndPlaceholder()
+        {
+            var stock = new FakeStockProvider("x");
+            var (bridge, pm, helper, worker) = NewSetup(stock: stock);
+            helper.Snapshot().Add(new FanaBridgeVariantProvider());
+            helper.Snapshot().Add(new FakeStockProvider("y"));    // [stock, stale, other]
+            Assert.True(bridge.EnsureRegistered(pm));          // [stock, inert, other, ours]
+            bridge.Unregister();
+
+            string report = bridge.DescribeResolution(pm);
+
+            Assert.Contains("Placeholder (replaced FanaBridge provider", report);
+            Assert.Contains(nameof(FanaBridgeVariantProvider) + " (inactive)", report);
         }
 
         [Fact]

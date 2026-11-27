@@ -103,6 +103,18 @@ namespace FanaBridge.ControlMapper
         {
             if (!_isActive)
                 return null;
+            return ResolveVariant(vendorid, productid);
+        }
+
+        /// <summary>
+        /// What <see cref="GetVariant"/> answers once past the <see cref="IsActive"/>
+        /// gate. Defaults to <see cref="ResolveForConnectedWheel"/>; tests swap it to
+        /// prove the gate without a live <see cref="FanatecPlugin"/>.
+        /// </summary>
+        internal Func<int, int, string> ResolveVariant { get; set; } = ResolveForConnectedWheel;
+
+        private static string ResolveForConnectedWheel(int vendorid, int productid)
+        {
             var wheelbase = FanatecPlugin.Instance?.Wheelbase;
             bool baseConnected = wheelbase != null && wheelbase.IsConnected;
             int connectedProductId = baseConnected ? wheelbase.ConnectedProductId : 0;

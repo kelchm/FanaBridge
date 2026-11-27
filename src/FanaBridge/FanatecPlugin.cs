@@ -668,8 +668,8 @@ namespace FanaBridge
             // The Control Mapper provider registration stays put: Control Mapper's
             // plugin is IReusable too, so both sides survive the manager restart
             // and unregistering here would only churn CM's controller list (and
-            // briefly resolve FanaBridge-only wheels to no variant). Final removal
-            // happens in FinalizePlugin(); the per-frame reconcile handles the
+            // briefly resolve FanaBridge-only wheels to no variant). The provider
+            // is retired in FinalizePlugin(); the per-frame reconcile handles the
             // settings toggle.
 
             // Guarded because the host wraps End() and FinalizePlugin() in one
@@ -709,8 +709,10 @@ namespace FanaBridge
             if (ReferenceEquals(Instance, this))
                 Instance = null;
 
-            try { _controlMapperBridge?.Unregister(); }
-            catch (Exception ex) { SimHub.Logging.Current.Debug("FanaBridge: CM unregister on finalize: " + ex.Message); }
+            // Retire rather than Unregister: a reconcile tick still in flight must not
+            // re-activate the provider after teardown.
+            try { _controlMapperBridge?.Retire(); }
+            catch (Exception ex) { SimHub.Logging.Current.Debug("FanaBridge: CM retire on finalize: " + ex.Message); }
 
             if (_connectionMonitor?.IsConnected == true)
             {
