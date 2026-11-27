@@ -705,6 +705,39 @@ namespace FanaBridge.Tests.Core.Devices
         }
 
         [Fact]
+        public void WheelChange_IsCountedAndDropsOldItmReports_BeforeTheNewAttachmentIsPublished()
+        {
+            // The new wheel's device may run as soon as its attachment is published.
+            // If the count and the old reports were still the old wheel's then, its
+            // ITM driver would baseline on the old count and drain the old push.
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("GTSWX")));
+
+            t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, 0x11 });   // old wheel's push
+            clock.T += 10;
+            wb.UpdateIdentity();                                     // buffered
+            int countBefore = wb.WheelChangeCount;
+
+            string? publishedWheel = null;
+            int countAtPublish = -1;
+            var reportsAtPublish = new List<byte[]>();
+            wb.AttachmentPublishedForTest = () =>
+            {
+                publishedWheel = wb.Attachment.WheelCode;
+                countAtPublish = wb.WheelChangeCount;
+                wb.DrainItmReports(reportsAtPublish.Add);
+            };
+
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("CSSWFORMV3")));   // rim swap
+
+            Assert.Equal("CSSWFORMV3", publishedWheel);
+            Assert.Equal(countBefore + 1, countAtPublish);
+            Assert.Empty(reportsAtPublish);
+        }
+
+        [Fact]
         public void RefreshCapabilities_DoesNotCountAsAWheelChange()
         {
             // WheelChangeCount drives the ITM lifecycle's cold-restart. A profile-store

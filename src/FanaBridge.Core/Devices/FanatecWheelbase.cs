@@ -129,6 +129,12 @@ namespace FanaBridge.Core.Devices
         /// </summary>
         internal Action<AttachmentSnapshot> CapabilitiesResolvedForTest;
 
+        /// <summary>
+        /// Test hook: runs right after an identity commit publishes its snapshot,
+        /// before <see cref="WheelChanged"/> is raised.
+        /// </summary>
+        internal Action AttachmentPublishedForTest;
+
         // ── Connection state ─────────────────────────────────────────────
 
         /// <summary>
@@ -669,6 +675,15 @@ namespace FanaBridge.Core.Devices
         // its result (see RefreshCapabilities).
         private void CommitAttachment(AttachmentSnapshot identity, string logContext)
         {
+            // Before publishing, so the new attachment's device never pairs it with
+            // the old count or the old wheel's reports. A wheel change cold-restarts
+            // the ITM lifecycle, and the buffered subscription reports were pushed by
+            // the PREVIOUS attachment: feeding them to the restarted lifecycle could
+            // falsely confirm the new wheel's bring-up against the old wheel's page.
+            WheelChangeCount++;
+            lock (_itmLock)
+                _itmReports.Clear();
+
             for (int attempt = 1; ; attempt++)
             {
                 int version = _capabilitySourceVersion;
@@ -694,13 +709,7 @@ namespace FanaBridge.Core.Devices
                          "resolving again");
             }
 
-            WheelChangeCount++;
-            // An identity change invalidates any buffered ITM subscription reports: they
-            // were pushed by the PREVIOUS attachment, and feeding them to the restarted
-            // ITM lifecycle could falsely confirm the new wheel's bring-up against the
-            // old wheel's page.
-            lock (_itmLock)
-                _itmReports.Clear();
+            AttachmentPublishedForTest?.Invoke();
             WheelChanged?.Invoke(this);
         }
 
