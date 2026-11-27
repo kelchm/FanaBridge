@@ -12,7 +12,7 @@ Three source projects, layered by dependency:
 | **FanaBridge** (plugin) | SimHub / WPF shell: plugin entrypoint, device registry, Control Mapper bridge, settings, UI, display drivers. References Core and Updater. |
 | **FanaBridge.Updater** | Isolated self-updater (release feed, download, file swap). References neither Core nor the plugin — audit boundary for code that rewrites files next to SimHub. |
 
-**Reference rules:** Core and Updater must not reference SimHub assemblies or each other. The plugin may reference both. Packaging uses **ILRepack** to merge Core + Updater into the shipped **`FanaBridge.dll`** (development builds keep separate assemblies for layering).
+**Reference rules:** Core and Updater must not reference SimHub assemblies or each other. The plugin may reference both. Packaging uses **ILRepack** to merge Core + Updater into the shipped **`FanaBridge.dll`** (development builds keep separate assemblies for layering). The unit suite runs against the separate assemblies, so CI also runs `tests/FanaBridge.ArtifactSmoke` against the merged DLL before packaging; it loads the artifact by reflection in its own process and checks the plugin entry type, the built-in profiles, the BAML keys and WPF construction of the plugin's controls.
 
 ## Namespace rule
 
@@ -26,6 +26,7 @@ namespace = project namespace root + relative folder path
 | `src/FanaBridge` | `FanaBridge` |
 | `src/FanaBridge.Updater` | `FanaBridge.Updater` |
 | `tests/FanaBridge.Tests` | `FanaBridge.Tests` |
+| `tests/FanaBridge.ArtifactSmoke` | `FanaBridge.ArtifactSmoke` |
 
 Enforced at compile time via **IDE0130** (`dotnet_style_namespace_match_folder = true`, severity error, `EnforceCodeStyleInBuild`). Deliberate exceptions use an in-file `#pragma warning disable IDE0130` with a one-line reason.
 

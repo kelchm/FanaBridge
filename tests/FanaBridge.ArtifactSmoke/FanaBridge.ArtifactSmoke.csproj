@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Post-merge contract check for the shipped single-DLL artifact (#104).
+       Runs as its own process against bin\<cfg>\merged\FanaBridge.dll and
+       reaches the plugin only through reflection, so it can never fall back
+       to the separate development assemblies. Deliberately no project
+       references: nothing from FanaBridge lands in this output directory. -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>FanaBridge.ArtifactSmoke</RootNamespace>
+    <AssemblyName>FanaBridge.ArtifactSmoke</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Provides .NET Framework 4.8 reference assemblies for builds without VS -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- What the merged DLL must contain, taken from the sources the merge
+       inputs are built from, so a new profile or XAML file is covered
+       without editing this project. -->
+  <ItemGroup>
+    <ExpectedProfile Include="..\..\src\FanaBridge.Core\Resources\Profiles\*.json"
+                     Exclude="..\..\src\FanaBridge.Core\Resources\Profiles\*.schema.json" />
+    <ExpectedXaml Include="..\..\src\FanaBridge\**\*.xaml"
+                  Exclude="..\..\src\FanaBridge\bin\**;..\..\src\FanaBridge\obj\**" />
+  </ItemGroup>
+
+  <Target Name="EmbedArtifactExpectations" BeforeTargets="GetAssemblyAttributes">
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>ExpectedProfiles</_Parameter1>
+        <_Parameter2>@(ExpectedProfile->'%(Filename)%(Extension)')</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>ExpectedXaml</_Parameter1>
+        <_Parameter2>@(ExpectedXaml->'%(RecursiveDir)%(Filename)%(Extension)')</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>SimHubDir</_Parameter1>
+        <_Parameter2>$(SimHubDir)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
+</Project>
