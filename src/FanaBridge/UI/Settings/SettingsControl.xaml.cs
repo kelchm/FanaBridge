@@ -844,6 +844,16 @@ namespace FanaBridge.UI.Settings
             if (result != MessageBoxResult.Yes)
                 return;
 
+            // Delete from disk and store first, so a failed delete leaves the
+            // override in place.
+            bool deleted = WheelProfileStore.DeleteUserProfile(profileId);
+            if (!deleted)
+            {
+                MessageBox.Show("Failed to delete profile.", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
             // Remove any override for this profile
             var wheelbase = Plugin.Wheelbase;
             string wheelCode = wheelbase.WheelCode;
@@ -855,15 +865,6 @@ namespace FanaBridge.UI.Settings
             // throws on a null key.
             if (!string.IsNullOrEmpty(matchKey))
                 Plugin.Settings.ProfileOverrides.Remove(matchKey);
-
-            // Delete from disk and store
-            bool deleted = WheelProfileStore.DeleteUserProfile(profileId);
-            if (!deleted)
-            {
-                MessageBox.Show("Failed to delete profile.", "Error",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
 
             // Re-resolve and update UI
             Plugin.SaveSettings();

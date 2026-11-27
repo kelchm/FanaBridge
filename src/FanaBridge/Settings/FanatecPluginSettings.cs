@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace FanaBridge.Settings
@@ -29,8 +30,28 @@ namespace FanaBridge.Settings
         /// Value = profile ID to use instead of auto-resolve.
         /// Empty / missing key = auto (built-in takes priority, user overrides).
         /// </summary>
-        public Dictionary<string, string> ProfileOverrides { get; set; }
-            = new Dictionary<string, string>();
+        /// <remarks>
+        /// Keys compare case-insensitively, as the registration-time reader
+        /// (<see cref="PersistedPluginSettings"/>) does, so a hand-edited key in
+        /// another case resolves the same way at registration and at runtime.
+        /// </remarks>
+        public Dictionary<string, string> ProfileOverrides
+        {
+            get => _profileOverrides;
+            set => _profileOverrides = CaseInsensitive(value);
+        }
+
+        private Dictionary<string, string> _profileOverrides = CaseInsensitive(null);
+
+        private static Dictionary<string, string> CaseInsensitive(IDictionary<string, string> source)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (source != null)
+                foreach (var kv in source)
+                    if (kv.Key != null)
+                        result[kv.Key] = kv.Value;
+            return result;
+        }
 
         // ---- Feature flags ----
 

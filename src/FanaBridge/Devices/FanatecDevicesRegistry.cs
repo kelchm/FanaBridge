@@ -122,15 +122,16 @@ namespace FanaBridge.Devices
 
             foreach (var identity in ordered)
             {
-                var profile = ResolveProfileFor(identity, overrides, Info, Warn);
+                var profile = ResolveProfileFor(identity, overrides, Info, Warn, out bool fromOverride);
 
-                // A bare profile can't size a device. The resolver can still land
-                // on one — e.g. a bare built-in hub profile named after the
-                // attachment beats a user LED profile with a non-standard id. The
-                // group registered under its identity profile before, so keep it
-                // that way: dropping the descriptor would hide an already-added
-                // device from SimHub along with its settings.
-                if (IsBare(profile))
+                // A bare profile reached WITHOUT an override — e.g. a bare built-in
+                // hub profile named after the attachment beating a user LED profile
+                // with a non-standard id — can't size a device. The group registered
+                // under its identity profile before, so keep it that way: dropping
+                // the descriptor would hide an already-added device from SimHub
+                // along with its settings. An explicit override to a bare profile is
+                // the user's choice and registers as such, as it always did.
+                if (IsBare(profile) && !fromOverride)
                 {
                     Warn("Device " + new DeviceConfig { Profile = identity }.DeviceTypeId +
                         " resolves to bare profile '" + profile.Id + "' (" + profile.Source +
@@ -139,10 +140,15 @@ namespace FanaBridge.Devices
                     profile = identity;
                 }
 
+                // An applied override has always named the device (its match
+                // spelling became the DeviceTypeID), so it keeps doing so; otherwise
+                // the group's identity profile does. Either way the ID is exactly
+                // what earlier builds registered, which SimHub matches saved devices
+                // against case-sensitively.
                 var config = new DeviceConfig
                 {
                     Profile = profile,
-                    IdentityProfile = ReferenceEquals(profile, identity) ? null : identity,
+                    IdentityProfile = fromOverride || ReferenceEquals(profile, identity) ? null : identity,
                     Capabilities = new WheelCapabilities(profile),
                 };
 
@@ -170,8 +176,9 @@ namespace FanaBridge.Devices
         /// </remarks>
         private static WheelProfile ResolveProfileFor(
             WheelProfile identity, IReadOnlyDictionary<string, string> overrides,
-            Action<string> info, Action<string> warn)
+            Action<string> info, Action<string> warn, out bool fromOverride)
         {
+            fromOverride = false;
             string wheelCode = identity.Match?.WheelType;
             string moduleCode = identity.Match?.ModuleType;
             string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
@@ -181,6 +188,7 @@ namespace FanaBridge.Devices
             overrides.TryGetValue(matchKey, out var overrideKey);
             var profile = WheelProfileStore.Resolve(wheelCode, moduleCode, overrideKey, out var overridden)
                 ?? identity;
+            fromOverride = overridden != null && ReferenceEquals(overridden, profile);
 
             if (string.IsNullOrEmpty(overrideKey))
                 return profile;

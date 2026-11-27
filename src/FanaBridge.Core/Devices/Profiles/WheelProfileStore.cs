@@ -239,7 +239,8 @@ namespace FanaBridge.Core.Devices.Profiles
                         Log.Warn(
                             "WheelProfileStore: User profile '" + profile.Id + "' in " +
                             Path.GetFileName(file) + " ignored: id already used by " +
-                            Path.GetFileName(first.SourcePath));
+                            Path.GetFileName(first.SourcePath) + ". Give it a unique id " +
+                            "and reselect it in FanaBridge's settings to use it.");
                         continue;
                     }
 
@@ -368,9 +369,10 @@ namespace FanaBridge.Core.Devices.Profiles
         public static WheelProfile Resolve(
             string wheelType, string moduleType, string overrideKey, out WheelProfile overrideProfile)
         {
-            overrideProfile = ResolveOverrideKey(overrideKey);
+            var snap = GetSnapshot();
+            overrideProfile = ResolveOverrideKey(snap, overrideKey);
 
-            var candidates = FindAllForWheel(wheelType, moduleType);
+            var candidates = Candidates(snap, wheelType, moduleType);
             if (candidates.Count == 0)
                 return null;
 
@@ -411,6 +413,15 @@ namespace FanaBridge.Core.Devices.Profiles
         public static List<WheelProfile> FindAllForWheel(
             string wheelType, string moduleType = null)
         {
+            return Candidates(GetSnapshot(), wheelType, moduleType);
+        }
+
+        // Every lookup that combines several reads takes the snapshot once and
+        // passes it down, so a concurrent Reload can't mix two snapshots' (equal
+        // but distinct) profile instances within one resolution.
+        private static List<WheelProfile> Candidates(
+            ProfileSnapshot snap, string wheelType, string moduleType)
+        {
             var results = new List<WheelProfile>();
 
             // A wheel/hub that isn't in the decode tables (e.g. EXT_INFO or
@@ -426,7 +437,7 @@ namespace FanaBridge.Core.Devices.Profiles
             // for the full analysis of naming divergence across SDK versions.
             wheelType = NormalizeWheelType(wheelType);
 
-            foreach (var p in GetSnapshot().All)
+            foreach (var p in snap.All)
             {
                 if (p.Match == null) continue;
 
@@ -517,10 +528,13 @@ namespace FanaBridge.Core.Devices.Profiles
         /// </summary>
         public static WheelProfile ResolveOverrideKey(string overrideKey)
         {
+            return ResolveOverrideKey(GetSnapshot(), overrideKey);
+        }
+
+        private static WheelProfile ResolveOverrideKey(ProfileSnapshot snap, string overrideKey)
+        {
             if (string.IsNullOrEmpty(overrideKey))
                 return null;
-
-            var snap = GetSnapshot();
 
             int sep = overrideKey.LastIndexOf(':');
             if (sep > 0 && sep < overrideKey.Length - 1)
@@ -529,7 +543,9 @@ namespace FanaBridge.Core.Devices.Profiles
                 string sourceStr = overrideKey.Substring(sep + 1);
 
                 if (Enum.TryParse(sourceStr, true, out ProfileSource source))
-                    return GetById(id, source);
+                    return snap.All.FirstOrDefault(p =>
+                        string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase)
+                        && p.Source == source);
             }
 
             // Legacy / simple key — fall back to ById lookup

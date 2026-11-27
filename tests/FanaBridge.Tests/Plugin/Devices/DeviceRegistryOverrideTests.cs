@@ -184,6 +184,62 @@ namespace FanaBridge.Tests.Plugin.Devices
         }
 
         [Fact]
+        public void Override_ToTheBareBuiltIn_RegistersTheBareProfile_AsBefore()
+        {
+            // An explicit pin to the bare built-in is the user's choice: it sized
+            // the editor (to nothing) before, and still does.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb81-hub-leds.json", "PHUB_FB81", "PHUB", revLeds: 4);
+            profiles.Reload();
+            WriteSettings("PHUB", "PHUB:BuiltIn");
+
+            var config = ConfigFor("Fanatec_PHUB");
+
+            Assert.NotNull(config);
+            Assert.Equal("PHUB", config.Profile.Id);
+            Assert.Equal(ProfileSource.BuiltIn, config.Profile.Source);
+            Assert.Equal(0, config.Capabilities.AllLedCount);
+        }
+
+        [Fact]
+        public void Override_ToALowercaseCodedProfile_KeepsTheIdEarlierBuildsRegistered()
+        {
+            // An applied override has always named the device after its own match
+            // spelling. SimHub matches saved devices case-sensitively, so that
+            // spelling must not change on upgrade.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb81-lower.json", "pswbmw-custom", "pswbmw");
+            profiles.Reload();
+            WriteSettings("PSWBMW", "pswbmw-custom:User");
+
+            var config = ConfigFor("Fanatec_pswbmw");
+
+            Assert.NotNull(config);
+            Assert.Equal("pswbmw-custom", config.Profile.Id);
+            Assert.Null(ConfigFor("Fanatec_PSWBMW"));
+        }
+
+        [Fact]
+        public void BuiltInPin_OverASameIdUserProfile_KeepsTheBuiltInEverywhere()
+        {
+            // A real rig's setup: the built-in pinned over a user profile with the
+            // same id, alongside other user profiles for the same attachment.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("PHUB_PBME-v2.json", "PHUB_PBME", "PHUB", "PBME", revLeds: 4);
+            profiles.Write("PHUB_PBME_LEGACY_REV.json", "PHUB_PBME_LEGACY_REV", "PHUB", "PBME", revLeds: 2);
+            profiles.Reload();
+            WriteSettings("PHUB_PBME", "PHUB_PBME:BuiltIn");
+
+            var config = ConfigFor("Fanatec_PHUB_PBME");
+
+            Assert.NotNull(config);
+            Assert.Equal("PHUB_PBME", config.Profile.Id);
+            Assert.Equal(ProfileSource.BuiltIn, config.Profile.Source);
+            Assert.Same(config.Profile,
+                WheelProfileStore.FindByWheelType("PHUB", "PBME", "PHUB_PBME:BuiltIn"));
+        }
+
+        [Fact]
         public void UnresolvableOverride_LeavesTheDeviceUsable()
         {
             WriteSettings("CSLSWGT3", "NoSuchProfile:BuiltIn");
