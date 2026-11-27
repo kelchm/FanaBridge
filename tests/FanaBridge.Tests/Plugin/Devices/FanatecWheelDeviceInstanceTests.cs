@@ -661,6 +661,243 @@ namespace FanaBridge.Tests.Plugin.Devices
             Assert.Equal(DeviceState.Connected, inst.GetDeviceState());
         }
 
+        // ── Add-device picker detection (issue #139) ───────────────────────
+
+        private static DeviceConfig ConfigFor(string wheelType, string? moduleType = null) =>
+            new DeviceConfig
+            {
+                Profile = new WheelProfile
+                {
+                    Id = wheelType + (moduleType == null ? "" : "_" + moduleType),
+                    Match = new ProfileMatch { WheelType = wheelType, ModuleType = moduleType },
+                },
+            };
+
+        // A plugin whose wheelbase has read one FF 08 frame, settled or not.
+        private static FanatecPlugin PluginWithFrame(byte[] frame, bool settle = true)
+        {
+            var t = new FakeTransport();
+            var clock = new Clock();
+            var wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);
+            Assert.True(wheelbase.AutoConnect());
+            t.Identity.Enqueue(frame);
+            clock.T += 10;
+            wheelbase.UpdateIdentity();
+            if (settle)
+            {
+                clock.T += 250;
+                Assert.True(wheelbase.UpdateIdentity());
+            }
+            var plugin = new FanatecPlugin();
+            plugin.InstallWheelbaseForTest(wheelbase, withDisplayEncoder: false);
+            return plugin;
+        }
+
+        private static byte[] HubFrame(string hub, string module)
+        {
+            var frame = Ff08(0x0C, FanatecDeviceTables.Hubs.First(kv => kv.Value == hub).Key);
+            frame[FanatecIdentity.OffModule] =
+                FanatecDeviceTables.Modules.First(kv => kv.Value == module).Key;
+            return frame;
+        }
+
+        private static DeviceDescriptor Detect(DeviceConfig config, Func<FanatecPlugin?> resolve)
+        {
+            var descriptor = new DeviceDescriptor();
+            FanatecDevicesRegistry.ApplyDetection(descriptor, config, resolve!);
+            return descriptor;
+        }
+
+        // SimHub's rule for "Devices found on your system", given the base's USB
+        // ID is present: a matching detection ID, and CompatibilityTest (if set).
+        private static bool Found(DeviceDescriptor d) =>
+            d.DetectionDescriptors.Any(u => u.iVID == 0x0EB7 && u.iPID == 0x0020)
+            && (d.CompatibilityTest?.Invoke() ?? true);
+
+        [Fact]
+        public void Detection_NoPlugin_IsNeverFound()
+        {
+            var d = Detect(ConfigFor("PSWBMW"), () => null);
+
+            Assert.Empty(d.DetectionDescriptors);
+            Assert.False(Found(d));
+        }
+
+        [Fact]
+        public void Detection_NoBaseConnected_IsNeverFound()
+        {
+            var bare = new FanatecPlugin();   // Init never ran — no wheelbase
+            var d = Detect(ConfigFor("PSWBMW"), () => bare);
+
+            Assert.Empty(d.DetectionDescriptors);
+            Assert.False(Found(d));
+        }
+
+        [Fact]
+        public void Detection_UsesTheConnectedBasesUsbId()
+        {
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            var d = Detect(ConfigFor("PSWBMW"), () => plugin);
+
+            var usb = Assert.Single(d.DetectionDescriptors);
+            Assert.Equal(0x0EB7, usb.iVID);
+            Assert.Equal(0x0020, usb.iPID);   // FakeBus's base
+            Assert.True(usb.IgnoreForArduino);
+        }
+
+        [Fact]
+        public void Detection_OnlyTheAttachedWheelIsFound()
+        {
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            string other = FanatecDeviceTables.Wheels.Values.First(v => v != "PSWBMW");
+
+            Assert.True(Found(Detect(ConfigFor("PSWBMW"), () => plugin)));
+            var otherDevice = Detect(ConfigFor(other), () => plugin);
+            Assert.Empty(otherDevice.DetectionDescriptors);
+            Assert.False(Found(otherDevice));
+        }
+
+        [Fact]
+        public void Detection_HubWithModule_OnlyTheExactPairIsFound()
+        {
+            var plugin = PluginWithFrame(HubFrame("PHUB", "PBME"));
+
+            Assert.True(Found(Detect(ConfigFor("PHUB", "PBME"), () => plugin)));
+            Assert.False(Found(Detect(ConfigFor("PHUB"), () => plugin)));
+            Assert.False(Found(Detect(ConfigFor("PHUB", "PBMR"), () => plugin)));
+        }
+
+        [Fact]
+        public void Detection_FirstIdentityStillSettling_IsNotFound()
+        {
+            var plugin = PluginWithFrame(Ff08(0x0C, WheelWire("PSWBMW")), settle: false);
+
+            Assert.False(Found(Detect(ConfigFor("PSWBMW"), () => plugin)));
+        }
+
+        [Fact]
+        public void Detection_ChangeAfterThePickerOpens_ListsNeitherWheel()
+        {
+            // A wheel swapped while the picker scans must not add a second entry:
+            // only the wheel attached at registration has a USB ID, and the live
+            // check drops it once it's gone.
+            string other = FanatecDeviceTables.Wheels.Values.First(v => v != "PSWBMW");
+            FanatecPlugin? current = PluginWithWheel("PSWBMW", out _);
+            var registered = Detect(ConfigFor("PSWBMW"), () => current);
+            var swappedTo = Detect(ConfigFor(other), () => current);
+            Assert.True(Found(registered));
+
+            current = PluginWithWheel(other, out _);
+            Assert.False(Found(registered));
+            Assert.False(Found(swappedTo));
+
+            current = null;
+            Assert.False(Found(registered));
+        }
+
+        [Fact]
+        public void Detection_ThrowingResolver_IsNotFound_AndDoesNotThrow()
+        {
+            var d = Detect(ConfigFor("PSWBMW"), () => throw new InvalidOperationException());
+
+            Assert.Empty(d.DetectionDescriptors);
+            Assert.False(Found(d));
+        }
+
+        [Fact]
+        public void Detection_ThrowingResolverAfterRegistration_FailsTheCheck()
+        {
+            bool fail = false;
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            var d = Detect(ConfigFor("PSWBMW"),
+                () => fail ? throw new InvalidOperationException() : plugin);
+
+            fail = true;
+            Assert.False(d.CompatibilityTest());
+        }
+
+        // Both guards are tested from a committed match, so the old identity is
+        // still cached and only the guard can turn the answer.
+        [Fact]
+        public void AttachedWheel_SwapStillSettling_IsScanning_AndNotFound()
+        {
+            var plugin = PluginWithWheel("PSWBMW", out var wheelbase, out var transport,
+                withDisplayEncoder: false);
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => plugin;
+            var d = Detect(ConfigFor("PSWBMW"), () => plugin);
+            Assert.Equal(DeviceState.Connected, inst.GetDeviceState());
+            Assert.True(Found(d));
+
+            string other = FanatecDeviceTables.Wheels.Values.First(v => v != "PSWBMW");
+            transport.Identity.Enqueue(Ff08(0x0C, WheelWire(other)));
+            wheelbase.UpdateIdentity();
+            Assert.False(wheelbase.IdentityStable);
+            Assert.Equal("PSWBMW", wheelbase.WheelCode);
+
+            Assert.Equal(DeviceState.Scanning, inst.GetDeviceState());
+            Assert.False(Found(d));
+        }
+
+        [Fact]
+        public void AttachedWheel_TransportDropped_IsScanning_AndNotFound()
+        {
+            var plugin = PluginWithWheel("PSWBMW", out var wheelbase, out var transport,
+                withDisplayEncoder: false);
+            var inst = InstanceFor("PSWBMW");
+            inst.PluginResolver = () => plugin;
+            var d = Detect(ConfigFor("PSWBMW"), () => plugin);
+            Assert.True(Found(d));
+
+            transport.Connected = false;
+            Assert.Equal("PSWBMW", wheelbase.WheelCode);
+
+            Assert.Equal(DeviceState.Scanning, inst.GetDeviceState());
+            Assert.False(Found(d));
+        }
+
+        [Fact]
+        public void Registration_ListsOnlyTheAttachedDevice()
+        {
+            var plugin = PluginWithWheel("PSWBMW", out _);
+
+            var descriptors = new FanatecDevicesRegistry().GetDevices(() => plugin).ToList();
+
+            Assert.True(descriptors.Count > 1);
+            var withUsbId = Assert.Single(descriptors, d => d.DetectionDescriptors.Any());
+            Assert.Equal("Fanatec_PSWBMW", withUsbId.DeviceTypeID);
+            Assert.True(Found(withUsbId));
+        }
+
+        [Fact]
+        public void Registration_AttachmentChangingMidLoop_StillListsOneDevice()
+        {
+            // Registration reads the plugin once per device, in BuildConfigs order.
+            var configs = FanatecDevicesRegistry.BuildConfigs().ToList();
+            var wheels = configs
+                .Where(c => c.ModuleCode == null && FanatecDeviceTables.Wheels.Values.Contains(c.WheelCode))
+                .Take(2).ToList();
+            int firstIndex = configs.FindIndex(c => c.DeviceTypeId == wheels[0].DeviceTypeId);
+            var first = PluginWithWheel(wheels[0].WheelCode, out _);
+            var second = PluginWithWheel(wheels[1].WheelCode, out _);
+            int calls = 0;
+
+            var descriptors = new FanatecDevicesRegistry()
+                .GetDevices(() => calls++ <= firstIndex ? first : second).ToList();
+
+            var withUsbId = Assert.Single(descriptors, d => d.DetectionDescriptors.Any());
+            Assert.Equal(wheels[0].DeviceTypeId, withUsbId.DeviceTypeID);
+        }
+
+        [Fact]
+        public void Registration_WithoutAPlugin_ListsNothing()
+        {
+            var descriptors = new FanatecDevicesRegistry().GetDevices(() => null).ToList();
+
+            Assert.NotEmpty(descriptors);
+            Assert.All(descriptors, d => Assert.Empty(d.DetectionDescriptors));
+        }
+
         // ── Generation guard (DataUpdate) ──────────────────────────────────
 
         [Fact]

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Profiles;
 using FanaBridge.Settings;
 using FanaBridge.UI.Devices;
@@ -29,25 +30,28 @@ namespace FanaBridge.Devices
         /// </summary>
         internal static readonly IDevicePanelFactory PanelFactory = new DevicePanelFactory();
 
-        public IEnumerable<DeviceDescriptor> GetDevices()
+        public IEnumerable<DeviceDescriptor> GetDevices() =>
+            GetDevices(() => FanatecPlugin.Instance);
+
+        /// <summary>Test seam: registration against a given plugin generation.</summary>
+        internal IEnumerable<DeviceDescriptor> GetDevices(Func<FanatecPlugin> resolvePlugin)
         {
             SimHub.Logging.Current.Info("FanatecDevicesRegistry: GetDevices() called");
+
+            // At most one device per call, even if the attachment changes mid-loop.
+            bool detected = false;
 
             foreach (var config in BuildConfigs())
             {
                 // Capture for closure
                 var capturedConfig = config;
 
-                yield return new DeviceDescriptor
+                var descriptor = new DeviceDescriptor
                 {
                     Name = config.Capabilities.ShortName ?? config.Capabilities.Name,
                     Brand = "Fanatec",
                     DeviceTypeID = config.DeviceTypeId,
                     ParentDeviceTypeID = config.ParentDeviceTypeId,
-                    // All Fanatec wheelbases share VID 0x0EB7. We use an arbitrary
-                    // PID (0x0001) just so SimHub sees a USB descriptor; the real
-                    // matching is done in GetDeviceState() against the wheelbase identity.
-                    DetectionDescriptor = new USBRequest(0x0EB7, 0x0001, true),
                     // The composition root for a device: it supplies the panel
                     // factory so the settings tabs do not depend on the plugin
                     // being enabled (SimHub shows them either way).
@@ -58,7 +62,46 @@ namespace FanaBridge.Devices
                     IsOEM = false,
                     IsDeprecated = false,
                 };
+                if (!detected)
+                    detected = ApplyDetection(descriptor, capturedConfig, resolvePlugin);
+                yield return descriptor;
             }
+        }
+
+        /// <summary>
+        /// Lists the device under the Add-device picker's "Devices found on your
+        /// system" only while its wheel or hub + module is attached. SimHub asks
+        /// for the devices each time the picker opens, so only the device attached
+        /// then gets the base's USB ID; <c>CompatibilityTest</c> drops it if the
+        /// attachment changes before the picker looks. Returns whether it did.
+        /// </summary>
+        internal static bool ApplyDetection(
+            DeviceDescriptor descriptor, DeviceConfig config, Func<FanatecPlugin> resolvePlugin)
+        {
+            int productId;
+            try
+            {
+                var plugin = resolvePlugin();
+                if (!FanatecWheelDeviceInstance.IsAttached(plugin, config))
+                    return false;
+                productId = plugin.Wheelbase.ConnectedProductId;
+            }
+            catch (Exception) { return false; }
+
+            if (productId <= 0)
+                return false;
+
+            descriptor.DetectionDescriptor = new USBRequest(
+                FanatecWheelbase.FANATEC_VENDOR_ID, productId, true);
+
+            // Runs off the UI thread; a throw would cost other devices their
+            // place in the found list.
+            descriptor.CompatibilityTest = () =>
+            {
+                try { return FanatecWheelDeviceInstance.IsAttached(resolvePlugin(), config); }
+                catch (Exception) { return false; }
+            };
+            return true;
         }
 
         private static readonly object DecisionLogLock = new object();
