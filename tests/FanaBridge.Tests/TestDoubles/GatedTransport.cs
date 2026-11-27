@@ -65,4 +65,35 @@ namespace FanaBridge.Tests.TestDoubles
 
         private sealed class NoOp : IDisposable { public void Dispose() { } }
     }
+
+    /// <summary>
+    /// Runs a call that may contend for a lock, and waits until it has either
+    /// finished or blocked. A concurrency test then knows the call has reached
+    /// its decisive point before the test releases the other side: unguarded
+    /// code has already run to completion, guarded code is waiting on the lock.
+    /// </summary>
+    internal static class ContendedCall
+    {
+        public static Thread StartAndWaitUntilBlockedOrDone(Action action, TimeSpan timeout)
+        {
+            var started = new ManualResetEventSlim();
+            var thread = new Thread(() => { started.Set(); action(); }) { IsBackground = true };
+            thread.Start();
+            if (!started.Wait(timeout))
+                throw new TimeoutException("the call never started");
+
+            var deadline = DateTime.UtcNow + timeout;
+            int blockedPolls = 0;
+            // Require the blocked state to hold for a few polls, so a brief
+            // runtime-internal wait isn't mistaken for waiting on the lock.
+            while (thread.IsAlive && blockedPolls < 20)
+            {
+                if (DateTime.UtcNow > deadline)
+                    throw new TimeoutException("the call neither finished nor blocked");
+                blockedPolls = (thread.ThreadState & ThreadState.WaitSleepJoin) != 0 ? blockedPolls + 1 : 0;
+                Thread.Sleep(2);
+            }
+            return thread;
+        }
+    }
 }

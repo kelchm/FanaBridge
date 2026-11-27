@@ -350,6 +350,7 @@ namespace FanaBridge.Tests.Plugin.Leds
             var caps = Caps((channel, count));
             var transport = new RecordingTransport { FailNext = 1 };
             var driver = BuildDriver(caps, transport);
+            driver.RetryInterval = TimeSpan.Zero;
             var raw = new Color[caps.AllLedCount];
             for (int i = 0; i < raw.Length; i++) raw[i] = Color.White;
             var state = new LedDeviceState(new Color[0], new Color[0], new Color[0], new Color[0], raw);
@@ -367,6 +368,47 @@ namespace FanaBridge.Tests.Plugin.Leds
             while (Writes() < 2 && DateTime.UtcNow < deadline)
             {
                 Assert.True(driver.SendLeds(state, forceRefresh: false));
+                Thread.Sleep(1);
+            }
+            driver.Dispose();
+
+            Assert.Equal(2, Writes());
+        }
+
+        [Fact]
+        public void SendLeds_RetriesOfAnUnchangedFrame_AreThrottled_ButChangedFramesAreNot()
+        {
+            var caps = Caps(("revRgb", 9));
+            var transport = new RecordingTransport { FailNext = 1 };
+            var driver = BuildDriver(caps, transport);
+            driver.RetryInterval = TimeSpan.FromHours(1);
+
+            LedDeviceState Frame(Color c)
+            {
+                var raw = new Color[caps.AllLedCount];
+                for (int i = 0; i < raw.Length; i++) raw[i] = c;
+                return new LedDeviceState(new Color[0], new Color[0], new Color[0], new Color[0], raw);
+            }
+            int Writes() => transport.Col03.Count(r => r[2] == 0x00);
+            var white = Frame(Color.White);
+
+            Assert.True(driver.SendLeds(white, forceRefresh: true));   // fails
+
+            // Identical frames inside the retry interval don't write again.
+            var until = DateTime.UtcNow + TimeSpan.FromMilliseconds(200);
+            while (DateTime.UtcNow < until)
+            {
+                Assert.True(driver.SendLeds(white, forceRefresh: false));
+                Thread.Sleep(1);
+            }
+            Assert.Equal(1, Writes());
+
+            // A changed frame goes out at once.
+            var red = Frame(Color.Red);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (Writes() < 2 && DateTime.UtcNow < deadline)
+            {
+                Assert.True(driver.SendLeds(red, forceRefresh: false));
                 Thread.Sleep(1);
             }
             driver.Dispose();

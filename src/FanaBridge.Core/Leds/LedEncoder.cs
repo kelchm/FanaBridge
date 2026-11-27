@@ -88,7 +88,6 @@ namespace FanaBridge.Core.Leds
             if (intensityPayload == null || intensityPayload.Length != INTENSITY_PAYLOAD_SIZE) return false;
 
             lock (_sync)
-            using (_transport.BeginBatch())
             {
                 ConsumePendingForceDirty();
 
@@ -126,23 +125,37 @@ namespace FanaBridge.Core.Leds
                     return true;
 
                 // Stage whichever reports changed, then commit with the last one.
+                // The batch is only opened once there's something to send.
                 bool ok = true;
 
-                if (hasColors && colorsChanged && intensitiesChanged)
+                using (_transport.BeginBatch())
                 {
-                    ok = SendButtonColorReport(colors, commit: false);
-                    ok = SendButtonIntensityReport(intensityPayload, commit: true) && ok;
-                }
-                else if (hasColors && colorsChanged)
-                {
-                    ok = SendButtonColorReport(colors, commit: true);
-                }
-                else
-                {
-                    ok = SendButtonIntensityReport(intensityPayload, commit: true);
+                    if (hasColors && colorsChanged && intensitiesChanged)
+                    {
+                        ok = SendButtonColorReport(colors, commit: false);
+                        ok = SendButtonIntensityReport(intensityPayload, commit: true) && ok;
+                    }
+                    else if (hasColors && colorsChanged)
+                    {
+                        ok = SendButtonColorReport(colors, commit: true);
+                    }
+                    else
+                    {
+                        ok = SendButtonIntensityReport(intensityPayload, commit: true);
+                    }
                 }
 
-                if (ok)
+                if (!ok)
+                {
+                    // Part of the pair may have landed: the intensity commit still
+                    // goes out after a failed color stage. The wheel's state is then
+                    // unknown, so forget both and let the next call resend them.
+                    // Keeping the previous values would make a return to that state
+                    // look unchanged and leave the wheel on the partial write.
+                    _lastColors.Remove(SUBCMD_BUTTON_COLORS);
+                    _lastIntensities = null;
+                }
+                else
                 {
                     if (hasColors)
                     {

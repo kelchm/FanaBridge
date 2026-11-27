@@ -603,14 +603,15 @@ namespace FanaBridge.Tests.Core.Leds
             var refresh = Task.Run(() => encoder.SetLegacyRev3Bit(allWhite));
             Assert.True(t.Entered.Wait(TimeSpan.FromSeconds(5)), "refresh never reached the transport");
 
-            var clear = Task.Run(() => encoder.Clear());
-            // Unguarded, Clear() finishes here having rewritten the buffer. The
-            // bounded wait only gives it the chance to; with the lock it stays blocked.
-            bool clearRanDuringRefresh = await Task.WhenAny(clear, Task.Delay(500)) == clear;
+            // Unguarded, Clear() finishes here having rewritten the buffer;
+            // guarded, it's blocked on the encoder lock.
+            var clear = ContendedCall.StartAndWaitUntilBlockedOrDone(
+                () => encoder.Clear(), TimeSpan.FromSeconds(5));
+            bool clearRanDuringRefresh = !clear.IsAlive;
 
             t.Release();
             Assert.True(await refresh);
-            await clear;
+            Assert.True(clear.Join(TimeSpan.FromSeconds(5)), "Clear() never finished");
 
             Assert.False(clearRanDuringRefresh, "Clear() ran while the refresh held the report buffer");
 

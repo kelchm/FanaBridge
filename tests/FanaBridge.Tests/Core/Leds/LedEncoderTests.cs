@@ -19,12 +19,17 @@ namespace FanaBridge.Tests.Core.Leds
             public List<byte[]> Col03Reports { get; } = new List<byte[]>();
             public int Col03MaxInputReportLength => 64;
 
+            // The next N col03 writes are recorded but report failure.
+            public int FailNext { get; set; }
+
             public bool SendCol01(byte[] data) => true;
 
             public bool SendCol03(byte[] data)
             {
                 Col03Reports.Add((byte[])data.Clone());
-                return true;
+                if (FailNext == 0) return true;
+                FailNext--;
+                return false;
             }
 
             public IReportStream IdentityReports => FakeReportStream.Empty;
@@ -167,6 +172,35 @@ namespace FanaBridge.Tests.Core.Leds
             Assert.Empty(t.Col03Reports);       // flag consumed — back to dirty tracking
         }
 
+        // ── Failed button writes ───────────────────────────────────────
+
+        [Fact]
+        public void SetButtonLedState_AfterAPartialWrite_ReturningToThePreviousStateResends()
+        {
+            // The color stage fails but the intensity commit still lands, so the
+            // wheel shows B's intensity. Going back to A must rewrite both rather
+            // than look unchanged against the last state that fully succeeded.
+            var t = new StubTransport();
+            var encoder = new LedEncoder(t);
+            var colorsA = new ushort[] { 0xF800 };
+            var colorsB = new ushort[] { 0x07E0 };
+            var intensitiesA = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
+            var intensitiesB = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
+            intensitiesA[0] = 2;
+            intensitiesB[0] = 5;
+
+            Assert.True(encoder.SetButtonLedState(colorsA, intensitiesA));
+            t.FailNext = 1;
+            Assert.False(encoder.SetButtonLedState(colorsB, intensitiesB));
+            Assert.Equal(5, LastReport(t, 0x03)[3]);   // B's intensity reached the wheel
+
+            t.Col03Reports.Clear();
+            Assert.True(encoder.SetButtonLedState(colorsA, intensitiesA));
+
+            Assert.Equal(2, LastReport(t, 0x03)[3]);
+            Assert.Contains(t.Col03Reports, r => r[2] == 0x02);
+        }
+
         // ── Concurrent callers (#80) ───────────────────────────────────
 
         [Fact]
@@ -183,14 +217,17 @@ namespace FanaBridge.Tests.Core.Leds
             var refresh = Task.Run(() => encoder.SetRevLedColors(lit));
             Assert.True(t.Entered.Wait(TimeSpan.FromSeconds(5)), "refresh never reached the transport");
 
-            var clear = Task.Run(() => encoder.SetRevLedColors(new ushort[9]));
-            // Unguarded, the clear finishes here having rewritten the buffer. The
-            // bounded wait only gives it the chance to; with the lock it stays blocked.
-            bool clearRanDuringRefresh = await Task.WhenAny(clear, Task.Delay(500)) == clear;
+            // Unguarded, the clear finishes here having rewritten the buffer;
+            // guarded, it's blocked on the encoder lock.
+            bool cleared = false;
+            var clear = ContendedCall.StartAndWaitUntilBlockedOrDone(
+                () => cleared = encoder.SetRevLedColors(new ushort[9]), TimeSpan.FromSeconds(5));
+            bool clearRanDuringRefresh = !clear.IsAlive;
 
             t.Release();
             Assert.True(await refresh);
-            Assert.True(await clear);
+            Assert.True(clear.Join(TimeSpan.FromSeconds(5)), "clear never finished");
+            Assert.True(cleared);
 
             Assert.False(clearRanDuringRefresh, "clear ran while the refresh held the report buffer");
 
