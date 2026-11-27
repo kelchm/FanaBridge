@@ -93,23 +93,47 @@ namespace FanaBridge.Core.Devices.Profiles
         public bool Verified { get; }
 
         /// <summary>
-        /// Checks whether switching from <paramref name="other"/> to this
-        /// capabilities set requires a SimHub restart to fully apply.
+        /// Checks whether a SimHub device built from <paramref name="registered"/>
+        /// needs a SimHub restart to fully reflect this capabilities set.
         /// Returns a human-readable reason string, or null if no restart is needed.
         /// </summary>
-        public string GetRestartReason(WheelCapabilities other)
+        /// <remarks>
+        /// Output switches live either way: the device instance resolves its
+        /// capabilities override-aware each frame and hot-swaps the LED and ITM
+        /// drivers. What doesn't switch is the device's tabs. SimHub builds the
+        /// LED editor (sized from the LED counts), the Screen tab (shown for a
+        /// display, with the controls and page catalog for its type and ITM
+        /// device) and the Tuning tab (shown for encoders) once per device, and
+        /// keeps them for the session.
+        /// </remarks>
+        public string GetRestartReason(WheelCapabilities registered)
         {
-            if (other == null)
+            if (registered == null)
                 return null;
 
-            // Only LED-layout changes still need a restart: SimHub sizes the LED
-            // editor's module from the registration-time counts. Display type and
-            // the ITM device id switch live — the device instance resolves them
-            // override-aware each frame and hot-swaps the ITM driver on change.
-            if (RevFlagCount != other.RevFlagCount || ButtonLedCount != other.ButtonLedCount)
-                return "LED count changed (" + other.AllLedCount + " → " + AllLedCount + ")";
+            if (RevFlagCount != registered.RevFlagCount || ButtonLedCount != registered.ButtonLedCount)
+                return "LED count changed (" + registered.AllLedCount + " → " + AllLedCount + ")";
+
+            if (Display != registered.Display)
+                return "Display changed (" + DisplayLabel(registered.Display) + " → " + DisplayLabel(Display) + ")";
+
+            if (Display == DisplayType.Itm && ItmDeviceId != registered.ItmDeviceId)
+                return "ITM display changed (device " + registered.ItmDeviceId + " → " + ItmDeviceId + ")";
+
+            if (HasEncoders != registered.HasEncoders)
+                return HasEncoders ? "Encoders added" : "Encoders removed";
 
             return null;
+        }
+
+        private static string DisplayLabel(DisplayType display)
+        {
+            switch (display)
+            {
+                case DisplayType.Basic: return "basic";
+                case DisplayType.Itm: return "ITM";
+                default: return "none";
+            }
         }
 
         // ── Constructors ─────────────────────────────────────────────────

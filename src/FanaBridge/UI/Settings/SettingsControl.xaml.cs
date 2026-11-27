@@ -27,12 +27,6 @@ namespace FanaBridge.UI.Settings
         /// <summary>Suppresses ComboBox SelectionChanged while we're programmatically populating.</summary>
         private bool _suppressProfileChange;
 
-        /// <summary>
-        /// Capabilities that the SimHub LED module was built from at startup.
-        /// Used to detect whether a profile switch requires a restart (e.g.
-        /// LED count or display type changed).
-        /// </summary>
-        private WheelCapabilities _bootCaps;
         private bool _restartPromptDismissed;
 
         /// <summary>
@@ -279,11 +273,6 @@ namespace FanaBridge.UI.Settings
             Plugin.StateChanged += OnPluginStateChanged;
             Plugin.UpdateStateChanged += OnUpdateStateChanged;
 
-            // Capture the capabilities the LED module was built from at startup.
-            // Only set once — tab reloads must not clobber the baseline.
-            if (_bootCaps == null)
-                _bootCaps = Plugin.CurrentCapabilities;
-
             // The ITM lifecycle moves without StateChanged firing (page switches,
             // recovery rungs, game exits) — poll its status row while visible.
             if (_itmStatusTimer == null)
@@ -355,6 +344,7 @@ namespace FanaBridge.UI.Settings
             // Also self-contained (hides itself while disconnected), so it runs
             // ahead of the early returns below and stays correct on every path.
             UpdateAddDevicePrompt();
+            UpdateRestartNotice(prompt: false);
             UpdateItmStatus();
 
             if (!Plugin.IsDeviceConnected)
@@ -754,21 +744,32 @@ namespace FanaBridge.UI.Settings
             UpdateRestartNotice();
         }
 
-        private void UpdateRestartNotice()
+        /// <summary>
+        /// Shows the restart notice when the active profile differs from what
+        /// the attached device's SimHub device was built from, in a way its tabs
+        /// or its name in the Devices list can't follow without a restart.
+        /// <paramref name="prompt"/> also offers the restart dialog; it's set
+        /// only after the user changed profiles, never for a passive refresh.
+        /// </summary>
+        private void UpdateRestartNotice(bool prompt = true)
         {
             var caps = Plugin?.CurrentCapabilities;
-            if (caps?.Name == null)
+
+            // The baseline is the device instance's own registration
+            // capabilities, the ones SimHub built its tabs from. Not added, or
+            // nothing attached: there's nothing stale to restart for.
+            var registered = Plugin?.GetAttachedDeviceRegistrationCaps();
+            if (caps?.Name == null || registered == null)
             {
                 txtRestartNotice.Visibility = Visibility.Collapsed;
                 return;
             }
 
-            // Check if capabilities changed in a way that requires restart
-            string restartReason = caps.GetRestartReason(_bootCaps);
+            string restartReason = caps.GetRestartReason(registered);
             if (restartReason != null)
             {
                 txtRestartNotice.Visibility = Visibility.Visible;
-                if (!_restartPromptDismissed)
+                if (prompt && !_restartPromptDismissed)
                     PromptRestart(restartReason);
                 return;
             }
@@ -776,9 +777,9 @@ namespace FanaBridge.UI.Settings
             // Check if the device name changed (cosmetic — doesn't need
             // restart for functionality, but the Devices list is stale)
             string currentName = caps.ShortName ?? caps.Name;
-            string bootName = _bootCaps?.ShortName ?? _bootCaps?.Name;
-            bool nameChanged = bootName != null
-                && !string.Equals(currentName, bootName, StringComparison.OrdinalIgnoreCase);
+            string registeredName = registered.ShortName ?? registered.Name;
+            bool nameChanged = registeredName != null
+                && !string.Equals(currentName, registeredName, StringComparison.OrdinalIgnoreCase);
 
             txtRestartNotice.Visibility = nameChanged
                 ? Visibility.Visible
@@ -789,8 +790,9 @@ namespace FanaBridge.UI.Settings
         {
             var result = System.Windows.MessageBox.Show(
                 reason + ".\n\n" +
-                "LED and display output has switched immediately, but the SimHub " +
-                "LED editor and device list need a restart to update.\n\n" +
+                "Output has already switched, but SimHub only rebuilds this " +
+                "device's LED editor, Screen and Tuning tabs, and its name in " +
+                "the Devices list, when it restarts.\n\n" +
                 "Restart SimHub now?",
                 "Restart Required",
                 System.Windows.MessageBoxButton.YesNo,

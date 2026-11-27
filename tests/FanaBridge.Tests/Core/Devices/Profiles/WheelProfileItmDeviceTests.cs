@@ -25,19 +25,58 @@ namespace FanaBridge.Tests.Core.Devices.Profiles
         }
 
         [Fact]
-        public void GetRestartReason_DisplayChanges_SwitchLive_NoRestart()
+        public void GetRestartReason_DisplayChanges_RequireRestart()
         {
-            // Display type and the ITM device id are resolved override-aware each
-            // frame (the ITM driver hot-swaps on an id change), so neither is a
-            // restart reason anymore — only LED-layout changes are, because
-            // SimHub sizes the LED editor from registration-time counts.
+            // Output follows these live, but SimHub builds the Screen tab once per
+            // device from its registration capabilities: whether it exists, its
+            // basic or ITM controls, and the ITM page catalog for the device id.
             var dev3 = new WheelCapabilities(new WheelProfile { Display = "itm", ItmDeviceIdRaw = 3 });
             var dev4 = new WheelCapabilities(new WheelProfile { Display = "itm", ItmDeviceIdRaw = 4 });
             var basic = new WheelCapabilities(new WheelProfile { Display = "basic" });
+            var none = new WheelCapabilities(new WheelProfile());
 
-            Assert.Null(dev4.GetRestartReason(dev3));      // ITM id change → live hot-swap
-            Assert.Null(basic.GetRestartReason(dev3));     // display type change → live
-            Assert.Null(dev4.GetRestartReason(dev4));      // identical caps → no restart
+            Assert.Equal("ITM display changed (device 3 → 4)", dev4.GetRestartReason(dev3));
+            Assert.Equal("Display changed (basic → ITM)", dev3.GetRestartReason(basic));
+            Assert.Equal("Display changed (ITM → basic)", basic.GetRestartReason(dev3));
+            Assert.Equal("Display changed (none → basic)", basic.GetRestartReason(none));
+            Assert.Equal("Display changed (basic → none)", none.GetRestartReason(basic));
+            Assert.Null(dev4.GetRestartReason(dev4));
+        }
+
+        [Fact]
+        public void GetRestartReason_IgnoresTheItmDeviceId_WithoutAnItmDisplay()
+        {
+            var basic3 = new WheelCapabilities(new WheelProfile { Display = "basic", ItmDeviceIdRaw = 3 });
+            var basic4 = new WheelCapabilities(new WheelProfile { Display = "basic", ItmDeviceIdRaw = 4 });
+
+            Assert.Null(basic4.GetRestartReason(basic3));
+        }
+
+        [Fact]
+        public void GetRestartReason_EncoderChanges_RequireRestart()
+        {
+            // Same LED counts, so only the Tuning tab's presence differs.
+            WheelCapabilities WithButtonLed(LedRole role) => new WheelCapabilities(new WheelProfile
+            {
+                Leds = new System.Collections.Generic.List<LedDefinition>
+                {
+                    new LedDefinition { Channel = LedChannel.ButtonRgb, HwIndex = 0, Role = role },
+                },
+            });
+            var plain = WithButtonLed(LedRole.Button);
+            var encoder = WithButtonLed(LedRole.Encoder);
+
+            Assert.Equal("Encoders added", encoder.GetRestartReason(plain));
+            Assert.Equal("Encoders removed", plain.GetRestartReason(encoder));
+            Assert.Null(encoder.GetRestartReason(encoder));
+        }
+
+        [Fact]
+        public void GetRestartReason_WithoutARegisteredDevice_IsNull()
+        {
+            var basic = new WheelCapabilities(new WheelProfile { Display = "basic" });
+
+            Assert.Null(basic.GetRestartReason(null));
         }
 
         [Fact]
