@@ -738,22 +738,11 @@ namespace FanaBridge.UI.Settings
             // means there is no identity to attach an override to — nothing to persist.
             if (string.IsNullOrEmpty(matchKey)) return;
 
-            // Check if the selected profile is the one auto-resolution would pick
-            var autoResolved = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null);
-            string autoOverrideKey = autoResolved != null
-                ? WheelProfileStore.MakeOverrideKey(autoResolved)
-                : null;
-            bool isDefault = string.Equals(overrideKey, autoOverrideKey, StringComparison.OrdinalIgnoreCase);
-
-            if (isDefault)
-            {
-                // No need to persist an override — default resolution already picks this
-                Plugin.Settings.ProfileOverrides.Remove(matchKey);
-            }
-            else
-            {
-                Plugin.Settings.ProfileOverrides[matchKey] = overrideKey;
-            }
+            // Store an override only when the pick differs from what automatic
+            // resolution would choose.
+            ProfileOverrideRules.ApplySelection(
+                Plugin.Settings.ProfileOverrides, matchKey, overrideKey,
+                WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null));
 
             // Persist settings and re-resolve capabilities
             Plugin.SaveSettings();
@@ -833,11 +822,12 @@ namespace FanaBridge.UI.Settings
                 ? System.IO.Path.GetFileName(caps.ProfileSourcePath)
                 : profileId;
 
-            // Capture the attachment before the confirmation dialog: the wheel can
-            // change while it is open, and the override to clear is the one for
-            // the profile being deleted, not for whatever is attached afterwards.
+            // The override to clear belongs to the deleted profile's own
+            // attachment, not to whatever is attached when the delete completes
+            // (the wheel can change while the dialog is open).
             var wheelbase = Plugin.Wheelbase;
-            string matchKey = WheelProfileStore.MakeMatchKey(wheelbase.WheelCode, wheelbase.ModuleCode);
+            string matchKey = WheelProfileStore.MakeMatchKey(
+                caps.Profile.Match?.WheelType, caps.Profile.Match?.ModuleType);
 
             var result = MessageBox.Show(
                 "Delete custom profile \"" + caps.Profile.Name + "\"?\n\n" +
@@ -861,16 +851,9 @@ namespace FanaBridge.UI.Settings
                 return;
             }
 
-            // Remove the override that pointed at the deleted profile, if any —
-            // stored in the current form, or in a legacy form that no longer
-            // resolves now the file is gone. A null/empty key (unrecognized wheel)
-            // can never have been stored as an override key, so there is nothing
-            // to remove — and Dictionary throws on a null key.
-            if (!string.IsNullOrEmpty(matchKey)
-                && Plugin.Settings.ProfileOverrides.TryGetValue(matchKey, out var stored)
-                && (string.Equals(stored, deletedOverrideKey, StringComparison.OrdinalIgnoreCase)
-                    || WheelProfileStore.ResolveOverrideKey(stored) == null))
-                Plugin.Settings.ProfileOverrides.Remove(matchKey);
+            // Remove the override that pointed at the deleted profile, if any.
+            ProfileOverrideRules.ClearAfterDelete(
+                Plugin.Settings.ProfileOverrides, matchKey, deletedOverrideKey);
 
             // Re-resolve and update UI
             Plugin.SaveSettings();

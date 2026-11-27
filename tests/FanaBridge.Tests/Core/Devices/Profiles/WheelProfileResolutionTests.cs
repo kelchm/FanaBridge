@@ -243,5 +243,76 @@ namespace FanaBridge.Tests.Core.Devices.Profiles
             Assert.Equal(ProfileSource.BuiltIn, WheelProfileStore.GetById("PSWBMW")?.Source);
             Assert.Equal(ProfileSource.BuiltIn, WheelProfileStore.FindByWheelType("PSWBMW")?.Source);
         }
+
+        // ── Canonical match codes ─────────────────────────────────────────
+
+        [Fact]
+        public void MatchCodes_AreCanonicalizedOnLoad_SoEveryProfileForAnAttachmentSharesItsId()
+        {
+            _profiles.Write("fb81-lower.json", "FB81_LOWER", "pswbmw");
+            _profiles.Write("fb81-alias.json", "FB81_ALIAS", "bentley");
+            _profiles.Write("fb81-hub.json", "FB81_HUB", "phub", "pbme");
+            _profiles.Write("fb81-unknown.json", "FB81_UNKNOWN", "fb81wheel");
+            _profiles.Reload();
+
+            var lower = WheelProfileStore.GetById("FB81_LOWER", ProfileSource.User);
+            var alias = WheelProfileStore.GetById("FB81_ALIAS", ProfileSource.User);
+            var hub = WheelProfileStore.GetById("FB81_HUB", ProfileSource.User);
+            var unknown = WheelProfileStore.GetById("FB81_UNKNOWN", ProfileSource.User);
+            Assert.NotNull(lower);
+            Assert.NotNull(alias);
+            Assert.NotNull(hub);
+            Assert.NotNull(unknown);
+
+            Assert.Equal("PSWBMW", lower!.Match.WheelType);
+            Assert.Equal("Fanatec_PSWBMW", new DeviceConfig { Profile = lower }.DeviceTypeId);
+            Assert.Equal("PSWBENT", alias!.Match.WheelType);
+            Assert.Equal("Fanatec_PHUB_PBME", new DeviceConfig { Profile = hub! }.DeviceTypeId);
+            // A code the decode tables don't know can't match a wheel; it is left as written.
+            Assert.Equal("fb81wheel", unknown!.Match.WheelType);
+        }
+
+        // ── Bare profiles ─────────────────────────────────────────────────
+
+        [Fact]
+        public void BareProfile_NeverWinsAutomatically_OverOneThatCanDriveSomething()
+        {
+            // Named after the attachment (tier 2), but with nothing to drive.
+            _profiles.Write("fb81-bare.json", TestWheel, TestWheel, revLeds: 0);
+            _profiles.Write("fb81-leds.json", "FB81_LEDS", TestWheel);
+            _profiles.Reload();
+
+            Assert.Equal("FB81_LEDS", WheelProfileStore.FindByWheelType(TestWheel)?.Id);
+            // An explicit override can still choose the bare profile.
+            Assert.Equal(TestWheel,
+                WheelProfileStore.FindByWheelType(TestWheel, null, TestWheel + ":User")?.Id);
+        }
+
+        [Fact]
+        public void AllCandidatesBare_ResolvesToTheNamedOne()
+        {
+            _profiles.Write("fb81-bare-a.json", "FB81_BARE", TestWheel, revLeds: 0);
+            _profiles.Write("fb81-bare-b.json", TestWheel, TestWheel, revLeds: 0);
+            _profiles.Reload();
+
+            Assert.Equal(TestWheel, WheelProfileStore.FindByWheelType(TestWheel)?.Id);
+        }
+
+        // ── Deletion when the rescan fails ────────────────────────────────
+
+        [Fact]
+        public void Delete_WhenTheRescanFails_StillDropsTheDeletedProfile()
+        {
+            _profiles.Write("fb81-del.json", "FB81_DEL", TestWheel);
+            _profiles.Reload();
+            Assert.NotNull(WheelProfileStore.FindByWheelType(TestWheel));
+
+            WheelProfileStore.EnumerateUserFiles = _ => throw new IOException("simulated scan failure");
+
+            Assert.True(WheelProfileStore.DeleteUserProfile("FB81_DEL"));
+            Assert.Null(WheelProfileStore.GetById("FB81_DEL", ProfileSource.User));
+            Assert.Null(WheelProfileStore.FindByWheelType(TestWheel));
+            Assert.Equal(ProfileSource.BuiltIn, WheelProfileStore.FindByWheelType("PSWBMW")?.Source);
+        }
     }
 }

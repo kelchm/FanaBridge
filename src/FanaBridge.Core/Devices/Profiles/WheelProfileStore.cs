@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using FanaBridge.Core.Devices.Identity;
 using Newtonsoft.Json;
 
 namespace FanaBridge.Core.Devices.Profiles
@@ -168,6 +169,8 @@ namespace FanaBridge.Core.Devices.Profiles
                                 continue;
                             }
 
+                            CanonicalizeMatch(profile);
+
                             if (loaded.TryGetValue(profile.Id, out var first))
                             {
                                 Log.Warn(
@@ -218,7 +221,8 @@ namespace FanaBridge.Core.Devices.Profiles
 
             var loaded = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
             var files = EnumerateUserFiles(directory)
-                .OrderBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase);
+                .OrderBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(f => Path.GetFileName(f), StringComparer.Ordinal);
 
             foreach (string file in files)
             {
@@ -233,6 +237,8 @@ namespace FanaBridge.Core.Devices.Profiles
                             "WheelProfileStore: Skipping file with no 'id': " + file);
                         continue;
                     }
+
+                    CanonicalizeMatch(profile);
 
                     if (loaded.TryGetValue(profile.Id, out var first))
                     {
@@ -382,16 +388,24 @@ namespace FanaBridge.Core.Devices.Profiles
             if (overrideProfile != null && candidates.Contains(overrideProfile))
                 return overrideProfile;
 
+            // Without an override, a bare profile (no LEDs, no display) never
+            // wins over a candidate that can drive something — e.g. a user LED
+            // profile for a hub beats the bare built-in hub profile named after
+            // it. Only when every candidate is bare does a bare one resolve.
+            var pool = candidates.Where(p => !p.IsBare).ToList();
+            if (pool.Count == 0)
+                pool = candidates;
+
             // 2. The candidate named after the attachment. Candidates come in
             //    load order (built-ins first), so the last one is the user's.
             string matchKey = MakeMatchKey(NormalizeWheelType(wheelType), moduleType);
-            var named = candidates.LastOrDefault(p =>
+            var named = pool.LastOrDefault(p =>
                 string.Equals(p.Id, matchKey, StringComparison.OrdinalIgnoreCase));
             if (named != null)
                 return named;
 
             // 3. First candidate in load order (profiles with non-standard ids).
-            return candidates[0];
+            return pool[0];
         }
 
         /// <summary>
@@ -488,8 +502,36 @@ namespace FanaBridge.Core.Devices.Profiles
             Log.Info(
                 "WheelProfileStore: Deleted user profile '" + profileId + "' (" +
                 Path.GetFileName(userProfile.SourcePath) + ")");
-            Reload();
+
+            // The file is gone, so the delete succeeded; a failed rescan must not
+            // leave the deleted profile resolvable. Fall back to dropping it from
+            // the current snapshot (a built-in with the same id takes it back).
+            try
+            {
+                Reload();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(
+                    "WheelProfileStore: Reload after deleting '" + profileId + "' failed (" +
+                    ex.Message + "); dropping it from the loaded profiles instead");
+                RemoveFromSnapshot(userProfile);
+            }
             return true;
+        }
+
+        private static void RemoveFromSnapshot(WheelProfile removed)
+        {
+            var snap = GetSnapshot();
+            var all = snap.All.Where(p => !ReferenceEquals(p, removed)).ToList();
+            // Same precedence as a load: built-ins first, then a user profile
+            // takes the id.
+            var byId = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in all.Where(p => p.Source == ProfileSource.BuiltIn))
+                byId[p.Id] = p;
+            foreach (var p in all.Where(p => p.Source == ProfileSource.User))
+                byId[p.Id] = p;
+            Interlocked.Exchange(ref _snapshot, new ProfileSnapshot(all, byId));
         }
 
         // ── Key helpers ──────────────────────────────────────────────────
@@ -563,11 +605,45 @@ namespace FanaBridge.Core.Devices.Profiles
         /// </summary>
         internal static string NormalizeWheelType(string wheelType)
         {
-            switch (wheelType)
-            {
-                case "BENTLEY": return "PSWBENT";
-                default: return wheelType;
-            }
+            return string.Equals(wheelType, "BENTLEY", StringComparison.OrdinalIgnoreCase)
+                ? "PSWBENT"
+                : wheelType;
+        }
+
+        // Canonical spelling of every known wheel/hub and module code, from the
+        // identity decode tables, looked up case-insensitively.
+        private static readonly Dictionary<string, string> CanonicalAttachmentCodes =
+            CanonicalCodes(FanatecDeviceTables.Wheels.Values.Concat(FanatecDeviceTables.Hubs.Values));
+        private static readonly Dictionary<string, string> CanonicalModuleCodes =
+            CanonicalCodes(FanatecDeviceTables.Modules.Values);
+
+        private static Dictionary<string, string> CanonicalCodes(IEnumerable<string> codes)
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var code in codes)
+                map[code] = code;
+            return map;
+        }
+
+        /// <summary>
+        /// Rewrites a profile's match codes to their canonical spelling (and the
+        /// BENTLEY alias to PSWBENT). Matching to hardware ignores case, but a
+        /// device's SimHub DeviceTypeID is built from these codes, so this keeps
+        /// every profile for one attachment on the same ID. Codes the decode
+        /// tables don't know are left as written: they can't match a wheel.
+        /// </summary>
+        private static void CanonicalizeMatch(WheelProfile profile)
+        {
+            var match = profile.Match;
+            if (match == null)
+                return;
+            match.WheelType = Canonical(NormalizeWheelType(match.WheelType), CanonicalAttachmentCodes);
+            match.ModuleType = Canonical(match.ModuleType, CanonicalModuleCodes);
+        }
+
+        private static string Canonical(string code, Dictionary<string, string> table)
+        {
+            return code != null && table.TryGetValue(code, out var canonical) ? canonical : code;
         }
     }
 }

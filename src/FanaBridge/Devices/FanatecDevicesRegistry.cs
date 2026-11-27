@@ -90,65 +90,45 @@ namespace FanaBridge.Devices
             void Info(string message) => decisions.Add(new KeyValuePair<bool, string>(false, message));
             void Warn(string message) => decisions.Add(new KeyValuePair<bool, string>(true, message));
 
-            // The first profile of each group names the device. GetAll() is in
-            // load order with built-ins first, so that is the built-in when
-            // there is one, else the first user profile — the spelling a saved
-            // device's case-sensitive DeviceTypeID was registered with.
-            var identities = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
+            // One device per attachment. The store canonicalizes match codes on
+            // load, so every profile for an attachment yields the same
+            // DeviceTypeID; the group's first profile just supplies the codes.
+            // (Case-insensitive anyway, for codes the decode tables don't know.)
+            var groups = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
             var ordered = new List<WheelProfile>();
 
             foreach (var profile in WheelProfileStore.GetAll())
             {
-                if (IsBare(profile))
+                if (profile.IsBare)
                 {
                     Info("Skipping bare profile '" + profile.Id + "' (" + profile.Source + ")");
                     continue;
                 }
 
                 string deviceTypeId = new DeviceConfig { Profile = profile }.DeviceTypeId;
-                if (identities.TryGetValue(deviceTypeId, out var identity))
+                if (groups.TryGetValue(deviceTypeId, out var first))
                 {
                     Info("Profile '" + profile.Id + "' (" + profile.Source + ") shares device " +
-                        deviceTypeId + " with '" + identity.Id + "' (" + identity.Source + ")");
+                        deviceTypeId + " with '" + first.Id + "' (" + first.Source + ")");
                     continue;
                 }
 
-                identities[deviceTypeId] = profile;
+                groups[deviceTypeId] = profile;
                 ordered.Add(profile);
             }
 
             var overrides = PersistedPluginSettings.ReadProfileOverrides();
             var configs = new List<DeviceConfig>();
 
-            foreach (var identity in ordered)
+            foreach (var first in ordered)
             {
-                var profile = ResolveProfileFor(identity, overrides, Info, Warn, out bool fromOverride);
-
-                // A bare profile reached WITHOUT an override — e.g. a bare built-in
-                // hub profile named after the attachment beating a user LED profile
-                // with a non-standard id — can't size a device. The group registered
-                // under its identity profile before, so keep it that way: dropping
-                // the descriptor would hide an already-added device from SimHub
-                // along with its settings. An explicit override to a bare profile is
-                // the user's choice and registers as such, as it always did.
-                if (IsBare(profile) && !fromOverride)
-                {
-                    Warn("Device " + new DeviceConfig { Profile = identity }.DeviceTypeId +
-                        " resolves to bare profile '" + profile.Id + "' (" + profile.Source +
-                        "); registering it with '" + identity.Id + "' (" + identity.Source +
-                        ") so an added device keeps loading. Choose its profile in FanaBridge's settings.");
-                    profile = identity;
-                }
-
-                // An applied override has always named the device (its match
-                // spelling became the DeviceTypeID), so it keeps doing so; otherwise
-                // the group's identity profile does. Either way the ID is exactly
-                // what earlier builds registered, which SimHub matches saved devices
-                // against case-sensitively.
+                // The resolver never picks a bare profile automatically while the
+                // group has one that can drive something, so a bare result here is
+                // an explicit override — the user's choice, registered as such.
+                var profile = ResolveProfileFor(first, overrides, Info, Warn);
                 var config = new DeviceConfig
                 {
                     Profile = profile,
-                    IdentityProfile = fromOverride || ReferenceEquals(profile, identity) ? null : identity,
                     Capabilities = new WheelCapabilities(profile),
                 };
 
@@ -162,7 +142,7 @@ namespace FanaBridge.Devices
         }
 
         /// <summary>
-        /// The profile backing the device named after <paramref name="identity"/>:
+        /// The profile backing the device for <paramref name="first"/>'s attachment:
         /// <see cref="WheelProfileStore.Resolve"/> for its attachment, honouring
         /// the persisted override for its match key.
         /// </summary>
@@ -175,20 +155,18 @@ namespace FanaBridge.Devices
         /// settings file — is derived from those.
         /// </remarks>
         private static WheelProfile ResolveProfileFor(
-            WheelProfile identity, IReadOnlyDictionary<string, string> overrides,
-            Action<string> info, Action<string> warn, out bool fromOverride)
+            WheelProfile first, IReadOnlyDictionary<string, string> overrides,
+            Action<string> info, Action<string> warn)
         {
-            fromOverride = false;
-            string wheelCode = identity.Match?.WheelType;
-            string moduleCode = identity.Match?.ModuleType;
+            string wheelCode = first.Match?.WheelType;
+            string moduleCode = first.Match?.ModuleType;
             string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
             if (string.IsNullOrEmpty(matchKey))
-                return identity;
+                return first;
 
             overrides.TryGetValue(matchKey, out var overrideKey);
             var profile = WheelProfileStore.Resolve(wheelCode, moduleCode, overrideKey, out var overridden)
-                ?? identity;
-            fromOverride = overridden != null && ReferenceEquals(overridden, profile);
+                ?? first;
 
             if (string.IsNullOrEmpty(overrideKey))
                 return profile;
@@ -209,10 +187,6 @@ namespace FanaBridge.Devices
 
             return profile;
         }
-
-        /// <summary>A profile with no LEDs and no display, which never gets a device.</summary>
-        private static bool IsBare(WheelProfile profile) =>
-            !profile.HasLeds && profile.DisplayType == DisplayType.None;
 
         /// <summary>
         /// Logs this call's decisions only when they differ from the previous

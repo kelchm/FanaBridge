@@ -159,13 +159,11 @@ namespace FanaBridge.Tests.Plugin.Devices
         }
 
         [Fact]
-        public void DeviceResolvingToABareProfile_StaysRegistered_WithItsIdentityProfile()
+        public void BareBuiltIn_DoesNotBeatAUserLedProfile_AtRegistrationOrAtRuntime()
         {
-            // The built-in PHUB is bare. A user profile for the same hub names a
-            // device, but without an override the hub resolves to the built-in
-            // (its id is the match key). The device was registered with the user
-            // profile before; dropping its descriptor would hide an added device
-            // and its settings from SimHub, so it keeps registering as it did.
+            // The built-in PHUB is bare and named after the attachment, but a bare
+            // profile never wins automatically over one that can drive something,
+            // so the user's LED profile backs the device and drives the hub alike.
             using var profiles = new TempUserProfiles();
             profiles.Write("fb81-hub-leds.json", "PHUB_FB81", "PHUB");
             profiles.Reload();
@@ -175,6 +173,7 @@ namespace FanaBridge.Tests.Plugin.Devices
             var withoutOverride = ConfigFor("Fanatec_PHUB");
             Assert.NotNull(withoutOverride);
             Assert.Equal("PHUB_FB81", withoutOverride.Profile.Id);
+            Assert.Same(withoutOverride.Profile, WheelProfileStore.FindByWheelType("PHUB"));
 
             WriteSettings("PHUB", "PHUB_FB81:User");
 
@@ -202,21 +201,20 @@ namespace FanaBridge.Tests.Plugin.Devices
         }
 
         [Fact]
-        public void Override_ToALowercaseCodedProfile_KeepsTheIdEarlierBuildsRegistered()
+        public void Override_ToALowercaseCodedProfile_RegistersTheCanonicalId()
         {
-            // An applied override has always named the device after its own match
-            // spelling. SimHub matches saved devices case-sensitively, so that
-            // spelling must not change on upgrade.
+            // Match codes are canonicalized on load, so pinning a hand-edited
+            // lowercase profile no longer renames the device.
             using var profiles = new TempUserProfiles();
             profiles.Write("fb81-lower.json", "pswbmw-custom", "pswbmw");
             profiles.Reload();
             WriteSettings("PSWBMW", "pswbmw-custom:User");
 
-            var config = ConfigFor("Fanatec_pswbmw");
+            var config = ConfigFor("Fanatec_PSWBMW");
 
             Assert.NotNull(config);
             Assert.Equal("pswbmw-custom", config.Profile.Id);
-            Assert.Null(ConfigFor("Fanatec_PSWBMW"));
+            Assert.Null(ConfigFor("Fanatec_pswbmw"));
         }
 
         [Fact]
