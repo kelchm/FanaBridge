@@ -157,38 +157,42 @@ namespace FanaBridge.ControlMapper
                             return false;
                         }
 
-                        // Activate before publishing, so no list we swap in ever holds a
-                        // momentarily inactive provider. Unregister leaves ours in the
-                        // list but inactive; turning the integration back on only needs
-                        // it re-activated.
+                        // FanaBridge is a gap-filler: ours goes LAST so SimHub's stock
+                        // Fanatec provider stays ahead and wins for every wheel it can
+                        // identify (Control Mapper takes the first non-null answer). Ours
+                        // is consulted only where stock returns null — a base SimHub
+                        // can't identify. Existing mappings are never disturbed.
+                        //
+                        // Read, validate and build any replacement list before activating,
+                        // so a lookup racing a registration that fails never gets an answer
+                        // from ours. Unregister leaves ours in the list but inactive;
+                        // turning the integration back on only needs it re-activated.
+                        int mineCount = 0;
+                        foreach (var p in current)
+                            if (p is FanaBridgeVariantProvider) mineCount++;
+                        bool oursLast = current.Count > 0 && ReferenceEquals(current[current.Count - 1], _provider);
+                        List<IVariantProvider> rebuilt = mineCount == 1 && oursLast ? null : Rebuild(current);
+
                         bool wasActive = _provider.IsActive;
                         reactivated = !wasActive;
+                        // Activate immediately before publishing, so no list we swap in
+                        // ever holds a momentarily inactive provider.
                         _provider.IsActive = true;
-
-                        try
+                        if (rebuilt != null)
                         {
-                            // FanaBridge is a gap-filler: ours goes LAST so SimHub's stock
-                            // Fanatec provider stays ahead and wins for every wheel it can
-                            // identify (Control Mapper takes the first non-null answer). Ours
-                            // is consulted only where stock returns null — a base SimHub
-                            // can't identify. Existing mappings are never disturbed.
-                            int mineCount = 0;
-                            foreach (var p in current)
-                                if (p is FanaBridgeVariantProvider) mineCount++;
-                            bool oursLast = current.Count > 0 && ReferenceEquals(current[current.Count - 1], _provider);
-
-                            if (!(mineCount == 1 && oursLast))
+                            try
                             {
-                                _provField.SetValue(vh, Rebuild(current));
-                                listChanged = true;
+                                _provField.SetValue(vh, rebuilt);
                             }
-                        }
-                        catch
-                        {
-                            // Nothing was published, so leave the provider as we found it:
-                            // a deactivated one must not start answering from a stale slot.
-                            _provider.IsActive = wasActive;
-                            throw;
+                            catch
+                            {
+                                // Nothing was published, so leave the provider as we found
+                                // it: a deactivated one must not start answering from a
+                                // slot that was never republished.
+                                _provider.IsActive = wasActive;
+                                throw;
+                            }
+                            listChanged = true;
                         }
                     }
 

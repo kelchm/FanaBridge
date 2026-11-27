@@ -110,8 +110,15 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
         /// <summary>A provider list whose enumeration throws, to make a rebuild fail.</summary>
         private sealed class UnreadableProviderList : List<IVariantProvider>, System.Collections.IEnumerable
         {
+            /// <summary>Runs as the bridge starts reading the list, just before the
+            /// read fails, standing in for a lookup that races the registration.</summary>
+            public System.Action? OnRead;
+
             System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
-                => throw new System.InvalidOperationException("simulated read failure");
+            {
+                OnRead?.Invoke();
+                throw new System.InvalidOperationException("simulated read failure");
+            }
         }
 
         private static void AssertInertPlaceholder(IVariantProvider p)
@@ -148,7 +155,7 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
         }
 
         [Fact]
-        public void EnsureRegistered_PublishFails_RestoresInactiveProvider()
+        public void EnsureRegistered_ReadFails_NeverActivatesProvider()
         {
             var stock = new FakeStockProvider("x");
             var (bridge, pm, helper, worker) = NewSetup(stock: stock);
@@ -156,14 +163,19 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
             var ours = (FanaBridgeVariantProvider)helper.Snapshot()[1];
             bridge.Unregister();
 
-            // Reading the list throws once the provider has been activated.
-            helper.Replace(new UnreadableProviderList { stock, ours });
+            // Reading the list throws. A lookup racing that read must not find ours active.
+            bool? activeDuringRead = null;
+            var unreadable = new UnreadableProviderList { stock, ours };
+            unreadable.OnRead = () => activeDuringRead = ours.IsActive;
+            helper.Replace(unreadable);
 
             Assert.False(bridge.EnsureRegistered(pm));
 
+            Assert.False(activeDuringRead);
             Assert.False(ours.IsActive);
             Assert.False(bridge.IsRegistered);
-            Assert.Equal(1, worker.UpdateControllerListCalls); // no re-enumerate for a failed publish
+            Assert.Same(unreadable, helper.Snapshot());        // nothing published
+            Assert.Equal(1, worker.UpdateControllerListCalls); // no re-enumerate for a failed registration
         }
 
         [Fact]
