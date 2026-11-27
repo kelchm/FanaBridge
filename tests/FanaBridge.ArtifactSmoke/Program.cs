@@ -190,14 +190,19 @@ namespace FanaBridge.ArtifactSmoke
             if (xaml.Count == 0)
                 throw new SmokeFailure("no expected XAML files were embedded in this harness at build time");
 
+            var resources = MetadataList("ExpectedWpfResources");
+            if (resources.Count == 0)
+                throw new SmokeFailure("no <Resource> items were read from FanaBridge.csproj at build time");
+
             // Each compiled page as BAML, plus each <Resource> item such as the
-            // plugin icon, under WPF's resource id for its path.
-            var expected = xaml.Select(x => ResourceId(Path.ChangeExtension(x, ".baml")))
-                .Concat(MetadataList("ExpectedWpfResources").Select(ResourceId))
+            // plugin icon.
+            var expected = xaml.Select(x => Path.ChangeExtension(x, ".baml"))
+                .Concat(resources)
+                .Select(NormalizeResourceId)
                 .ToList();
 
             const string container = "FanaBridge.g.resources";
-            var keys = new HashSet<string>(StringComparer.Ordinal);
+            var keys = new List<string>();
             using (var stream = _plugin!.GetManifestResourceStream(container)
                                 ?? throw new SmokeFailure("no " + container + " manifest resource"))
             using (var reader = new ResourceReader(stream))
@@ -206,17 +211,20 @@ namespace FanaBridge.ArtifactSmoke
                     keys.Add((string)entry.Key);
             }
 
-            var missing = expected.Where(k => !keys.Contains(k)).ToList();
+            var present = new HashSet<string>(keys.Select(NormalizeResourceId), StringComparer.Ordinal);
+            var missing = expected.Where(k => !present.Contains(k)).ToList();
             if (missing.Count > 0)
                 throw new SmokeFailure("missing from " + container + ": " + string.Join(", ", missing) +
                                        " (present: " + string.Join(", ", keys) + ")");
             return expected.Count + " resource keys present";
         }
 
-        // WPF's resource id for a project-relative path: forward slashes,
-        // URI-escaped (a space becomes %20), lower-cased.
-        private static string ResourceId(string relativePath) =>
-            Uri.EscapeUriString(relativePath.Replace('\\', '/')).ToLowerInvariant();
+        // WPF stores each resource under a lower-cased, URI-escaped form of its
+        // project-relative path. Comparing both sides unescaped matches it
+        // without re-implementing WPF's exact escaping (a space, '#' or a
+        // literal "%20" in a file name).
+        private static string NormalizeResourceId(string id) =>
+            Uri.UnescapeDataString(id.Replace('\\', '/')).ToLowerInvariant();
 
         private static string Construct(string typeName, params object[] ctorArgs)
         {
