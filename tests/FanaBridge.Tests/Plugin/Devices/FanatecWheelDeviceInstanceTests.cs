@@ -603,6 +603,39 @@ namespace FanaBridge.Tests.Plugin.Devices
         }
 
         [Fact]
+        public void ProfileWithoutWheelCode_DoesNotClaimAnUnrecognizedRim()
+        {
+            byte unknownWire = Enumerable.Range(1, 254).Select(i => (byte)i)
+                .First(w => !FanatecDeviceTables.Wheels.ContainsKey(w)
+                         && !FanatecDeviceTables.Hubs.ContainsKey(w));
+            var t = new FakeTransport();
+            var clock = new Clock();
+            var wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);
+            Assert.True(wheelbase.AutoConnect());
+            t.Identity.Enqueue(Ff08(0x0C, unknownWire));
+            clock.T += 10;
+            wheelbase.UpdateIdentity();
+            clock.T += 250;
+            wheelbase.UpdateIdentity();
+            Assert.True(wheelbase.WheelDetected);
+            Assert.Null(wheelbase.WheelCode);
+
+            var plugin = new FanatecPlugin();
+            plugin.InstallWheelbaseForTest(wheelbase);
+            var builtIn = WheelProfileStore.FindByWheelType("PSWBMW");
+            Assert.NotNull(builtIn);
+            var noMatch = new WheelProfile { Id = "hand-written", Match = null, Leds = builtIn!.Leds };
+            var inst = new FanatecWheelDeviceInstance(new DeviceConfig
+            {
+                Profile = noMatch,
+                Capabilities = new WheelCapabilities(noMatch),
+            });
+            inst.PluginResolver = () => plugin;
+
+            Assert.Equal(DeviceState.Scanning, inst.GetDeviceState());
+        }
+
+        [Fact]
         public void SettlingIdentity_ReportsScanning_UntilCommitted()
         {
             // Mid-transition output suppression: while a changed reading is still
