@@ -22,16 +22,15 @@ namespace FanaBridge.ControlMapper
     /// ours only answers where SimHub returns null (a base it can't identify, e.g.
     /// a Podium DD). So existing Control Mapper mappings are never disturbed —
     /// enabling the feature adds per-rim identity only where there was none, and
-    /// disabling it removes our provider with no further effect.
+    /// disabling it deactivates our provider, which then answers nothing.
     ///
-    /// Design notes (verified against the decompiled SimHub.Plugins):
+    /// Design notes:
     /// <list type="bullet">
     /// <item><description>
-    ///   <c>VariantHelper.GetVariant</c> resolves with
-    ///   <c>FirstOrDefault(v =&gt; v != null)</c> over the list, so appending ours
-    ///   LAST keeps the stock Fanatec provider ahead: it wins for any wheel it can
-    ///   identify, and ours is consulted only where stock returns null. Existing
-    ///   mappings stay byte-identical; disabling removes only our provider.
+    ///   <c>VariantHelper.GetVariant</c> takes the first non-null answer from the
+    ///   list in order, so appending ours LAST keeps the stock Fanatec provider
+    ///   ahead: it wins for any wheel it can identify, and ours is consulted only
+    ///   where stock returns null. Existing mappings stay byte-identical.
     /// </description></item>
     /// <item><description>
     ///   The provider list is created lazily by <c>VariantHelper.Start()</c> and
@@ -45,12 +44,19 @@ namespace FanaBridge.ControlMapper
     ///   "ensure ours is present, last", not one-shot.
     /// </description></item>
     /// <item><description>
-    ///   We register by swapping in a fresh list (copy + append) rather than
-    ///   mutating in place: <c>GetVariant</c> enumerates the list lock-free from
-    ///   the worker thread, so an in-place mutation could throw "collection
-    ///   modified". A reference swap is atomic for readers. The swap is done
-    ///   under the same monitor (<c>typeof(VariantHelper)</c>) that
-    ///   <c>Start()</c>/<c>Stop()</c> use, so we never race those.
+    ///   The list is never mutated in place and never made shorter.
+    ///   <c>GetVariant</c> reads it lock-free from the worker thread, so an
+    ///   in-place mutation could throw "collection modified". Older SimHub
+    ///   releases walked the list once per lookup, so swapping in a new list was
+    ///   invisible to a lookup in progress. Current releases (9.13.x) re-read the
+    ///   list at each step of a lookup, so a lookup in progress sees a swapped-in
+    ///   list, and a shorter one makes it read past the end (#132). So
+    ///   registering swaps in a copy that is never shorter than the current list
+    ///   (stale FanaBridge entries become inert placeholders instead of being
+    ///   removed), and <see cref="Unregister"/> only deactivates our provider,
+    ///   leaving it in place. The swap is done under the same monitor
+    ///   (<c>typeof(VariantHelper)</c>) that <c>Start()</c>/<c>Stop()</c> use, so
+    ///   we never race those.
     /// </description></item>
     /// <item><description>
     ///   <c>VariantHelper</c> only subscribes to <c>VariantChanged</c> for
@@ -130,7 +136,7 @@ namespace FanaBridge.ControlMapper
                     object vh = _vhField.GetValue(rw);
                     if (vh == null) return false;
 
-                    bool changed;
+                    bool listChanged = false;
                     lock (_vhLockType)
                     {
                         if (!(_provField.GetValue(vh) is IList current))
@@ -152,26 +158,27 @@ namespace FanaBridge.ControlMapper
                             if (p is FanaBridgeVariantProvider) mineCount++;
                         bool oursLast = current.Count > 0 && ReferenceEquals(current[current.Count - 1], _provider);
 
-                        if (mineCount == 1 && oursLast)
+                        if (!(mineCount == 1 && oursLast))
                         {
-                            _registered = true;
-                            return true;                    // already present exactly once, last
+                            // Rebuild without ever shrinking the list (see the design notes):
+                            // every entry keeps its position, any FanaBridge provider (a stale
+                            // one left by a prior plugin reload, or ours out of place) becomes
+                            // an inert placeholder, and ours is appended last.
+                            var newList = new List<IVariantProvider>(current.Count + 1);
+                            foreach (var p in current)
+                                newList.Add(p is FanaBridgeVariantProvider ? InertVariantProvider.Instance : (IVariantProvider)p);
+                            newList.Add(_provider);
+                            _provField.SetValue(vh, newList);
+                            listChanged = true;
                         }
-
-                        // Rebuild: every non-FanaBridge provider in original order, then
-                        // ours appended last (drops any stale FanaBridge provider left by
-                        // a prior plugin reload).
-                        var newList = new List<IVariantProvider>();
-                        foreach (var p in current)
-                            if (!(p is FanaBridgeVariantProvider))
-                                newList.Add((IVariantProvider)p);
-                        newList.Add(_provider);
-                        _provField.SetValue(vh, newList);
-                        changed = true;
                     }
 
+                    // Unregister leaves our provider in the list but inactive; turning the
+                    // integration back on only needs it re-activated.
+                    bool reactivated = !_provider.IsActive;
+                    _provider.IsActive = true;
                     _registered = true;
-                    if (changed)
+                    if (listChanged)
                     {
                         if (!_everRegistered)
                         {
@@ -184,8 +191,17 @@ namespace FanaBridge.ControlMapper
                             SimHub.Logging.Current.Info(
                                 "FanaBridge: Control Mapper variant provider re-registered after eviction");
                         }
-                        rwToReEnum = rw; // defer the re-enumerate to outside _sync (see ReEnumerateOutsideLock)
                     }
+                    else if (reactivated)
+                    {
+                        SimHub.Logging.Current.Info(
+                            "FanaBridge: Control Mapper variant provider re-activated");
+                    }
+                    // A new or re-activated provider changes the attached rim's variant, so
+                    // its controller needs re-keying. Deferred to outside _sync (see
+                    // ReEnumerateOutsideLock).
+                    if (listChanged || reactivated)
+                        rwToReEnum = rw;
                 }
                 catch (Exception ex)
                 {
@@ -229,48 +245,38 @@ namespace FanaBridge.ControlMapper
         }
 
         /// <summary>
-        /// Remove our provider from Control Mapper's list so disabling the
-        /// feature (or a plugin reload / shutdown) doesn't leave a dead provider
-        /// behind. Safe to call when never registered.
+        /// Deactivate our provider when the feature is disabled (or on plugin
+        /// reload / shutdown): it stops answering, so Control Mapper behaves as if
+        /// it were absent. It is deliberately left in Control Mapper's list,
+        /// because removing it would make the list shorter (see the design notes,
+        /// #132). Safe to call when never registered.
         /// </summary>
         public void Unregister()
         {
             lock (_sync)
             {
-                if (!_resolved || _pm == null) { _registered = false; return; }
-                try
-                {
-                    object cm = LiveControlMapper();
-                    object rw = cm != null ? _rwField.GetValue(cm) : null;
-                    object vh = rw != null ? _vhField.GetValue(rw) : null;
-                    if (vh != null && _vhLockType != null)
-                    {
-                        lock (_vhLockType)
-                        {
-                            if (_provField.GetValue(vh) is IList current
-                                && current.Cast<object>().Any(p => p is FanaBridgeVariantProvider))
-                            {
-                                var newList = new List<IVariantProvider>();
-                                foreach (var p in current)
-                                    if (!(p is FanaBridgeVariantProvider))
-                                        newList.Add((IVariantProvider)p);
-                                _provField.SetValue(vh, newList);
-                                SimHub.Logging.Current.Info(
-                                    "FanaBridge: Control Mapper variant provider removed");
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    SimHub.Logging.Current.Debug(
-                        "FanaBridge: Control Mapper unregister failed: " + ex.Message);
-                }
-                finally
-                {
-                    _registered = false;
-                }
+                bool wasRegistered = _registered;
+                _provider.IsActive = false;
+                _registered = false;
+                if (wasRegistered)
+                    SimHub.Logging.Current.Info(
+                        "FanaBridge: Control Mapper variant provider deactivated");
             }
+        }
+
+        /// <summary>
+        /// Stands in for a FanaBridge provider that must leave Control Mapper's list
+        /// (a stale one from a prior plugin reload, or ours out of position), so the
+        /// list keeps its length. Always answers <c>null</c>, which Control Mapper
+        /// treats the same as an absent provider.
+        /// </summary>
+        private sealed class InertVariantProvider : IVariantProvider
+        {
+            public static readonly InertVariantProvider Instance = new InertVariantProvider();
+
+            public string GetVariant(int vendorid, int productid) => null;
+
+            public event EventHandler VariantChanged { add { } remove { } }
         }
 
         /// <summary>

@@ -30,10 +30,11 @@ namespace FanaBridge.ControlMapper
     /// still shows something friendly.</para>
     ///
     /// <para><b>Registration.</b> <see cref="ControlMapperBridge"/> appends this provider
-    /// AFTER the stock Fanatec provider. Control Mapper resolves with
-    /// <c>FirstOrDefault(v =&gt; v != null)</c>, so stock wins for any wheel it
-    /// recognizes and this provider answers only where stock returns <c>null</c> —
-    /// filling the gap without disturbing anything stock already handles.</para>
+    /// AFTER the stock Fanatec provider. Control Mapper takes the first non-null answer,
+    /// so stock wins for any wheel it recognizes and this provider answers only where
+    /// stock returns <c>null</c> — filling the gap without disturbing anything stock
+    /// already handles. Once added, the provider stays in Control Mapper's list; turning
+    /// the integration off clears <see cref="IsActive"/> instead of removing it.</para>
     /// </summary>
     public class FanaBridgeVariantProvider : IVariantProvider
     {
@@ -71,6 +72,21 @@ namespace FanaBridge.ControlMapper
 
         private string _lastVariant;
 
+        private volatile bool _isActive = true;
+
+        /// <summary>
+        /// Whether the provider answers at all. <see cref="ControlMapperBridge"/> never
+        /// removes the provider from Control Mapper's list (doing so can make a lookup in
+        /// progress read past the end, #132); it clears this flag instead. While false,
+        /// <see cref="GetVariant"/> returns <c>null</c>, which Control Mapper treats the
+        /// same as an absent provider. Read from Control Mapper's polling thread.
+        /// </summary>
+        public bool IsActive
+        {
+            get => _isActive;
+            set => _isActive = value;
+        }
+
         /// <summary>
         /// Control Mapper's entry point. Returns the stable per-rim id for the Fanatec
         /// base FanaBridge is actively driving; <c>null</c> otherwise (which lets the next
@@ -85,6 +101,8 @@ namespace FanaBridge.ControlMapper
         /// </summary>
         public string GetVariant(int vendorid, int productid)
         {
+            if (!_isActive)
+                return null;
             var wheelbase = FanatecPlugin.Instance?.Wheelbase;
             bool baseConnected = wheelbase != null && wheelbase.IsConnected;
             int connectedProductId = baseConnected ? wheelbase.ConnectedProductId : 0;

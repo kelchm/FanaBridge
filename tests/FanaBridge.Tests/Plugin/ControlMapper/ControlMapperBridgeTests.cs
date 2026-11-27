@@ -101,38 +101,82 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
         }
 
         [Fact]
-        public void EnsureRegistered_DropsStaleFanaBridgeProvider_FromPriorReload()
+        public void EnsureRegistered_NeutralizesStaleFanaBridgeProvider_WithoutShrinkingList()
         {
-            var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
+            var stock = new FakeStockProvider("x");
+            var (bridge, pm, helper, worker) = NewSetup(stock: stock);
             // A previous plugin instance left its own provider behind.
             helper.Snapshot().Add(new FanaBridgeVariantProvider());
             Assert.Equal(2, helper.Snapshot().Count);
 
             Assert.True(bridge.EnsureRegistered(pm));
 
-            // Stale one removed, exactly one FanaBridge provider, and it's last.
+            // The stale entry keeps its slot as an inert placeholder (the list never
+            // shrinks, #132), and exactly one FanaBridge provider remains, last.
             List<IVariantProvider> list = helper.Snapshot();
-            Assert.Equal(2, list.Count);
-            Assert.IsType<FanaBridgeVariantProvider>(list[1]);
+            Assert.Equal(3, list.Count);
+            Assert.Same(stock, list[0]);
+            Assert.IsNotType<FanaBridgeVariantProvider>(list[1]);
+            Assert.Null(list[1].GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+            Assert.IsType<FanaBridgeVariantProvider>(list[2]);
             int fanaCount = 0;
             foreach (var p in list) if (p is FanaBridgeVariantProvider) fanaCount++;
             Assert.Equal(1, fanaCount);
         }
 
         [Fact]
-        public void Unregister_RemovesProvider()
+        public void Unregister_LeavesProviderInPlace_AndDeactivatesIt()
         {
             var stock = new FakeStockProvider("x");
             var (bridge, pm, helper, worker) = NewSetup(stock: stock);
             Assert.True(bridge.EnsureRegistered(pm));
-            Assert.Equal(2, helper.Snapshot().Count);
+            List<IVariantProvider> before = helper.Snapshot();
 
             bridge.Unregister();
 
+            // Control Mapper reads the list lock-free and re-reads it during a lookup,
+            // so unregistering must not swap in a shorter list (#132).
             Assert.False(bridge.IsRegistered);
             List<IVariantProvider> list = helper.Snapshot();
-            Assert.Single(list);
+            Assert.Same(before, list);
+            Assert.Equal(2, list.Count);
             Assert.Same(stock, list[0]);
+            var ours = Assert.IsType<FanaBridgeVariantProvider>(list[1]);
+            Assert.False(ours.IsActive);
+        }
+
+        [Fact]
+        public void EnsureRegistered_AfterUnregister_ReactivatesInPlace_AndReEnumerates()
+        {
+            var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
+            Assert.True(bridge.EnsureRegistered(pm));
+            bridge.Unregister();
+            List<IVariantProvider> before = helper.Snapshot();
+
+            Assert.True(bridge.EnsureRegistered(pm));
+
+            Assert.True(bridge.IsRegistered);
+            Assert.Same(before, helper.Snapshot());            // list untouched
+            Assert.True(((FanaBridgeVariantProvider)before[1]).IsActive);
+            Assert.Equal(2, worker.UpdateControllerListCalls); // rim re-keyed on re-activation
+        }
+
+        [Fact]
+        public void RegisterUnregisterCycles_NeverShrinkTheList()
+        {
+            var (bridge, pm, helper, worker) = NewSetup(stock: new FakeStockProvider("x"));
+            int last = helper.Snapshot().Count;
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.True(bridge.EnsureRegistered(pm));
+                Assert.True(helper.Snapshot().Count >= last);
+                last = helper.Snapshot().Count;
+
+                bridge.Unregister();
+                Assert.True(helper.Snapshot().Count >= last);
+                last = helper.Snapshot().Count;
+            }
+            Assert.Equal(2, last); // stock + ours: cycling doesn't grow it either
         }
 
         [Fact]
