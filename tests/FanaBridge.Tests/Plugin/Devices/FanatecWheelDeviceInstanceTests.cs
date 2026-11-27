@@ -873,20 +873,20 @@ namespace FanaBridge.Tests.Plugin.Devices
         public void Registration_AttachmentChangingMidLoop_StillListsOneDevice()
         {
             // Registration reads the plugin once per device, in BuildConfigs order.
-            var wheels = FanatecDevicesRegistry.BuildConfigs()
+            var configs = FanatecDevicesRegistry.BuildConfigs().ToList();
+            var wheels = configs
                 .Where(c => c.ModuleCode == null && FanatecDeviceTables.Wheels.Values.Contains(c.WheelCode))
-                .Select(c => c.WheelCode)
                 .Take(2).ToList();
-            var order = FanatecDevicesRegistry.BuildConfigs().Select(c => c.WheelCode).ToList();
-            int firstIndex = order.IndexOf(wheels[0]);
-            var first = PluginWithWheel(wheels[0], out _);
-            var second = PluginWithWheel(wheels[1], out _);
+            int firstIndex = configs.FindIndex(c => c.DeviceTypeId == wheels[0].DeviceTypeId);
+            var first = PluginWithWheel(wheels[0].WheelCode, out _);
+            var second = PluginWithWheel(wheels[1].WheelCode, out _);
             int calls = 0;
 
             var descriptors = new FanatecDevicesRegistry()
                 .GetDevices(() => calls++ <= firstIndex ? first : second).ToList();
 
-            Assert.Single(descriptors, d => d.DetectionDescriptors.Any());
+            var withUsbId = Assert.Single(descriptors, d => d.DetectionDescriptors.Any());
+            Assert.Equal(wheels[0].DeviceTypeId, withUsbId.DeviceTypeID);
         }
 
         [Fact]
