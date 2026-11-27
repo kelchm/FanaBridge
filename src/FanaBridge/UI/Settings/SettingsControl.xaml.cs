@@ -147,7 +147,7 @@ namespace FanaBridge.UI.Settings
 
         // Connected: the wheelbase node carries the dot + base name; the wheel and
         // module nodes follow what's attached (module only on a hub that has one).
-        private void ShowConnectedChain(FanatecWheelbase wb)
+        private void ShowConnectedChain(AttachmentSnapshot wb)
         {
             SetDot(LinkState.Connected);
             txtBaseName.Text = ChainBaseText(wb);
@@ -257,19 +257,19 @@ namespace FanaBridge.UI.Settings
         }
 
         // friendly name → code → raw byte, so an unmapped device still shows.
-        private static string ChainBaseText(FanatecWheelbase wb)
+        private static string ChainBaseText(AttachmentSnapshot wb)
             => wb.BaseFriendlyName
             ?? wb.BaseCode
             ?? (wb.BaseType != 0 ? string.Format("Unknown Base (0x{0:X2})", wb.BaseType) : "Unknown Base");
 
-        private static string ChainAttachmentText(FanatecWheelbase wb)
+        private static string ChainAttachmentText(AttachmentSnapshot wb)
             => wb.AttachmentFriendlyName
             ?? wb.WheelCode
             ?? (wb.WheelWireCode == 0xFF
                 ? "Unrecognized (0xFF)"
                 : string.Format("Unrecognized (0x{0:X2})", wb.WheelWireCode));
 
-        private static string ChainModuleText(FanatecWheelbase wb)
+        private static string ChainModuleText(AttachmentSnapshot wb)
             => wb.ModuleFriendlyName
             ?? wb.ModuleCode
             ?? string.Format("Unknown (0x{0:X2})", wb.ModuleWireCode);
@@ -367,12 +367,14 @@ namespace FanaBridge.UI.Settings
                 return;
             }
 
-            var wheelbase = Plugin.Wheelbase;
+            // One snapshot, so the chain, the capabilities and the picker all
+            // describe the same attachment.
+            var attachment = Plugin.Wheelbase.Attachment;
 
             // Connected, but the FF 08 identity hasn't been committed yet (the base
             // is still being read). Show the transitional state rather than a
             // misleading "Unknown Base" flash.
-            if (!wheelbase.HasIdentity)
+            if (!attachment.HasIdentity)
             {
                 ShowBaseOnly(LinkState.Connecting, "Connecting…", null);
                 SetStatusDetail(null);
@@ -382,11 +384,11 @@ namespace FanaBridge.UI.Settings
                 return;
             }
 
-            var caps = Plugin.CurrentCapabilities;
+            var caps = attachment.Capabilities;
             bool identified = caps.Name != null;
 
             // The chain shows what's attached whether or not a profile matched.
-            ShowConnectedChain(wheelbase);
+            ShowConnectedChain(attachment);
             SetStatusDetail(null);
 
             txtCapabilities.Text = identified ? FormatCapabilities(caps) : "—";
@@ -399,7 +401,7 @@ namespace FanaBridge.UI.Settings
             // Pass caps only when identified; an unrecognized-but-attached wheel
             // still shows the picker so the New Profile Wizard stays reachable.
             UpdateProfilePicker(
-                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode,
+                attachment.WheelDetected, attachment.WheelCode, attachment.ModuleCode,
                 identified ? caps : null);
         }
 
@@ -419,9 +421,9 @@ namespace FanaBridge.UI.Settings
         {
             _promptDeviceTypeId = null;
 
-            var wheelbase = Plugin?.Wheelbase;
-            if (wheelbase == null || !Plugin.IsDeviceConnected || !wheelbase.HasIdentity
-                || !wheelbase.WheelDetected)
+            var attachment = Plugin?.Wheelbase?.Attachment;
+            if (attachment == null || !Plugin.IsDeviceConnected || !attachment.HasIdentity
+                || !attachment.WheelDetected)
             {
                 // Every way out of these states (connect/disconnect, identity
                 // commit) raises StateChanged, so no re-poll is needed.
@@ -430,7 +432,7 @@ namespace FanaBridge.UI.Settings
                 return;
             }
 
-            if (!wheelbase.IdentityStable)
+            if (!attachment.IdentityStable)
             {
                 // The unstable→stable edge is silent when the identity settles
                 // back UNCHANGED (nothing commits, so no StateChanged) — re-poll
@@ -448,7 +450,7 @@ namespace FanaBridge.UI.Settings
                 WatchSimHubDevices(devices);
 
             var config = FanatecDevicesRegistry.FindConfigForAttachment(
-                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
+                attachment.WheelDetected, attachment.WheelCode, attachment.ModuleCode);
 
             // Stay quiet when there is nothing addable: no matching registered
             // config, one whose profile has nothing to drive (an explicit pin to
@@ -730,10 +732,11 @@ namespace FanaBridge.UI.Settings
 
             // Build match key for current wheel
             var wheelbase = Plugin.Wheelbase;
-            if (!wheelbase.WheelDetected) return;
+            var attachment = wheelbase.Attachment;
+            if (!attachment.WheelDetected) return;
 
-            string wheelCode = wheelbase.WheelCode;
-            string moduleCode = wheelbase.ModuleCode;
+            string wheelCode = attachment.WheelCode;
+            string moduleCode = attachment.ModuleCode;
             string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
 
             // No match key (e.g. detected but unrecognized wheel, WheelCode null)

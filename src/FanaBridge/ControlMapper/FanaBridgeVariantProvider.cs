@@ -148,9 +148,10 @@ namespace FanaBridge.ControlMapper
         internal static string ComputeCurrentVariant()
         {
             var wheelbase = FanatecPlugin.Instance?.Wheelbase;
-            if (wheelbase == null || !wheelbase.IsConnected || !wheelbase.WheelDetected)
+            var attachment = wheelbase?.Attachment;
+            if (attachment == null || !wheelbase.IsConnected || !attachment.WheelDetected)
                 return null;
-            return FormatStockVariant(wheelbase.WheelCode, wheelbase.ModuleCode);
+            return FormatStockVariant(attachment.WheelCode, attachment.ModuleCode);
         }
 
         /// <summary>
@@ -160,18 +161,19 @@ namespace FanaBridge.ControlMapper
         internal static string ComputeFriendlyName()
         {
             var wheelbase = FanatecPlugin.Instance?.Wheelbase;
-            if (wheelbase == null || !wheelbase.IsConnected || !wheelbase.WheelDetected)
+            var attachment = wheelbase?.Attachment;
+            if (attachment == null || !wheelbase.IsConnected || !attachment.WheelDetected)
                 return null;
             // Normalize on the short name FanaBridge shows elsewhere (the device's
             // DeviceDescriptor.Name = caps.ShortName ?? caps.Name). Cheap (no device
             // lookup) so it's safe per-frame. Falls back to a composed friendly name,
             // then the raw code. (The SimHub device's own name — incl. a user rename —
             // is preferred at stamp time; see ControlMapperBridge.StampFriendlyNames.)
-            var caps = wheelbase.CurrentCapabilities;
-            string shortName = caps?.ShortName ?? caps?.Name;
+            var caps = attachment.Capabilities;
+            string shortName = caps.ShortName ?? caps.Name;
             if (!string.IsNullOrEmpty(shortName))
                 return shortName;
-            return FormatFriendlyName(wheelbase.WheelCode, wheelbase.ModuleCode);
+            return FormatFriendlyName(attachment.WheelCode, attachment.ModuleCode);
         }
 
         /// <summary>
@@ -222,13 +224,13 @@ namespace FanaBridge.ControlMapper
         {
             if (string.IsNullOrEmpty(candidate))
                 return false;
-            var wheelbase = FanatecPlugin.Instance?.Wheelbase;
-            if (wheelbase == null || !wheelbase.WheelDetected)
+            var attachment = FanatecPlugin.Instance?.Wheelbase?.Attachment;
+            if (attachment == null || !attachment.WheelDetected)
                 return false;
-            var caps = wheelbase.CurrentCapabilities;
-            return NameEquals(candidate, caps?.ShortName)
-                || NameEquals(candidate, caps?.Name)
-                || NameEquals(candidate, FormatFriendlyName(wheelbase.WheelCode, wheelbase.ModuleCode));
+            var caps = attachment.Capabilities;
+            return NameEquals(candidate, caps.ShortName)
+                || NameEquals(candidate, caps.Name)
+                || NameEquals(candidate, FormatFriendlyName(attachment.WheelCode, attachment.ModuleCode));
         }
 
         private static bool NameEquals(string a, string b)

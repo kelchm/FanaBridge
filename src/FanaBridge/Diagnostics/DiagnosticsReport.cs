@@ -413,22 +413,24 @@ namespace FanaBridge.Diagnostics
                 sb.AppendLine(Kv("Detail", statusDetail));
 
             byte[] raw = wb?.LastRawReport;
+            // One snapshot, so the identity lines describe a single attachment.
+            var a = wb?.Attachment;
             if (!connected || wb == null || raw == null || raw.Length == 0)
             {
                 // A committed SRM converter identity has no FF 08 frame (it came from the DE FA
                 // channel) — surface it so the report doesn't read as "unidentified".
-                if (wb != null && wb.IsSrmConverter)
+                if (a != null && a.IsSrmConverter)
                 {
                     sb.AppendLine(Kv("Identity source", "SRM Conversion Kit (DE FA channel — no FF 08)"));
-                    sb.AppendLine(Kv("Steering wheel", wb.WheelDetected
-                        ? (wb.WheelCode ?? string.Format("Unknown (id 0x{0:X2})", wb.WheelWireCode))
-                            + (wb.IsHub ? " [hub]" : "")
+                    sb.AppendLine(Kv("Steering wheel", a.WheelDetected
+                        ? (a.WheelCode ?? string.Format("Unknown (id 0x{0:X2})", a.WheelWireCode))
+                            + (a.IsHub ? " [hub]" : "")
                         : "(nothing attached)"));
-                    if (wb.IsHub)
-                        sb.AppendLine(Kv("Button module", (wb.ModuleCode
-                            ?? (wb.ModuleWireCode != 0 ? string.Format("Unknown (0x{0:X2})", wb.ModuleWireCode) : "(none)"))
-                            + (wb.ModuleWireCode != 0 ? "   [converter-module decode UNVALIDATED — please report]" : "")));
-                    sb.AppendLine(Kv("Kit firmware", wb.SrmKitFirmware ?? "?"));
+                    if (a.IsHub)
+                        sb.AppendLine(Kv("Button module", (a.ModuleCode
+                            ?? (a.ModuleWireCode != 0 ? string.Format("Unknown (0x{0:X2})", a.ModuleWireCode) : "(none)"))
+                            + (a.ModuleWireCode != 0 ? "   [converter-module decode UNVALIDATED — please report]" : "")));
+                    sb.AppendLine(Kv("Kit firmware", a.SrmKitFirmware ?? "?"));
                     return;
                 }
 
@@ -444,28 +446,28 @@ namespace FanaBridge.Diagnostics
                     fw.SystemConfig, fw.Extended ? "extended" : "legacy")));
             sb.AppendLine(Kv("Raw", BytesToHex(raw)));
 
-            sb.AppendLine(Row("Wheelbase", wb.BaseCode ?? "Unknown", 0x02, wb.BaseType, fw?.Wheelbase));
+            sb.AppendLine(Row("Wheelbase", a.BaseCode ?? "Unknown", 0x02, a.BaseType, fw?.Wheelbase));
 
-            if (!wb.WheelDetected)
+            if (!a.WheelDetected)
             {
                 sb.AppendLine(Kv("Steering wheel", "(nothing attached)"));
             }
             else
             {
                 string wheel =
-                    wb.WheelCode != null     ? wb.WheelCode :
-                    wb.WheelWireCode == 0xFF ? "EXT_INFO" :
-                                               "Unknown";
-                if (wb.IsHub) wheel += " [hub]";
-                sb.AppendLine(Row("Steering wheel", wheel, 0x18, wb.WheelWireCode, fw?.SteeringWheel));
+                    a.WheelCode != null     ? a.WheelCode :
+                    a.WheelWireCode == 0xFF ? "EXT_INFO" :
+                                              "Unknown";
+                if (a.IsHub) wheel += " [hub]";
+                sb.AppendLine(Row("Steering wheel", wheel, 0x18, a.WheelWireCode, fw?.SteeringWheel));
 
-                if (wb.IsHub && (wb.ModuleCode != null || wb.ModuleWireCode != 0))
-                    sb.AppendLine(Row("Button module", wb.ModuleCode ?? "Unknown", 0x1F, wb.ModuleWireCode, fw?.ButtonModule));
+                if (a.IsHub && (a.ModuleCode != null || a.ModuleWireCode != 0))
+                    sb.AppendLine(Row("Button module", a.ModuleCode ?? "Unknown", 0x1F, a.ModuleWireCode, fw?.ButtonModule));
             }
 
-            sb.AppendLine(Kv("Identifier", BuildIdentifier(wb) + (wb.IdentityStable ? "" : "  (settling)")));
-            if (!string.IsNullOrEmpty(wb.DisplayName))
-                sb.AppendLine(new string(' ', 18) + "(\"" + wb.DisplayName + "\")");
+            sb.AppendLine(Kv("Identifier", BuildIdentifier(a) + (a.IdentityStable ? "" : "  (settling)")));
+            if (!string.IsNullOrEmpty(a.DisplayName))
+                sb.AppendLine(new string(' ', 18) + "(\"" + a.DisplayName + "\")");
         }
 
         // "  Label:         value" — colon attached to the label, values aligned.
@@ -485,7 +487,7 @@ namespace FanaBridge.Diagnostics
 
         // The FanaBridge identifier — the single line that matters for mapping,
         // mirroring Col03IdentityProbe (e.g. "PHUB_PBME").
-        private static string BuildIdentifier(FanatecWheelbase wb)
+        private static string BuildIdentifier(AttachmentSnapshot wb)
         {
             if (!wb.WheelDetected)
                 return "(no wheel)";

@@ -108,7 +108,13 @@ namespace FanaBridge.Core.Devices
         // Most recent drained reading; decoded into the public properties on commit.
         private SystemReportReader.Reading _lastReading;
 
-        private volatile bool _identityStable = true;
+        // The published attachment: identity, settling flag and capabilities as one
+        // immutable object behind one reference, so no reader can see a half-updated
+        // identity or one attachment paired with another's capabilities. Replaced only
+        // under _publishLock (identity commits on the frame thread, capability refreshes
+        // on the UI thread); read lock-free.
+        private readonly object _publishLock = new object();
+        private volatile AttachmentSnapshot _attachment = AttachmentSnapshot.Empty;
 
         // ── Connection state ─────────────────────────────────────────────
 
@@ -129,70 +135,74 @@ namespace FanaBridge.Core.Devices
         /// <summary>Product name from the HID descriptor of the connected device.</summary>
         public string ProductName { get; private set; }
 
-        // ── Wheelbase identity ───────────────────────────────────────────
+        // ── Attachment ───────────────────────────────────────────────────
+
+        /// <summary>
+        /// The current attachment: identity, settling state and capabilities,
+        /// published together. A reader that needs more than one of these must
+        /// take this once and read everything from it; the individual properties
+        /// below each read whatever snapshot is current at that moment.
+        /// </summary>
+        public AttachmentSnapshot Attachment => _attachment;
 
         /// <summary>Raw BaseType byte from the FF 08 report (byte 0x02).</summary>
-        public byte BaseType { get; private set; }
+        public byte BaseType => _attachment.BaseType;
 
         /// <summary>FanaBridge wheelbase code (e.g. "CSDDPlus"), or null if unrecognized.</summary>
-        public string BaseCode { get; private set; }
-
-        // ── Attachment (wheel or hub) identity ───────────────────────────
+        public string BaseCode => _attachment.BaseCode;
 
         /// <summary>Whether a wheel or hub is currently attached.</summary>
-        public bool WheelDetected { get; private set; }
+        public bool WheelDetected => _attachment.WheelDetected;
 
         /// <summary>
         /// Stable profile-match code for the attached wheel/hub (e.g. "PSWBMW",
         /// "PHUB"), or null when nothing is attached / the wire code is unrecognized.
         /// </summary>
-        public string WheelCode { get; private set; }
+        public string WheelCode => _attachment.WheelCode;
 
         /// <summary>
         /// Raw attachment wire code (FF 08 byte 0x18) — the deepest, firmware-defined
         /// identifier. 0 when nothing is attached.
         /// </summary>
-        public byte WheelWireCode { get; private set; }
+        public byte WheelWireCode => _attachment.WheelWireCode;
 
         /// <summary>Whether the attachment is a hub (accepts a button module).</summary>
-        public bool IsHub { get; private set; }
+        public bool IsHub => _attachment.IsHub;
 
         /// <summary>FanaBridge button-module code ("PBME"/"PBMR"), or null when none.</summary>
-        public string ModuleCode { get; private set; }
+        public string ModuleCode => _attachment.ModuleCode;
 
         /// <summary>
         /// Raw module wire byte (FF 08 byte 0x1F) — the deepest module identifier.
         /// A non-zero value with a null <see cref="ModuleCode"/> means a module is
         /// present but not in the decode table (report it). 0 when no module.
         /// </summary>
-        public byte ModuleWireCode { get; private set; }
+        public byte ModuleWireCode => _attachment.ModuleWireCode;
 
         /// <summary>
         /// Whether the connected device is an SRM Conversion Kit (a wheel-side base impersonator),
         /// identified via its <c>DE FA</c> channel rather than <c>FF 08</c>. Its wheel is hard-wired,
         /// so this identity is fixed for the connection. False for a genuine Fanatec base.
         /// </summary>
-        public bool IsSrmConverter { get; private set; }
+        public bool IsSrmConverter => _attachment.IsSrmConverter;
 
         /// <summary>SRM Conversion Kit firmware (e.g. "6.12") when <see cref="IsSrmConverter"/>, else null.</summary>
-        public string SrmKitFirmware { get; private set; }
+        public string SrmKitFirmware => _attachment.SrmKitFirmware;
 
         /// <summary>Resolved capability profile for the current wheel + module combination.</summary>
-        public WheelCapabilities CurrentCapabilities { get; private set; }
-            = WheelCapabilities.None;
+        public WheelCapabilities CurrentCapabilities => _attachment.Capabilities;
 
         /// <summary>
         /// Whether a wheel/hub is identified (attached AND recognized, not just transitional).
         /// </summary>
-        public bool WheelIdentified =>
-            WheelDetected && !string.IsNullOrEmpty(WheelCode);
+        public bool WheelIdentified => _attachment.WheelIdentified;
 
         /// <summary>
         /// Whether the attachment identity is settled (not mid-transition). False
         /// while a changed reading is still settling — consumers should treat the
         /// device as not-yet-connected and suppress output during that window.
         /// </summary>
-        public bool IdentityStable => _identityStable;
+        public bool IdentityStable => _attachment.IdentityStable;
 
         /// <summary>
         /// Whether the base's FF 08 identity has been read since connecting. False
@@ -201,42 +211,24 @@ namespace FanaBridge.Core.Devices
         /// <see cref="BaseType"/> (0 until the first commit, reset to 0 on
         /// disconnect), so there is no separate flag to keep in sync.
         /// </summary>
-        public bool HasIdentity => BaseType != 0 || IsSrmConverter;
+        public bool HasIdentity => _attachment.HasIdentity;
 
         /// <summary>
         /// Display name for the current wheel/hub: the matched profile's name, else
         /// the FanaBridge code (or an EXT_INFO / unknown marker for unmapped bytes).
         /// </summary>
-        public string DisplayName
-        {
-            get
-            {
-                if (!WheelDetected)
-                    return "No wheel attached";
-                if (CurrentCapabilities != null && !string.IsNullOrEmpty(CurrentCapabilities.Name))
-                    return CurrentCapabilities.Name;
-                string label =
-                    WheelCode != null     ? WheelCode :
-                    WheelWireCode == 0xFF ? "EXT_INFO (extended-identity wheel — please report)" :
-                    "Unknown (0x" + WheelWireCode.ToString("X2") + ")";
-                string module =
-                    ModuleCode != null          ? " + " + ModuleCode :
-                    IsHub && ModuleWireCode != 0 ? " + Module 0x" + ModuleWireCode.ToString("X2") + " (please report)" :
-                                                   "";
-                return label + module;
-            }
-        }
+        public string DisplayName => _attachment.DisplayName;
 
         // ── Friendly display names (UI only) ──────────────────────────────
 
         /// <summary>Friendly wheelbase name (e.g. "ClubSport DD+"), or null if unrecognized.</summary>
-        public string BaseFriendlyName => FanatecIdentity.FriendlyBase(BaseCode);
+        public string BaseFriendlyName => _attachment.BaseFriendlyName;
 
         /// <summary>Friendly attached wheel/hub name (e.g. "Podium Hub"), or null if unrecognized.</summary>
-        public string AttachmentFriendlyName => FanatecIdentity.FriendlyAttachment(WheelCode);
+        public string AttachmentFriendlyName => _attachment.AttachmentFriendlyName;
 
         /// <summary>Friendly button-module name (e.g. "Button Module Rally"), or null when none/unrecognized.</summary>
-        public string ModuleFriendlyName => FanatecIdentity.FriendlyModule(ModuleCode);
+        public string ModuleFriendlyName => _attachment.ModuleFriendlyName;
 
         // ── Diagnostics ──────────────────────────────────────────────────
 
@@ -496,10 +488,18 @@ namespace FanaBridge.Core.Devices
                 CommitSrmIdentity(srm);
             }
 
+            // The settled flag is published with the identity it describes: a reading that
+            // has just settled commits identity, capabilities and "stable" in one snapshot,
+            // so no reader sees "stable" on the outgoing attachment. A converter identity is
+            // fixed and always settled, so the FF 08 settler doesn't speak for it.
             bool changed = _settler.Tick(now, out _, out _);
-            _identityStable = _settler.IsStable;
-            if (changed && !IsSrmConverter)
-                CommitIdentity();
+            if (!IsSrmConverter)
+            {
+                if (changed)
+                    CommitIdentity(_settler.IsStable);
+                else if (_settler.IsStable != _attachment.IdentityStable)
+                    PublishIdentityStable(_settler.IsStable);
+            }
 
             // Still unidentified and idle? Ping the DE FA channel (harmless to a genuine base). Any 0xDD
             // reply is picked up by the next drain. Gated on the CONNECTION being unidentified
@@ -508,7 +508,7 @@ namespace FanaBridge.Core.Devices
             // WheelDetected false again, but must NOT re-arm the ping loop. (Besides being
             // pointless, the query's report-id-0x00 frame is rejected by some bases' HID driver,
             // so re-armed pings logged a write warning every second until a wheel came back.)
-            if (!WheelDetected && !HasIdentity && _identityStable && now - _lastSrmQueryMs >= SrmQueryMs)
+            if (!WheelDetected && !HasIdentity && IdentityStable && now - _lastSrmQueryMs >= SrmQueryMs)
             {
                 _lastSrmQueryMs = now;
                 try { _srmReader.SendQuery(_transport); }
@@ -610,22 +610,27 @@ namespace FanaBridge.Core.Devices
             _settler.Offer(r.Wire, effModule, now);
         }
 
-        // Commit the latest (settled) reading into the public identity properties.
-        private void CommitIdentity()
+        // Commit the latest (settled) reading as a new attachment, with its capabilities.
+        private void CommitIdentity(bool identityStable)
         {
             byte wire = _lastReading.Wire;
             bool isHub = FanatecIdentity.IsHub(wire);
 
-            WheelDetected = wire != 0;
-            WheelCode = FanatecIdentity.DecodeCode(wire);
-            WheelWireCode = wire;
-            IsHub = isHub;
-            ModuleCode = isHub ? FanatecIdentity.DecodeModule(_lastReading.ModRaw) : null;
-            ModuleWireCode = isHub ? _lastReading.ModRaw : (byte)0;   // 0x1F is only meaningful on a hub
-            BaseType = _lastReading.BaseType;
-            BaseCode = FanatecIdentity.DecodeBaseCode(_lastReading.BaseType);
+            var identity = new AttachmentSnapshot(
+                generation: 0,   // assigned on publish
+                baseType: _lastReading.BaseType,
+                baseCode: FanatecIdentity.DecodeBaseCode(_lastReading.BaseType),
+                wheelWireCode: wire,
+                wheelCode: FanatecIdentity.DecodeCode(wire),
+                isHub: isHub,
+                moduleWireCode: isHub ? _lastReading.ModRaw : (byte)0,   // 0x1F is only meaningful on a hub
+                moduleCode: isHub ? FanatecIdentity.DecodeModule(_lastReading.ModRaw) : null,
+                isSrmConverter: false,
+                srmKitFirmware: null,
+                identityStable: identityStable,
+                capabilities: WheelCapabilities.None);
 
-            ResolveCapabilities("Wheel changed");
+            PublishNewAttachment(identity, ResolveCapabilities(identity, "Wheel changed"));
             RaiseWheelChanged(identityChanged: true);
         }
 
@@ -633,46 +638,103 @@ namespace FanaBridge.Core.Devices
         // module come from DE FA, not FF 08; BaseType stays 0 (the emulated base is not a real model).
         private void CommitSrmIdentity(SrmConverterIdentity.Result srm)
         {
-            IsSrmConverter = true;
-            SrmKitFirmware = srm.KitFirmware;
-
             byte wire = srm.WheelId;
             bool isHub = FanatecIdentity.IsHub(wire);
 
-            WheelDetected = wire != 0;
-            WheelCode = srm.WheelCode;                       // SRM map (handles 0x17); null when unknown id
-            WheelWireCode = wire;
-            IsHub = isHub;
-            ModuleCode = isHub ? srm.ModuleCode : null;      // module only meaningful on a hub
-            ModuleWireCode = isHub ? srm.ModuleRaw : (byte)0;
-            BaseType = 0;
-            BaseCode = null;
-            _identityStable = true;                          // fixed identity — always settled
+            var identity = new AttachmentSnapshot(
+                generation: 0,   // assigned on publish
+                baseType: 0,
+                baseCode: null,
+                wheelWireCode: wire,
+                wheelCode: srm.WheelCode,                    // SRM map (handles 0x17); null when unknown id
+                isHub: isHub,
+                moduleWireCode: isHub ? srm.ModuleRaw : (byte)0,
+                moduleCode: isHub ? srm.ModuleCode : null,   // module only meaningful on a hub
+                isSrmConverter: true,
+                srmKitFirmware: srm.KitFirmware,
+                identityStable: true,                        // fixed identity — always settled
+                capabilities: WheelCapabilities.None);
 
-            ResolveCapabilities("SRM converter identified");
+            PublishNewAttachment(identity, ResolveCapabilities(identity, "SRM converter identified"));
             RaiseWheelChanged(identityChanged: true);
             Log.Info(string.Format(
                 "FanatecWheelbase: SRM Conversion Kit — Wheel={0} (id 0x{1:X2}), Module={2}, KitFw={3}",
-                WheelCode ?? "unknown", wire, ModuleCode ?? "(none)", SrmKitFirmware ?? "?"));
+                identity.WheelCode ?? "unknown", wire, identity.ModuleCode ?? "(none)", identity.SrmKitFirmware ?? "?"));
         }
+
+        // Publishes an identity as the next attachment generation. A capability
+        // refresh still resolving for the previous generation sees the bump and
+        // discards its result (see RefreshCapabilities).
+        private void PublishNewAttachment(AttachmentSnapshot identity, WheelCapabilities capabilities)
+        {
+            lock (_publishLock)
+                _attachment = identity.AsGeneration(_attachment.Generation + 1, capabilities);
+        }
+
+        private void PublishIdentityStable(bool identityStable)
+        {
+            lock (_publishLock)
+                _attachment = _attachment.WithIdentityStable(identityStable);
+        }
+
+        // Attachment changes are rate-limited by the settle window, so a refresh
+        // that loses to a new attachment this many times in a row is not going
+        // to win; give up rather than spin.
+        private const int RefreshAttempts = 3;
 
         /// <summary>
         /// Forces a re-evaluation of capabilities against the current profile store.
         /// Call after <see cref="WheelProfileStore.Reload"/> to pick up newly-saved
         /// profiles without requiring a SimHub restart or a physical wheel change.
         /// </summary>
+        /// <remarks>
+        /// Runs on the caller's thread (the settings UI) while identity commits run
+        /// on the frame thread. The result is published only if the attachment it
+        /// was resolved for is still the current one. Otherwise it is discarded and
+        /// the current attachment is resolved again, because that attachment's own
+        /// capabilities may have been resolved before the store changed.
+        /// </remarks>
         public void RefreshCapabilities()
         {
-            if (!WheelDetected)
-                return;
+            for (int attempt = 0; attempt < RefreshAttempts; attempt++)
+            {
+                var resolvedFor = _attachment;
+                if (!resolvedFor.WheelDetected)
+                    return;
 
-            ResolveCapabilities("RefreshCapabilities");
-            RaiseWheelChanged(identityChanged: false);   // same attachment — profiles re-resolved only
+                var capabilities = ResolveCapabilities(resolvedFor, "RefreshCapabilities");
+
+                bool published = false;
+                lock (_publishLock)
+                {
+                    var current = _attachment;
+                    if (current.Generation == resolvedFor.Generation)
+                    {
+                        // Built on the current snapshot rather than the one resolved
+                        // for: the settling flag may have moved since.
+                        _attachment = current.WithCapabilities(capabilities);
+                        published = true;
+                    }
+                }
+
+                if (published)
+                {
+                    RaiseWheelChanged(identityChanged: false);   // same attachment — profiles re-resolved only
+                    return;
+                }
+
+                Log.Info("FanatecWheelbase: RefreshCapabilities — the attachment changed while resolving; " +
+                         "discarded the result for the previous attachment");
+            }
+
+            Log.Warn("FanatecWheelbase: RefreshCapabilities — the attachment kept changing; gave up after " +
+                     RefreshAttempts + " attempts");
         }
 
         /// <summary>
-        /// Resolves the capability profile for the current attachment, respecting
-        /// any user override from the plugin settings.
+        /// Resolves the capability profile for an attachment, respecting any user
+        /// override from the plugin settings. Reads only the identity it is given,
+        /// never the published one, so the result belongs to that attachment.
         ///
         /// COMPOSITION SEAM: today this resolves a single profile for the attached
         /// wheel/hub(+module). The full model is compositional —
@@ -682,17 +744,14 @@ namespace FanaBridge.Core.Devices
         /// nothing, so single-source resolution is equivalent — but new sources
         /// should be merged here rather than bolted on elsewhere. Tracked in #16.
         /// </summary>
-        private void ResolveCapabilities(string logContext)
+        private WheelCapabilities ResolveCapabilities(AttachmentSnapshot identity, string logContext)
         {
-            if (!WheelDetected)
-            {
-                CurrentCapabilities = WheelCapabilities.None;
-                return;
-            }
+            if (!identity.WheelDetected)
+                return WheelCapabilities.None;
 
             // WheelCode and ModuleCode are already the profile-match keys.
-            string wheelCode = WheelCode;
-            string moduleCode = ModuleCode;
+            string wheelCode = identity.WheelCode;
+            string moduleCode = identity.ModuleCode;
 
             string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
 
@@ -710,22 +769,24 @@ namespace FanaBridge.Core.Devices
                     " but was stored for " + matchKey + " — ignoring.");
             }
 
-            CurrentCapabilities = profile != null
+            var capabilities = profile != null
                 ? new WheelCapabilities(profile)
                 : WheelCapabilities.None;
 
             Log.Info(string.Format(
                 "FanatecWheelbase: {0} — Base={1} (0x{2:X2}), Detected={3}, Wheel={4} (wire 0x{5:X2}), Module={6} (0x{7:X2}), Override={8}, Caps={9}",
                 logContext,
-                BaseCode ?? "(unknown)",
-                BaseType,
-                WheelDetected,
-                WheelCode ?? "(unrecognized)",
-                WheelWireCode,
-                ModuleCode ?? "(none)",
-                ModuleWireCode,
+                identity.BaseCode ?? "(unknown)",
+                identity.BaseType,
+                identity.WheelDetected,
+                identity.WheelCode ?? "(unrecognized)",
+                identity.WheelWireCode,
+                identity.ModuleCode ?? "(none)",
+                identity.ModuleWireCode,
                 overrideId ?? "(auto)",
-                CurrentCapabilities.Name ?? "(none)"));
+                capabilities.Name ?? "(none)"));
+
+            return capabilities;
         }
 
         // ── Lifecycle ────────────────────────────────────────────────────
@@ -735,24 +796,15 @@ namespace FanaBridge.Core.Devices
         {
             _transport.Disconnect();
             _settler.Reset();
-            _identityStable = true;
             _lastReading = default;
             lock (_itmLock) _itmReports.Clear();
 
             ConnectedProductId = 0;
             ProductName = null;
-            WheelDetected = false;
-            WheelCode = null;
-            WheelWireCode = 0;
-            IsHub = false;
-            ModuleCode = null;
-            ModuleWireCode = 0;
-            BaseType = 0;
-            BaseCode = null;
-            IsSrmConverter = false;
-            SrmKitFirmware = null;
+            // A new (empty) generation, so a refresh resolving for the attachment
+            // that was connected can't publish into whatever connects next.
+            PublishNewAttachment(AttachmentSnapshot.Empty, WheelCapabilities.None);
             _pendingSrm = null;
-            CurrentCapabilities = WheelCapabilities.None;
             LastRawReport = null;
             // LastConnectError is intentionally left intact — it reflects the most
             // recent connect attempt and is cleared on the next successful connect.

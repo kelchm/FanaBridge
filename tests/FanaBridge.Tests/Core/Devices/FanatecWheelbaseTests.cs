@@ -726,6 +726,78 @@ namespace FanaBridge.Tests.Core.Devices
             Assert.Equal(afterIdentity + 1, wb.WheelChangeCount);
         }
 
+        // ── Attachment snapshot (issue #137) ───────────────────────────────
+
+        [Fact]
+        public void AttachmentChange_PublishesIdentityCapabilitiesAndSettledTogether()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+            var before = wb.Attachment;
+
+            // A different wheel arrives: while it settles, the published snapshot
+            // is still the old attachment, whole, marked as settling.
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("GTSWX")));
+            clock.T += 10;
+            wb.UpdateIdentity();
+            var settling = wb.Attachment;
+            Assert.False(settling.IdentityStable);
+            Assert.Equal("PSWBMW", settling.WheelCode);
+            Assert.Same(before.Capabilities, settling.Capabilities);
+            Assert.Equal(before.Generation, settling.Generation);
+
+            // Once settled, identity, capabilities and the settled flag arrive in
+            // one snapshot, as a new generation.
+            clock.T += 250;
+            Assert.True(wb.UpdateIdentity());
+            var after = wb.Attachment;
+            Assert.True(after.IdentityStable);
+            Assert.Equal("GTSWX", after.WheelCode);
+            Assert.Equal("GTSWX", after.Capabilities.Profile?.Id);
+            Assert.Equal(before.Generation + 1, after.Generation);
+
+            // Snapshots are immutable: a reader holding the old one still sees it whole.
+            Assert.Equal("PSWBMW", before.WheelCode);
+            Assert.Equal("PSWBMW", before.Capabilities.Profile?.Id);
+            Assert.True(before.IdentityStable);
+        }
+
+        [Fact]
+        public void RefreshCapabilities_KeepsTheAttachment_AndReplacesOnlyItsCapabilities()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+            var before = wb.Attachment;
+
+            wb.RefreshCapabilities();
+
+            var after = wb.Attachment;
+            Assert.NotSame(before, after);
+            Assert.NotSame(before.Capabilities, after.Capabilities);
+            Assert.Equal(before.Generation, after.Generation);
+            Assert.Equal(before.WheelCode, after.WheelCode);
+        }
+
+        [Fact]
+        public void Disconnect_StartsANewEmptyGeneration()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+            int generation = wb.Attachment.Generation;
+
+            wb.Disconnect();
+
+            Assert.True(wb.Attachment.Generation > generation);
+            Assert.False(wb.Attachment.WheelDetected);
+            Assert.Same(WheelCapabilities.None, wb.Attachment.Capabilities);
+        }
+
         // ── Guard rails ────────────────────────────────────────────────────
 
         [Fact]

@@ -74,9 +74,9 @@ namespace FanaBridge.UI.Wizard
             };
 
             // Pre-populate identity from the wheelbase
-            var wheelbase = _plugin.Wheelbase;
-            _state.WheelType = wheelbase.WheelCode;
-            _state.ModuleType = wheelbase.ModuleCode;
+            var attachment = _plugin.Wheelbase.Attachment;
+            _state.WheelType = attachment.WheelCode;
+            _state.ModuleType = attachment.ModuleCode;
 
             txtWizWheelType.Text = _state.WheelType ?? "Unknown";
             txtWizModuleType.Text = _state.ModuleType ?? "(none)";
