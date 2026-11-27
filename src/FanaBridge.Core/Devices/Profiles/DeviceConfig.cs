@@ -74,10 +74,13 @@ namespace FanaBridge.Core.Devices.Profiles
         /// Exact module matching means an attached module with no dedicated
         /// profile leaves the bare hub unmatched (no graceful fallback).
         /// Composing base ⊕ hub ⊕ module dynamically is tracked in issue #16.
+        /// A config without a wheel code never matches: an unrecognized rim
+        /// also has no code, and must not be driven by such a profile.
         /// </remarks>
         public bool MatchesAttachment(bool wheelDetected, string attachedWheelCode, string attachedModule)
         {
             return wheelDetected
+                && !string.IsNullOrEmpty(WheelCode)
                 && string.Equals(WheelCode, attachedWheelCode, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(ModuleCode, attachedModule, StringComparison.OrdinalIgnoreCase);
         }
