@@ -331,10 +331,7 @@ namespace FanaBridge.Devices
         }
 
         /// <summary>
-        /// Whether <paramref name="config"/> is the wheel or hub + module that
-        /// <paramref name="plugin"/>'s wheelbase has attached, with a settled
-        /// identity. Shared by device state and the Add-device picker so the two
-        /// can't disagree.
+        /// The attachment check shared by device state and the Add-device picker.
         /// </summary>
         internal static bool IsAttached(FanatecPlugin plugin, DeviceConfig config)
         {

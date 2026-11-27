@@ -30,7 +30,11 @@ namespace FanaBridge.Devices
         /// </summary>
         internal static readonly IDevicePanelFactory PanelFactory = new DevicePanelFactory();
 
-        public IEnumerable<DeviceDescriptor> GetDevices()
+        public IEnumerable<DeviceDescriptor> GetDevices() =>
+            GetDevices(() => FanatecPlugin.Instance);
+
+        /// <summary>Test seam: registration against a given plugin generation.</summary>
+        internal IEnumerable<DeviceDescriptor> GetDevices(Func<FanatecPlugin> resolvePlugin)
         {
             SimHub.Logging.Current.Info("FanatecDevicesRegistry: GetDevices() called");
 
@@ -55,28 +59,36 @@ namespace FanaBridge.Devices
                     IsOEM = false,
                     IsDeprecated = false,
                 };
-                ApplyDetection(descriptor, capturedConfig, () => FanatecPlugin.Instance);
+                ApplyDetection(descriptor, capturedConfig, resolvePlugin);
                 yield return descriptor;
             }
         }
 
         /// <summary>
         /// Lists the device under the Add-device picker's "Devices found on your
-        /// system" only while its wheel or hub + module is attached: the USB ID
-        /// says a Fanatec base is connected, and <c>CompatibilityTest</c> picks
-        /// the attached device. SimHub asks for the devices each time the picker
-        /// opens, so the base's product ID is current; with no base, no USB ID.
+        /// system" only while its wheel or hub + module is attached. SimHub asks
+        /// for the devices each time the picker opens, so only the device attached
+        /// then gets the base's USB ID; <c>CompatibilityTest</c> drops it if the
+        /// attachment changes before the picker looks.
         /// </summary>
         internal static void ApplyDetection(
             DeviceDescriptor descriptor, DeviceConfig config, Func<FanatecPlugin> resolvePlugin)
         {
-            int productId = 0;
-            try { productId = resolvePlugin()?.Wheelbase?.ConnectedProductId ?? 0; }
-            catch (Exception) { }
+            int productId;
+            try
+            {
+                var plugin = resolvePlugin();
+                if (!FanatecWheelDeviceInstance.IsAttached(plugin, config))
+                    return;
+                productId = plugin.Wheelbase.ConnectedProductId;
+            }
+            catch (Exception) { return; }
 
-            if (productId > 0)
-                descriptor.DetectionDescriptor = new USBRequest(
-                    FanatecWheelbase.FANATEC_VENDOR_ID, productId, true);
+            if (productId <= 0)
+                return;
+
+            descriptor.DetectionDescriptor = new USBRequest(
+                FanatecWheelbase.FANATEC_VENDOR_ID, productId, true);
 
             // Runs off the UI thread; a throw would cost other devices their
             // place in the found list.
