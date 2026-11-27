@@ -33,12 +33,8 @@ namespace FanaBridge.Devices
         {
             SimHub.Logging.Current.Info("FanatecDevicesRegistry: GetDevices() called");
 
-            foreach (var config in BuildConfigs(verbose: true))
+            foreach (var config in BuildConfigs())
             {
-                SimHub.Logging.Current.Info(
-                    "FanatecDevicesRegistry: Registering " + config.Capabilities.Name +
-                    " (" + config.DeviceTypeId + ")");
-
                 // Capture for closure
                 var capturedConfig = config;
 
@@ -65,161 +61,154 @@ namespace FanaBridge.Devices
             }
         }
 
+        private static readonly object DecisionLogLock = new object();
+        private static string _lastDecisionLog;
+
         /// <summary>
-        /// Builds the deduplicated device configs, one per match key: the
-        /// built-in profile wins the dedupe for stable identity, then a
-        /// persisted override for the same wheel+module replaces profile and
-        /// capabilities, sizing the LED editor at registration. Runtime output
-        /// additionally follows the active profile live via ResolveCapsFor;
-        /// only editor sizing waits for a restart.
+        /// Builds the device configs, one per DeviceTypeID. Profiles that can
+        /// back a device are grouped by the DeviceTypeID they would register
+        /// under; each group's profile is whatever
+        /// <see cref="WheelProfileStore.Resolve"/> picks for that attachment
+        /// with the persisted override — the same rule the running plugin
+        /// applies — so the LED editor is sized from the profile that will
+        /// actually drive the wheel. Runtime output additionally follows the
+        /// active profile live via ResolveCapsFor; only editor sizing waits for
+        /// a restart.
         ///
         /// Shared by descriptor registration (<see cref="GetDevices"/>) and the
         /// settings page's add-device prompt so both resolve a detected wheel
-        /// to the same DeviceTypeID. <paramref name="verbose"/> logs the
-        /// skip/dedupe decisions; only registration does, so the per-refresh
-        /// prompt path doesn't flood the log.
+        /// to the same DeviceTypeID. Both call this repeatedly (SimHub asks for
+        /// the devices every time its Add-device picker opens), so the
+        /// per-device decisions are logged only when they change.
         /// </summary>
-        public static IReadOnlyCollection<DeviceConfig> BuildConfigs(bool verbose = false)
+        public static IReadOnlyCollection<DeviceConfig> BuildConfigs()
         {
             // Ensure profiles are loaded from disk
             WheelProfileStore.EnsureLoaded();
 
-            var configs = new Dictionary<string, DeviceConfig>(StringComparer.OrdinalIgnoreCase);
+            var decisions = new List<KeyValuePair<bool, string>>();
+            void Info(string message) => decisions.Add(new KeyValuePair<bool, string>(false, message));
+            void Warn(string message) => decisions.Add(new KeyValuePair<bool, string>(true, message));
+
+            // One device per attachment. The store canonicalizes match codes on
+            // load, so every profile for an attachment yields the same
+            // DeviceTypeID; the group's first profile just supplies the codes.
+            // (Case-insensitive anyway, for codes the decode tables don't know.)
+            var groups = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
+            var ordered = new List<WheelProfile>();
 
             foreach (var profile in WheelProfileStore.GetAll())
             {
-                // Skip bare hub profiles (no LEDs, no display)
-                if (!profile.HasLeds && profile.DisplayType == DisplayType.None)
+                if (profile.IsBare)
                 {
-                    if (verbose)
-                        SimHub.Logging.Current.Info(
-                            "FanatecDevicesRegistry: Skipping bare profile '" + profile.Id + "'");
+                    Info("Skipping bare profile '" + profile.Id + "' (" + profile.Source + ")");
                     continue;
                 }
 
+                string deviceTypeId = new DeviceConfig { Profile = profile }.DeviceTypeId;
+                if (groups.TryGetValue(deviceTypeId, out var first))
+                {
+                    Info("Profile '" + profile.Id + "' (" + profile.Source + ") shares device " +
+                        deviceTypeId + " with '" + first.Id + "' (" + first.Source + ")");
+                    continue;
+                }
+
+                groups[deviceTypeId] = profile;
+                ordered.Add(profile);
+            }
+
+            var overrides = PersistedPluginSettings.ReadProfileOverrides();
+            var configs = new List<DeviceConfig>();
+
+            foreach (var first in ordered)
+            {
+                // The resolver never picks a bare profile automatically while the
+                // group has one that can drive something, so a bare result here is
+                // an explicit override — the user's choice, registered as such.
+                var profile = ResolveProfileFor(first, overrides, Info, Warn);
                 var config = new DeviceConfig
                 {
                     Profile = profile,
                     Capabilities = new WheelCapabilities(profile),
                 };
 
-                if (configs.TryGetValue(config.DeviceTypeId, out var existing))
-                {
-                    // Built-in always wins — it defines the device's full capability
-                    if (existing.Profile.Source == ProfileSource.BuiltIn)
-                    {
-                        if (verbose)
-                            SimHub.Logging.Current.Info(
-                                "FanatecDevicesRegistry: Profile '" + profile.Id +
-                                "' (" + profile.Source + ") skipped — built-in '" +
-                                existing.Profile.Id + "' defines device " + config.DeviceTypeId);
-                        continue;
-                    }
-
-                    // New profile is built-in, existing is user — promote built-in
-                    if (profile.Source == ProfileSource.BuiltIn)
-                    {
-                        if (verbose)
-                            SimHub.Logging.Current.Info(
-                                "FanatecDevicesRegistry: Built-in '" + profile.Id +
-                                "' replaces user '" + existing.Profile.Id +
-                                "' for device " + config.DeviceTypeId);
-                    }
-                    else
-                    {
-                        // Both are user profiles — keep the first one.
-                        // The registry only determines the device descriptor
-                        // (name, type ID). LED capability comes from the
-                        // currently-active profile at runtime.
-                        if (verbose)
-                            SimHub.Logging.Current.Info(
-                                "FanatecDevicesRegistry: Profile '" + profile.Id +
-                                "' (" + profile.Source + ") skipped — '" +
-                                existing.Profile.Id + "' already registered for " +
-                                config.DeviceTypeId);
-                        continue;
-                    }
-                }
-
-                configs[config.DeviceTypeId] = config;
+                Info("Registering " + config.Capabilities.Name + " (" + config.DeviceTypeId +
+                    ") with profile '" + profile.Id + "' (" + profile.Source + ")");
+                configs.Add(config);
             }
 
-            ApplyProfileOverrides(configs, verbose);
-
-            return configs.Values;
+            LogIfChanged(decisions);
+            return configs;
         }
 
         /// <summary>
-        /// Swaps in the user's chosen profile for any device that has one.
+        /// The profile backing the device for <paramref name="first"/>'s attachment:
+        /// <see cref="WheelProfileStore.Resolve"/> for its attachment, honouring
+        /// the persisted override for its match key.
         /// </summary>
         /// <remarks>
-        /// Dedupe above picks the built-in profile so a device's identity stays
-        /// stable, but the capabilities it carries also size the LED editor —
-        /// which is fixed for the lifetime of a device instance. Resolving the
-        /// override here (rather than only at runtime) is what lets a restart
-        /// actually produce an editor matching an override that changes the LED
-        /// layout, including one that adds LEDs to a display-only wheel.
-        ///
-        /// The override is only honoured when it resolves to a profile matching
-        /// the same wheel/module, since <see cref="DeviceConfig.DeviceTypeId"/>
-        /// is derived from those — a mismatched override would rename the device
-        /// and orphan its saved settings.
+        /// Resolving the override here (rather than only at runtime) is what lets
+        /// a restart actually produce an LED editor matching an override that
+        /// changes the LED layout, including one that adds LEDs to a display-only
+        /// wheel. The resolver only honours an override matching the same
+        /// wheel/module, since the device's identity — and the name of its
+        /// settings file — is derived from those.
         /// </remarks>
-        private static void ApplyProfileOverrides(
-            Dictionary<string, DeviceConfig> configs, bool verbose)
+        private static WheelProfile ResolveProfileFor(
+            WheelProfile first, IReadOnlyDictionary<string, string> overrides,
+            Action<string> info, Action<string> warn)
         {
-            var overrides = PersistedPluginSettings.ReadProfileOverrides();
-            if (overrides.Count == 0)
-                return;
+            string wheelCode = first.Match?.WheelType;
+            string moduleCode = first.Match?.ModuleType;
+            string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
+            if (string.IsNullOrEmpty(matchKey))
+                return first;
 
-            foreach (var key in configs.Keys.ToList())
+            overrides.TryGetValue(matchKey, out var overrideKey);
+            var profile = WheelProfileStore.Resolve(wheelCode, moduleCode, overrideKey, out var overridden)
+                ?? first;
+
+            if (string.IsNullOrEmpty(overrideKey))
+                return profile;
+
+            if (overridden == null)
             {
-                var config = configs[key];
-                var matchKey = WheelProfileStore.MakeMatchKey(config.WheelCode, config.ModuleCode);
-                if (string.IsNullOrEmpty(matchKey))
-                    continue;
-
-                if (!overrides.TryGetValue(matchKey, out var overrideKey))
-                    continue;
-
-                var overridden = WheelProfileStore.ResolveOverrideKey(overrideKey);
-                if (overridden == null)
-                {
-                    if (verbose)
-                        SimHub.Logging.Current.Info(
-                            "FanatecDevicesRegistry: override '" + overrideKey + "' for " +
-                            matchKey + " did not resolve — using " + config.Profile.Id);
-                    continue;
-                }
-
+                info("Override '" + overrideKey + "' for " + matchKey +
+                    " did not resolve — using " + profile.Id);
+            }
+            else if (!ReferenceEquals(overridden, profile))
+            {
                 var overriddenMatch = WheelProfileStore.MakeMatchKey(
                     overridden.Match?.WheelType, overridden.Match?.ModuleType);
-                if (!string.Equals(overriddenMatch, matchKey, StringComparison.OrdinalIgnoreCase))
-                {
-                    // Gated like the unresolved-override warning above: the
-                    // settings page re-runs this every refresh, and a mismatch
-                    // is permanent for the session, so it would repeat forever.
-                    if (verbose)
-                        SimHub.Logging.Current.Warn(
-                            "FanatecDevicesRegistry: override '" + overrideKey + "' matches " +
-                            (overriddenMatch ?? "nothing") + " but was stored for " + matchKey +
-                            " — ignoring so the device keeps its identity.");
-                    continue;
-                }
+                warn("Override '" + overrideKey + "' matches " + (overriddenMatch ?? "nothing") +
+                    " but was stored for " + matchKey +
+                    " — ignoring so the device keeps its identity.");
+            }
 
-                if (ReferenceEquals(overridden, config.Profile))
-                    continue;
+            return profile;
+        }
 
-                configs[key] = new DeviceConfig
-                {
-                    Profile = overridden,
-                    Capabilities = new WheelCapabilities(overridden),
-                };
+        /// <summary>
+        /// Logs this call's decisions only when they differ from the previous
+        /// call's, so repeated registration requests don't flood the log.
+        /// </summary>
+        private static void LogIfChanged(List<KeyValuePair<bool, string>> decisions)
+        {
+            string summary = string.Join("\n", decisions.Select(d => d.Value));
+            lock (DecisionLogLock)
+            {
+                if (string.Equals(summary, _lastDecisionLog, StringComparison.Ordinal))
+                    return;
+                _lastDecisionLog = summary;
+            }
 
-                if (verbose)
-                    SimHub.Logging.Current.Info(
-                        "FanatecDevicesRegistry: device " + key + " uses override profile '" +
-                        overridden.Id + "' (" + overridden.Source + ")");
+            foreach (var decision in decisions)
+            {
+                string message = "FanatecDevicesRegistry: " + decision.Value;
+                if (decision.Key)
+                    SimHub.Logging.Current.Warn(message);
+                else
+                    SimHub.Logging.Current.Info(message);
             }
         }
 
@@ -228,10 +217,8 @@ namespace FanaBridge.Devices
         /// wheel/hub + module, or null when nothing registered matches (no
         /// profile, or only a bare profile that never gets a descriptor).
         /// Uses <see cref="DeviceConfig.MatchesAttachment"/> — the same exact
-        /// wheel+module predicate as device-state reporting — rather than
-        /// <c>WheelProfileStore.FindByWheelType</c>, whose bare-wheel fallback
-        /// would suggest a device that could never report Connected for a
-        /// hub with a module attached.
+        /// wheel+module predicate as device-state reporting — so it only ever
+        /// suggests a device that can report Connected.
         /// </summary>
         public static DeviceConfig FindConfigForAttachment(
             bool wheelDetected, string wheelCode, string moduleCode)

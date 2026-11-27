@@ -16,7 +16,10 @@ namespace FanaBridge.Core.Devices.Profiles
 
         /// <summary>
         /// Stable identifier for SimHub's DeviceTypeID.
-        /// Derived from the profile's match criteria.
+        /// Derived from the profile's match criteria, whose codes
+        /// <see cref="WheelProfileStore"/> canonicalizes on load, so every profile
+        /// for the same attachment yields the same ID (SimHub matches a saved
+        /// device by exact, case-sensitive DeviceTypeID).
         /// Format: "Fanatec_{wheelType}" or "Fanatec_{wheelType}_{moduleType}".
         /// </summary>
         public string DeviceTypeId
@@ -49,10 +52,10 @@ namespace FanaBridge.Core.Devices.Profiles
             }
         }
 
-        /// <summary>Profile-match wheel code (e.g. "PSWBMW", "PHUB") from the profile.</summary>
+        /// <summary>Profile-match wheel code (e.g. "PSWBMW", "PHUB").</summary>
         public string WheelCode => Profile?.Match?.WheelType;
 
-        /// <summary>Button-module code, resolved from the profile match criteria, or null.</summary>
+        /// <summary>Button-module code, resolved from the profile's match criteria, or null.</summary>
         public string ModuleCode => string.IsNullOrEmpty(Profile?.Match?.ModuleType) ? null : Profile.Match.ModuleType;
 
         /// <summary>

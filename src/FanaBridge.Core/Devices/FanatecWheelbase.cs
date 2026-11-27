@@ -699,7 +699,17 @@ namespace FanaBridge.Core.Devices
             // Check for a user override
             string overrideId = ProfileOverrideResolver?.Invoke(matchKey);
 
-            var profile = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId);
+            // The same resolver device registration uses, so the active profile
+            // is the one the device's LED editor was sized from.
+            var profile = WheelProfileStore.Resolve(wheelCode, moduleCode, overrideId, out var overridden);
+            if (overridden != null && !ReferenceEquals(overridden, profile))
+            {
+                Log.Warn(
+                    "FanatecWheelbase: override '" + overrideId + "' matches " +
+                    (WheelProfileStore.MakeMatchKey(overridden.Match?.WheelType, overridden.Match?.ModuleType) ?? "nothing") +
+                    " but was stored for " + matchKey + " — ignoring.");
+            }
+
             CurrentCapabilities = profile != null
                 ? new WheelCapabilities(profile)
                 : WheelCapabilities.None;

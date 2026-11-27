@@ -28,6 +28,7 @@ Current residents:
 
 - `FakeReportStream` — transport stream fake used across Core and Plugin domains.
 - `FakeLedModuleHost` — LED module host seam used by Plugin Devices and Settings tests.
+- `TempUserProfiles` — writes user wheel profiles into the directory the real profile store reads, and removes them on dispose; used by Core and Plugin Devices tests.
 
 Domain-local (not here):
 

@@ -451,10 +451,12 @@ namespace FanaBridge.UI.Settings
                 wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
 
             // Stay quiet when there is nothing addable: no matching registered
-            // config, a config whose descriptor SimHub doesn't know (a profile
-            // created this session — the restart notice owns that message), or
-            // the device is already added.
-            if (config == null || devices == null
+            // config, one whose profile has nothing to drive (an explicit pin to
+            // a bare profile — adding it would give a device with no output), a
+            // config whose descriptor SimHub doesn't know (a profile created this
+            // session — the restart notice owns that message), or the device is
+            // already added.
+            if (config == null || config.Profile == null || config.Profile.IsBare || devices == null
                 || !SimHubDevicesGateway.HasDescriptor(devices, config.DeviceTypeId)
                 || SimHubDevicesGateway.IsDeviceAdded(devices, config.DeviceTypeId))
             {
@@ -608,19 +610,21 @@ namespace FanaBridge.UI.Settings
                 ? WheelProfileStore.MakeMatchKey(wheelCode, moduleCode)
                 : null;
 
-            // Get ALL profiles that match this wheel (built-in + user, even duplicates)
+            // Every profile resolution could pick for this attachment (built-in
+            // + user, even when they share an ID), in load order.
             var all = WheelProfileStore.FindAllForWheel(wheelCode, moduleCode);
-
-            // Determine which profile auto-resolution would pick (no override)
-            var autoResolved = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null);
-            string autoOverrideKey = autoResolved != null
-                ? WheelProfileStore.MakeOverrideKey(autoResolved)
-                : null;
 
             // Current override (if any) from settings
             string currentOverride = null;
             if (matchKey != null)
                 Plugin.Settings.ProfileOverrides?.TryGetValue(matchKey, out currentOverride);
+
+            // Select what resolution actually picks with that override, so a
+            // stale or mismatched override shows the profile really in use.
+            var effective = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, currentOverride);
+            string effectiveOverrideKey = effective != null
+                ? WheelProfileStore.MakeOverrideKey(effective)
+                : null;
 
             if (all.Count == 0)
             {
@@ -667,17 +671,8 @@ namespace FanaBridge.UI.Settings
                     };
                     cboProfile.Items.Add(item);
 
-                    // Select: explicit override wins, otherwise the auto-resolved one
-                    if (!string.IsNullOrEmpty(currentOverride))
-                    {
-                        if (string.Equals(overrideKey, currentOverride, StringComparison.OrdinalIgnoreCase))
-                            selectedIndex = i;
-                    }
-                    else
-                    {
-                        if (string.Equals(overrideKey, autoOverrideKey, StringComparison.OrdinalIgnoreCase))
-                            selectedIndex = i;
-                    }
+                    if (string.Equals(overrideKey, effectiveOverrideKey, StringComparison.OrdinalIgnoreCase))
+                        selectedIndex = i;
                 }
 
                 cboProfile.SelectedIndex = selectedIndex;
@@ -745,22 +740,11 @@ namespace FanaBridge.UI.Settings
             // means there is no identity to attach an override to — nothing to persist.
             if (string.IsNullOrEmpty(matchKey)) return;
 
-            // Check if the selected profile is the one auto-resolution would pick
-            var autoResolved = WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null);
-            string autoOverrideKey = autoResolved != null
-                ? WheelProfileStore.MakeOverrideKey(autoResolved)
-                : null;
-            bool isDefault = string.Equals(overrideKey, autoOverrideKey, StringComparison.OrdinalIgnoreCase);
-
-            if (isDefault)
-            {
-                // No need to persist an override — default resolution already picks this
-                Plugin.Settings.ProfileOverrides.Remove(matchKey);
-            }
-            else
-            {
-                Plugin.Settings.ProfileOverrides[matchKey] = overrideKey;
-            }
+            // Store an override only when the pick differs from what automatic
+            // resolution would choose.
+            ProfileOverrideRules.ApplySelection(
+                Plugin.Settings.ProfileOverrides, matchKey, overrideKey,
+                WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null));
 
             // Persist settings and re-resolve capabilities
             Plugin.SaveSettings();
@@ -835,9 +819,17 @@ namespace FanaBridge.UI.Settings
                 return;
 
             string profileId = caps.Profile.Id;
+            string deletedOverrideKey = WheelProfileStore.MakeOverrideKey(caps.Profile);
             string fileName = caps.ProfileSourcePath != null
                 ? System.IO.Path.GetFileName(caps.ProfileSourcePath)
                 : profileId;
+
+            // The override to clear belongs to the deleted profile's own
+            // attachment, not to whatever is attached when the delete completes
+            // (the wheel can change while the dialog is open).
+            var wheelbase = Plugin.Wheelbase;
+            string matchKey = WheelProfileStore.MakeMatchKey(
+                caps.Profile.Match?.WheelType, caps.Profile.Match?.ModuleType);
 
             var result = MessageBox.Show(
                 "Delete custom profile \"" + caps.Profile.Name + "\"?\n\n" +
@@ -851,19 +843,8 @@ namespace FanaBridge.UI.Settings
             if (result != MessageBoxResult.Yes)
                 return;
 
-            // Remove any override for this profile
-            var wheelbase = Plugin.Wheelbase;
-            string wheelCode = wheelbase.WheelCode;
-            string moduleCode = wheelbase.ModuleCode;
-            string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
-
-            // A null/empty key (unrecognized wheel) can never have been stored as
-            // an override key, so there is nothing to remove — and Dictionary
-            // throws on a null key.
-            if (!string.IsNullOrEmpty(matchKey))
-                Plugin.Settings.ProfileOverrides.Remove(matchKey);
-
-            // Delete from disk and store
+            // Delete from disk and store first, so a failed delete leaves the
+            // override in place.
             bool deleted = WheelProfileStore.DeleteUserProfile(profileId);
             if (!deleted)
             {
@@ -871,6 +852,10 @@ namespace FanaBridge.UI.Settings
                     MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
+
+            // Remove the override that pointed at the deleted profile, if any.
+            ProfileOverrideRules.ClearAfterDelete(
+                Plugin.Settings.ProfileOverrides, matchKey, deletedOverrideKey);
 
             // Re-resolve and update UI
             Plugin.SaveSettings();

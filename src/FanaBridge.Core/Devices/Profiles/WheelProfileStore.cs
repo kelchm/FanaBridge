@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using FanaBridge.Core.Devices.Identity;
 using Newtonsoft.Json;
 
 namespace FanaBridge.Core.Devices.Profiles
@@ -16,17 +17,30 @@ namespace FanaBridge.Core.Devices.Profiles
     /// see partially-populated state even if <see cref="Reload"/> is running
     /// on another thread.
     ///
-    /// Loading order (later entries override earlier ones with the same ID):
-    ///   1. Built-in profiles embedded in the plugin DLL as assembly resources.
-    ///      These are immutable and cannot be modified by users.
-    ///   2. User profiles from a writable directory on disk (future).
-    ///      Users can create/edit these to support new wheels.
+    /// Loading order is deterministic, so every lookup resolves the same way
+    /// however the directory happens to be enumerated:
+    ///   1. Built-in profiles embedded in the plugin DLL as assembly resources,
+    ///      sorted by resource name (ordinal). These are immutable.
+    ///   2. User profiles from a writable directory next to the plugin DLL,
+    ///      sorted by file name (ordinal, ignoring case). Users can create/edit
+    ///      these to support new wheels.
+    ///
+    /// Ids are unique within a source: the first profile in that order keeps
+    /// the id, and a later duplicate is rejected with a warning naming both
+    /// files. Across sources, a user profile takes a built-in's id in the id
+    /// index, while the built-in stays in <see cref="GetAll"/> so the profile
+    /// picker can still offer it.
+    ///
+    /// <see cref="Resolve"/> is the single rule mapping an attachment to a
+    /// profile; registration, runtime capability resolution and the settings
+    /// picker all go through it.
     /// </summary>
     public static class WheelProfileStore
     {
         /// <summary>
         /// Immutable snapshot of loaded profiles.  Replaced atomically by
-        /// <see cref="Reload"/> and <see cref="DeleteUserProfile"/>.
+        /// <see cref="Reload"/>, or by <c>RemoveFromSnapshot</c> when the rescan
+        /// after a delete fails.
         /// </summary>
         private class ProfileSnapshot
         {
@@ -80,7 +94,8 @@ namespace FanaBridge.Core.Devices.Profiles
             // 1. Built-in profiles: embedded in the assembly (immutable)
             LoadFromEmbeddedResources(all, byId);
 
-            // 2. User profiles: writable directory on disk (overrides built-in)
+            // 2. User profiles: writable directory on disk. A user profile takes
+            //    a built-in's id in byId; the built-in stays in all.
             string userDir = GetUserProfileDirectory();
             if (userDir != null)
                 LoadFromDirectory(userDir, all, byId);
@@ -115,15 +130,18 @@ namespace FanaBridge.Core.Devices.Profiles
         }
 
         /// <summary>
-        /// Loads profile JSON from assembly embedded resources.
-        /// Resource names matching "*.Profiles.*.json" are treated as profiles.
+        /// Loads profile JSON from assembly embedded resources, in resource-name
+        /// order. Resource names matching "*.Profiles.*.json" are treated as
+        /// profiles.
         /// </summary>
         private static void LoadFromEmbeddedResources(
             List<WheelProfile> all, Dictionary<string, WheelProfile> byId)
         {
             var assembly = typeof(WheelProfileStore).Assembly;
+            var loaded = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (string resourceName in assembly.GetManifestResourceNames())
+            foreach (string resourceName in assembly.GetManifestResourceNames()
+                         .OrderBy(n => n, StringComparer.Ordinal))
             {
                 // Embedded resource names follow: {RootNamespace}.{RelativePath}.{filename}
                 // e.g. "FanaBridge.Core.Resources.Profiles.PSWBMW.json"
@@ -152,10 +170,21 @@ namespace FanaBridge.Core.Devices.Profiles
                                 continue;
                             }
 
-                            byId[profile.Id] = profile;
-                            all.Add(profile);
+                            CanonicalizeMatch(profile);
+
+                            if (loaded.TryGetValue(profile.Id, out var first))
+                            {
+                                Log.Warn(
+                                    "WheelProfileStore: Built-in profile '" + profile.Id + "' in " +
+                                    resourceName + " ignored: id already used by " + first.SourcePath);
+                                continue;
+                            }
+
                             profile.Source = ProfileSource.BuiltIn;
                             profile.SourcePath = resourceName;
+                            loaded[profile.Id] = profile;
+                            byId[profile.Id] = profile;
+                            all.Add(profile);
                             Log.Info(
                                 "WheelProfileStore: Loaded built-in profile '" + profile.Id +
                                 "' (" + profile.Name + ")");
@@ -171,8 +200,19 @@ namespace FanaBridge.Core.Devices.Profiles
         }
 
         /// <summary>
-        /// Loads all .json files from a directory into the store.
-        /// Files loaded later override earlier ones with the same ID.
+        /// Test seam: lists the user profile files in a directory. The loader
+        /// sorts whatever this returns, so the order it comes back in never
+        /// matters.
+        /// </summary>
+        internal static Func<string, IEnumerable<string>> EnumerateUserFiles = DefaultEnumerateUserFiles;
+
+        /// <summary>The production <see cref="EnumerateUserFiles"/>.</summary>
+        internal static IEnumerable<string> DefaultEnumerateUserFiles(string directory) =>
+            Directory.GetFiles(directory, "*.json");
+
+        /// <summary>
+        /// Loads all .json files from a directory into the store, in file-name
+        /// order. A file reusing the id of an earlier user file is rejected.
         /// </summary>
         private static void LoadFromDirectory(
             string directory, List<WheelProfile> all, Dictionary<string, WheelProfile> byId)
@@ -180,7 +220,12 @@ namespace FanaBridge.Core.Devices.Profiles
             if (!Directory.Exists(directory))
                 return;
 
-            foreach (string file in Directory.GetFiles(directory, "*.json"))
+            var loaded = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
+            var files = EnumerateUserFiles(directory)
+                .OrderBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(f => Path.GetFileName(f), StringComparer.Ordinal);
+
+            foreach (string file in files)
             {
                 try
                 {
@@ -191,6 +236,18 @@ namespace FanaBridge.Core.Devices.Profiles
                     {
                         Log.Warn(
                             "WheelProfileStore: Skipping file with no 'id': " + file);
+                        continue;
+                    }
+
+                    CanonicalizeMatch(profile);
+
+                    if (loaded.TryGetValue(profile.Id, out var first))
+                    {
+                        Log.Warn(
+                            "WheelProfileStore: User profile '" + profile.Id + "' in " +
+                            Path.GetFileName(file) + " ignored: id already used by " +
+                            Path.GetFileName(first.SourcePath) + ". Give it a unique id " +
+                            "and reselect it in FanaBridge's settings to use it.");
                         continue;
                     }
 
@@ -215,23 +272,17 @@ namespace FanaBridge.Core.Devices.Profiles
                             "). This build may not load it correctly.");
                     }
 
-                    bool wasBuiltIn = byId.TryGetValue(profile.Id, out var existing)
-                        && existing.Source == ProfileSource.BuiltIn;
-                    bool wasUser = byId.TryGetValue(profile.Id, out var existingUser)
-                        && existingUser.Source == ProfileSource.User;
+                    // Only built-ins are in byId before this loop's own entries,
+                    // and those are caught by the duplicate check above.
+                    bool wasBuiltIn = byId.ContainsKey(profile.Id);
 
-                    // User profile wins in the auto-resolution dictionary,
-                    // but the built-in remains in all for the profile picker.
+                    // User profile wins in the id index, but the built-in
+                    // remains in all for the profile picker.
+                    loaded[profile.Id] = profile;
                     byId[profile.Id] = profile;
                     all.Add(profile);
 
-                    if (wasUser)
-                    {
-                        Log.Warn(
-                            "WheelProfileStore: Duplicate user profile '" + profile.Id +
-                            "' — " + Path.GetFileName(file) + " overrides earlier file");
-                    }
-                    else if (wasBuiltIn)
+                    if (wasBuiltIn)
                     {
                         Log.Info(
                             "WheelProfileStore: User profile '" + profile.Id +
@@ -251,8 +302,8 @@ namespace FanaBridge.Core.Devices.Profiles
         }
 
         /// <summary>
-        /// Looks up a profile by its ID.  When multiple profiles share the
-        /// same ID (built-in + user), returns the auto-resolution winner.
+        /// Looks up a profile by its ID.  When a built-in and a user profile
+        /// share the ID, returns the user profile.
         /// Use <see cref="FindAllForWheel"/> to get all candidates.
         /// </summary>
         public static WheelProfile GetById(string id)
@@ -264,7 +315,8 @@ namespace FanaBridge.Core.Devices.Profiles
         /// <summary>
         /// Looks up a specific profile by ID and source.  This allows
         /// retrieving a built-in profile even when a user profile with the
-        /// same ID exists.
+        /// same ID exists.  Ids are unique within a source, so this is
+        /// unambiguous.
         /// </summary>
         public static WheelProfile GetById(string id, ProfileSource source)
         {
@@ -275,98 +327,89 @@ namespace FanaBridge.Core.Devices.Profiles
         }
 
         /// <summary>
-        /// Finds the best matching profile for the given decoded wheel/module type.
-        /// For hub+module combos, tries "{wheelType}_{moduleType}" first,
-        /// then falls back to "{wheelType}" alone.
+        /// Finds the profile for the given decoded wheel/module type, with no
+        /// override. See <see cref="Resolve"/> for the rule.
         /// Returns null if no profile matches.
         /// </summary>
         public static WheelProfile FindByWheelType(string wheelType, string moduleType = null)
         {
-            return FindByWheelType(wheelType, moduleType, overrideId: null);
+            return Resolve(wheelType, moduleType, overrideKey: null, out _);
         }
 
         /// <summary>
         /// Finds a profile for the given decoded wheel/module type, optionally
-        /// respecting an explicit user override.
+        /// respecting an explicit user override. See <see cref="Resolve"/>.
         /// </summary>
         /// <param name="overrideId">
-        /// When non-null, look up this specific profile ID first.  If the
-        /// profile no longer exists (deleted file, etc.), fall through to
-        /// normal auto-resolution.
+        /// An override key (<see cref="MakeOverrideKey"/>). It is honoured only
+        /// when it resolves to a profile matching this attachment; otherwise
+        /// normal resolution applies.
         /// </param>
         public static WheelProfile FindByWheelType(
             string wheelType, string moduleType, string overrideId)
         {
-            // A wheel/hub that isn't in the decode tables (e.g. EXT_INFO or
-            // future hardware) resolves to a null code. With no code and no
-            // explicit override there is nothing to match, so return early —
-            // before touching the snapshot — rather than letting a null key
-            // reach Dictionary.TryGetValue (which throws ArgumentNullException).
-            if (string.IsNullOrEmpty(wheelType) && string.IsNullOrEmpty(overrideId))
+            return Resolve(wheelType, moduleType, overrideId, out _);
+        }
+
+        /// <summary>
+        /// The single profile-resolution rule for an attachment, shared by
+        /// device registration, runtime capability resolution and the settings
+        /// picker so they can never disagree.
+        ///
+        /// The candidates are the profiles whose match equals the attachment
+        /// exactly (<see cref="FindAllForWheel"/>). Of those, the result is:
+        ///   1. the override, if it resolves and is a candidate;
+        ///   2. else the candidate whose id is the match key
+        ///      (<see cref="MakeMatchKey"/>), a user profile beating a built-in;
+        ///   3. else the first candidate in load order.
+        /// Without an override, a bare profile (<see cref="WheelProfile.IsBare"/>)
+        /// is passed over in steps 2 and 3 whenever a candidate can drive
+        /// something; only an all-bare attachment resolves to a bare profile.
+        /// There is no bare-wheel fallback for a hub with a module attached:
+        /// device matching is exact too, so such a profile's device could never
+        /// report Connected.
+        /// </summary>
+        /// <param name="overrideProfile">
+        /// The profile <paramref name="overrideKey"/> resolved to, or null when
+        /// there was no override or it did not resolve. Non-null but different
+        /// from the result means the override was ignored because it matches a
+        /// different attachment; logging that is left to the caller.
+        /// </param>
+        /// <returns>The resolved profile, or null when nothing matches.</returns>
+        public static WheelProfile Resolve(
+            string wheelType, string moduleType, string overrideKey, out WheelProfile overrideProfile)
+        {
+            var snap = GetSnapshot();
+            overrideProfile = ResolveOverrideKey(snap, overrideKey);
+
+            var candidates = Candidates(snap, wheelType, moduleType);
+            if (candidates.Count == 0)
                 return null;
 
-            var snap = GetSnapshot();
-
-            // 0. Explicit user override (from plugin settings).
+            // 1. Explicit user override (from plugin settings).
             //    An override key is "ID:source" (e.g. "PHUB_PBMR:BuiltIn")
             //    to disambiguate built-in vs. user profiles with the same ID.
-            if (!string.IsNullOrEmpty(overrideId))
-            {
-                var overridden = ResolveOverrideKey(overrideId);
-                if (overridden != null)
-                    return overridden;
-                // Override didn't resolve — fall through to auto
-            }
+            if (overrideProfile != null && candidates.Contains(overrideProfile))
+                return overrideProfile;
 
-            // Normalize wheel type names that differ between the SimHub
-            // managed DLL enum and our profile IDs. The managed DLL
-            // (SimHub.FanatecManaged.dll) uses different names for some
-            // wheels than the Fanatec SDK sources we based our profiles on.
-            // This is a temporary workaround — see docs/reference/devices.md
-            // for the full analysis of naming divergence across SDK versions.
-            wheelType = NormalizeWheelType(wheelType);
+            // Without an override, a bare profile (no LEDs, no display) never
+            // wins over a candidate that can drive something — e.g. a user LED
+            // profile for a hub beats the bare built-in hub profile named after
+            // it. Only when every candidate is bare does a bare one resolve.
+            var pool = candidates.Where(p => !p.IsBare).ToList();
+            if (pool.Count == 0)
+                pool = candidates;
 
-            // An override may have been supplied for a null-coded wheel but
-            // failed to resolve above; with no usable code, stop here so the
-            // key lookups below never see a null key.
-            if (string.IsNullOrEmpty(wheelType))
-                return null;
+            // 2. The candidate named after the attachment. Candidates come in
+            //    load order (built-ins first), so the last one is the user's.
+            string matchKey = MakeMatchKey(NormalizeWheelType(wheelType), moduleType);
+            var named = pool.LastOrDefault(p =>
+                string.Equals(p.Id, matchKey, StringComparison.OrdinalIgnoreCase));
+            if (named != null)
+                return named;
 
-            // 1. Try compound key first (hub + module)
-            if (!string.IsNullOrEmpty(moduleType))
-            {
-                string compoundId = MakeMatchKey(wheelType, moduleType);
-                if (snap.ById.TryGetValue(compoundId, out var compound))
-                    return compound;
-            }
-
-            // Fall back to wheel-only key
-            if (snap.ById.TryGetValue(wheelType, out var profile))
-                return profile;
-
-            // Scan by match criteria (for profiles that use non-standard IDs)
-            foreach (var p in snap.ById.Values)
-            {
-                if (p.Match == null) continue;
-
-                bool wheelMatch = string.Equals(
-                    p.Match.WheelType, wheelType, StringComparison.OrdinalIgnoreCase);
-
-                if (!wheelMatch) continue;
-
-                if (string.IsNullOrEmpty(moduleType))
-                {
-                    if (string.IsNullOrEmpty(p.Match.ModuleType))
-                        return p;
-                }
-                else
-                {
-                    if (string.Equals(p.Match.ModuleType, moduleType, StringComparison.OrdinalIgnoreCase))
-                        return p;
-                }
-            }
-
-            return null;
+            // 3. First candidate in load order (profiles with non-standard ids).
+            return pool[0];
         }
 
         /// <summary>
@@ -378,17 +421,39 @@ namespace FanaBridge.Core.Devices.Profiles
         }
 
         /// <summary>
-        /// Returns every profile that would match the given wheel/module type,
-        /// regardless of priority.  Used by the settings UI to populate the
-        /// profile picker ComboBox.  Results may include both built-in and
-        /// user profiles — even when they share the same ID.
+        /// Returns every profile whose match equals the given wheel/module type
+        /// exactly — the candidates <see cref="Resolve"/> chooses from — in load
+        /// order.  Used by the settings UI to populate the profile picker
+        /// ComboBox.  Results may include both a built-in and a user profile
+        /// sharing an ID.  A module-less profile is not a candidate for a hub
+        /// with a module attached.
         /// </summary>
         public static List<WheelProfile> FindAllForWheel(
             string wheelType, string moduleType = null)
         {
-            wheelType = NormalizeWheelType(wheelType);
-            var snap = GetSnapshot();
+            return Candidates(GetSnapshot(), wheelType, moduleType);
+        }
+
+        // Every lookup that combines several reads takes the snapshot once and
+        // passes it down, so a concurrent Reload can't mix two snapshots' (equal
+        // but distinct) profile instances within one resolution.
+        private static List<WheelProfile> Candidates(
+            ProfileSnapshot snap, string wheelType, string moduleType)
+        {
             var results = new List<WheelProfile>();
+
+            // A wheel/hub that isn't in the decode tables (e.g. EXT_INFO or
+            // future hardware) resolves to a null code, which nothing matches.
+            if (string.IsNullOrEmpty(wheelType))
+                return results;
+
+            // Normalize wheel type names that differ between the SimHub
+            // managed DLL enum and our profile IDs. The managed DLL
+            // (SimHub.FanatecManaged.dll) uses different names for some
+            // wheels than the Fanatec SDK sources we based our profiles on.
+            // This is a temporary workaround — see docs/reference/devices.md
+            // for the full analysis of naming divergence across SDK versions.
+            wheelType = NormalizeWheelType(wheelType);
 
             foreach (var p in snap.All)
             {
@@ -398,38 +463,26 @@ namespace FanaBridge.Core.Devices.Profiles
                     p.Match.WheelType, wheelType, StringComparison.OrdinalIgnoreCase);
                 if (!wheelMatch) continue;
 
-                // For module-capable wheels, include profiles that either
-                // match the specific module or have no module requirement.
-                if (!string.IsNullOrEmpty(moduleType))
-                {
-                    bool moduleMatch = string.IsNullOrEmpty(p.Match.ModuleType)
-                        || string.Equals(p.Match.ModuleType, moduleType, StringComparison.OrdinalIgnoreCase);
-                    if (moduleMatch)
-                        results.Add(p);
-                }
-                else
-                {
-                    if (string.IsNullOrEmpty(p.Match.ModuleType))
-                        results.Add(p);
-                }
+                bool moduleMatch = string.IsNullOrEmpty(moduleType)
+                    ? string.IsNullOrEmpty(p.Match.ModuleType)
+                    : string.Equals(p.Match.ModuleType, moduleType, StringComparison.OrdinalIgnoreCase);
+                if (moduleMatch)
+                    results.Add(p);
             }
 
             return results;
         }
 
         /// <summary>
-        /// Deletes a user-created profile from disk and removes it from the
-        /// in-memory store.  Returns true if the file was deleted.
+        /// Deletes a user-created profile from disk and reloads the store, so
+        /// what is in memory afterwards is exactly what a fresh load of the
+        /// remaining files gives.  Returns true if the profile was deleted.
         /// Built-in profiles cannot be deleted.  If a built-in profile with
-        /// the same ID exists, it is restored as the auto-resolution winner.
+        /// the same ID exists, it takes the ID back.
         /// </summary>
         public static bool DeleteUserProfile(string profileId)
         {
-            var snap = GetSnapshot();
-
-            var userProfile = snap.All.FirstOrDefault(p =>
-                string.Equals(p.Id, profileId, StringComparison.OrdinalIgnoreCase)
-                && p.Source == ProfileSource.User);
+            var userProfile = GetById(profileId, ProfileSource.User);
 
             if (userProfile == null)
             {
@@ -442,24 +495,6 @@ namespace FanaBridge.Core.Devices.Profiles
             {
                 if (!string.IsNullOrEmpty(userProfile.SourcePath) && File.Exists(userProfile.SourcePath))
                     File.Delete(userProfile.SourcePath);
-
-                // Build a new snapshot without the deleted profile.
-                // Iterate in load order so "last wins" for byId is preserved.
-                var newAll = new List<WheelProfile>(snap.All.Count);
-                var newById = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
-
-                foreach (var p in snap.All)
-                {
-                    if (p == userProfile) continue;
-                    newAll.Add(p);
-                    newById[p.Id] = p; // last wins (user > built-in)
-                }
-
-                Interlocked.Exchange(ref _snapshot, new ProfileSnapshot(newAll, newById));
-
-                Log.Info(
-                    "WheelProfileStore: Deleted user profile '" + profileId + "'");
-                return true;
             }
             catch (Exception ex)
             {
@@ -467,6 +502,40 @@ namespace FanaBridge.Core.Devices.Profiles
                     "WheelProfileStore: Failed to delete profile '" + profileId + "': " + ex.Message);
                 return false;
             }
+
+            Log.Info(
+                "WheelProfileStore: Deleted user profile '" + profileId + "' (" +
+                Path.GetFileName(userProfile.SourcePath) + ")");
+
+            // The file is gone, so the delete succeeded; a failed rescan must not
+            // leave the deleted profile resolvable. Fall back to dropping it from
+            // the current snapshot (a built-in with the same id takes it back).
+            try
+            {
+                Reload();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(
+                    "WheelProfileStore: Reload after deleting '" + profileId + "' failed (" +
+                    ex.Message + "); dropping it from the loaded profiles instead");
+                RemoveFromSnapshot(userProfile);
+            }
+            return true;
+        }
+
+        private static void RemoveFromSnapshot(WheelProfile removed)
+        {
+            var snap = GetSnapshot();
+            var all = snap.All.Where(p => !ReferenceEquals(p, removed)).ToList();
+            // Same precedence as a load: built-ins first, then a user profile
+            // takes the id.
+            var byId = new Dictionary<string, WheelProfile>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in all.Where(p => p.Source == ProfileSource.BuiltIn))
+                byId[p.Id] = p;
+            foreach (var p in all.Where(p => p.Source == ProfileSource.User))
+                byId[p.Id] = p;
+            Interlocked.Exchange(ref _snapshot, new ProfileSnapshot(all, byId));
         }
 
         // ── Key helpers ──────────────────────────────────────────────────
@@ -505,10 +574,13 @@ namespace FanaBridge.Core.Devices.Profiles
         /// </summary>
         public static WheelProfile ResolveOverrideKey(string overrideKey)
         {
+            return ResolveOverrideKey(GetSnapshot(), overrideKey);
+        }
+
+        private static WheelProfile ResolveOverrideKey(ProfileSnapshot snap, string overrideKey)
+        {
             if (string.IsNullOrEmpty(overrideKey))
                 return null;
-
-            var snap = GetSnapshot();
 
             int sep = overrideKey.LastIndexOf(':');
             if (sep > 0 && sep < overrideKey.Length - 1)
@@ -517,7 +589,9 @@ namespace FanaBridge.Core.Devices.Profiles
                 string sourceStr = overrideKey.Substring(sep + 1);
 
                 if (Enum.TryParse(sourceStr, true, out ProfileSource source))
-                    return GetById(id, source);
+                    return snap.All.FirstOrDefault(p =>
+                        string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase)
+                        && p.Source == source);
             }
 
             // Legacy / simple key — fall back to ById lookup
@@ -535,11 +609,45 @@ namespace FanaBridge.Core.Devices.Profiles
         /// </summary>
         internal static string NormalizeWheelType(string wheelType)
         {
-            switch (wheelType)
-            {
-                case "BENTLEY": return "PSWBENT";
-                default: return wheelType;
-            }
+            return string.Equals(wheelType, "BENTLEY", StringComparison.OrdinalIgnoreCase)
+                ? "PSWBENT"
+                : wheelType;
+        }
+
+        // Canonical spelling of every known wheel/hub and module code, from the
+        // identity decode tables, looked up case-insensitively.
+        private static readonly Dictionary<string, string> CanonicalAttachmentCodes =
+            CanonicalCodes(FanatecDeviceTables.Wheels.Values.Concat(FanatecDeviceTables.Hubs.Values));
+        private static readonly Dictionary<string, string> CanonicalModuleCodes =
+            CanonicalCodes(FanatecDeviceTables.Modules.Values);
+
+        private static Dictionary<string, string> CanonicalCodes(IEnumerable<string> codes)
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var code in codes)
+                map[code] = code;
+            return map;
+        }
+
+        /// <summary>
+        /// Rewrites a profile's match codes to their canonical spelling (and the
+        /// BENTLEY alias to PSWBENT). Matching to hardware ignores case, but a
+        /// device's SimHub DeviceTypeID is built from these codes, so this keeps
+        /// every profile for one attachment on the same ID. Codes the decode
+        /// tables don't know are left as written: they can't match a wheel.
+        /// </summary>
+        private static void CanonicalizeMatch(WheelProfile profile)
+        {
+            var match = profile.Match;
+            if (match == null)
+                return;
+            match.WheelType = Canonical(NormalizeWheelType(match.WheelType), CanonicalAttachmentCodes);
+            match.ModuleType = Canonical(match.ModuleType, CanonicalModuleCodes);
+        }
+
+        private static string Canonical(string code, Dictionary<string, string> table)
+        {
+            return code != null && table.TryGetValue(code, out var canonical) ? canonical : code;
         }
     }
 }

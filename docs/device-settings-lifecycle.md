@@ -32,7 +32,7 @@ The LED editor and the settings owner are created with the device instance, from
 
 The consequence is the point: a device can always describe its settings, so a save while FanaBridge is disabled reproduces what was loaded instead of dropping what it cannot see.
 
-Because the editor's slot count is fixed once built, the profile that sizes it has to be the one the user actually chose. Device registration therefore resolves the user's profile override itself, reading the stored settings file directly rather than through the plugin — which may not be running. An override is only honoured when it matches the same wheel and module, since the device's identity, and therefore the name of its settings file, is derived from those.
+Because the editor's slot count is fixed once built, the profile that sizes it has to be the one the user actually chose. Device registration therefore resolves the user's profile override itself, reading the stored settings file directly rather than through the plugin — which may not be running. An override is only honoured when it matches the same wheel and module, since the device's identity, and therefore the name of its settings file, is derived from those. Registration, the running plugin and the settings page's profile picker all resolve a profile through the same rule in `WheelProfileStore.Resolve`, so the profile that sizes the editor is the one that drives the wheel.
 
 Changing an override to one with a different LED layout still needs a SimHub restart for the editor to resize. That is unchanged, and the settings page says so.
 

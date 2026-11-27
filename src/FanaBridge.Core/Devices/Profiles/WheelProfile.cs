@@ -164,6 +164,14 @@ namespace FanaBridge.Core.Devices.Profiles
         [JsonIgnore]
         public bool HasLeds => Leds.Count > 0;
 
+        /// <summary>
+        /// True for a profile with no LEDs and no display — nothing to drive, so
+        /// it never backs a SimHub device on its own and never wins automatic
+        /// resolution over a profile that can drive something.
+        /// </summary>
+        [JsonIgnore]
+        public bool IsBare => !HasLeds && DisplayType == FanaBridge.Core.Devices.Profiles.DisplayType.None;
+
         // ── Runtime metadata (set by WheelProfileStore, not serialized) ──
 
         /// <summary>
