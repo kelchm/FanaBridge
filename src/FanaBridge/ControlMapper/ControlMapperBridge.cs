@@ -186,9 +186,10 @@ namespace FanaBridge.ControlMapper
                             }
                             catch
                             {
-                                // Nothing was published, so leave the provider as we found
-                                // it: a deactivated one must not start answering from a
-                                // slot that was never republished.
+                                // Nothing was published, so put the provider back as we found
+                                // it. If it was already in the old list, a lookup racing this
+                                // instant may have seen it active; only a failed read or
+                                // rebuild above guarantees it never answers.
                                 _provider.IsActive = wasActive;
                                 throw;
                             }
