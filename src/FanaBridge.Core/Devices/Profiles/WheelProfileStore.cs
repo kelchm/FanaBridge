@@ -39,7 +39,8 @@ namespace FanaBridge.Core.Devices.Profiles
     {
         /// <summary>
         /// Immutable snapshot of loaded profiles.  Replaced atomically by
-        /// <see cref="Reload"/>.
+        /// <see cref="Reload"/>, or by <c>RemoveFromSnapshot</c> when the rescan
+        /// after a delete fails.
         /// </summary>
         private class ProfileSnapshot
         {
@@ -361,6 +362,9 @@ namespace FanaBridge.Core.Devices.Profiles
         ///   2. else the candidate whose id is the match key
         ///      (<see cref="MakeMatchKey"/>), a user profile beating a built-in;
         ///   3. else the first candidate in load order.
+        /// Without an override, a bare profile (<see cref="WheelProfile.IsBare"/>)
+        /// is passed over in steps 2 and 3 whenever a candidate can drive
+        /// something; only an all-bare attachment resolves to a bare profile.
         /// There is no bare-wheel fallback for a hub with a module attached:
         /// device matching is exact too, so such a profile's device could never
         /// report Connected.

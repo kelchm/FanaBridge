@@ -314,5 +314,19 @@ namespace FanaBridge.Tests.Core.Devices.Profiles
             Assert.Null(WheelProfileStore.FindByWheelType(TestWheel));
             Assert.Equal(ProfileSource.BuiltIn, WheelProfileStore.FindByWheelType("PSWBMW")?.Source);
         }
+
+        [Fact]
+        public void Delete_WhenTheRescanFails_HandsASharedIdBackToTheBuiltIn()
+        {
+            _profiles.Write("fb81-same-id.json", "PSWBMW", "PSWBMW");
+            _profiles.Reload();
+            Assert.Equal(ProfileSource.User, WheelProfileStore.GetById("PSWBMW")?.Source);
+
+            WheelProfileStore.EnumerateUserFiles = _ => throw new IOException("simulated scan failure");
+
+            Assert.True(WheelProfileStore.DeleteUserProfile("PSWBMW"));
+            Assert.Equal(ProfileSource.BuiltIn, WheelProfileStore.GetById("PSWBMW")?.Source);
+            Assert.Equal(ProfileSource.BuiltIn, WheelProfileStore.FindByWheelType("PSWBMW")?.Source);
+        }
     }
 }

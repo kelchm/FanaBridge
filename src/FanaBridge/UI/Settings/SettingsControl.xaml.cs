@@ -451,10 +451,12 @@ namespace FanaBridge.UI.Settings
                 wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
 
             // Stay quiet when there is nothing addable: no matching registered
-            // config, a config whose descriptor SimHub doesn't know (a profile
-            // created this session — the restart notice owns that message), or
-            // the device is already added.
-            if (config == null || devices == null
+            // config, one whose profile has nothing to drive (an explicit pin to
+            // a bare profile — adding it would give a device with no output), a
+            // config whose descriptor SimHub doesn't know (a profile created this
+            // session — the restart notice owns that message), or the device is
+            // already added.
+            if (config == null || config.Profile == null || config.Profile.IsBare || devices == null
                 || !SimHubDevicesGateway.HasDescriptor(devices, config.DeviceTypeId)
                 || SimHubDevicesGateway.IsDeviceAdded(devices, config.DeviceTypeId))
             {

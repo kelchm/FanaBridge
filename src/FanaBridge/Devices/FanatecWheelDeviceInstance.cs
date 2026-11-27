@@ -641,7 +641,7 @@ namespace FanaBridge.Devices
             // non-matching device resolves to its own registration profile
             // and so never hot-swaps to the connected wheel's profile.
             var currentCaps = plugin.ResolveCapsFor(_config);
-            if (currentCaps?.Profile != null)
+            if (currentCaps != null)
                 _ledHost.HotSwapIfNeeded(currentCaps);
 
             // Settings the module could not fully take leave it partially

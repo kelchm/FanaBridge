@@ -186,6 +186,12 @@ namespace FanaBridge
         /// global, so unrelated device instances must NOT consume it directly —
         /// this is the single guard that prevents the connected wheel's caps
         /// from leaking into every descriptor.
+        ///
+        /// For the matching device the live result wins even when it has no
+        /// profile (e.g. its last profile was deleted): falling back to the
+        /// registration capabilities would keep driving a profile that no
+        /// longer resolves. The device and its settings stay; output stops until
+        /// a profile resolves again.
         /// </summary>
         public WheelCapabilities ResolveCapsFor(DeviceConfig config)
         {
@@ -194,7 +200,7 @@ namespace FanaBridge
 
             var wheelbase = _wheelbase;
             var current = CurrentCapabilities;
-            if (current?.Profile != null && wheelbase != null
+            if (current != null && wheelbase != null
                 && config.MatchesAttachment(
                     wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode))
             {
