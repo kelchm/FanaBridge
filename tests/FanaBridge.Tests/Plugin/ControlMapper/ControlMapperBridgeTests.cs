@@ -107,6 +107,13 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
             return n;
         }
 
+        /// <summary>A provider list whose enumeration throws, to make a rebuild fail.</summary>
+        private sealed class UnreadableProviderList : List<IVariantProvider>, System.Collections.IEnumerable
+        {
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+                => throw new System.InvalidOperationException("simulated read failure");
+        }
+
         private static void AssertInertPlaceholder(IVariantProvider p)
         {
             Assert.IsNotType<FanaBridgeVariantProvider>(p);
@@ -122,16 +129,41 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
             // A previous plugin instance left its own provider behind, last.
             var stale = new FanaBridgeVariantProvider();
             helper.Snapshot().Add(stale);
+            List<IVariantProvider> before = helper.Snapshot();
 
             Assert.True(bridge.EnsureRegistered(pm));
 
-            // Ours takes the stale provider's slot: same length, never shorter (#132).
-            List<IVariantProvider> list = helper.Snapshot();
-            Assert.Equal(2, list.Count);
-            Assert.Same(stock, list[0]);
-            Assert.IsType<FanaBridgeVariantProvider>(list[1]);
-            Assert.NotSame(stale, list[1]);
-            Assert.Equal(1, CountFanaBridge(list));
+            // Ours takes the stale provider's slot in a newly published list: same
+            // length, never shorter (#132). The old list may still be mid-lookup, so
+            // its slot must not be overwritten in place.
+            List<IVariantProvider> published = helper.Snapshot();
+            Assert.NotSame(before, published);
+            Assert.Equal(2, before.Count);
+            Assert.Same(stale, before[1]);
+            Assert.Equal(2, published.Count);
+            Assert.Same(stock, published[0]);
+            Assert.IsType<FanaBridgeVariantProvider>(published[1]);
+            Assert.NotSame(stale, published[1]);
+            Assert.Equal(1, CountFanaBridge(published));
+        }
+
+        [Fact]
+        public void EnsureRegistered_PublishFails_RestoresInactiveProvider()
+        {
+            var stock = new FakeStockProvider("x");
+            var (bridge, pm, helper, worker) = NewSetup(stock: stock);
+            Assert.True(bridge.EnsureRegistered(pm));
+            var ours = (FanaBridgeVariantProvider)helper.Snapshot()[1];
+            bridge.Unregister();
+
+            // Reading the list throws once the provider has been activated.
+            helper.Replace(new UnreadableProviderList { stock, ours });
+
+            Assert.False(bridge.EnsureRegistered(pm));
+
+            Assert.False(ours.IsActive);
+            Assert.False(bridge.IsRegistered);
+            Assert.Equal(1, worker.UpdateControllerListCalls); // no re-enumerate for a failed publish
         }
 
         [Fact]

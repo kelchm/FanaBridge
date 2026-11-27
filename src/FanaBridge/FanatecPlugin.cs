@@ -58,16 +58,12 @@ namespace FanaBridge
         private ItmEncoder _itm;
 
         /// <summary>
-        /// Experimental Control Mapper integration bridge. Lazily constructed
-        /// the first time the feature is enabled (so a missing SimHub Control
-        /// Mapper type can't affect plugin load), reconciled to
+        /// Experimental Control Mapper integration. Owns the bridge (created lazily
+        /// the first time the feature is enabled), reconciled to
         /// <see cref="FanatecPluginSettings.EnableControlMapperIntegration"/> each
-        /// frame in <see cref="DataUpdate"/>.
+        /// frame in <see cref="DataUpdate"/> and retired in <see cref="FinalizePlugin"/>.
         /// </summary>
-        // volatile: written on the DataUpdate thread (UpdateControlMapperIntegration),
-        // read in the WheelChanged handler, which may fire from any thread. Ensures the
-        // handler observes the constructed bridge; a missed read self-heals next tick.
-        private volatile ControlMapperBridge _controlMapperBridge;
+        private readonly ControlMapperIntegration _controlMapper = new ControlMapperIntegration();
 
         /// <summary>Frame counter that throttles the Control Mapper reconcile (see <see cref="UpdateControlMapperIntegration"/>).</summary>
         private int _cmReconcileTick;
@@ -326,7 +322,7 @@ namespace FanaBridge
         {
             try
             {
-                var bridge = _controlMapperBridge ?? new ControlMapperBridge();
+                var bridge = _controlMapper.Bridge ?? new ControlMapperBridge();
                 return bridge.IsRecognizeIndividualWheelsOn(PluginManager);
             }
             catch { return null; }
@@ -339,7 +335,7 @@ namespace FanaBridge
         /// distinguishable from "Control Mapper not installed".
         /// </summary>
         public bool IsControlMapperIntegrationGivenUp =>
-            _controlMapperBridge?.IsGivenUp == true;
+            _controlMapper.Bridge?.IsGivenUp == true;
 
         /// <summary>The connected wheelbase — used by DeviceInstance wrappers to query wheel identity.</summary>
         // ARCHITECTURE: single-device assumption. When multi-device support lands
@@ -507,7 +503,7 @@ namespace FanaBridge
 
                 // Tell Control Mapper to re-read the variant for the just-swapped
                 // rim (no-op unless the experimental bridge is registered).
-                _controlMapperBridge?.RequestReEnumerate();
+                _controlMapper.Bridge?.RequestReEnumerate();
             };
 
             // Publish the singleton only now that every shared field is
@@ -616,7 +612,8 @@ namespace FanaBridge
         /// <summary>
         /// Reconciles the experimental Control Mapper integration bridge to the
         /// current setting. Registers (lazily constructing the bridge) when
-        /// enabled, unregisters when disabled — live, no restart. Throttled so it
+        /// enabled, unregisters when disabled — live, no restart — and does
+        /// nothing once <see cref="FinalizePlugin"/> has run. Throttled so it
         /// isn't doing reflection work every single frame; the bridge itself is
         /// idempotent, so a coarse cadence is fine and keeps it responsive to the
         /// user toggling the setting or Control Mapper's "Recognize Individual
@@ -631,19 +628,7 @@ namespace FanaBridge
 
             try
             {
-                if (Settings.EnableControlMapperIntegration)
-                {
-                    if (_controlMapperBridge == null)
-                        _controlMapperBridge = new ControlMapperBridge();
-                    _controlMapperBridge.EnsureRegistered(PluginManager);
-                    // Stamp a friendly CustomName on the connected wheel's source(s) so
-                    // the UI shows a readable name while the match key stays the stable id.
-                    _controlMapperBridge.StampFriendlyNames();
-                }
-                else
-                {
-                    _controlMapperBridge?.Unregister();
-                }
+                _controlMapper.Reconcile(Settings.EnableControlMapperIntegration, PluginManager);
             }
             catch (Exception ex)
             {
@@ -709,9 +694,10 @@ namespace FanaBridge
             if (ReferenceEquals(Instance, this))
                 Instance = null;
 
-            // Retire rather than Unregister: a reconcile tick still in flight must not
-            // re-activate the provider after teardown.
-            try { _controlMapperBridge?.Retire(); }
+            // Retire rather than Unregister: no later reconcile tick, including one
+            // still in flight, may create, register or re-activate a provider after
+            // teardown, even if the bridge was never created.
+            try { _controlMapper.Retire(); }
             catch (Exception ex) { SimHub.Logging.Current.Debug("FanaBridge: CM retire on finalize: " + ex.Message); }
 
             if (_connectionMonitor?.IsConnected == true)
@@ -781,7 +767,7 @@ namespace FanaBridge
             string controlMapperSection;
             try
             {
-                var bridge = _controlMapperBridge ?? new ControlMapperBridge();
+                var bridge = _controlMapper.Bridge ?? new ControlMapperBridge();
                 controlMapperSection = bridge.DescribeResolution(PluginManager);
             }
             catch (Exception ex)

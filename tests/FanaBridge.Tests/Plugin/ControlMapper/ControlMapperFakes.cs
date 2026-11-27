@@ -64,6 +64,7 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
         public List<IVariantProvider> Snapshot() => VariantProviders!;
         public void ResetToStockOnly(IVariantProvider stock)
             => VariantProviders = new List<IVariantProvider> { stock };
+        public void Replace(List<IVariantProvider> list) => VariantProviders = list;
     }
 
     /// <summary>Stand-in for the stock Fanatec/Simucube providers — returns a

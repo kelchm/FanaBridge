@@ -161,23 +161,34 @@ namespace FanaBridge.ControlMapper
                         // momentarily inactive provider. Unregister leaves ours in the
                         // list but inactive; turning the integration back on only needs
                         // it re-activated.
-                        reactivated = !_provider.IsActive;
+                        bool wasActive = _provider.IsActive;
+                        reactivated = !wasActive;
                         _provider.IsActive = true;
 
-                        // FanaBridge is a gap-filler: ours goes LAST so SimHub's stock
-                        // Fanatec provider stays ahead and wins for every wheel it can
-                        // identify (Control Mapper takes the first non-null answer). Ours
-                        // is consulted only where stock returns null — a base SimHub
-                        // can't identify. Existing mappings are never disturbed.
-                        int mineCount = 0;
-                        foreach (var p in current)
-                            if (p is FanaBridgeVariantProvider) mineCount++;
-                        bool oursLast = current.Count > 0 && ReferenceEquals(current[current.Count - 1], _provider);
-
-                        if (!(mineCount == 1 && oursLast))
+                        try
                         {
-                            _provField.SetValue(vh, Rebuild(current));
-                            listChanged = true;
+                            // FanaBridge is a gap-filler: ours goes LAST so SimHub's stock
+                            // Fanatec provider stays ahead and wins for every wheel it can
+                            // identify (Control Mapper takes the first non-null answer). Ours
+                            // is consulted only where stock returns null — a base SimHub
+                            // can't identify. Existing mappings are never disturbed.
+                            int mineCount = 0;
+                            foreach (var p in current)
+                                if (p is FanaBridgeVariantProvider) mineCount++;
+                            bool oursLast = current.Count > 0 && ReferenceEquals(current[current.Count - 1], _provider);
+
+                            if (!(mineCount == 1 && oursLast))
+                            {
+                                _provField.SetValue(vh, Rebuild(current));
+                                listChanged = true;
+                            }
+                        }
+                        catch
+                        {
+                            // Nothing was published, so leave the provider as we found it:
+                            // a deactivated one must not start answering from a stale slot.
+                            _provider.IsActive = wasActive;
+                            throw;
                         }
                     }
 
