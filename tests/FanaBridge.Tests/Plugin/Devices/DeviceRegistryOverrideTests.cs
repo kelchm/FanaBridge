@@ -159,19 +159,22 @@ namespace FanaBridge.Tests.Plugin.Devices
         }
 
         [Fact]
-        public void DeviceResolvingToABareProfile_IsNotRegistered_UntilAnOverridePicksAnother()
+        public void DeviceResolvingToABareProfile_StaysRegistered_WithItsIdentityProfile()
         {
             // The built-in PHUB is bare. A user profile for the same hub names a
             // device, but without an override the hub resolves to the built-in
-            // (its id is the match key) — so registering the user profile's LED
-            // layout would size an editor for a profile that never drives it.
+            // (its id is the match key). The device was registered with the user
+            // profile before; dropping its descriptor would hide an added device
+            // and its settings from SimHub, so it keeps registering as it did.
             using var profiles = new TempUserProfiles();
             profiles.Write("fb81-hub-leds.json", "PHUB_FB81", "PHUB");
             profiles.Reload();
             PersistedPluginSettings.SettingsPathResolver =
                 () => Path.Combine(Path.GetTempPath(), "fanabridge-does-not-exist.json");
 
-            Assert.Null(ConfigFor("Fanatec_PHUB"));
+            var withoutOverride = ConfigFor("Fanatec_PHUB");
+            Assert.NotNull(withoutOverride);
+            Assert.Equal("PHUB_FB81", withoutOverride.Profile.Id);
 
             WriteSettings("PHUB", "PHUB_FB81:User");
 

@@ -123,20 +123,28 @@ namespace FanaBridge.Devices
             foreach (var identity in ordered)
             {
                 var profile = ResolveProfileFor(identity, overrides, Info, Warn);
+
+                // A bare profile can't size a device. The resolver can still land
+                // on one — e.g. a bare built-in hub profile named after the
+                // attachment beats a user LED profile with a non-standard id. The
+                // group registered under its identity profile before, so keep it
+                // that way: dropping the descriptor would hide an already-added
+                // device from SimHub along with its settings.
+                if (IsBare(profile))
+                {
+                    Warn("Device " + new DeviceConfig { Profile = identity }.DeviceTypeId +
+                        " resolves to bare profile '" + profile.Id + "' (" + profile.Source +
+                        "); registering it with '" + identity.Id + "' (" + identity.Source +
+                        ") so an added device keeps loading. Choose its profile in FanaBridge's settings.");
+                    profile = identity;
+                }
+
                 var config = new DeviceConfig
                 {
                     Profile = profile,
                     IdentityProfile = ReferenceEquals(profile, identity) ? null : identity,
                     Capabilities = new WheelCapabilities(profile),
                 };
-
-                // Bare profiles never back a device, whichever way they are reached.
-                if (IsBare(profile))
-                {
-                    Info("Skipping device " + config.DeviceTypeId + " — it resolves to bare profile '" +
-                        profile.Id + "' (" + profile.Source + ")");
-                    continue;
-                }
 
                 Info("Registering " + config.Capabilities.Name + " (" + config.DeviceTypeId +
                     ") with profile '" + profile.Id + "' (" + profile.Source + ")");
