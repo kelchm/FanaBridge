@@ -22,16 +22,15 @@ namespace FanaBridge.ControlMapper
     /// ours only answers where SimHub returns null (a base it can't identify, e.g.
     /// a Podium DD). So existing Control Mapper mappings are never disturbed —
     /// enabling the feature adds per-rim identity only where there was none, and
-    /// disabling it removes our provider with no further effect.
+    /// disabling it deactivates our provider, which then answers nothing.
     ///
-    /// Design notes (verified against the decompiled SimHub.Plugins):
+    /// Design notes:
     /// <list type="bullet">
     /// <item><description>
-    ///   <c>VariantHelper.GetVariant</c> resolves with
-    ///   <c>FirstOrDefault(v =&gt; v != null)</c> over the list, so appending ours
-    ///   LAST keeps the stock Fanatec provider ahead: it wins for any wheel it can
-    ///   identify, and ours is consulted only where stock returns null. Existing
-    ///   mappings stay byte-identical; disabling removes only our provider.
+    ///   <c>VariantHelper.GetVariant</c> takes the first non-null answer from the
+    ///   list in order, so appending ours LAST keeps the stock Fanatec provider
+    ///   ahead: it wins for any wheel it can identify, and ours is consulted only
+    ///   where stock returns null. Existing mappings stay byte-identical.
     /// </description></item>
     /// <item><description>
     ///   The provider list is created lazily by <c>VariantHelper.Start()</c> and
@@ -45,12 +44,21 @@ namespace FanaBridge.ControlMapper
     ///   "ensure ours is present, last", not one-shot.
     /// </description></item>
     /// <item><description>
-    ///   We register by swapping in a fresh list (copy + append) rather than
-    ///   mutating in place: <c>GetVariant</c> enumerates the list lock-free from
-    ///   the worker thread, so an in-place mutation could throw "collection
-    ///   modified". A reference swap is atomic for readers. The swap is done
-    ///   under the same monitor (<c>typeof(VariantHelper)</c>) that
-    ///   <c>Start()</c>/<c>Stop()</c> use, so we never race those.
+    ///   The list is never mutated in place and never made shorter.
+    ///   <c>GetVariant</c> reads it lock-free from the worker thread, so an
+    ///   in-place mutation could throw "collection modified". Older SimHub
+    ///   releases walked the list once per lookup, so swapping in a new list was
+    ///   invisible to a lookup in progress. Current releases (9.13.x) re-read the
+    ///   list at each step of a lookup, so a lookup in progress sees a swapped-in
+    ///   list, and a shorter one makes it read past the end (#132). So every
+    ///   list we publish is a new copy at least as long as the current one: any
+    ///   FanaBridge provider that has to leave becomes an inert placeholder in
+    ///   its slot, and ours takes the trailing placeholder if there is one (so
+    ///   plugin reloads don't grow the list) or is appended otherwise.
+    ///   <see cref="Unregister"/> and <see cref="Retire"/> only deactivate our
+    ///   provider, leaving it in place. The swap is done under the same monitor
+    ///   (<c>typeof(VariantHelper)</c>) that <c>Start()</c>/<c>Stop()</c> use, so
+    ///   we never race those.
     /// </description></item>
     /// <item><description>
     ///   <c>VariantHelper</c> only subscribes to <c>VariantChanged</c> for
@@ -87,8 +95,13 @@ namespace FanaBridge.ControlMapper
         private bool _registered;
         private bool _everRegistered;
         private bool _giveUpLogged;
+        private bool _retired;
 
-        /// <summary>Whether our provider is currently believed to be in Control Mapper's list.</summary>
+        /// <summary>
+        /// Whether our provider is currently believed to be registered and active
+        /// (answering Control Mapper). After <see cref="Unregister"/> it stays in
+        /// the list but inactive, so this is false.
+        /// </summary>
         public bool IsRegistered => _registered;
 
         /// <summary>
@@ -102,7 +115,8 @@ namespace FanaBridge.ControlMapper
         /// list. Idempotent and cheap to call every (throttled) tick. Returns
         /// true when the provider is registered, false when Control Mapper isn't
         /// ready yet, the user's "Recognize Individual Wheels" toggle is off, or
-        /// a reflection step has failed (see <see cref="IsGivenUp"/>).
+        /// a reflection step has failed (see <see cref="IsGivenUp"/>). Always
+        /// false once the bridge is retired (see <see cref="Retire"/>).
         /// </summary>
         /// <param name="pm">SimHub's <c>PluginManager</c> (typed as object so the
         /// bridge can be unit-tested with a stand-in).</param>
@@ -112,17 +126,17 @@ namespace FanaBridge.ControlMapper
             object rwToReEnum = null; // set when a re-enumerate is needed; dispatched AFTER releasing _sync
             lock (_sync)
             {
-                if (_giveUpLogged) return false;
+                if (_retired || _giveUpLogged) return false;
                 _pm = pm;
                 if (!ResolveHandles(pm)) return false;
 
                 object cm = LiveControlMapper();
                 if (cm == null) return false;          // plugin not loaded yet — quiet retry
-                // Value-access + mutation are wrapped: like every other reflection path
-                // here (Unregister / StampFriendlyNames / DescribeResolution), an
-                // unexpected SimHub shape change or an object disposed/rebuilt mid-call
-                // should quietly give up and retry next tick, not surface as repeated
-                // warnings from the per-tick DataUpdate caller.
+                // Value-access + mutation are wrapped: like the other reflection paths
+                // here (StampFriendlyNames / DescribeResolution), an unexpected SimHub
+                // shape change or an object disposed/rebuilt mid-call should quietly
+                // give up and retry next tick, not surface as repeated warnings from
+                // the per-tick DataUpdate caller.
                 try
                 {
                     object rw = _rwField.GetValue(cm);
@@ -130,7 +144,8 @@ namespace FanaBridge.ControlMapper
                     object vh = _vhField.GetValue(rw);
                     if (vh == null) return false;
 
-                    bool changed;
+                    bool listChanged = false;
+                    bool reactivated = false;
                     lock (_vhLockType)
                     {
                         if (!(_provField.GetValue(vh) is IList current))
@@ -147,31 +162,43 @@ namespace FanaBridge.ControlMapper
                         // identify (Control Mapper takes the first non-null answer). Ours
                         // is consulted only where stock returns null — a base SimHub
                         // can't identify. Existing mappings are never disturbed.
+                        //
+                        // Read, validate and build any replacement list before activating,
+                        // so a lookup racing a registration that fails never gets an answer
+                        // from ours. Unregister leaves ours in the list but inactive;
+                        // turning the integration back on only needs it re-activated.
                         int mineCount = 0;
                         foreach (var p in current)
                             if (p is FanaBridgeVariantProvider) mineCount++;
                         bool oursLast = current.Count > 0 && ReferenceEquals(current[current.Count - 1], _provider);
+                        List<IVariantProvider> rebuilt = mineCount == 1 && oursLast ? null : Rebuild(current);
 
-                        if (mineCount == 1 && oursLast)
+                        bool wasActive = _provider.IsActive;
+                        reactivated = !wasActive;
+                        // Activate immediately before publishing, so no list we swap in
+                        // ever holds a momentarily inactive provider.
+                        _provider.IsActive = true;
+                        if (rebuilt != null)
                         {
-                            _registered = true;
-                            return true;                    // already present exactly once, last
+                            try
+                            {
+                                _provField.SetValue(vh, rebuilt);
+                            }
+                            catch
+                            {
+                                // Nothing was published, so put the provider back as we found
+                                // it. If it was already in the old list, a lookup racing this
+                                // instant may have seen it active; only a failed read or
+                                // rebuild above guarantees it never answers.
+                                _provider.IsActive = wasActive;
+                                throw;
+                            }
+                            listChanged = true;
                         }
-
-                        // Rebuild: every non-FanaBridge provider in original order, then
-                        // ours appended last (drops any stale FanaBridge provider left by
-                        // a prior plugin reload).
-                        var newList = new List<IVariantProvider>();
-                        foreach (var p in current)
-                            if (!(p is FanaBridgeVariantProvider))
-                                newList.Add((IVariantProvider)p);
-                        newList.Add(_provider);
-                        _provField.SetValue(vh, newList);
-                        changed = true;
                     }
 
                     _registered = true;
-                    if (changed)
+                    if (listChanged)
                     {
                         if (!_everRegistered)
                         {
@@ -184,8 +211,17 @@ namespace FanaBridge.ControlMapper
                             SimHub.Logging.Current.Info(
                                 "FanaBridge: Control Mapper variant provider re-registered after eviction");
                         }
-                        rwToReEnum = rw; // defer the re-enumerate to outside _sync (see ReEnumerateOutsideLock)
                     }
+                    else if (reactivated)
+                    {
+                        SimHub.Logging.Current.Info(
+                            "FanaBridge: Control Mapper variant provider re-activated");
+                    }
+                    // A new or re-activated provider changes the attached rim's variant, so
+                    // its controller needs re-keying. Deferred to outside _sync (see
+                    // ReEnumerateOutsideLock).
+                    if (listChanged || reactivated)
+                        rwToReEnum = rw;
                 }
                 catch (Exception ex)
                 {
@@ -198,6 +234,27 @@ namespace FanaBridge.ControlMapper
             // dispatch OUTSIDE _sync (see ReEnumerateOutsideLock) to avoid the deadlock.
             ReEnumerateOutsideLock(rwToReEnum);
             return true;
+        }
+
+        /// <summary>
+        /// Builds the list to publish in place of <paramref name="current"/>, never
+        /// shorter than it (see the design notes). Every entry keeps its position, and
+        /// every FanaBridge provider (a stale one left by a prior plugin instance, or
+        /// ours out of place) becomes an inert placeholder. Ours then takes the last
+        /// slot if that is a placeholder, so plugin reloads reuse the slot instead of
+        /// growing the list; otherwise it is appended.
+        /// </summary>
+        private List<IVariantProvider> Rebuild(IList current)
+        {
+            var newList = new List<IVariantProvider>(current.Count + 1);
+            foreach (var p in current)
+                newList.Add(p is FanaBridgeVariantProvider ? InertVariantProvider.Instance : (IVariantProvider)p);
+            int last = newList.Count - 1;
+            if (last >= 0 && newList[last] is InertVariantProvider)
+                newList[last] = _provider;
+            else
+                newList.Add(_provider);
+            return newList;
         }
 
         /// <summary>
@@ -229,48 +286,58 @@ namespace FanaBridge.ControlMapper
         }
 
         /// <summary>
-        /// Remove our provider from Control Mapper's list so disabling the
-        /// feature (or a plugin reload / shutdown) doesn't leave a dead provider
-        /// behind. Safe to call when never registered.
+        /// Deactivate our provider when the feature is disabled: it stops answering,
+        /// so Control Mapper behaves as if it were absent. It is deliberately left in
+        /// Control Mapper's list, because removing it would make the list shorter
+        /// (see the design notes, #132). A later <see cref="EnsureRegistered"/>
+        /// re-activates it. Safe to call when never registered.
         /// </summary>
         public void Unregister()
         {
             lock (_sync)
+                Deactivate();
+        }
+
+        /// <summary>
+        /// Deactivate our provider for good, at plugin teardown. Like
+        /// <see cref="Unregister"/>, it stays in Control Mapper's list, but from then
+        /// on <see cref="EnsureRegistered"/> returns false without registering or
+        /// re-activating it, so a reconcile tick still in flight can't bring it back.
+        /// A later plugin instance's bridge reuses its slot.
+        /// </summary>
+        public void Retire()
+        {
+            lock (_sync)
             {
-                if (!_resolved || _pm == null) { _registered = false; return; }
-                try
-                {
-                    object cm = LiveControlMapper();
-                    object rw = cm != null ? _rwField.GetValue(cm) : null;
-                    object vh = rw != null ? _vhField.GetValue(rw) : null;
-                    if (vh != null && _vhLockType != null)
-                    {
-                        lock (_vhLockType)
-                        {
-                            if (_provField.GetValue(vh) is IList current
-                                && current.Cast<object>().Any(p => p is FanaBridgeVariantProvider))
-                            {
-                                var newList = new List<IVariantProvider>();
-                                foreach (var p in current)
-                                    if (!(p is FanaBridgeVariantProvider))
-                                        newList.Add((IVariantProvider)p);
-                                _provField.SetValue(vh, newList);
-                                SimHub.Logging.Current.Info(
-                                    "FanaBridge: Control Mapper variant provider removed");
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    SimHub.Logging.Current.Debug(
-                        "FanaBridge: Control Mapper unregister failed: " + ex.Message);
-                }
-                finally
-                {
-                    _registered = false;
-                }
+                _retired = true;
+                Deactivate();
             }
+        }
+
+        // Caller holds _sync.
+        private void Deactivate()
+        {
+            bool wasRegistered = _registered;
+            _provider.IsActive = false;
+            _registered = false;
+            if (wasRegistered)
+                SimHub.Logging.Current.Info(
+                    "FanaBridge: Control Mapper variant provider deactivated");
+        }
+
+        /// <summary>
+        /// Stands in for a FanaBridge provider that must leave Control Mapper's list
+        /// (a stale one from a prior plugin instance, or ours out of position), so the
+        /// list keeps its length. Always answers <c>null</c>, which Control Mapper
+        /// treats the same as an absent provider.
+        /// </summary>
+        private sealed class InertVariantProvider : IVariantProvider
+        {
+            public static readonly InertVariantProvider Instance = new InertVariantProvider();
+
+            public string GetVariant(int vendorid, int productid) => null;
+
+            public event EventHandler VariantChanged { add { } remove { } }
         }
 
         /// <summary>
@@ -423,7 +490,7 @@ namespace FanaBridge.ControlMapper
                             try { v = p.GetVariant(FanaBridgeVariantProvider.FanatecVendorId, pid); }
                             catch (Exception ex) { err = ex.GetBaseException().Message; }
                             if (winner == null && v != null) { winner = v; winnerIsOurs = p is FanaBridgeVariantProvider; }
-                            sb.AppendLine("    - " + p.GetType().Name + " => " + (err != null ? "ERROR: " + err : (v ?? "null")));
+                            sb.AppendLine("    - " + DescribeProvider(p) + " => "+ (err != null ? "ERROR: " + err : (v ?? "null")));
                         }
                         sb.AppendLine("  Resolved (winning) variant: " + (winner ?? "null"));
                         sb.AppendLine("  Verdict: " + Verdict(winner, winnerIsOurs));
@@ -617,6 +684,18 @@ namespace FanaBridge.ControlMapper
             }
             catch { }
             return 0;
+        }
+
+        /// <summary>A provider's label in the diagnostic report: its type name, marked
+        /// when it is an inactive FanaBridge provider, or a clear label for a
+        /// placeholder.</summary>
+        private static string DescribeProvider(IVariantProvider p)
+        {
+            if (p is InertVariantProvider)
+                return "Placeholder (replaced FanaBridge provider, always null)";
+            if (p is FanaBridgeVariantProvider fb && !fb.IsActive)
+                return p.GetType().Name + " (inactive)";
+            return p.GetType().Name;
         }
 
         /// <summary>Plain-English summary of what FanaBridge is doing for the live wheel.</summary>
