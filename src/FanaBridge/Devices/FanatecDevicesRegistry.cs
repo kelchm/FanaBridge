@@ -38,6 +38,9 @@ namespace FanaBridge.Devices
         {
             SimHub.Logging.Current.Info("FanatecDevicesRegistry: GetDevices() called");
 
+            // At most one device per call, even if the attachment changes mid-loop.
+            bool detected = false;
+
             foreach (var config in BuildConfigs())
             {
                 // Capture for closure
@@ -59,7 +62,8 @@ namespace FanaBridge.Devices
                     IsOEM = false,
                     IsDeprecated = false,
                 };
-                ApplyDetection(descriptor, capturedConfig, resolvePlugin);
+                if (!detected)
+                    detected = ApplyDetection(descriptor, capturedConfig, resolvePlugin);
                 yield return descriptor;
             }
         }
@@ -69,9 +73,9 @@ namespace FanaBridge.Devices
         /// system" only while its wheel or hub + module is attached. SimHub asks
         /// for the devices each time the picker opens, so only the device attached
         /// then gets the base's USB ID; <c>CompatibilityTest</c> drops it if the
-        /// attachment changes before the picker looks.
+        /// attachment changes before the picker looks. Returns whether it did.
         /// </summary>
-        internal static void ApplyDetection(
+        internal static bool ApplyDetection(
             DeviceDescriptor descriptor, DeviceConfig config, Func<FanatecPlugin> resolvePlugin)
         {
             int productId;
@@ -79,13 +83,13 @@ namespace FanaBridge.Devices
             {
                 var plugin = resolvePlugin();
                 if (!FanatecWheelDeviceInstance.IsAttached(plugin, config))
-                    return;
+                    return false;
                 productId = plugin.Wheelbase.ConnectedProductId;
             }
-            catch (Exception) { return; }
+            catch (Exception) { return false; }
 
             if (productId <= 0)
-                return;
+                return false;
 
             descriptor.DetectionDescriptor = new USBRequest(
                 FanatecWheelbase.FANATEC_VENDOR_ID, productId, true);
@@ -97,6 +101,7 @@ namespace FanaBridge.Devices
                 try { return FanatecWheelDeviceInstance.IsAttached(resolvePlugin(), config); }
                 catch (Exception) { return false; }
             };
+            return true;
         }
 
         private static readonly object DecisionLogLock = new object();
