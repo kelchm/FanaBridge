@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -608,6 +609,125 @@ namespace FanaBridge.Tests.Plugin.Devices
                     (driver as IDisposable)?.Dispose();
                 }
             });
+        }
+
+        // ── LED output when the last profile goes ─────────────────────────
+
+        // SimHub's real LED module and the manager it drives, for the
+        // user-profile hub, with the plugin's LED encoders on the fake transport.
+        // The module's Display() is what SimHub calls each frame: it asks the
+        // manager for a driver (GetDriver) and hands it the frame (SendLeds).
+        private static FanatecLedModuleHost LedModuleFor(DeviceConfig config, FanatecPlugin plugin) =>
+            OnStaThread(() => new FanatecLedModuleHost(config, () => plugin, () => plugin.ResolveCapsFor(config)));
+
+        private static FanatecLedDriver InstalledDriver(FanatecLedModuleHost host) =>
+            Assert.IsType<FanatecLedDriver>(host.ManagerForTest.GetDriverInstance());
+
+        /// <summary>Rev LED color reports (FF 01 00 ...) on the wire.</summary>
+        private static List<byte[]> RevLedFrames(FakeTransport t)
+        {
+            lock (t.Col03Sent)
+                return t.Col03Sent.Where(r => r[0] == 0xFF && r[1] == 0x01 && r[2] == 0x00).ToList();
+        }
+
+        private static bool IsBlankRevFrame(byte[] r) => r[3] == 0 && r[4] == 0 && r[5] == 0 && r[6] == 0;
+
+        // A hub with a driver installed from its profile and its rev LEDs lit,
+        // whose last profile has then been deleted.
+        private static FanatecLedModuleHost LitHubLosingItsProfile(
+            TempUserProfiles profiles, out FanatecPlugin plugin, out FakeTransport transport, out DeviceConfig config)
+        {
+            WriteLastProfile(profiles);
+            profiles.Reload();
+            var cfg = Assert.Single(FanatecDevicesRegistry.BuildConfigs(), c => c.WheelCode == "CSSWUH");
+            config = cfg;
+            var p = AttachedPlugin(BareHubFrame("CSSWUH"), out var wheelbase, out transport, out _,
+                withLedEncoders: true);
+            plugin = p;
+
+            var host = LedModuleFor(cfg, p);
+            host.Display();
+            var driver = InstalledDriver(host);
+            driver.WaitForWriteForTest();
+            Assert.NotEmpty(RevLedFrames(transport));
+
+            // Stands in for telemetry having lit the rev LEDs through that driver.
+            Assert.True(p.Leds.SetRevLedColors(new ushort[] { 0xF800, 0xF800 }));
+
+            Assert.True(WheelProfileStore.DeleteUserProfile(LastProfileId));
+            wheelbase.RefreshCapabilities();
+            Assert.Null(p.ResolveCapsFor(cfg).Profile);
+            return host;
+        }
+
+        [Fact]
+        public void LastProfileDeleted_TheInstalledLedDriverIsBlanked_AndReplacedWithOneWithNoLeds()
+        {
+            using var profiles = new TempUserProfiles();
+            var host = LitHubLosingItsProfile(profiles, out var plugin, out var transport, out var config);
+            try
+            {
+                var lit = InstalledDriver(host);
+                lock (transport.Col03Sent) transport.Col03Sent.Clear();
+
+                host.HotSwapIfNeeded(plugin.ResolveCapsFor(config));
+
+                var blank = Assert.Single(RevLedFrames(transport));
+                Assert.True(IsBlankRevFrame(blank));
+                Assert.False(lit.BlankDeclined);
+
+                // The next frames build a driver from "no profile", which writes nothing.
+                host.Display();
+                host.Display();
+                var empty = InstalledDriver(host);
+                Assert.NotSame(lit, empty);
+                Assert.False(empty.HasPendingBlank);
+                lock (transport.Col03Sent) Assert.Single(transport.Col03Sent);
+            }
+            finally
+            {
+                host.Dispose();
+            }
+        }
+
+        [Fact]
+        public void LastProfileDeleted_ADeclinedLedBlank_IsRetriedUntilAccepted()
+        {
+            using var profiles = new TempUserProfiles();
+            var host = LitHubLosingItsProfile(profiles, out var plugin, out var transport, out var config);
+            try
+            {
+                lock (transport.Col03Sent) transport.Col03Sent.Clear();
+                transport.AcceptCol03 = false;
+
+                host.HotSwapIfNeeded(plugin.ResolveCapsFor(config));   // the closing blank is declined
+                Assert.Single(RevLedFrames(transport));
+
+                // The driver for "no profile" takes the blank over: tried on its first
+                // frame, then paced.
+                host.Display();
+                var empty = InstalledDriver(host);
+                Assert.True(empty.HasPendingBlank);
+                Assert.Equal(2, RevLedFrames(transport).Count);
+                host.Display();
+                Assert.Equal(2, RevLedFrames(transport).Count);
+
+                empty.BlankRetryInterval = TimeSpan.Zero;
+                transport.AcceptCol03 = true;
+                host.Display();
+                Assert.Equal(3, RevLedFrames(transport).Count);
+                Assert.All(RevLedFrames(transport), r => Assert.True(IsBlankRevFrame(r)));
+                Assert.False(empty.HasPendingBlank);
+
+                // Accepted: nothing more is sent.
+                host.Display();
+                host.Display();
+                Assert.Equal(3, RevLedFrames(transport).Count);
+            }
+            finally
+            {
+                host.Dispose();
+            }
         }
 
         // ── LED color notice ──────────────────────────────────────────────

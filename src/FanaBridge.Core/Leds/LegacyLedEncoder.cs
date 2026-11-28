@@ -251,7 +251,8 @@ namespace FanaBridge.Core.Leds
         /// <summary>
         /// Clears every legacy LED channel this encoder has driven.
         /// </summary>
-        public void Clear()
+        /// <returns>Whether every blanking write was accepted.</returns>
+        public bool Clear()
         {
             // Each channel has to be zeroed on its own subcommand — a 0x08 frame does
             // nothing for LEDs addressed via 0x0A or 0x0B, which would otherwise stay
@@ -260,16 +261,18 @@ namespace FanaBridge.Core.Leds
             //
             // Nothing else is sent: turning LEDs off is not a reason to touch the
             // rim's white LED or its stored preferences.
+            bool ok = true;
             if (_lastBitmask != 0xFFFF || _lastRevStripeColor != 0xFFFF)
-                SendLedData(0x00, 0x00);
+                ok &= SendLedData(0x00, 0x00);
 
             if (_lastRev3BitPacked != 0xFFFFFFFF)
-                SendLedRgbData(0x00, 0x00, 0x00, 0x00);
+                ok &= SendLedRgbData(0x00, 0x00, 0x00, 0x00);
 
             if (_lastFlag3BitPacked != 0xFFFFFFFF)
-                SendFlagRgbData(0x00, 0x00, 0x00, 0x00);
+                ok &= SendFlagRgbData(0x00, 0x00, 0x00, 0x00);
 
             ForceDirty();
+            return ok;
         }
 
         /// <summary>

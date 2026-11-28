@@ -78,6 +78,9 @@ namespace FanaBridge.Leds
 
         public Control EditControl => _module.EditControl;
 
+        /// <summary>Test hook: the manager the module drives.</summary>
+        internal FanatecLedManager ManagerForTest => _manager;
+
         public bool Apply(JObject source, bool isDefault)
         {
             // Snapshot for rollback: a rejected payload must not leave

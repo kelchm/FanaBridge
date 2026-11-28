@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Threading.Tasks;
 using BA63Driver.Base;
@@ -74,11 +75,49 @@ namespace FanaBridge.Leds
         // in-flight the frame is dropped rather than blocking.
         private Task _refreshTask;
 
+        // The driver this one replaced, while the blank it was closed with is
+        // still declined: its LEDs may be lit, and nothing else would turn them
+        // off (a driver for "no profile" has none of its own to write). Retried
+        // from SendLeds, frame thread only, paced by BlankRetryInterval.
+        private FanatecLedDriver _pendingBlank;
+        private long _lastBlankAttempt;
+
+        /// <summary>
+        /// Whether the blank this driver was last closed with was declined, for
+        /// any of its own channels or a blank it took over that is still due.
+        /// </summary>
+        internal bool BlankDeclined { get; private set; }
+
+        /// <summary>The encoder this driver writes through, so a replacement only takes over a blank it can send.</summary>
+        internal LedEncoder Encoder => _leds;
+
+        /// <summary>How often a declined blank taken over from a replaced driver is retried.</summary>
+        internal TimeSpan BlankRetryInterval { get; set; } = TimeSpan.FromSeconds(1);
+
+        /// <summary>Whether a replaced driver's declined blank is still being retried. For tests.</summary>
+        internal bool HasPendingBlank => _pendingBlank != null;
+
+        /// <summary>Test hook: waits for a write already handed to the background task.</summary>
+        internal void WaitForWriteForTest()
+        {
+            try { _refreshTask?.Wait(TimeSpan.FromSeconds(10)); }
+            catch { }
+        }
+
         public FanatecLedDriver(WheelCapabilities caps, LedEncoder leds, LegacyLedEncoder legacyLeds)
+            : this(caps, leds, legacyLeds, pendingBlank: null)
+        {
+        }
+
+        /// <param name="pendingBlank">A replaced driver whose closing blank was
+        /// declined; this driver retries it until it is accepted.</param>
+        internal FanatecLedDriver(
+            WheelCapabilities caps, LedEncoder leds, LegacyLedEncoder legacyLeds, FanatecLedDriver pendingBlank)
         {
             _caps = caps ?? throw new ArgumentNullException(nameof(caps));
             _leds = leds ?? throw new ArgumentNullException(nameof(leds));
             _legacyLeds = legacyLeds;
+            _pendingBlank = pendingBlank;
             _profile = caps.Profile;
 
             // Build dispatch tables from the profile
@@ -131,21 +170,63 @@ namespace FanaBridge.Leds
             }
             catch { }
 
+            BlankDeclined = !TryBlank();
+        }
+
+        /// <summary>
+        /// Blanks every channel this driver drives, and a replaced driver's
+        /// blank it is still retrying.
+        /// </summary>
+        /// <returns>Whether every blanking write was accepted.</returns>
+        private bool TryBlank()
+        {
+            // &= (not &&) so one declined channel doesn't skip the others.
+            bool ok = true;
             try
             {
                 if (_caps.HasRevRgb)
-                    _leds.SetRevLedColors(new ushort[_caps.RevRgbCount]);
+                    ok &= _leds.SetRevLedColors(new ushort[_caps.RevRgbCount]);
                 if (_caps.HasFlagRgb)
-                    _leds.SetFlagLedColors(new ushort[_caps.FlagRgbCount]);
+                    ok &= _leds.SetFlagLedColors(new ushort[_caps.FlagRgbCount]);
                 if (_buttonRgbSlotCount > 0 || _caps.ButtonAuxIntensityCount > 0)
-                    _leds.SetButtonLedState(new ushort[_buttonRgbSlotCount],
-                                              new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE]);
+                    ok &= _leds.SetButtonLedState(new ushort[_buttonRgbSlotCount],
+                                                    new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE]);
                 if ((_caps.HasLegacyRevOnOff || _caps.HasLegacyRevStripe || _caps.HasLegacyRev3Bit || _caps.HasLegacyFlag3Bit) && _legacyLeds != null)
-                    _legacyLeds.Clear();
+                    ok &= _legacyLeds.Clear();
             }
             catch (Exception ex)
             {
                 SimHub.Logging.Current.Warn("FanatecLedDriver: Clear failed: " + ex.Message);
+                ok = false;
+            }
+
+            if (_pendingBlank != null)
+            {
+                if (_pendingBlank.TryBlank())
+                    _pendingBlank = null;
+                else
+                    ok = false;
+            }
+
+            return ok;
+        }
+
+        // Retries a replaced driver's declined blank, at most once per
+        // BlankRetryInterval. Runs only while no write task is in flight, so it
+        // never overlaps this driver's own writes on the shared encoders.
+        private void RetryPendingBlank()
+        {
+            long now = Stopwatch.GetTimestamp();
+            if (_lastBlankAttempt != 0
+                && now - _lastBlankAttempt < (long)(BlankRetryInterval.TotalSeconds * Stopwatch.Frequency))
+                return;
+            _lastBlankAttempt = now;
+
+            if (_pendingBlank.TryBlank())
+            {
+                _pendingBlank = null;
+                SimHub.Logging.Current.Info(
+                    "FanatecLedDriver: blanked the LEDs the previous driver left lit");
             }
         }
 
@@ -173,18 +254,24 @@ namespace FanaBridge.Leds
             if (!IsConnected)
                 return false;
 
+            // Drop this frame if the previous write is still in flight
+            var inFlight = _refreshTask;
+            if (inFlight != null && inFlight.Status != TaskStatus.RanToCompletion
+                                 && inFlight.Status != TaskStatus.Faulted)
+                return true;
+
+            // Before the change check: a replaced driver's blank is due whatever
+            // this frame holds, and the driver for "no profile" sees no changes.
+            if (_pendingBlank != null)
+                RetryPendingBlank();
+
+            // No LEDs (an attachment with no profile): nothing to build or send.
+            if (_ledChannels.Length == 0)
+                return true;
+
             // Skip unchanged frames — avoid color conversion and USB I/O
             if (!stateComparer.HasChanged(state) && !forceRefresh)
                 return true;
-
-            // Drop this frame if the previous write is still in flight
-            if (_refreshTask != null)
-            {
-                var t = _refreshTask;
-                if (t != null && t.Status != TaskStatus.RanToCompletion
-                              && t.Status != TaskStatus.Faulted)
-                    return true;
-            }
 
             // ── Build into the current ping-pong slot ────────────────
             // The previous task (using the other slot) is guaranteed complete

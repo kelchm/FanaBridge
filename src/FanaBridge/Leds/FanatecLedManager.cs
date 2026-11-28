@@ -50,6 +50,13 @@ namespace FanaBridge.Leds
         // unavailable/available transitions log once rather than per frame.
         private bool _noDriverReported;
 
+        // A driver a hot-swap closed whose blank was declined, held until the
+        // next driver is built and takes over retrying it.
+        private FanatecLedDriver _pendingBlank;
+
+        /// <summary>Test seam: how often a driver retries a blank it took over.</summary>
+        internal TimeSpan BlankRetryInterval { get; set; } = TimeSpan.FromSeconds(1);
+
         /// <summary>
         /// Keep asking for a driver forever. The base class otherwise stops
         /// after a handful of attempts, which for this late-bound manager would
@@ -116,10 +123,22 @@ namespace FanaBridge.Leds
                 // profile", whichever of the two saw the source first.
                 Observe(caps.Profile);
 
+                // A blank the replaced driver couldn't get accepted is retried by
+                // this one, if it writes through the same encoders. A driver from
+                // another plugin generation can't reach that hardware state, and
+                // that generation's teardown blanked it.
+                var pendingBlank = _pendingBlank != null && ReferenceEquals(_pendingBlank.Encoder, leds)
+                    ? _pendingBlank
+                    : null;
+
                 // With no profile this is a driver with no LEDs: output stops,
                 // and a profile appearing later hot-swaps to a real driver.
-                var driver = new FanatecLedDriver(caps, leds, legacyLeds);
+                var driver = new FanatecLedDriver(caps, leds, legacyLeds, pendingBlank)
+                {
+                    BlankRetryInterval = BlankRetryInterval,
+                };
 
+                _pendingBlank = null;
                 _lastDriverProfile = caps.Profile;
 
                 if (_noDriverReported)
@@ -189,7 +208,17 @@ namespace FanaBridge.Leds
                 : "FanatecLedManager: Active profile changed to '" +
                   (currentCaps.Name ?? "?") + "' — triggering driver rebuild");
 
+            // Closing blanks the driver's LEDs. If the transport declines that,
+            // they stay lit, and a driver for "no profile" would never write them
+            // again, so the next driver takes over retrying the blank.
+            var closing = GetDriverInstance() as FanatecLedDriver;
             Close();
+            if (closing != null && closing.BlankDeclined)
+            {
+                _pendingBlank = closing;
+                SimHub.Logging.Current.Info(
+                    "FanatecLedManager: the LED blank was declined; the next driver will retry it");
+            }
             // _lastDriverProfile will be updated in the next GetDriver() call
             return true;
         }

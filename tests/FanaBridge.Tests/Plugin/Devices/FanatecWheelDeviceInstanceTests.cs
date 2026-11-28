@@ -59,7 +59,16 @@ namespace FanaBridge.Tests.Plugin.Devices
             public bool IsDevicePresent => Connected;
             public FanatecTransport.TransportConnectStatus LastConnectStatus =>
                 FanatecTransport.TransportConnectStatus.Connected;
-            public bool SendCol03(byte[] data) => true;
+            // Recorded col03 output (copied), so LED tests can assert what reached
+            // the wire. Locked: the LED driver writes from a background task.
+            public List<byte[]> Col03Sent { get; } = new List<byte[]>();
+            public volatile bool AcceptCol03 = true;
+            public bool SendCol03(byte[] data)
+            {
+                lock (Col03Sent)
+                    Col03Sent.Add((byte[])data.Clone());
+                return AcceptCol03;
+            }
             public bool SendCol01(byte[] data)
             {
                 var copy = new byte[data.Length];
