@@ -81,10 +81,10 @@ namespace FanaBridge.Devices
             int productId;
             try
             {
-                var plugin = resolvePlugin();
-                if (!FanatecWheelDeviceInstance.IsAttached(plugin, config))
+                var snap = resolvePlugin()?.Wheelbase?.Snapshot;
+                if (!FanatecWheelDeviceInstance.IsAttached(snap, config))
                     return false;
-                productId = plugin.Wheelbase.ConnectedProductId;
+                productId = snap.ProductId;
             }
             catch (Exception) { return false; }
 

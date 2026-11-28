@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Identity;
 using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Logging;
 using FanaBridge.Tests.TestDoubles;
 using FanaBridge.Core.Transport;
 using Xunit;
@@ -27,6 +30,7 @@ namespace FanaBridge.Tests.Core.Devices
             public int ConnectedPid;
             public int DisconnectCount;
             public bool Connected;
+            public Action? OnDisconnect;
 
             public FakeReportStream Identity { get; } = new FakeReportStream();
             public FakeReportStream Itm { get; } = new FakeReportStream();
@@ -40,7 +44,12 @@ namespace FanaBridge.Tests.Core.Devices
                 return ConnectResult;
             }
 
-            public void Disconnect() { DisconnectCount++; Connected = false; }
+            public void Disconnect()
+            {
+                OnDisconnect?.Invoke();
+                DisconnectCount++;
+                Connected = false;
+            }
             public void Dispose() => Disconnect();
 
             public bool IsConnected => Connected;
@@ -205,7 +214,7 @@ namespace FanaBridge.Tests.Core.Devices
             Assert.True(wb.AutoConnect());
 
             int wheelChanged = 0;
-            wb.WheelChanged += _ => wheelChanged++;
+            wb.WheelChanged += () => wheelChanged++;
 
             t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
             clock.T += 10;
@@ -252,7 +261,7 @@ namespace FanaBridge.Tests.Core.Devices
             CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
 
             int wheelChanged = 0;
-            wb.WheelChanged += _ => wheelChanged++;
+            wb.WheelChanged += () => wheelChanged++;
 
             // The firmware re-pushing the same identity (reconnect flap) must not
             // re-fire WheelChanged — that's what the settler's change detection is for.
@@ -312,7 +321,7 @@ namespace FanaBridge.Tests.Core.Devices
             Assert.True(wb.AutoConnect());
 
             int wheelChanged = 0;
-            wb.WheelChanged += _ => wheelChanged++;
+            wb.WheelChanged += () => wheelChanged++;
 
             t.Srm.Enqueue(SrmReply());
             clock.T += 10;
@@ -465,7 +474,7 @@ namespace FanaBridge.Tests.Core.Devices
             CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
 
             int wheelChanged = 0;
-            wb.WheelChanged += _ => wheelChanged++;
+            wb.WheelChanged += () => wheelChanged++;
 
             string other = FanatecDeviceTables.Wheels.Values.First(v => v != "PSWBMW");
             CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire(other)));
@@ -486,7 +495,7 @@ namespace FanaBridge.Tests.Core.Devices
             CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
 
             int wheelChanged = 0;
-            wb.WheelChanged += _ => wheelChanged++;
+            wb.WheelChanged += () => wheelChanged++;
 
             string other = FanatecDeviceTables.Wheels.Values.First(v => v != "PSWBMW");
             t.Identity.Enqueue(Ff08(0x0C, WheelWire(other)));      // flap out...
@@ -582,7 +591,7 @@ namespace FanaBridge.Tests.Core.Devices
         // ── Capability resolution hooks ────────────────────────────────────
 
         [Fact]
-        public void ProfileOverrideResolver_RedirectsCapabilityResolution()
+        public void SetProfileOverrides_RedirectsCapabilityResolution()
         {
             var wb = Make(out var t, out var bus, out var clock);
             bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
@@ -594,17 +603,18 @@ namespace FanaBridge.Tests.Core.Devices
             profiles.Write("fb81-wheelbase-override.json", "PSWBMW_OVERRIDE", "PSWBMW");
             profiles.Reload();
 
-            string? requestedKey = null;
-            wb.ProfileOverrideResolver = key => { requestedKey = key; return "PSWBMW_OVERRIDE:User"; };
+            wb.SetProfileOverrides(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PSWBMW"] = "PSWBMW_OVERRIDE:User",
+            });
 
             CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
 
-            Assert.Equal("PSWBMW", requestedKey);            // asked with the match key
             Assert.Equal("PSWBMW_OVERRIDE", wb.CurrentCapabilities.Profile?.Id);   // override won
         }
 
         [Fact]
-        public void ProfileOverrideResolver_ForADifferentWheel_IsIgnored()
+        public void SetProfileOverrides_ForADifferentWheel_IsIgnored()
         {
             // Registration ignores an override whose match differs from the
             // attachment; runtime must too, or the active profile would differ
@@ -613,7 +623,10 @@ namespace FanaBridge.Tests.Core.Devices
             bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
             Assert.True(wb.AutoConnect());
 
-            wb.ProfileOverrideResolver = _ => "PHUB:BuiltIn";
+            wb.SetProfileOverrides(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PSWBMW"] = "PHUB:BuiltIn",
+            });
 
             CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
 
@@ -751,9 +764,593 @@ namespace FanaBridge.Tests.Core.Devices
             Assert.True(wb.AutoConnect());
 
             int wheelChanged = 0;
-            wb.WheelChanged += _ => wheelChanged++;
+            wb.WheelChanged += () => wheelChanged++;
             CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
             Assert.Equal(1, wheelChanged);
+        }
+
+        // ── Stage 1a: atomic snapshot, leaf state lock, epochs, and purity (#137) ──
+
+        [Fact]
+        public void AutoConnect_WithInitialReading_PublishesUnstableUntilSettle()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "ClubSport DD"));
+            t.RespondOnSend.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+
+            Assert.True(wb.AutoConnect());
+
+            // Adopt offered the initial reading to the settler, so the published
+            // snapshot must already report Connected=true and IdentityStable=false
+            // before the first UpdateIdentity tick.
+            var afterConnect = wb.Snapshot;
+            Assert.True(afterConnect.Connected);
+            Assert.Equal(0x0020, afterConnect.ProductId);
+            Assert.Equal("ClubSport DD", afterConnect.ProductName);
+            Assert.Equal(1, afterConnect.ConnectionEpoch);
+            Assert.Equal(1, afterConnect.AttachmentEpoch);
+            Assert.False(afterConnect.IdentityStable);
+            Assert.False(afterConnect.WheelDetected);
+            Assert.False(afterConnect.HasIdentity);
+            Assert.Same(WheelCapabilities.None, afterConnect.Capabilities);
+
+            clock.T += 250;
+            Assert.True(wb.UpdateIdentity());
+
+            var committed = wb.Snapshot;
+            Assert.True(committed.Connected);
+            Assert.True(committed.IdentityStable);
+            Assert.Equal(1, committed.ConnectionEpoch);
+            Assert.Equal(2, committed.AttachmentEpoch);
+            Assert.Equal(1, committed.WheelChangeCount);
+            Assert.Equal("PSWBMW", committed.WheelCode);
+            Assert.Equal("PSWBMW", committed.Capabilities.Profile?.Id);
+        }
+
+        [Fact]
+        public void CommitIdentity_WhileSettling_KeepsPreviousIdentityAndCapabilitiesPaired()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, HubWire("PHUB"), module: 0x01));
+
+            var initial = wb.Snapshot;
+            Assert.True(initial.IdentityStable);
+            Assert.Equal("PHUB", initial.WheelCode);
+            Assert.Equal("PBME", initial.ModuleCode);
+            Assert.Equal("PHUB_PBME", initial.Capabilities.Profile?.Id);
+
+            // A changed reading starts settling: IdentityStable turns false while
+            // the previously committed identity and capabilities stay paired in the
+            // same attachment epoch.
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+            clock.T += 10;
+            Assert.False(wb.UpdateIdentity());
+
+            var settling = wb.Snapshot;
+            Assert.False(settling.IdentityStable);
+            Assert.Equal(initial.ConnectionEpoch, settling.ConnectionEpoch);
+            Assert.Equal(initial.AttachmentEpoch, settling.AttachmentEpoch);
+            Assert.Equal(initial.WheelChangeCount, settling.WheelChangeCount);
+            Assert.Equal("PHUB", settling.WheelCode);
+            Assert.Equal("PBME", settling.ModuleCode);
+            Assert.Equal("PHUB_PBME", settling.Capabilities.Profile?.Id);
+
+            // Once the settle window elapses, identity, capabilities, stability,
+            // AttachmentEpoch, and WheelChangeCount publish together in one snapshot.
+            clock.T += 250;
+            Assert.True(wb.UpdateIdentity());
+
+            var swapped = wb.Snapshot;
+            Assert.True(swapped.IdentityStable);
+            Assert.Equal(initial.ConnectionEpoch, swapped.ConnectionEpoch);
+            Assert.Equal(initial.AttachmentEpoch + 1, swapped.AttachmentEpoch);
+            Assert.Equal(initial.WheelChangeCount + 1, swapped.WheelChangeCount);
+            Assert.Equal("PSWBMW", swapped.WheelCode);
+            Assert.Null(swapped.ModuleCode);
+            Assert.Equal("PSWBMW", swapped.Capabilities.Profile?.Id);
+        }
+
+        [Fact]
+        public void CommitSrmIdentity_PublishesAtomicallyAndAdvancesAttachmentEpoch()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0005, 64, 64, "CSL Elite"));
+            Assert.True(wb.AutoConnect());
+
+            var before = wb.Snapshot;
+            Assert.True(before.Connected);
+            Assert.False(before.IsSrmConverter);
+            Assert.False(before.WheelDetected);
+            Assert.Same(WheelCapabilities.None, before.Capabilities);
+
+            t.Srm.Enqueue(SrmReply());
+            clock.T += 10;
+            wb.UpdateIdentity();
+
+            var after = wb.Snapshot;
+            Assert.True(after.Connected);
+            Assert.Equal(before.ConnectionEpoch, after.ConnectionEpoch);
+            Assert.Equal(before.AttachmentEpoch + 1, after.AttachmentEpoch);
+            Assert.Equal(before.WheelChangeCount + 1, after.WheelChangeCount);
+            Assert.True(after.IsSrmConverter);
+            Assert.True(after.IdentityStable);
+            Assert.True(after.WheelDetected);
+            Assert.Equal("CSSWFORMV2", after.WheelCode);
+            Assert.Equal("CSSWFORMV2", after.Capabilities.Profile?.Id);
+        }
+
+        [Fact]
+        public void RimSwapFlap_EndingUnchanged_BumpsAttachmentEpochWithoutWheelChanged()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+
+            var before = wb.Snapshot;
+            int wheelChanged = 0;
+            wb.WheelChanged += () => wheelChanged++;
+
+            // Flap to another wheel and back before the settle window expires.
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("CSSWFORMV2")));
+            clock.T += 50;
+            Assert.False(wb.UpdateIdentity());
+            Assert.False(wb.Snapshot.IdentityStable);
+            Assert.Equal(before.AttachmentEpoch, wb.Snapshot.AttachmentEpoch);
+
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+            clock.T += 50;
+            Assert.False(wb.UpdateIdentity());
+
+            clock.T += 250;
+            Assert.False(wb.UpdateIdentity());
+
+            var after = wb.Snapshot;
+            Assert.True(after.IdentityStable);
+            Assert.Equal(before.ConnectionEpoch, after.ConnectionEpoch);
+            Assert.Equal(before.AttachmentEpoch + 1, after.AttachmentEpoch);
+            Assert.Equal(before.WheelChangeCount, after.WheelChangeCount);
+            Assert.Equal("PSWBMW", after.WheelCode);
+            Assert.Equal(0, wheelChanged);
+        }
+
+        [Fact]
+        public void Disconnect_PublishesDisconnectedSnapshotBeforeClosingTransport()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "ClubSport DD"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+
+            var before = wb.Snapshot;
+            Assert.True(before.Connected);
+
+            WheelbaseSnapshot? observedDuringTransportDisconnect = null;
+            t.OnDisconnect = () => observedDuringTransportDisconnect = wb.Snapshot;
+
+            wb.Disconnect();
+
+            Assert.NotNull(observedDuringTransportDisconnect);
+            Assert.False(observedDuringTransportDisconnect!.Connected);
+            Assert.Equal(0, observedDuringTransportDisconnect.ProductId);
+            Assert.Null(observedDuringTransportDisconnect.ProductName);
+            Assert.False(observedDuringTransportDisconnect.WheelDetected);
+            Assert.Same(WheelCapabilities.None, observedDuringTransportDisconnect.Capabilities);
+            Assert.Equal(before.ConnectionEpoch + 1, observedDuringTransportDisconnect.ConnectionEpoch);
+            Assert.Equal(before.AttachmentEpoch + 1, observedDuringTransportDisconnect.AttachmentEpoch);
+            Assert.Equal(before.WheelChangeCount, observedDuringTransportDisconnect.WheelChangeCount);
+        }
+
+        private sealed class LockCheckingLogSink : ILogSink
+        {
+            private readonly Func<bool> _anyLockHeld;
+            public int InfoCount;
+            public int WarnCount;
+            public int Violations;
+
+            public LockCheckingLogSink(Func<bool> anyLockHeld) => _anyLockHeld = anyLockHeld;
+
+            public void Info(string message)
+            {
+                Interlocked.Increment(ref InfoCount);
+                if (_anyLockHeld()) Interlocked.Increment(ref Violations);
+            }
+
+            public void Warn(string message)
+            {
+                Interlocked.Increment(ref WarnCount);
+                if (_anyLockHeld()) Interlocked.Increment(ref Violations);
+            }
+
+            public void Error(string message)
+            {
+                if (_anyLockHeld()) Interlocked.Increment(ref Violations);
+            }
+
+            public void Debug(string message)
+            {
+                if (_anyLockHeld()) Interlocked.Increment(ref Violations);
+            }
+        }
+
+        [Fact]
+        public void StateAndItmLocks_NeverHeldDuringLoggingOrWheelChanged()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+
+            int wheelChangedCalls = 0;
+            int wheelChangedViolations = 0;
+            wb.WheelChanged += () =>
+            {
+                wheelChangedCalls++;
+                if (wb.IsStateLockHeldForTest || wb.IsItmLockHeldForTest)
+                    wheelChangedViolations++;
+            };
+
+            var previousSink = Log.Sink;
+            var sink = new LockCheckingLogSink(() => wb.IsStateLockHeldForTest || wb.IsItmLockHeldForTest);
+            Log.Sink = sink;
+            try
+            {
+                Assert.True(wb.AutoConnect());
+
+                // Mismatched override forces Log.Warn on both commit and refresh.
+                wb.SetProfileOverrides(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["PSWBMW"] = "PHUB:BuiltIn",
+                });
+                CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+                wb.RefreshCapabilities();
+
+                // Overflow the 32-entry ITM buffer to trigger the buffer-full Log.Warn.
+                for (int i = 0; i < 40; i++)
+                {
+                    t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, (byte)i });
+                    clock.T += 10;
+                    wb.UpdateIdentity();
+                }
+
+                wb.Disconnect();
+
+                // Also exercise SRM commit logging and WheelChanged.
+                Assert.True(wb.AutoConnect());
+                t.Srm.Enqueue(SrmReply());
+                clock.T += 10;
+                wb.UpdateIdentity();
+            }
+            finally
+            {
+                Log.Sink = previousSink;
+            }
+
+            Assert.True(sink.InfoCount > 0);
+            Assert.True(sink.WarnCount >= 3); // 2 ignored-override warnings + 1 ITM buffer-full warning
+            Assert.Equal(3, wheelChangedCalls); // FF 08 commit, refresh, SRM commit
+            Assert.Equal(0, sink.Violations);
+            Assert.Equal(0, wheelChangedViolations);
+        }
+
+        [Fact]
+        public void CommitThenRefresh_AndRefreshThenCommit_BothConvergeToLatestOverridesAndCatalog()
+        {
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-stage1a-ordering.json", "PSWBMW_STAGE1A", "PSWBMW", revLeds: 5);
+            profiles.Reload();
+
+            var userOverride = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PSWBMW"] = "PSWBMW_STAGE1A:User",
+            };
+
+            // Ordering 1: commit runs first (with auto/built-in), then override swap + refresh runs last.
+            {
+                var wb = Make(out var t, out var bus, out var clock);
+                bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+                Assert.True(wb.AutoConnect());
+
+                CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+                var afterCommit = wb.Snapshot;
+                Assert.Equal("PSWBMW", afterCommit.Capabilities.Profile?.Id);
+
+                wb.SetProfileOverrides(userOverride);
+                wb.RefreshCapabilities();
+
+                var afterRefresh = wb.Snapshot;
+                Assert.Equal("PSWBMW_STAGE1A", afterRefresh.Capabilities.Profile?.Id);
+                Assert.Equal(5, afterRefresh.Capabilities.AllLedCount);
+                Assert.Equal(afterCommit.ConnectionEpoch, afterRefresh.ConnectionEpoch);
+                Assert.Equal(afterCommit.AttachmentEpoch, afterRefresh.AttachmentEpoch);
+                Assert.Equal(afterCommit.WheelChangeCount, afterRefresh.WheelChangeCount);
+            }
+
+            // Ordering 2: override swap + refresh runs while a swap to PSWBMW is settling, then commit runs last.
+            {
+                var wb = Make(out var t, out var bus, out var clock);
+                bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+                Assert.True(wb.AutoConnect());
+                CommitIdentity(wb, t, clock, Ff08(0x0C, HubWire("PHUB"), module: 0x01));
+
+                t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+                clock.T += 10;
+                Assert.False(wb.UpdateIdentity());
+                Assert.False(wb.Snapshot.IdentityStable);
+
+                wb.SetProfileOverrides(userOverride);
+                wb.RefreshCapabilities();
+
+                // Refresh preserved IdentityStable=false while PSWBMW was still settling.
+                Assert.False(wb.Snapshot.IdentityStable);
+                Assert.Equal("PHUB", wb.Snapshot.WheelCode);
+
+                clock.T += 250;
+                Assert.True(wb.UpdateIdentity());
+
+                var afterCommit = wb.Snapshot;
+                Assert.True(afterCommit.IdentityStable);
+                Assert.Equal("PSWBMW", afterCommit.WheelCode);
+                Assert.Equal("PSWBMW_STAGE1A", afterCommit.Capabilities.Profile?.Id);
+                Assert.Equal(5, afterCommit.Capabilities.AllLedCount);
+            }
+        }
+
+        [Fact]
+        public void OverrideEdit_WithNoWheelAttached_IsHonouredByNextCommit()
+        {
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-stage1a-nowheel.json", "PSWBMW_NOWHEEL", "PSWBMW", revLeds: 4);
+            profiles.Reload();
+
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            int wheelChanged = 0;
+            wb.WheelChanged += () => wheelChanged++;
+
+            // Edit overrides and refresh while no wheel is attached.
+            var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PSWBMW"] = "PSWBMW_NOWHEEL:User",
+            };
+            wb.SetProfileOverrides(overrides);
+            wb.RefreshCapabilities();
+
+            // Mutating the caller's dictionary afterwards must not affect the wheelbase's copy.
+            overrides["PSWBMW"] = "PSWBMW:BuiltIn";
+
+            Assert.Equal(0, wheelChanged);
+            Assert.False(wb.WheelDetected);
+            Assert.Same(WheelCapabilities.None, wb.CurrentCapabilities);
+
+            // Next wheel commit must honour the override stored while no wheel was attached.
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+
+            Assert.Equal("PSWBMW_NOWHEEL", wb.Snapshot.Capabilities.Profile?.Id);
+            Assert.Equal(4, wb.Snapshot.Capabilities.AllLedCount);
+            Assert.Equal(1, wheelChanged);
+        }
+
+        [Fact]
+        public void ProfileStoreReload_LeavesPreviouslyPublishedSnapshotProfileUnchanged()
+        {
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-stage1a-reload.json", "PSWBMW_RELOAD", "PSWBMW", revLeds: 4, name: "BMW Reload V1");
+            profiles.Reload();
+
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            wb.SetProfileOverrides(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PSWBMW"] = "PSWBMW_RELOAD:User",
+            });
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+
+            var beforeReload = wb.Snapshot;
+            Assert.Equal("BMW Reload V1", beforeReload.Capabilities.Name);
+            Assert.Equal(4, beforeReload.Capabilities.AllLedCount);
+            Assert.Equal("BMW Reload V1", beforeReload.Capabilities.Profile.Name);
+            Assert.Equal(4, beforeReload.Capabilities.Profile.Leds.Count);
+
+            // Rewrite the profile on disk and reload the store.
+            profiles.Write("fb137-stage1a-reload.json", "PSWBMW_RELOAD", "PSWBMW", revLeds: 8, name: "BMW Reload V2");
+            profiles.Reload();
+
+            // The previously published snapshot and its frozen profile object are completely unchanged.
+            Assert.Equal("BMW Reload V1", beforeReload.Capabilities.Name);
+            Assert.Equal(4, beforeReload.Capabilities.AllLedCount);
+            Assert.Equal("BMW Reload V1", beforeReload.Capabilities.Profile.Name);
+            Assert.Equal(4, beforeReload.Capabilities.Profile.Leds.Count);
+            Assert.NotSame(beforeReload.Capabilities.Profile, WheelProfileStore.GetById("PSWBMW_RELOAD"));
+
+            // Refresh picks up the reloaded profile in a new snapshot while the old snapshot stays V1.
+            wb.RefreshCapabilities();
+            var afterRefresh = wb.Snapshot;
+            Assert.Equal("BMW Reload V2", afterRefresh.Capabilities.Name);
+            Assert.Equal(8, afterRefresh.Capabilities.AllLedCount);
+            Assert.Equal("BMW Reload V1", beforeReload.Capabilities.Profile.Name);
+            Assert.Equal(4, beforeReload.Capabilities.Profile.Leds.Count);
+        }
+
+        [Fact]
+        public async Task ConcurrentCommitsRefreshesReloadsAndReaders_EverySnapshotIsSelfConsistentAndFinalMatchesInputs()
+        {
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-stage1a-stress-a.json", "PSWBMW_STRESS_A", "PSWBMW", revLeds: 4, name: "BMW Stress A");
+            profiles.Write("fb137-stage1a-stress-b.json", "PSWBMW_STRESS_B", "PSWBMW", revLeds: 7, name: "BMW Stress B");
+            profiles.Write("fb137-stage1a-stress-hub.json", "PHUB_PBME_STRESS", "PHUB", moduleType: "PBME", revLeds: 6, name: "Hub Stress");
+            profiles.Reload();
+
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            var frames = new[]
+            {
+                Ff08(0x0C, WheelWire("PSWBMW")),
+                Ff08(0x0C, HubWire("PHUB"), module: 0x01),
+                Ff08(0x0C, WheelWire("CSSWFORMV2")),
+            };
+
+            var overrideSets = new[]
+            {
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["PSWBMW"] = "PSWBMW_STRESS_A:User",
+                    ["PHUB_PBME"] = "PHUB_PBME_STRESS:User",
+                },
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["PSWBMW"] = "PSWBMW_STRESS_B:User",
+                },
+            };
+
+            using var start = new ManualResetEventSlim(false);
+            using var updatesDone = new ManualResetEventSlim(false);
+            using var done = new ManualResetEventSlim(false);
+            var violations = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            long observedCount = 0;
+
+            Action readerLoop = () =>
+            {
+                long lastConnEpoch = -1;
+                long lastAttachEpoch = -1;
+                int lastWheelChangeCount = -1;
+
+                start.Wait();
+                while (!done.IsSet)
+                {
+                    var s = wb.Snapshot;
+                    Interlocked.Increment(ref observedCount);
+
+                    if (s.ConnectionEpoch < lastConnEpoch)
+                        violations.Enqueue($"ConnectionEpoch went backwards: {s.ConnectionEpoch} < {lastConnEpoch}");
+                    if (s.AttachmentEpoch < lastAttachEpoch)
+                        violations.Enqueue($"AttachmentEpoch went backwards: {s.AttachmentEpoch} < {lastAttachEpoch}");
+                    if (s.WheelChangeCount < lastWheelChangeCount)
+                        violations.Enqueue($"WheelChangeCount went backwards: {s.WheelChangeCount} < {lastWheelChangeCount}");
+                    lastConnEpoch = s.ConnectionEpoch;
+                    lastAttachEpoch = s.AttachmentEpoch;
+                    lastWheelChangeCount = s.WheelChangeCount;
+
+                    if (!s.Connected)
+                    {
+                        if (s.WheelDetected || s.HasIdentity || s.ProductId != 0 || s.ProductName != null
+                            || !ReferenceEquals(s.Capabilities, WheelCapabilities.None) || !s.IdentityStable)
+                        {
+                            violations.Enqueue($"Disconnected snapshot had dirty state: detected={s.WheelDetected}, pid={s.ProductId}, caps={s.Capabilities.Name}");
+                        }
+                        continue;
+                    }
+
+                    if (s.ProductId != 0x0020 || s.ProductName != "Base")
+                        violations.Enqueue($"Connected snapshot had wrong base identity: pid={s.ProductId}, name={s.ProductName}");
+
+                    if (!s.WheelDetected)
+                    {
+                        if (s.WheelCode != null || s.ModuleCode != null || !ReferenceEquals(s.Capabilities, WheelCapabilities.None))
+                            violations.Enqueue($"No-wheel snapshot had non-empty identity/caps: wheel={s.WheelCode}, caps={s.Capabilities.Name}");
+                        continue;
+                    }
+
+                    var profile = s.Capabilities.Profile;
+                    if (profile == null)
+                    {
+                        violations.Enqueue($"Known wheel {s.WheelCode}/{s.ModuleCode} had null profile");
+                        continue;
+                    }
+
+                    if (!string.Equals(profile.Match?.WheelType, s.WheelCode, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(profile.Match?.ModuleType ?? "", s.ModuleCode ?? "", StringComparison.OrdinalIgnoreCase))
+                    {
+                        violations.Enqueue(
+                            $"Mixed snapshot: identity={s.WheelCode}/{s.ModuleCode} paired with profile={profile.Id} ({profile.Match?.WheelType}/{profile.Match?.ModuleType})");
+                    }
+
+                    if (s.WheelCode == "PHUB" && (!s.IsHub || s.ModuleCode != "PBME"))
+                        violations.Enqueue($"PHUB snapshot had mismatched hub/module: isHub={s.IsHub}, mod={s.ModuleCode}");
+                    if (s.WheelCode != "PHUB" && (s.IsHub || s.ModuleCode != null))
+                        violations.Enqueue($"Non-hub snapshot had hub/module: wheel={s.WheelCode}, isHub={s.IsHub}, mod={s.ModuleCode}");
+                }
+            };
+
+            var reader1 = Task.Run(readerLoop);
+            var reader2 = Task.Run(readerLoop);
+
+            var updateWriter = Task.Run(() =>
+            {
+                start.Wait();
+                try
+                {
+                    for (int i = 0; i < 600; i++)
+                    {
+                        if (i > 0 && i % 100 == 0)
+                        {
+                            wb.Disconnect();
+                            wb.AutoConnect();
+                        }
+
+                        t.Identity.Enqueue(frames[i % frames.Length]);
+                        clock.T += 10;
+                        wb.UpdateIdentity();
+                        clock.T += 250;
+                        wb.UpdateIdentity();
+                    }
+                }
+                finally
+                {
+                    updatesDone.Set();
+                }
+            });
+
+            var refreshWriter = Task.Run(() =>
+            {
+                start.Wait();
+                int i = 0;
+                while (!updatesDone.IsSet)
+                {
+                    wb.SetProfileOverrides(overrideSets[i++ % overrideSets.Length]);
+                    wb.RefreshCapabilities();
+                }
+            });
+
+            var reloadWriter = Task.Run(() =>
+            {
+                start.Wait();
+                for (int i = 0; i < 20 && !updatesDone.IsSet; i++)
+                {
+                    WheelProfileStore.Reload();
+                    Thread.Yield();
+                }
+            });
+
+            start.Set();
+            await Task.WhenAll(updateWriter, refreshWriter, reloadWriter);
+
+            // Converge to explicit final inputs and verify the final snapshot matches.
+            if (!wb.IsConnected)
+                Assert.True(wb.AutoConnect());
+            wb.SetProfileOverrides(overrideSets[2]); // PSWBMW -> PSWBMW_STRESS_B:User
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+            wb.RefreshCapabilities();
+
+            done.Set();
+            await Task.WhenAll(reader1, reader2);
+
+            Assert.Empty(violations);
+            Assert.True(Interlocked.Read(ref observedCount) > 0);
+
+            var finalSnap = wb.Snapshot;
+            Assert.True(finalSnap.Connected);
+            Assert.True(finalSnap.IdentityStable);
+            Assert.Equal("PSWBMW", finalSnap.WheelCode);
+            Assert.Equal("PSWBMW_STRESS_B", finalSnap.Capabilities.Profile?.Id);
+            Assert.Equal(7, finalSnap.Capabilities.AllLedCount);
         }
     }
 }

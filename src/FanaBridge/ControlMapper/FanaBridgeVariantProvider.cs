@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Identity;
 using SimHub.Plugins.OutputPlugins.ControlRemapper.Variants;
 
@@ -115,12 +116,23 @@ namespace FanaBridge.ControlMapper
 
         private static string ResolveForConnectedWheel(int vendorid, int productid)
         {
-            var wheelbase = FanatecPlugin.Instance?.Wheelbase;
-            bool baseConnected = wheelbase != null && wheelbase.IsConnected;
-            int connectedProductId = baseConnected ? wheelbase.ConnectedProductId : 0;
-            if (!ShouldClaim(vendorid, productid, baseConnected, connectedProductId))
+            var snap = FanatecPlugin.Instance?.Wheelbase?.Snapshot;
+            return ResolveForSnapshot(snap, vendorid, productid);
+        }
+
+        /// <summary>
+        /// Pure single-snapshot resolution for <see cref="GetVariant"/>: reads
+        /// connection state, product id, and wheel/module identity from one
+        /// <see cref="WheelbaseSnapshot"/> so the PID gate and variant string can
+        /// never come from two different connections or attachments.
+        /// </summary>
+        internal static string ResolveForSnapshot(WheelbaseSnapshot snap, int vendorid, int productid)
+        {
+            if (snap == null)
                 return null;
-            return ComputeCurrentVariant();
+            if (!ShouldClaim(vendorid, productid, snap.Connected, snap.ProductId))
+                return null;
+            return FormatCurrentVariant(snap);
         }
 
         /// <summary>
@@ -147,10 +159,17 @@ namespace FanaBridge.ControlMapper
         /// </summary>
         internal static string ComputeCurrentVariant()
         {
-            var wheelbase = FanatecPlugin.Instance?.Wheelbase;
-            if (wheelbase == null || !wheelbase.IsConnected || !wheelbase.WheelDetected)
+            var snap = FanatecPlugin.Instance?.Wheelbase?.Snapshot;
+            if (snap == null || !snap.Connected)
                 return null;
-            return FormatStockVariant(wheelbase.WheelCode, wheelbase.ModuleCode);
+            return FormatCurrentVariant(snap);
+        }
+
+        private static string FormatCurrentVariant(WheelbaseSnapshot snap)
+        {
+            if (!snap.WheelDetected)
+                return null;
+            return FormatStockVariant(snap.WheelCode, snap.ModuleCode);
         }
 
         /// <summary>
@@ -159,19 +178,19 @@ namespace FanaBridge.ControlMapper
         /// </summary>
         internal static string ComputeFriendlyName()
         {
-            var wheelbase = FanatecPlugin.Instance?.Wheelbase;
-            if (wheelbase == null || !wheelbase.IsConnected || !wheelbase.WheelDetected)
+            var snap = FanatecPlugin.Instance?.Wheelbase?.Snapshot;
+            if (snap == null || !snap.Connected || !snap.WheelDetected)
                 return null;
             // Normalize on the short name FanaBridge shows elsewhere (the device's
             // DeviceDescriptor.Name = caps.ShortName ?? caps.Name). Cheap (no device
             // lookup) so it's safe per-frame. Falls back to a composed friendly name,
             // then the raw code. (The SimHub device's own name — incl. a user rename —
             // is preferred at stamp time; see ControlMapperBridge.StampFriendlyNames.)
-            var caps = wheelbase.CurrentCapabilities;
+            var caps = snap.Capabilities;
             string shortName = caps?.ShortName ?? caps?.Name;
             if (!string.IsNullOrEmpty(shortName))
                 return shortName;
-            return FormatFriendlyName(wheelbase.WheelCode, wheelbase.ModuleCode);
+            return FormatFriendlyName(snap.WheelCode, snap.ModuleCode);
         }
 
         /// <summary>
@@ -222,13 +241,13 @@ namespace FanaBridge.ControlMapper
         {
             if (string.IsNullOrEmpty(candidate))
                 return false;
-            var wheelbase = FanatecPlugin.Instance?.Wheelbase;
-            if (wheelbase == null || !wheelbase.WheelDetected)
+            var snap = FanatecPlugin.Instance?.Wheelbase?.Snapshot;
+            if (snap == null || !snap.Connected || !snap.WheelDetected)
                 return false;
-            var caps = wheelbase.CurrentCapabilities;
+            var caps = snap.Capabilities;
             return NameEquals(candidate, caps?.ShortName)
                 || NameEquals(candidate, caps?.Name)
-                || NameEquals(candidate, FormatFriendlyName(wheelbase.WheelCode, wheelbase.ModuleCode));
+                || NameEquals(candidate, FormatFriendlyName(snap.WheelCode, snap.ModuleCode));
         }
 
         private static bool NameEquals(string a, string b)

@@ -1,4 +1,6 @@
 using FanaBridge.ControlMapper;
+using FanaBridge.Core.Devices;
+using FanaBridge.Core.Devices.Profiles;
 using Xunit;
 
 namespace FanaBridge.Tests.Plugin.ControlMapper
@@ -95,5 +97,63 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
         [Fact]
         public void Poll_WithNoLiveWheel_DoesNotThrow()
             => new FanaBridgeVariantProvider().Poll();
+
+        [Fact]
+        public void ResolveForSnapshot_ReadsConnectedPidAndVariantFromOneSnapshot()
+        {
+            var connected = new WheelbaseSnapshot(
+                connected: true,
+                productId: 0x0020,
+                productName: "ClubSport DD",
+                connectionEpoch: 1,
+                attachmentEpoch: 2,
+                wheelChangeCount: 1,
+                identityStable: true,
+                baseType: 0x0C,
+                baseCode: "CSDDPlus",
+                wheelDetected: true,
+                wheelCode: "PHUB",
+                wheelWireCode: 0x09,
+                isHub: true,
+                moduleCode: "PBMR",
+                moduleWireCode: 0x02,
+                isSrmConverter: false,
+                srmKitFirmware: null,
+                capabilities: WheelCapabilities.None);
+
+            // Matching VID + PID from that snapshot emits the snapshot's variant.
+            Assert.Equal(
+                "FS_WHEEL_SWTYPE_PHUB_PBMR",
+                FanaBridgeVariantProvider.ResolveForSnapshot(
+                    connected, FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+
+            // Different PID is never claimed, even though the snapshot has a wheel.
+            Assert.Null(FanaBridgeVariantProvider.ResolveForSnapshot(
+                connected, FanaBridgeVariantProvider.FanatecVendorId, 0x0005));
+
+            // Disconnected snapshot never claims, even if wheel fields were populated.
+            var disconnected = new WheelbaseSnapshot(
+                connected: false,
+                productId: 0x0020,
+                productName: "ClubSport DD",
+                connectionEpoch: 2,
+                attachmentEpoch: 3,
+                wheelChangeCount: 1,
+                identityStable: true,
+                baseType: 0x0C,
+                baseCode: "CSDDPlus",
+                wheelDetected: true,
+                wheelCode: "PHUB",
+                wheelWireCode: 0x09,
+                isHub: true,
+                moduleCode: "PBMR",
+                moduleWireCode: 0x02,
+                isSrmConverter: false,
+                srmKitFirmware: null,
+                capabilities: WheelCapabilities.None);
+
+            Assert.Null(FanaBridgeVariantProvider.ResolveForSnapshot(
+                disconnected, FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+        }
     }
 }

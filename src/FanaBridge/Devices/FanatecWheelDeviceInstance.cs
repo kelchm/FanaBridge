@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using FanaBridge;
+using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Profiles;
 using FanaBridge.Core.Display.Session;
 using FanaBridge.Display;
@@ -317,20 +318,36 @@ namespace FanaBridge.Devices
         }
 
         public override DeviceState GetDeviceState() =>
-            GetDeviceStateFor(PluginResolver());
+            GetDeviceStateFor(PluginResolver()?.Wheelbase?.Snapshot);
 
         /// <summary>
-        /// The device state as seen by one specific plugin generation.
-        /// DataUpdate passes the generation it captured at the top of the
-        /// frame, so state and drivers can never come from different ones.
+        /// The device state as seen in one captured wheelbase snapshot.
+        /// DataUpdate passes the snapshot it captured at the top of the frame,
+        /// so state and drivers always decide from the same snapshot.
         /// </summary>
-        private DeviceState GetDeviceStateFor(FanatecPlugin plugin)
+        private DeviceState GetDeviceStateFor(WheelbaseSnapshot snap)
         {
             // Never Disabled: SimHub reserves that for the user's own switch and
             // forces an enabled device claiming it back to Scanning every frame,
             // so it never settles and floods the log (see the lifecycle doc,
             // "Presenting availability").
-            return IsAttached(plugin, _config) ? DeviceState.Connected : DeviceState.Scanning;
+            return IsAttached(snap, _config) ? DeviceState.Connected : DeviceState.Scanning;
+        }
+
+        /// <summary>
+        /// The attachment check shared by device state, the restart notice, and
+        /// the Add-device picker — evaluated against one captured snapshot.
+        /// </summary>
+        internal static bool IsAttached(WheelbaseSnapshot snap, DeviceConfig config)
+        {
+            if (snap == null || config == null || !snap.Connected)
+                return false;
+
+            // Identity still settling: don't drive a half-(re)connected wheel.
+            if (!snap.IdentityStable)
+                return false;
+
+            return config.MatchesAttachment(snap.WheelDetected, snap.WheelCode, snap.ModuleCode);
         }
 
         /// <summary>
@@ -338,18 +355,7 @@ namespace FanaBridge.Devices
         /// </summary>
         internal static bool IsAttached(FanatecPlugin plugin, DeviceConfig config)
         {
-            // ARCHITECTURE: reaches into wheelbase identity fields; when the
-            // peripheral model lands, bind to a peripheral snapshot instead.
-            var wheelbase = plugin?.Wheelbase;
-            if (wheelbase == null || !wheelbase.IsConnected)
-                return false;
-
-            // Identity still settling: don't drive a half-(re)connected wheel.
-            if (!wheelbase.IdentityStable)
-                return false;
-
-            return config.MatchesAttachment(
-                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
+            return IsAttached(plugin?.Wheelbase?.Snapshot, config);
         }
 
         /// <summary>
@@ -431,8 +437,12 @@ namespace FanaBridge.Devices
             // reads the base Enabled (the user's real choice).
             bool switchedOn = ShouldBeRunning();
 
+            // Capture one snapshot at the top of the frame: attachment check,
+            // display/ITM/LED capabilities, wheel-change counter, and any LED
+            // driver built during this frame all use this copy.
+            var frameSnapshot = currentPlugin?.Wheelbase?.Snapshot;
             bool isConnected =
-                switchedOn && GetDeviceStateFor(currentPlugin) == DeviceState.Connected;
+                switchedOn && GetDeviceStateFor(frameSnapshot) == DeviceState.Connected;
 
             // The LEDs tab badge: hidden while nothing can drive the device;
             // connected state pushed because the module only refreshes its own
@@ -471,15 +481,15 @@ namespace FanaBridge.Devices
                 if (!ReferenceEquals(PluginResolver(), currentPlugin))
                     return;
 
-                DriveHardware(currentPlugin, ref data);
+                DriveHardware(currentPlugin, frameSnapshot, ref data);
             }
         }
 
         /// <summary>
         /// One frame of display/ITM/LED output, entirely from the frame's
-        /// captured generation. Callers hold <see cref="_outputGate"/>.
+        /// captured generation and snapshot. Callers hold <see cref="_outputGate"/>.
         /// </summary>
-        private void DriveHardware(FanatecPlugin plugin, ref GameData data)
+        private void DriveHardware(FanatecPlugin plugin, WheelbaseSnapshot frameSnapshot, ref GameData data)
         {
             var device = plugin?.Transport;
             if (device == null || !device.IsConnected)
@@ -508,14 +518,10 @@ namespace FanaBridge.Devices
             }
             _displayTestWasActive = displayTest;
 
-            // Resolve THIS descriptor's caps override-aware — the same rule the
-            // LED pipeline already follows via ResolveCapsFor (the single guard).
-            // Registration caps froze the built-in profile's display type and ITM
-            // device id, so a user override changing either was honored by LEDs
-            // but silently ignored by the display drivers — restart or not,
-            // because the registry's dedupe keeps the built-in for registration.
-            var displayCaps = plugin.ResolveCapsFor(_config);
-            var displayType = displayCaps.Display;
+            // Resolve THIS descriptor's caps once from the frame's snapshot so
+            // display, ITM, LED hot-swap, and LED driver construction all agree.
+            var frameCaps = FanatecPlugin.ResolveCapsFor(_config, frameSnapshot);
+            var displayType = frameCaps.Display;
 
             // Switched away from ITM (e.g. override to a basic-display profile):
             // stop the session so the next Itm selection re-runs bring-up.
@@ -530,24 +536,24 @@ namespace FanaBridge.Devices
             {
                 // Override retargeted the ITM display id — the driver's deviceId
                 // is ctor-fixed, so hot-swap it like the LED pipeline does.
-                if (_itmDisplay != null && _itmDeviceId != displayCaps.ItmDeviceId)
+                if (_itmDisplay != null && _itmDeviceId != frameCaps.ItmDeviceId)
                 {
                     _itmDisplay.Stop();
                     _itmDisplay = null;
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                         "]: ITM display id changed (" + _itmDeviceId + " → " +
-                        displayCaps.ItmDeviceId + ") — rebuilding ITM driver");
+                        frameCaps.ItmDeviceId + ") — rebuilding ITM driver");
                 }
                 if (_itmDisplay == null)
                 {
-                    _itmDeviceId = displayCaps.ItmDeviceId;
+                    _itmDeviceId = frameCaps.ItmDeviceId;
                     _itmDisplay = new ItmDisplayDriver(plugin.Itm,
                         log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
                         deviceId: _itmDeviceId);
                     // Baseline the wheel-change counter at creation — the driver is starting
                     // cold anyway, so changes before this point are already accounted for.
-                    _itmWheelChangeCount = plugin.Wheelbase?.WheelChangeCount ?? 0;
+                    _itmWheelChangeCount = frameSnapshot?.WheelChangeCount ?? 0;
                     // Drop any status snapshot cached from a disposed generation's controller,
                     // so the Device Status row never shows the old controller's description
                     // (a plugin-generation rebind or a display-id change rebuilds the driver here).
@@ -571,7 +577,7 @@ namespace FanaBridge.Devices
                     // A wheel/hub/module change (identity layer, FF 08) resets the display to
                     // a cold state that is invisible on the ITM channel — restart the ITM
                     // lifecycle from bring-up. Polled via the monotonic counter.
-                    int wheelChanges = plugin.Wheelbase?.WheelChangeCount ?? 0;
+                    int wheelChanges = frameSnapshot?.WheelChangeCount ?? 0;
                     if (wheelChanges != _itmWheelChangeCount)
                     {
                         _itmWheelChangeCount = wheelChanges;
@@ -640,19 +646,15 @@ namespace FanaBridge.Devices
             // ── LEDs ─────────────────────────────────────────────────────
             // Hot-swap the driver if the active profile changed (e.g. user
             // picked a different override in the settings dropdown).
-            // Use the per-descriptor resolution, not the global caps — a
-            // non-matching device resolves to its own registration profile
-            // and so never hot-swaps to the connected wheel's profile.
-            var currentCaps = plugin.ResolveCapsFor(_config);
-            if (currentCaps?.Profile != null)
-                _ledHost.HotSwapIfNeeded(currentCaps);
+            if (frameCaps?.Profile != null)
+                _ledHost.HotSwapIfNeeded(frameCaps);
 
             // Settings the module could not fully take leave it partially
             // populated, so driving LEDs from it would show something the user
             // never chose. Output resumes once a later load or a reset makes it
             // trustworthy again -- the same condition that unblocks saving.
             if (!_settings.IsFaulted)
-                _ledHost.Display();
+                _ledHost.Display(frameSnapshot);
         }
 
         /// <summary>

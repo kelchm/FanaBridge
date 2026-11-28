@@ -407,28 +407,30 @@ namespace FanaBridge.Diagnostics
         private static void AppendSystemReport(
             StringBuilder sb, FanatecWheelbase wb, bool connected, string statusDetail)
         {
+            var snap = wb?.Snapshot;
+            bool isConnected = snap != null ? snap.Connected : connected;
             sb.AppendLine("FF 08 system report (col03 — identity + firmware):");
-            sb.AppendLine(Kv("Connected", connected.ToString()));
+            sb.AppendLine(Kv("Connected", isConnected.ToString()));
             if (!string.IsNullOrEmpty(statusDetail))
                 sb.AppendLine(Kv("Detail", statusDetail));
 
             byte[] raw = wb?.LastRawReport;
-            if (!connected || wb == null || raw == null || raw.Length == 0)
+            if (!isConnected || snap == null || raw == null || raw.Length == 0)
             {
                 // A committed SRM converter identity has no FF 08 frame (it came from the DE FA
                 // channel) — surface it so the report doesn't read as "unidentified".
-                if (wb != null && wb.IsSrmConverter)
+                if (snap != null && snap.IsSrmConverter)
                 {
                     sb.AppendLine(Kv("Identity source", "SRM Conversion Kit (DE FA channel — no FF 08)"));
-                    sb.AppendLine(Kv("Steering wheel", wb.WheelDetected
-                        ? (wb.WheelCode ?? string.Format("Unknown (id 0x{0:X2})", wb.WheelWireCode))
-                            + (wb.IsHub ? " [hub]" : "")
+                    sb.AppendLine(Kv("Steering wheel", snap.WheelDetected
+                        ? (snap.WheelCode ?? string.Format("Unknown (id 0x{0:X2})", snap.WheelWireCode))
+                            + (snap.IsHub ? " [hub]" : "")
                         : "(nothing attached)"));
-                    if (wb.IsHub)
-                        sb.AppendLine(Kv("Button module", (wb.ModuleCode
-                            ?? (wb.ModuleWireCode != 0 ? string.Format("Unknown (0x{0:X2})", wb.ModuleWireCode) : "(none)"))
-                            + (wb.ModuleWireCode != 0 ? "   [converter-module decode UNVALIDATED — please report]" : "")));
-                    sb.AppendLine(Kv("Kit firmware", wb.SrmKitFirmware ?? "?"));
+                    if (snap.IsHub)
+                        sb.AppendLine(Kv("Button module", (snap.ModuleCode
+                            ?? (snap.ModuleWireCode != 0 ? string.Format("Unknown (0x{0:X2})", snap.ModuleWireCode) : "(none)"))
+                            + (snap.ModuleWireCode != 0 ? "   [converter-module decode UNVALIDATED — please report]" : "")));
+                    sb.AppendLine(Kv("Kit firmware", snap.SrmKitFirmware ?? "?"));
                     return;
                 }
 
@@ -444,28 +446,28 @@ namespace FanaBridge.Diagnostics
                     fw.SystemConfig, fw.Extended ? "extended" : "legacy")));
             sb.AppendLine(Kv("Raw", BytesToHex(raw)));
 
-            sb.AppendLine(Row("Wheelbase", wb.BaseCode ?? "Unknown", 0x02, wb.BaseType, fw?.Wheelbase));
+            sb.AppendLine(Row("Wheelbase", snap.BaseCode ?? "Unknown", 0x02, snap.BaseType, fw?.Wheelbase));
 
-            if (!wb.WheelDetected)
+            if (!snap.WheelDetected)
             {
                 sb.AppendLine(Kv("Steering wheel", "(nothing attached)"));
             }
             else
             {
                 string wheel =
-                    wb.WheelCode != null     ? wb.WheelCode :
-                    wb.WheelWireCode == 0xFF ? "EXT_INFO" :
-                                               "Unknown";
-                if (wb.IsHub) wheel += " [hub]";
-                sb.AppendLine(Row("Steering wheel", wheel, 0x18, wb.WheelWireCode, fw?.SteeringWheel));
+                    snap.WheelCode != null     ? snap.WheelCode :
+                    snap.WheelWireCode == 0xFF ? "EXT_INFO" :
+                                                 "Unknown";
+                if (snap.IsHub) wheel += " [hub]";
+                sb.AppendLine(Row("Steering wheel", wheel, 0x18, snap.WheelWireCode, fw?.SteeringWheel));
 
-                if (wb.IsHub && (wb.ModuleCode != null || wb.ModuleWireCode != 0))
-                    sb.AppendLine(Row("Button module", wb.ModuleCode ?? "Unknown", 0x1F, wb.ModuleWireCode, fw?.ButtonModule));
+                if (snap.IsHub && (snap.ModuleCode != null || snap.ModuleWireCode != 0))
+                    sb.AppendLine(Row("Button module", snap.ModuleCode ?? "Unknown", 0x1F, snap.ModuleWireCode, fw?.ButtonModule));
             }
 
-            sb.AppendLine(Kv("Identifier", BuildIdentifier(wb) + (wb.IdentityStable ? "" : "  (settling)")));
-            if (!string.IsNullOrEmpty(wb.DisplayName))
-                sb.AppendLine(new string(' ', 18) + "(\"" + wb.DisplayName + "\")");
+            sb.AppendLine(Kv("Identifier", BuildIdentifier(snap) + (snap.IdentityStable ? "" : "  (settling)")));
+            if (!string.IsNullOrEmpty(snap.DisplayName))
+                sb.AppendLine(new string(' ', 18) + "(\"" + snap.DisplayName + "\")");
         }
 
         // "  Label:         value" — colon attached to the label, values aligned.
@@ -485,17 +487,17 @@ namespace FanaBridge.Diagnostics
 
         // The FanaBridge identifier — the single line that matters for mapping,
         // mirroring Col03IdentityProbe (e.g. "PHUB_PBME").
-        private static string BuildIdentifier(FanatecWheelbase wb)
+        private static string BuildIdentifier(WheelbaseSnapshot snap)
         {
-            if (!wb.WheelDetected)
+            if (!snap.WheelDetected)
                 return "(no wheel)";
 
             string wheel =
-                wb.WheelCode != null     ? wb.WheelCode :
-                wb.WheelWireCode == 0xFF ? "EXT_INFO(0xFF)" :
-                                           string.Format("UNKNOWN(0x{0:X2})", wb.WheelWireCode);
+                snap.WheelCode != null     ? snap.WheelCode :
+                snap.WheelWireCode == 0xFF ? "EXT_INFO(0xFF)" :
+                                             string.Format("UNKNOWN(0x{0:X2})", snap.WheelWireCode);
 
-            return (wb.IsHub && wb.ModuleCode != null) ? wheel + "_" + wb.ModuleCode : wheel;
+            return (snap.IsHub && snap.ModuleCode != null) ? wheel + "_" + snap.ModuleCode : wheel;
         }
 
         // ── Firmware versions (decoded from the FF 08 system report) ──────

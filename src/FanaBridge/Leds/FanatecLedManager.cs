@@ -1,4 +1,6 @@
 using System;
+using System.Threading;
+using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Profiles;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.PSE;
 
@@ -48,6 +50,24 @@ namespace FanaBridge.Leds
         // unavailable/available transitions log once rather than per frame.
         private bool _noDriverReported;
 
+        // Snapshot captured by the owning device frame, scoped to one Display()
+        // call on that thread so GetDriver() triggered part-way through builds
+        // from the frame's snapshot instead of taking a second read.
+        private WheelbaseSnapshot _frameSnapshot;
+        private volatile int _frameSnapshotThreadId;
+
+        internal void BeginFrame(WheelbaseSnapshot snapshot)
+        {
+            _frameSnapshot = snapshot;
+            _frameSnapshotThreadId = Thread.CurrentThread.ManagedThreadId;
+        }
+
+        internal void EndFrame()
+        {
+            _frameSnapshotThreadId = 0;
+            _frameSnapshot = null;
+        }
+
         /// <summary>
         /// Keep asking for a driver forever. The base class otherwise stops
         /// after a handful of attempts, which for this late-bound manager would
@@ -84,10 +104,22 @@ namespace FanaBridge.Leds
         /// <summary>
         /// Called by the base class when a connection is needed. Builds a driver
         /// from the capabilities resolved for THIS descriptor (respecting any
-        /// user profile override) — never the raw global caps, which would build
-        /// a driver for whatever wheel is currently connected.
+        /// user profile override) — using the frame's captured snapshot when called
+        /// during a device frame rather than re-reading the wheelbase.
         /// </summary>
         public override FanatecLedDriver GetDriver()
+        {
+            var frameSnap = _frameSnapshotThreadId == Thread.CurrentThread.ManagedThreadId
+                ? _frameSnapshot
+                : null;
+            return GetDriver(frameSnap);
+        }
+
+        /// <summary>
+        /// Builds a driver using <paramref name="snapshot"/> when provided, else
+        /// the live wheelbase snapshot.
+        /// </summary>
+        internal FanatecLedDriver GetDriver(WheelbaseSnapshot snapshot)
         {
             try
             {
@@ -107,7 +139,8 @@ namespace FanaBridge.Leds
                     return null;
                 }
 
-                var caps = plugin.ResolveCapsFor(_config) ?? WheelCapabilities.None;
+                var effectiveSnapshot = snapshot ?? plugin.Wheelbase?.Snapshot;
+                var caps = FanatecPlugin.ResolveCapsFor(_config, effectiveSnapshot) ?? WheelCapabilities.None;
                 var driver = new FanatecLedDriver(caps, leds, legacyLeds);
 
                 _lastDriverProfile = caps.Profile;

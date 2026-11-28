@@ -1,5 +1,9 @@
 using System;
+using System.Collections.Generic;
 using FanaBridge.Core.Devices;
+using FanaBridge.Core.Devices.Identity;
+using FanaBridge.Core.Transport;
+using FanaBridge.Tests.TestDoubles;
 using Xunit;
 
 namespace FanaBridge.Tests.Core.Devices
@@ -385,6 +389,99 @@ namespace FanaBridge.Tests.Core.Devices
             Assert.True(monitor.Update());
             Assert.True(monitor.IsConnected);
             Assert.Null(monitor.LastDisconnectReason);
+        }
+
+        // ── Transport health vs published snapshot (#137 Stage 1a) ───────
+
+        private sealed class UnhealthyStreamTransport : IConnectableTransport
+        {
+            public bool ConnectResult = true;
+            public bool Connected;
+            public bool DevicePresent = true;
+            public FakeReportStream Identity { get; } = new FakeReportStream();
+
+            public bool Connect(int productId)
+            {
+                Connected = ConnectResult;
+                return ConnectResult;
+            }
+
+            public void Disconnect() => Connected = false;
+            public void Dispose() => Disconnect();
+            public bool IsConnected => Connected;
+            public bool IsDevicePresent => DevicePresent;
+            public FanatecTransport.TransportConnectStatus LastConnectStatus =>
+                Connected ? FanatecTransport.TransportConnectStatus.Connected
+                          : FanatecTransport.TransportConnectStatus.NoDeviceForPid;
+            public bool SendCol03(byte[] data) => Connected;
+            public bool SendCol01(byte[] data) => Connected;
+            public IReportStream IdentityReports => Identity;
+            public IReportStream ItmReports => FakeReportStream.Empty;
+            public IReportStream SrmReports => FakeReportStream.Empty;
+            public IReportStream TuningReports => FakeReportStream.Empty;
+            public int ReadCol01(byte[] buffer, int timeoutMs) => -1;
+            public int Col03MaxInputReportLength => 64;
+            public int Col01MaxInputReportLength => 34;
+            public IDisposable BeginBatch() => new NoOp();
+            private sealed class NoOp : IDisposable { public void Dispose() { } }
+        }
+
+        private sealed class SingleDeviceBus : IHidBusEnumerator
+        {
+            public IReadOnlyList<HidDeviceInfo> GetDevices(ushort vendorId) =>
+                new[] { new HidDeviceInfo(0x0020, 64, 64, "ClubSport DD") };
+        }
+
+        [Fact]
+        public void Heartbeat_TransportUnhealthyWhileSnapshotStillConnected_DisconnectsAndReconnects()
+        {
+            // IWheelbaseConnection.IsConnected must stay backed by live transport
+            // health (not the published snapshot). When a col03 reader faults or
+            // a stream closes while the device stays on the HID bus, the snapshot
+            // still says Connected until the stream-check heartbeat fires and
+            // calls Disconnect().
+            var transport = new UnhealthyStreamTransport();
+            long now = 0;
+            var wb = new FanatecWheelbase(transport, new SingleDeviceBus(), () => now);
+            bool disconnectedFired = false;
+            bool reconnectedFired = false;
+
+            var monitor = new ConnectionMonitor(wb, wb.AutoConnect);
+            monitor.Disconnected += () => disconnectedFired = true;
+            monitor.Connected += () => reconnectedFired = true;
+
+            Assert.True(monitor.TryInitialConnect());
+            Assert.True(wb.IsConnected);
+            Assert.True(wb.Snapshot.Connected);
+            long connectedEpoch = wb.Snapshot.ConnectionEpoch;
+
+            // Simulate a dropped stream / faulted col03 reader while the device
+            // remains present on the USB bus.
+            transport.Connected = false;
+            transport.DevicePresent = true;
+
+            // Live transport health is false, while the published snapshot still
+            // reports connected until the heartbeat acts.
+            Assert.False(wb.IsConnected);
+            Assert.True(wb.Snapshot.Connected);
+
+            // Stream check runs at frame 60 (before the 120-frame HID bus check).
+            PumpFrames(monitor, 60);
+
+            Assert.True(disconnectedFired);
+            Assert.False(monitor.IsConnected);
+            Assert.False(wb.Snapshot.Connected);
+            Assert.Equal(connectedEpoch + 1, wb.Snapshot.ConnectionEpoch);
+
+            // After the cooldown expires, the monitor reconnects and publishes a
+            // fresh connected snapshot in the next connection epoch.
+            PumpFrames(monitor, 300); // COOLDOWN_LONG
+            Assert.True(monitor.Update());
+            Assert.True(reconnectedFired);
+            Assert.True(monitor.IsConnected);
+            Assert.True(wb.IsConnected);
+            Assert.True(wb.Snapshot.Connected);
+            Assert.Equal(connectedEpoch + 2, wb.Snapshot.ConnectionEpoch);
         }
     }
 }

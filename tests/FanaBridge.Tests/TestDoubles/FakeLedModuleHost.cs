@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Controls;
+using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Profiles;
 using FanaBridge.Leds;
 using Newtonsoft.Json.Linq;
@@ -105,9 +106,13 @@ namespace FanaBridge.Tests.TestDoubles
         public Action? OnDisplay { get; set; }
         public Action? OnStopDriving { get; set; }
 
-        public void Display()
+        /// <summary>Snapshot passed into the most recent <see cref="Display"/> call.</summary>
+        public WheelbaseSnapshot? LastDisplaySnapshot { get; private set; }
+
+        public void Display(WheelbaseSnapshot snapshot)
         {
             DisplayCount++;
+            LastDisplaySnapshot = snapshot;
             OnDisplay?.Invoke();
         }
 

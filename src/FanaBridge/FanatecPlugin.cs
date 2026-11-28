@@ -32,7 +32,12 @@ namespace FanaBridge
         /// hardware without owning their own HID connections.
         /// Set during Init(), cleared during FinalizePlugin().
         /// </summary>
-        public static FanatecPlugin Instance { get; private set; }
+        public static FanatecPlugin Instance
+        {
+            get => _instance;
+            private set => _instance = value;
+        }
+        private static volatile FanatecPlugin _instance;
 
         public FanatecPluginSettings Settings { get; set; }
 
@@ -49,7 +54,7 @@ namespace FanaBridge
         /// </summary>
         private bool _coreInitialized;
 
-        private FanatecWheelbase _wheelbase;
+        private volatile FanatecWheelbase _wheelbase;
         private ConnectionMonitor _connectionMonitor;
         private FanatecTuningController _tuning;
         private LedEncoder _leds;
@@ -152,7 +157,7 @@ namespace FanaBridge
         private volatile bool _displayTestActive;
 
         /// <summary>Whether the Fanatec device is currently connected (for UI binding).</summary>
-        public bool IsDeviceConnected => _connectionMonitor?.IsConnected == true;
+        public bool IsDeviceConnected => _wheelbase?.Snapshot.Connected == true;
 
         /// <summary>
         /// When disconnected, a short reason for it (the latest connect-attempt
@@ -174,6 +179,26 @@ namespace FanaBridge
         public WheelCapabilities CurrentCapabilities => _wheelbase?.CurrentCapabilities ?? WheelCapabilities.None;
 
         /// <summary>
+        /// Resolves the capabilities a specific device descriptor should use
+        /// against a captured wheelbase snapshot. Returns the live capabilities
+        /// only when the snapshot is connected and matches <paramref name="config"/>;
+        /// otherwise returns the config's own registration capabilities.
+        /// </summary>
+        internal static WheelCapabilities ResolveCapsFor(DeviceConfig config, WheelbaseSnapshot snap)
+        {
+            if (config == null)
+                return WheelCapabilities.None;
+
+            if (snap != null && snap.Connected && snap.Capabilities.Profile != null
+                && config.MatchesAttachment(snap.WheelDetected, snap.WheelCode, snap.ModuleCode))
+            {
+                return snap.Capabilities;
+            }
+
+            return config.Capabilities ?? WheelCapabilities.None;
+        }
+
+        /// <summary>
         /// Resolves the capabilities a specific device descriptor should use.
         /// Returns the live, currently-active capabilities (which respect any
         /// user override) only when the connected wheel actually matches this
@@ -185,19 +210,18 @@ namespace FanaBridge
         /// </summary>
         public WheelCapabilities ResolveCapsFor(DeviceConfig config)
         {
-            if (config == null)
-                return WheelCapabilities.None;
+            return ResolveCapsFor(config, _wheelbase?.Snapshot);
+        }
 
-            var wheelbase = _wheelbase;
-            var current = CurrentCapabilities;
-            if (current?.Profile != null && wheelbase != null
-                && config.MatchesAttachment(
-                    wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode))
-            {
-                return current;
-            }
-
-            return config.Capabilities ?? WheelCapabilities.None;
+        /// <summary>
+        /// Replaces the stored profile overrides (copy-on-write) and hands the
+        /// new map to the wheelbase so capability resolution sees it atomically.
+        /// </summary>
+        internal void SetProfileOverrides(Dictionary<string, string> overrides)
+        {
+            if (Settings != null)
+                Settings.ProfileOverrides = overrides;
+            _wheelbase?.SetProfileOverrides(Settings?.ProfileOverrides ?? overrides);
         }
 
         /// <summary>
@@ -216,6 +240,18 @@ namespace FanaBridge
             // null so the no-encoder guards keep being exercised.
             if (withDisplayEncoder)
                 _display = new DisplayEncoder(wheelbase.Transport);
+        }
+
+        /// <summary>
+        /// Test hook: installs LED encoders bound to the test wheelbase's transport
+        /// so <see cref="Leds.FanatecLedManager.GetDriver()"/> can construct drivers
+        /// without running full <see cref="Init"/>.
+        /// </summary>
+        internal void InstallLedEncodersForTest()
+        {
+            if (_wheelbase == null) return;
+            _leds = new LedEncoder(_wheelbase.Transport);
+            _legacyLeds = new LegacyLedEncoder(_wheelbase.Transport);
         }
 
         /// <summary>Called by each <see cref="FanatecWheelDeviceInstance"/> so the
@@ -246,14 +282,15 @@ namespace FanaBridge
         /// </summary>
         public string GetConnectedWheelDisplayName()
         {
-            if (_wheelbase == null || !_wheelbase.WheelDetected) return null;
+            var snap = _wheelbase?.Snapshot;
+            if (snap == null || !snap.Connected || !snap.WheelDetected) return null;
             lock (_deviceInstancesLock)
             {
                 foreach (var inst in _deviceInstances)
                 {
                     try
                     {
-                        if (inst.GetDeviceState() == SimHub.Plugins.Devices.DeviceState.Connected)
+                        if (FanatecWheelDeviceInstance.IsAttached(snap, inst.Config))
                         {
                             string name = inst.MainDisplayName;
                             if (!string.IsNullOrEmpty(name)) return name;
@@ -267,21 +304,58 @@ namespace FanaBridge
 
         /// <summary>
         /// The registration capabilities of the added FanaBridge device for the
+        /// attachment in <paramref name="snap"/>: what SimHub built that device's
+        /// LED editor, Screen and Tuning tabs from. Null when no added device is
+        /// attached in that snapshot, including while the identity is still settling.
+        /// </summary>
+        internal WheelCapabilities GetAttachedDeviceRegistrationCaps(WheelbaseSnapshot snap)
+        {
+            if (snap == null || !snap.Connected || !snap.IdentityStable || !snap.WheelDetected)
+                return null;
+
+            lock (_deviceInstancesLock)
+            {
+                foreach (var inst in _deviceInstances)
+                {
+                    if (FanatecWheelDeviceInstance.IsAttached(snap, inst.Config))
+                        return inst.Config.Capabilities;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The registration capabilities of the added FanaBridge device for the
         /// attached wheel or hub + module: what SimHub built that device's LED
         /// editor, Screen and Tuning tabs from. Null when no added device is
         /// attached, including while the identity is still settling.
         /// </summary>
         internal WheelCapabilities GetAttachedDeviceRegistrationCaps()
         {
-            lock (_deviceInstancesLock)
-            {
-                foreach (var inst in _deviceInstances)
-                {
-                    if (FanatecWheelDeviceInstance.IsAttached(this, inst.Config))
-                        return inst.Config.Capabilities;
-                }
-            }
-            return null;
+            return GetAttachedDeviceRegistrationCaps(_wheelbase?.Snapshot);
+        }
+
+        /// <summary>
+        /// Test seam invoked inside <see cref="GetRestartNoticeCapabilities"/>
+        /// between the two reads the restart notice used to make separately, so
+        /// tests can deterministically force a commit in that window.
+        /// </summary>
+        internal Action BetweenRestartNoticeReadsForTest;
+
+        /// <summary>
+        /// Captures one wheelbase snapshot and returns both the live capabilities
+        /// and the attached added device's registration capabilities from that same
+        /// snapshot, so the restart notice never pairs two different attachments.
+        /// </summary>
+        internal void GetRestartNoticeCapabilities(
+            out WheelbaseSnapshot snapshot,
+            out WheelCapabilities liveCapabilities,
+            out WheelCapabilities registeredCapabilities)
+        {
+            snapshot = _wheelbase?.Snapshot;
+            liveCapabilities = snapshot?.Capabilities ?? WheelCapabilities.None;
+            BetweenRestartNoticeReadsForTest?.Invoke();
+            registeredCapabilities = GetAttachedDeviceRegistrationCaps(snapshot);
         }
 
         // Detects the vendor's app/service running alongside FanaBridge — the same
@@ -407,10 +481,13 @@ namespace FanaBridge
             // every Init, against the stable core built above.
 
             // --- Properties ---
-            this.AttachDelegate("FanaBridge.Connected", () => _connectionMonitor.IsConnected);
+            this.AttachDelegate("FanaBridge.Connected", () => _wheelbase.Snapshot.Connected);
             this.AttachDelegate("FanaBridge.DeviceName", () => _wheelbase.ProductName ?? "Not connected");
             this.AttachDelegate("FanaBridge.BaseName", () =>
-                _wheelbase.IsConnected ? (_wheelbase.BaseCode ?? "Unknown") : "Not connected");
+            {
+                var snap = _wheelbase.Snapshot;
+                return snap.Connected ? (snap.BaseCode ?? "Unknown") : "Not connected";
+            });
             this.AttachDelegate("FanaBridge.WheelName", () => _wheelbase.DisplayName);
             this.AttachDelegate("FanaBridge.ModuleName", () => _wheelbase.ModuleCode ?? "None");
             this.AttachDelegate("FanaBridge.DisplayName", () => _wheelbase.DisplayName);
@@ -466,6 +543,10 @@ namespace FanaBridge
                 "FanaBridgeSettings",
                 () => new FanatecPluginSettings());
 
+            // Load the profile catalog before any state transition so capability
+            // resolution under the wheelbase's state lock is pure in-memory.
+            WheelProfileStore.EnsureLoaded();
+
             // The wheelbase owns the HID transport and reads the FF 08 identity
             // report through it (no SimHub.FanatecManaged.dll). Encoders share
             // that same transport for hardware I/O.
@@ -480,16 +561,8 @@ namespace FanaBridge
                 msg => SimHub.Logging.Current.Warn(msg),
                 msg => SimHub.Logging.Current.Info(msg));
 
-            // Wire up profile override resolution from plugin settings
-            _wheelbase.ProfileOverrideResolver = (matchKey) =>
-            {
-                if (string.IsNullOrEmpty(matchKey))
-                    return null;
-                if (Settings.ProfileOverrides != null
-                    && Settings.ProfileOverrides.TryGetValue(matchKey, out var overrideId))
-                    return overrideId;
-                return null;
-            };
+            // Hand the wheelbase an immutable copy of the stored profile overrides.
+            _wheelbase.SetProfileOverrides(Settings.ProfileOverrides);
 
             _connectionMonitor = new ConnectionMonitor(
                 _wheelbase, TryConnect,
@@ -508,9 +581,10 @@ namespace FanaBridge
                 StateChanged?.Invoke();
             };
 
-            _wheelbase.WheelChanged += (manager) =>
+            _wheelbase.WheelChanged += () =>
             {
-                SimHub.Logging.Current.Info("FanaBridge: Wheel changed to " + manager.DisplayName);
+                var snap = _wheelbase.Snapshot;
+                SimHub.Logging.Current.Info("FanaBridge: Wheel changed to " + snap.DisplayName);
 
                 // The physical rim just changed — firmware resets LED state
                 // but our dirty-tracking arrays still hold the old instance's
@@ -808,8 +882,11 @@ namespace FanaBridge
                     + "  Co-driver: " + (ItmCoDriverWarning ?? "none detected (Fanatec app/service not running)");
             }
 
+            var wb = _wheelbase;
+            var snap = wb?.Snapshot;
+            bool connected = snap?.Connected == true;
             var report = DiagnosticsReport.Build(
-                _wheelbase, IsDeviceConnected, StatusDetail, BuildIdentity.Full, controlMapperSection, itmSection);
+                wb, connected, StatusDetail, BuildIdentity.Full, controlMapperSection, itmSection);
 
             return report;
         }
@@ -846,7 +923,8 @@ namespace FanaBridge
                 if (!connected)
                     return false;
 
-                SimHub.Logging.Current.Info($"FanaBridge: Connected to {_wheelbase.ProductName} (PID 0x{_wheelbase.ConnectedProductId:X4})");
+                var snap = _wheelbase.Snapshot;
+                SimHub.Logging.Current.Info($"FanaBridge: Connected to {snap.ProductName} (PID 0x{snap.ProductId:X4})");
                 return true;
             }
             catch (Exception ex)

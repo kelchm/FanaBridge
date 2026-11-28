@@ -40,6 +40,7 @@ namespace FanaBridge.Leds
     public class FanatecLedDriver : DriverBase, ILedButtonsDriver
     {
         private readonly WheelCapabilities _caps;
+        internal WheelCapabilities Capabilities => _caps;
         private readonly WheelProfile _profile;
         private readonly PhysicalMapper _mapper;
         private readonly LedEncoder _leds;

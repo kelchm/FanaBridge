@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Controls;
+using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Profiles;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
@@ -21,7 +22,7 @@ namespace FanaBridge.Leds
 
         public void LoadDefaults() { }
 
-        public void Display() { }
+        public void Display(WheelbaseSnapshot snapshot) { }
 
         public void SetStatus(bool canDrive, bool connected) { }
 

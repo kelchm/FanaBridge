@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Windows.Controls;
+using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Profiles;
 using Newtonsoft.Json.Linq;
 using SimHub.Plugins;
@@ -36,8 +37,11 @@ namespace FanaBridge.Leds
         /// </summary>
         void LoadDefaults();
 
-        /// <summary>Drives one frame of LED output.</summary>
-        void Display();
+        /// <summary>
+        /// Drives one frame of LED output against the frame's captured wheelbase
+        /// snapshot so any driver built during the frame uses that same snapshot.
+        /// </summary>
+        void Display(WheelbaseSnapshot snapshot);
 
         /// <summary>
         /// Drives the LEDs tab's connection badge: hidden while nothing can
