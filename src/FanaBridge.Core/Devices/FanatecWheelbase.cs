@@ -421,17 +421,15 @@ namespace FanaBridge.Core.Devices
             // Publish the connected snapshot with stability from the settler: if ReadInitial
             // offered a reading, IdentityStable is already false until that reading settles.
             bool initialStable = _settler.IsStable;
-            lock (_stateLock)
-            {
-                var previous = _snapshot;
-                _snapshot = WheelbaseSnapshot.CreateConnected(
+            PublishSnapshot(
+                (previous, _) => WheelbaseSnapshot.CreateConnected(
                     connectionEpoch: previous.ConnectionEpoch + 1,
                     attachmentEpoch: previous.AttachmentEpoch + 1,
                     wheelChangeCount: previous.WheelChangeCount,
                     productId: productId,
                     productName: productName,
-                    identityStable: initialStable);
-            }
+                    identityStable: initialStable),
+                out _);
             return true;
         }
 
@@ -667,19 +665,46 @@ namespace FanaBridge.Core.Devices
             _settler.Offer(r.Wire, effModule, now);
         }
 
+        private delegate WheelbaseSnapshot SnapshotTransition(
+            WheelbaseSnapshot previous,
+            IReadOnlyDictionary<string, string> overrides);
+
+        /// <summary>
+        /// Single publish entry point for <see cref="_snapshot"/>: acquires the
+        /// leaf <see cref="_stateLock"/>, hands the previous snapshot and the
+        /// immutable override map to <paramref name="transition"/>, and stores
+        /// the returned snapshot when it differs from <c>previous</c>. This is
+        /// the only assignment to <see cref="_snapshot"/> and the only read of
+        /// <see cref="_profileOverrides"/>.
+        /// </summary>
+        private bool PublishSnapshot(SnapshotTransition transition, out WheelbaseSnapshot published)
+        {
+            lock (_stateLock)
+            {
+                var previous = _snapshot;
+                var next = transition(previous, _profileOverrides);
+                if (ReferenceEquals(next, previous))
+                {
+                    published = previous;
+                    return false;
+                }
+
+                _snapshot = next;
+                published = next;
+                return true;
+            }
+        }
+
         private void PublishSettleStarted()
         {
             if (!_snapshot.IdentityStable)
                 return;
 
-            lock (_stateLock)
-            {
-                var previous = _snapshot;
-                if (!previous.Connected || !previous.IdentityStable)
-                    return;
-
-                _snapshot = previous.WithIdentityStable(false);
-            }
+            PublishSnapshot(
+                (previous, _) => (!previous.Connected || !previous.IdentityStable)
+                    ? previous
+                    : previous.WithIdentityStable(false),
+                out _);
         }
 
         // Commit the latest (settled) reading together with its resolved capabilities
@@ -706,16 +731,14 @@ namespace FanaBridge.Core.Devices
             lock (_itmLock)
                 _itmReports.Clear();
 
-            WheelbaseSnapshot published;
-            ResolutionOutcome resolution;
-            lock (_stateLock)
+            ResolutionOutcome resolution = default;
+            if (!PublishSnapshot((previous, overrides) =>
             {
-                var previous = _snapshot;
                 if (!previous.Connected)
-                    return false;
+                    return previous;
 
-                resolution = ResolveCapabilitiesUnlocked(wheelDetected, wheelCode, moduleCode);
-                published = new WheelbaseSnapshot(
+                resolution = ResolveCapabilities(overrides, wheelDetected, wheelCode, moduleCode);
+                return new WheelbaseSnapshot(
                     connected: true,
                     productId: previous.ProductId,
                     productName: previous.ProductName,
@@ -734,7 +757,9 @@ namespace FanaBridge.Core.Devices
                     isSrmConverter: false,
                     srmKitFirmware: null,
                     capabilities: resolution.Capabilities);
-                _snapshot = published;
+            }, out var published))
+            {
+                return false;
             }
 
             LogIgnoredOverride(resolution);
@@ -755,21 +780,18 @@ namespace FanaBridge.Core.Devices
             WheelProfileStore.EnsureLoaded();
 
             ResolutionOutcome resolution = default;
-            bool published = false;
-            lock (_stateLock)
+            if (PublishSnapshot((previous, overrides) =>
             {
-                var previous = _snapshot;
                 if (!previous.Connected || previous.IdentityStable)
-                    return;
+                    return previous;
 
-                resolution = ResolveCapabilitiesUnlocked(
-                    previous.WheelDetected, previous.WheelCode, previous.ModuleCode);
-                _snapshot = previous.WithSettleEndedUnchanged(resolution.Capabilities);
-                published = true;
-            }
-
-            if (published)
+                resolution = ResolveCapabilities(
+                    overrides, previous.WheelDetected, previous.WheelCode, previous.ModuleCode);
+                return previous.WithSettleEndedUnchanged(resolution.Capabilities);
+            }, out _))
+            {
                 LogIgnoredOverride(resolution);
+            }
         }
 
         // Commit a fixed SRM converter identity from the DE FA channel (a one-shot — no settler). Rim +
@@ -788,16 +810,14 @@ namespace FanaBridge.Core.Devices
             lock (_itmLock)
                 _itmReports.Clear();
 
-            WheelbaseSnapshot published;
-            ResolutionOutcome resolution;
-            lock (_stateLock)
+            ResolutionOutcome resolution = default;
+            if (!PublishSnapshot((previous, overrides) =>
             {
-                var previous = _snapshot;
                 if (!previous.Connected)
-                    return;
+                    return previous;
 
-                resolution = ResolveCapabilitiesUnlocked(wheelDetected, wheelCode, moduleCode);
-                published = new WheelbaseSnapshot(
+                resolution = ResolveCapabilities(overrides, wheelDetected, wheelCode, moduleCode);
+                return new WheelbaseSnapshot(
                     connected: true,
                     productId: previous.ProductId,
                     productName: previous.ProductName,
@@ -816,7 +836,9 @@ namespace FanaBridge.Core.Devices
                     isSrmConverter: true,
                     srmKitFirmware: srm.KitFirmware,
                     capabilities: resolution.Capabilities);
-                _snapshot = published;
+            }, out var published))
+            {
+                return;
             }
 
             LogIgnoredOverride(resolution);
@@ -840,18 +862,18 @@ namespace FanaBridge.Core.Devices
         {
             WheelProfileStore.EnsureLoaded();
 
-            WheelbaseSnapshot published;
-            ResolutionOutcome resolution;
-            lock (_stateLock)
+            ResolutionOutcome resolution = default;
+            if (!PublishSnapshot((previous, overrides) =>
             {
-                var previous = _snapshot;
                 if (!previous.Connected || !previous.WheelDetected)
-                    return;
+                    return previous;
 
-                resolution = ResolveCapabilitiesUnlocked(
-                    previous.WheelDetected, previous.WheelCode, previous.ModuleCode);
-                published = previous.WithCapabilities(resolution.Capabilities);
-                _snapshot = published;
+                resolution = ResolveCapabilities(
+                    overrides, previous.WheelDetected, previous.WheelCode, previous.ModuleCode);
+                return previous.WithCapabilities(resolution.Capabilities);
+            }, out var published))
+            {
+                return;
             }
 
             LogIgnoredOverride(resolution);
@@ -878,9 +900,10 @@ namespace FanaBridge.Core.Devices
 
         /// <summary>
         /// Pure, in-memory capability resolution for the given attachment using
-        /// the current immutable override map and loaded profile catalog. Runs
-        /// under <see cref="_stateLock"/>: never logs, never does I/O, never calls
-        /// a delegate.
+        /// the immutable override map handed in by <see cref="PublishSnapshot"/>
+        /// and the loaded profile catalog. Static so it can never touch live
+        /// wheelbase fields; runs under <see cref="_stateLock"/>: never logs,
+        /// never does I/O, never calls an external delegate.
         ///
         /// COMPOSITION SEAM: today this resolves a single profile for the attached
         /// wheel/hub(+module). The full model is compositional —
@@ -890,7 +913,8 @@ namespace FanaBridge.Core.Devices
         /// nothing, so single-source resolution is equivalent — but new sources
         /// should be merged here rather than bolted on elsewhere. Tracked in #16.
         /// </summary>
-        private ResolutionOutcome ResolveCapabilitiesUnlocked(
+        private static ResolutionOutcome ResolveCapabilities(
+            IReadOnlyDictionary<string, string> overrides,
             bool wheelDetected, string wheelCode, string moduleCode)
         {
             if (!wheelDetected)
@@ -899,7 +923,7 @@ namespace FanaBridge.Core.Devices
             string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
             string overrideId = null;
             if (!string.IsNullOrEmpty(matchKey))
-                _profileOverrides.TryGetValue(matchKey, out overrideId);
+                overrides.TryGetValue(matchKey, out overrideId);
 
             // The same resolver device registration uses, so the active profile
             // is the one the device's LED editor was sized from.
@@ -949,17 +973,15 @@ namespace FanaBridge.Core.Devices
         /// </summary>
         public void Disconnect()
         {
-            lock (_stateLock)
-            {
-                var previous = _snapshot;
-                if (previous.Connected || previous.HasIdentity || previous.WheelDetected || !previous.IdentityStable)
-                {
-                    _snapshot = WheelbaseSnapshot.CreateDisconnected(
-                        connectionEpoch: previous.ConnectionEpoch + 1,
-                        attachmentEpoch: previous.AttachmentEpoch + 1,
-                        wheelChangeCount: previous.WheelChangeCount);
-                }
-            }
+            PublishSnapshot(
+                (previous, _) =>
+                    (previous.Connected || previous.HasIdentity || previous.WheelDetected || !previous.IdentityStable)
+                        ? WheelbaseSnapshot.CreateDisconnected(
+                            connectionEpoch: previous.ConnectionEpoch + 1,
+                            attachmentEpoch: previous.AttachmentEpoch + 1,
+                            wheelChangeCount: previous.WheelChangeCount)
+                        : previous,
+                out _);
 
             _transport.Disconnect();
             _settler.Reset();
