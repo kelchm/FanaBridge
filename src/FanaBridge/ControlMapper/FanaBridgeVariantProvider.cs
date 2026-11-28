@@ -108,16 +108,34 @@ namespace FanaBridge.ControlMapper
         }
 
         /// <summary>
+        /// Resolves the live plugin generation for <see cref="GetVariant"/> and
+        /// <see cref="Poll"/>. Production reads <see cref="FanatecPlugin.Instance"/>;
+        /// tests inject a plugin to exercise the public <see cref="GetVariant"/> path.
+        /// </summary>
+        internal Func<FanatecPlugin> PluginResolver { get; set; }
+
+        /// <summary>
         /// What <see cref="GetVariant"/> answers once past the <see cref="IsActive"/>
         /// gate. Defaults to <see cref="ResolveForConnectedWheel"/>; tests swap it to
         /// prove the gate without a live <see cref="FanatecPlugin"/>.
         /// </summary>
-        internal Func<int, int, string> ResolveVariant { get; set; } = ResolveForConnectedWheel;
+        internal Func<int, int, string> ResolveVariant { get; set; }
 
-        private static string ResolveForConnectedWheel(int vendorid, int productid)
+        public FanaBridgeVariantProvider()
+            : this(null)
         {
-            var snap = FanatecPlugin.Instance?.Wheelbase?.Snapshot;
-            return ResolveForSnapshot(snap, vendorid, productid);
+        }
+
+        internal FanaBridgeVariantProvider(Func<FanatecPlugin> pluginResolver)
+        {
+            PluginResolver = pluginResolver ?? (() => FanatecPlugin.Instance);
+            ResolveVariant = ResolveForConnectedWheel;
+        }
+
+        private string ResolveForConnectedWheel(int vendorid, int productid)
+        {
+            var view = PluginResolver()?.CaptureView() ?? default;
+            return ResolveForSnapshot(view.Snapshot, vendorid, productid);
         }
 
         /// <summary>
@@ -153,13 +171,12 @@ namespace FanaBridge.ControlMapper
         }
 
         /// <summary>
-        /// The variant id FanaBridge emits for the live wheel — stock-compatible
-        /// <c>"FS_WHEEL_SWTYPE_&lt;code&gt;"</c> — or <c>null</c> when no base/wheel is
-        /// present. Shared by <see cref="GetVariant"/> and the bridge.
+        /// The variant id FanaBridge emits for the wheel in <paramref name="snap"/> —
+        /// stock-compatible <c>"FS_WHEEL_SWTYPE_&lt;code&gt;"</c> — or <c>null</c>
+        /// when no base/wheel is present. Shared by <see cref="GetVariant"/> and the bridge.
         /// </summary>
-        internal static string ComputeCurrentVariant()
+        internal static string ComputeCurrentVariant(WheelbaseSnapshot snap)
         {
-            var snap = FanatecPlugin.Instance?.Wheelbase?.Snapshot;
             if (snap == null || !snap.Connected)
                 return null;
             return FormatCurrentVariant(snap);
@@ -173,12 +190,12 @@ namespace FanaBridge.ControlMapper
         }
 
         /// <summary>
-        /// The human-readable name for the live wheel (applied as the controller's
-        /// <c>CustomName</c> for display), or <c>null</c> when no wheel is present.
+        /// The human-readable name for the wheel in <paramref name="snap"/> (applied
+        /// as the controller's <c>CustomName</c> for display), or <c>null</c> when
+        /// no wheel is present.
         /// </summary>
-        internal static string ComputeFriendlyName()
+        internal static string ComputeFriendlyName(WheelbaseSnapshot snap)
         {
-            var snap = FanatecPlugin.Instance?.Wheelbase?.Snapshot;
             if (snap == null || !snap.Connected || !snap.WheelDetected)
                 return null;
             // Normalize on the short name FanaBridge shows elsewhere (the device's
@@ -231,17 +248,16 @@ namespace FanaBridge.ControlMapper
 
         /// <summary>
         /// True if <paramref name="candidate"/> is a name FanaBridge itself would have
-        /// stamped for the currently-connected wheel — its short name
+        /// stamped for the wheel in <paramref name="snap"/> — its short name
         /// (<c>caps.ShortName</c> / <c>caps.Name</c>) or the composed friendly name. Lets
         /// the Control Mapper stamp refresh a prior FanaBridge default (so a device rename
         /// propagates, and older composed stamps migrate to the short name) while never
         /// touching a name the user typed in Control Mapper.
         /// </summary>
-        internal static bool IsFanaBridgeDefaultName(string candidate)
+        internal static bool IsFanaBridgeDefaultName(WheelbaseSnapshot snap, string candidate)
         {
             if (string.IsNullOrEmpty(candidate))
                 return false;
-            var snap = FanatecPlugin.Instance?.Wheelbase?.Snapshot;
             if (snap == null || !snap.Connected || !snap.WheelDetected)
                 return false;
             var caps = snap.Capabilities;
@@ -259,7 +275,8 @@ namespace FanaBridge.ControlMapper
         /// </summary>
         internal void Poll()
         {
-            string current = ComputeCurrentVariant();
+            var view = PluginResolver()?.CaptureView() ?? default;
+            string current = ComputeCurrentVariant(view.Snapshot);
             if (current == _lastVariant)
                 return;
             _lastVariant = current;

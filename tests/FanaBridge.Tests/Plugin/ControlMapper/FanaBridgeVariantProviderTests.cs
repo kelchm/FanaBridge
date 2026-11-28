@@ -1,6 +1,12 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using FanaBridge.ControlMapper;
 using FanaBridge.Core.Devices;
+using FanaBridge.Core.Devices.Identity;
 using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Transport;
+using FanaBridge.Tests.TestDoubles;
 using Xunit;
 
 namespace FanaBridge.Tests.Plugin.ControlMapper
@@ -154,6 +160,80 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
 
             Assert.Null(FanaBridgeVariantProvider.ResolveForSnapshot(
                 disconnected, FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+        }
+
+        private sealed class FakeTransport : IConnectableTransport
+        {
+            public bool Connected;
+            public FakeReportStream Identity { get; } = new FakeReportStream();
+            public bool Connect(int productId) { Connected = true; return true; }
+            public void Disconnect() => Connected = false;
+            public void Dispose() => Disconnect();
+            public bool IsConnected => Connected;
+            public bool IsDevicePresent => Connected;
+            public FanatecTransport.TransportConnectStatus LastConnectStatus =>
+                FanatecTransport.TransportConnectStatus.Connected;
+            public bool SendCol03(byte[] data) => true;
+            public bool SendCol01(byte[] data) => true;
+            public IReportStream IdentityReports => Identity;
+            public IReportStream ItmReports => FakeReportStream.Empty;
+            public IReportStream SrmReports => FakeReportStream.Empty;
+            public IReportStream TuningReports => FakeReportStream.Empty;
+            public int ReadCol01(byte[] buffer, int timeoutMs) => -1;
+            public int Col03MaxInputReportLength => 64;
+            public int Col01MaxInputReportLength => 34;
+            public IDisposable BeginBatch() => new NoOp();
+            private sealed class NoOp : IDisposable { public void Dispose() { } }
+        }
+
+        private sealed class FakeBus : IHidBusEnumerator
+        {
+            private readonly int _pid;
+            public FakeBus(int pid) => _pid = pid;
+            public IReadOnlyList<HidDeviceInfo> GetDevices(ushort vendorId) =>
+                new[] { new HidDeviceInfo(_pid, 64, 64, "ClubSport DD") };
+        }
+
+        private static byte[] HubFrame(string hub, string module)
+        {
+            var b = new byte[64];
+            b[0] = 0xFF; b[1] = 0x08;
+            b[FanatecIdentity.OffBaseType] = 0x0C;
+            b[FanatecIdentity.OffWireCode] = FanatecDeviceTables.Hubs.First(kv => kv.Value == hub).Key;
+            b[FanatecIdentity.OffModule] = FanatecDeviceTables.Modules.First(kv => kv.Value == module).Key;
+            return b;
+        }
+
+        [Fact]
+        public void GetVariant_PublicPath_UsesSingleCapturedViewForPidGateAndVariant()
+        {
+            var transport = new FakeTransport();
+            long now = 0;
+            var wheelbase = new FanatecWheelbase(transport, new FakeBus(0x0020), () => now);
+            Assert.True(wheelbase.AutoConnect());
+            transport.Identity.Enqueue(HubFrame("PHUB", "PBMR"));
+            now += 10;
+            wheelbase.UpdateIdentity();
+            now += 250;
+            Assert.True(wheelbase.UpdateIdentity());
+
+            var plugin = new FanatecPlugin();
+            plugin.InstallWheelbaseForTest(wheelbase, withDisplayEncoder: false);
+
+            var provider = new FanaBridgeVariantProvider(() => plugin);
+
+            Assert.Equal(
+                "FS_WHEEL_SWTYPE_PHUB_PBMR",
+                provider.GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+            Assert.Null(provider.GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0005));
+            Assert.Null(provider.GetVariant(0x1234, 0x0020));
+
+            provider.IsActive = false;
+            Assert.Null(provider.GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
+            provider.IsActive = true;
+
+            wheelbase.Disconnect();
+            Assert.Null(provider.GetVariant(FanaBridgeVariantProvider.FanatecVendorId, 0x0020));
         }
     }
 }

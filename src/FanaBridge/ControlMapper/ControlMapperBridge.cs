@@ -80,7 +80,18 @@ namespace FanaBridge.ControlMapper
             "SimHub.Plugins.OutputPlugins.ControlRemapper.ControlMapperPlugin";
 
         private readonly object _sync = new object();
-        private readonly FanaBridgeVariantProvider _provider = new FanaBridgeVariantProvider();
+        private readonly FanaBridgeVariantProvider _provider;
+
+        /// <summary>
+        /// Resolves the live plugin generation for entry points that do not
+        /// receive a pre-captured <see cref="PluginView"/>.
+        /// </summary>
+        internal Func<FanatecPlugin> PluginResolver { get; set; } = () => FanatecPlugin.Instance;
+
+        public ControlMapperBridge()
+        {
+            _provider = new FanaBridgeVariantProvider(() => PluginResolver());
+        }
 
         // Reflection handles resolved once from types (instance-independent).
         private bool _resolved;
@@ -352,21 +363,34 @@ namespace FanaBridge.ControlMapper
         /// </summary>
         public void StampFriendlyNames()
         {
+            var view = PluginResolver()?.CaptureView() ?? default;
+            StampFriendlyNames(view);
+        }
+
+        /// <summary>
+        /// Stamps Control Mapper's <c>CustomName</c> from one captured
+        /// <see cref="PluginView"/> so the variant id, device display name,
+        /// fallback friendly name, and default-name check all come from the
+        /// same plugin generation and snapshot.
+        /// </summary>
+        internal void StampFriendlyNames(PluginView view)
+        {
             lock (_sync)
             {
                 if (!_registered || !_resolved || _pm == null) return;
 
+                var snap = view.Snapshot;
                 string id, friendly;
                 try
                 {
-                    id = FanaBridgeVariantProvider.ComputeCurrentVariant();
+                    id = FanaBridgeVariantProvider.ComputeCurrentVariant(snap);
                     // Prefer the SimHub device's own name — the user's rename if they set
                     // one, otherwise its short name — so the Control Mapper controller
                     // matches what's shown in the Devices view. Fall back to the computed
                     // short/friendly name if no device instance is connected.
-                    friendly = FanatecPlugin.Instance?.GetConnectedWheelDisplayName();
+                    friendly = view.Plugin?.GetConnectedWheelDisplayName(snap);
                     if (string.IsNullOrEmpty(friendly))
-                        friendly = FanaBridgeVariantProvider.ComputeFriendlyName();
+                        friendly = FanaBridgeVariantProvider.ComputeFriendlyName(snap);
                 }
                 catch { return; }
                 if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(friendly)) return;
@@ -390,7 +414,7 @@ namespace FanaBridge.ControlMapper
                         // device rename propagates and old stamps migrate) — but never a
                         // name the user typed in Control Mapper.
                         bool oursToSet = string.IsNullOrEmpty(current)
-                            || FanaBridgeVariantProvider.IsFanaBridgeDefaultName(current);
+                            || FanaBridgeVariantProvider.IsFanaBridgeDefaultName(snap, current);
                         if (!oursToSet) continue;
                         if (string.Equals(current, friendly, StringComparison.Ordinal)) continue; // already correct
                         if (SetCustomName(desc, friendly))
@@ -432,13 +456,20 @@ namespace FanaBridge.ControlMapper
         /// </summary>
         public string DescribeResolution(object pm)
         {
+            var view = PluginResolver()?.CaptureView() ?? default;
+            return DescribeResolution(pm, view);
+        }
+
+        internal string DescribeResolution(object pm, PluginView view)
+        {
             var sb = new StringBuilder();
             sb.AppendLine("Control Mapper integration (diagnostic)");
             sb.AppendLine("  Mode: gap-filler — SimHub wins where it recognizes a wheel; FanaBridge fills the rest.");
 
+            var snap = view.Snapshot;
             string ours = null, friendly = null;
-            try { ours = FanaBridgeVariantProvider.ComputeCurrentVariant(); } catch { }
-            try { friendly = FanaBridgeVariantProvider.ComputeFriendlyName(); } catch { }
+            try { ours = FanaBridgeVariantProvider.ComputeCurrentVariant(snap); } catch { }
+            try { friendly = FanaBridgeVariantProvider.ComputeFriendlyName(snap); } catch { }
             sb.AppendLine("  FanaBridge would emit (id): " + (ours ?? "(none — no wheel detected)"));
             sb.AppendLine("  Friendly name (-> CustomName): " + (friendly ?? "(none)"));
             sb.AppendLine("  Bridge state: registered=" + _registered + ", givenUp=" + _giveUpLogged);
@@ -459,7 +490,7 @@ namespace FanaBridge.ControlMapper
                     object rw = _rwField.GetValue(cm);
                     object vh = rw != null ? _vhField.GetValue(rw) : null;
 
-                    int pid = ResolveFanatecPid(cm);
+                    int pid = ResolveFanatecPid(cm, snap);
                     sb.AppendLine("  Live wheel PID: 0x" + pid.ToString("X4"));
 
                     // Snapshot the provider list under the same monitor Start()/Stop() use,
@@ -664,16 +695,12 @@ namespace FanaBridge.ControlMapper
 
         // ---- diagnostic reflection (read-only) -----------------------------
 
-        /// <summary>Best-effort live wheel PID: prefer FanaBridge's own wheelbase,
-        /// else the first committed Fanatec controller's PID, else 0.</summary>
-        private int ResolveFanatecPid(object cm)
+        /// <summary>Best-effort live wheel PID: prefer FanaBridge's own captured
+        /// snapshot, else the first committed Fanatec controller's PID, else 0.</summary>
+        private static int ResolveFanatecPid(object cm, FanaBridge.Core.Devices.WheelbaseSnapshot snap)
         {
-            try
-            {
-                int fromBase = FanatecPlugin.Instance?.Wheelbase?.ConnectedProductId ?? 0;
-                if (fromBase != 0) return fromBase;
-            }
-            catch { }
+            if (snap != null && snap.Connected && snap.ProductId != 0)
+                return snap.ProductId;
 
             try
             {

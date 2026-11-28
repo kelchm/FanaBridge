@@ -31,6 +31,9 @@ namespace FanaBridge.ControlMapper
         /// deactivates otherwise. Does nothing once retired.
         /// </summary>
         public void Reconcile(bool enabled, object pm)
+            => Reconcile(enabled, pm, plugin: null);
+
+        internal void Reconcile(bool enabled, object pm, FanatecPlugin plugin)
         {
             if (!enabled)
             {
@@ -51,7 +54,10 @@ namespace FanaBridge.ControlMapper
             bridge.EnsureRegistered(pm);
             // Stamp a friendly CustomName on the connected wheel's source(s) so the UI
             // shows a readable name while the match key stays the stable id.
-            bridge.StampFriendlyNames();
+            if (plugin != null)
+                bridge.StampFriendlyNames(plugin.CaptureView());
+            else
+                bridge.StampFriendlyNames();
         }
 
         /// <summary>

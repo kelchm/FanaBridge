@@ -280,15 +280,14 @@ namespace FanaBridge
         }
 
         /// <summary>
-        /// The SimHub device display name for the currently-connected wheel — the user's
-        /// device rename if they set one, otherwise the same short name shown elsewhere in
-        /// FanaBridge (<c>DeviceDescriptor.Name</c> = caps.ShortName). Null when no device
-        /// instance reports Connected. Used by the Control Mapper integration so the mapped
-        /// controller is labelled consistently with the Devices view.
+        /// The SimHub device display name for the wheel attached in
+        /// <paramref name="snap"/> — the user's device rename if they set one,
+        /// otherwise the same short name shown elsewhere in FanaBridge
+        /// (<c>DeviceDescriptor.Name</c> = caps.ShortName). Null when no device
+        /// instance matches that snapshot.
         /// </summary>
-        public string GetConnectedWheelDisplayName()
+        internal string GetConnectedWheelDisplayName(WheelbaseSnapshot snap)
         {
-            var snap = _wheelbase?.Snapshot;
             if (snap == null || !snap.Connected || !snap.WheelDetected) return null;
             lock (_deviceInstancesLock)
             {
@@ -307,6 +306,16 @@ namespace FanaBridge
             }
             return null;
         }
+
+        /// <summary>
+        /// The SimHub device display name for the currently-connected wheel — the user's
+        /// device rename if they set one, otherwise the same short name shown elsewhere in
+        /// FanaBridge (<c>DeviceDescriptor.Name</c> = caps.ShortName). Null when no device
+        /// instance reports Connected. Used by the Control Mapper integration so the mapped
+        /// controller is labelled consistently with the Devices view.
+        /// </summary>
+        public string GetConnectedWheelDisplayName()
+            => GetConnectedWheelDisplayName(_wheelbase?.Snapshot);
 
         /// <summary>
         /// The registration capabilities of the added FanaBridge device for the
@@ -514,7 +523,7 @@ namespace FanaBridge
             // dashboard while testing the experimental Control Mapper integration.
             // Cheap (no reflection) — it only reads live wheel state.
             this.AttachDelegate("FanaBridge.ControlMapperVariant",
-                () => FanaBridgeVariantProvider.ComputeFriendlyName() ?? "");
+                () => FanaBridgeVariantProvider.ComputeFriendlyName(_wheelbase.Snapshot) ?? "");
 
             // --- Events ---
             this.AddEvent("DeviceConnected");
@@ -729,7 +738,7 @@ namespace FanaBridge
 
             try
             {
-                _controlMapper.Reconcile(Settings.EnableControlMapperIntegration, PluginManager);
+                _controlMapper.Reconcile(Settings.EnableControlMapperIntegration, PluginManager, this);
             }
             catch (Exception ex)
             {
