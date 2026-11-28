@@ -6,7 +6,7 @@ This exists because getting it wrong destroys user data. In August 2026 a user's
 
 ## What SimHub does
 
-Three behaviours of SimHub shape everything here. They were established against 9.11.21 and have held unchanged under the currently pinned 9.11.22, where this design was manually validated.
+Three behaviours of SimHub shape everything here. They were established against 9.11.21, where this design was manually validated. The build now pins SimHub 9.13.7 (see `.simhub-version`), and [Threading Model](threading.md) lists the host behaviour the current code assumes.
 
 **A device's settings file is rewritten from a single call, wholesale.** SimHub asks a device to serialize itself and writes the result over the file. There is no merge against what is already on disk, so anything the device does not include is erased. A device cannot repair this later — by the time it notices, the previous contents are gone.
 
