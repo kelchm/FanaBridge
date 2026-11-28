@@ -1465,6 +1465,8 @@ namespace FanaBridge.Tests.Plugin.Devices
         public void BasicWheel_NoneBlank_RetriesUntilTheTransportAccepts()
         {
             var inst = ConnectedGt3Instance(out var transport);
+            var clock = new Clock();
+            inst.NowMs = clock.Now;
             inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
             var data = RunningData("3");
             inst.DataUpdate(null, ref data);
@@ -1473,10 +1475,12 @@ namespace FanaBridge.Tests.Plugin.Devices
             transport.AcceptCol01 = false;
             transport.Col01Sent.Clear();
             inst.DataUpdate(null, ref data);   // declined — must not latch
+            clock.T += 1000;
             inst.DataUpdate(null, ref data);
             Assert.Equal(2, DisplayFrames(transport).Count);
 
             transport.AcceptCol01 = true;
+            clock.T += 1000;
             inst.DataUpdate(null, ref data);   // accepted — latches
             inst.DataUpdate(null, ref data);
             Assert.Equal(3, DisplayFrames(transport).Count);
@@ -1554,6 +1558,8 @@ namespace FanaBridge.Tests.Plugin.Devices
             var plugin = PluginWithWheel("CSLSWGT3", out _, out var transport);
             var inst = InstanceFor("CSLSWGT3");
             inst.PluginResolver = () => plugin;
+            var clock = new Clock();
+            inst.NowMs = clock.Now;
 
             inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
             var data = RunningData("3");
@@ -1569,6 +1575,7 @@ namespace FanaBridge.Tests.Plugin.Devices
             Assert.True(plugin.Display.HasWritten); // still ours
 
             transport.AcceptCol01 = true;
+            clock.T += 1000;
             inst.DataUpdate(null, ref data);        // retry accepted
             Assert.False(plugin.Display.HasWritten);
         }

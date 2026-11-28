@@ -166,9 +166,11 @@ namespace FanaBridge.Tests.Plugin.Devices
 
             var plugin = AttachedPlugin(BareHubFrame("CSSWUH"), out var wheelbase, out var transport, out _,
                 withDisplayEncoder: true);
+            var clock = new Clock();
             var inst = new FanatecWheelDeviceInstance(config, null, new FakeLedModuleHost())
             {
                 PluginResolver = () => plugin,
+                NowMs = clock.Now,
             };
             inst.SetSettings(new JObject { ["wheelType"] = "CSSWUH", ["displayMode"] = "Gear" }, isDefault: false);
             var data = RunningData("3");
@@ -180,12 +182,126 @@ namespace FanaBridge.Tests.Plugin.Devices
             transport.AcceptCol01 = false;
             transport.Col01Sent.Clear();
             inst.DataUpdate(null, ref data);   // declined — must not latch
+            clock.T += 1000;
             inst.DataUpdate(null, ref data);
             Assert.Equal(2, DisplayFrames(transport).Count);
             Assert.True(plugin.Display.HasWritten);   // still ours
 
             transport.AcceptCol01 = true;
+            clock.T += 1000;
             inst.DataUpdate(null, ref data);   // accepted — latches and releases
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(3, DisplayFrames(transport).Count);
+            Assert.False(plugin.Display.HasWritten);
+        }
+
+        // ── Display hand-off ownership ────────────────────────────────────
+
+        // A device for the user-profile hub that has driven its display, then
+        // had its last profile deleted and handed the display off.
+        private static FanatecWheelDeviceInstance HandedOffHub(
+            TempUserProfiles profiles, out FanatecPlugin plugin, out FakeTransport transport)
+        {
+            WriteLastProfile(profiles);
+            profiles.Reload();
+            var config = Assert.Single(FanatecDevicesRegistry.BuildConfigs(), c => c.WheelCode == "CSSWUH");
+            var p = AttachedPlugin(BareHubFrame("CSSWUH"), out var wheelbase, out transport, out _,
+                withDisplayEncoder: true);
+            plugin = p;
+            var inst = new FanatecWheelDeviceInstance(config, null, new FakeLedModuleHost()) { PluginResolver = () => p };
+            inst.SetSettings(new JObject { ["wheelType"] = "CSSWUH", ["displayMode"] = "Gear" }, isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+
+            Assert.True(WheelProfileStore.DeleteUserProfile(LastProfileId));
+            wheelbase.RefreshCapabilities();
+            inst.DataUpdate(null, ref data);
+            Assert.False(plugin.Display.HasWritten);   // blanked and released
+            return inst;
+        }
+
+        [Fact]
+        public void AHandedOffDisplay_IsLeftAloneByTeardown()
+        {
+            using var profiles = new TempUserProfiles();
+            using var settings = NoPersistedSettings();
+            var inst = HandedOffHub(profiles, out var plugin, out var transport);
+            var data = RunningData("3");
+            transport.Col01Sent.Clear();
+
+            // The plugin's shutdown blank, a reconnect, and SimHub ending the device.
+            inst.BlankOutput();
+            inst.DataUpdate(null, ref data);
+            inst.BlankOutput();
+            inst.End();
+
+            Assert.Empty(DisplayFrames(transport));
+            // So the plugin's own exit blank, which checks this, leaves it alone too.
+            Assert.False(plugin.Display.HasWritten);
+        }
+
+        [Fact]
+        public void ADisplayTestAfterTheHandOff_IsBlankedAndReleasedWhenItEnds()
+        {
+            var plugin = PluginWithWheel("CSLSWGT3", out _, out var transport);
+            var inst = InstanceFor("CSLSWGT3");
+            inst.PluginResolver = () => plugin;
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+            inst.DataUpdate(null, ref data);           // handed off
+            Assert.False(plugin.Display.HasWritten);
+
+            // The settings page's display test writes to the display again...
+            plugin.DisplayTestActive = true;
+            Assert.True(plugin.Display.DisplayText("ABC"));
+            inst.DataUpdate(null, ref data);
+            transport.Col01Sent.Clear();
+
+            // ...and when the page releases it, its text is blanked and the display
+            // handed off once more.
+            plugin.DisplayTestActive = false;
+            inst.DataUpdate(null, ref data);
+            inst.DataUpdate(null, ref data);
+
+            var blank = Assert.Single(DisplayFrames(transport));
+            Assert.Equal(SevenSegment.Blank, blank[5]);
+            Assert.Equal(SevenSegment.Blank, blank[6]);
+            Assert.Equal(SevenSegment.Blank, blank[7]);
+            Assert.False(plugin.Display.HasWritten);
+        }
+
+        [Fact]
+        public void AHandOffBlankThatKeepsBeingDeclined_IsRetriedAboutOnceASecond()
+        {
+            var plugin = PluginWithWheel("CSLSWGT3", out _, out var transport);
+            var inst = InstanceFor("CSLSWGT3");
+            inst.PluginResolver = () => plugin;
+            var clock = new Clock();
+            inst.NowMs = clock.Now;
+            inst.SetSettings(Gt3Settings("Gear"), isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+
+            inst.SetSettings(Gt3Settings("None"), isDefault: false);
+            transport.AcceptCol01 = false;
+            transport.Col01Sent.Clear();
+            for (int i = 0; i < 10; i++)
+                inst.DataUpdate(null, ref data);
+            Assert.Single(DisplayFrames(transport));
+
+            clock.T += 999;
+            inst.DataUpdate(null, ref data);
+            Assert.Single(DisplayFrames(transport));
+
+            clock.T += 1;
+            inst.DataUpdate(null, ref data);
+            Assert.Equal(2, DisplayFrames(transport).Count);
+
+            transport.AcceptCol01 = true;
+            clock.T += 1000;
+            inst.DataUpdate(null, ref data);
             inst.DataUpdate(null, ref data);
             Assert.Equal(3, DisplayFrames(transport).Count);
             Assert.False(plugin.Display.HasWritten);

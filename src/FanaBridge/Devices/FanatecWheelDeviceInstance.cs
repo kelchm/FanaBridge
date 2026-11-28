@@ -68,9 +68,24 @@ namespace FanaBridge.Devices
         // lifecycle must restart from bring-up.
         private int _itmWheelChangeCount;
         // True once the 7-segment display (the legacy page on ITM wheels) has been
-        // blanked after switching to mode "None", so it is cleared once on the
-        // transition rather than every frame.
-        private bool _legacyBlanked;
+        // blanked and handed off, on the switch to mode "None" or when the
+        // attachment has no display left to drive. From then on nothing here
+        // writes to it, teardown included, until FanaBridge drives it again or
+        // the settings page's display test takes it back.
+        private bool _segmentDisplayReleased;
+        // When the last hand-off blank was declined, so a transport that keeps
+        // refusing it is retried about once a second rather than every frame.
+        private long? _handOffDeclinedAtMs;
+        private const long HandOffRetryMs = 1000;
+
+        /// <summary>Test seam: the clock that paces hand-off blank retries, in milliseconds.</summary>
+        internal Func<long> NowMs = DefaultClock();
+
+        private static Func<long> DefaultClock()
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            return () => sw.ElapsedMilliseconds;
+        }
         // Tracks the settings page's display test so the handback edge (test just
         // ended) can blank the residue and reset the driver's value latches.
         private bool _displayTestWasActive;
@@ -246,7 +261,6 @@ namespace FanaBridge.Devices
             _itmStatusSnapshot = null;
             _itmWasRunning = false;
             _itmErrorLogged = false;
-            _legacyBlanked = false;
 
             // Re-register with the new plugin's instance list (used by the
             // Control Mapper integration to read display names).
@@ -534,6 +548,14 @@ namespace FanaBridge.Devices
             // latches, so the live gear/speed repaints immediately instead of
             // waiting for the next value change.
             bool displayTest = plugin.DisplayTestActive;
+            if (displayTest)
+            {
+                // The test writes the display itself, so it takes back a display
+                // that was handed off: once it ends, the hand-off below blanks the
+                // test's text and releases the display again.
+                _segmentDisplayReleased = false;
+                _handOffDeclinedAtMs = null;
+            }
             if (!displayTest && _displayTestWasActive
                 && _displaySettings.DisplayMode != DisplaySettings.ModeNone
                 && displayType != DisplayType.None)
@@ -711,18 +733,25 @@ namespace FanaBridge.Devices
         {
             _ledHost.StopDriving();
 
-            // Skip the display blank in mode "None" — the display isn't ours, and
-            // on an identity transition the transport may still be live.
-            if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+            // Skip the display blank in mode "None" or once the display has been
+            // handed off — the display isn't ours, and on an identity transition the
+            // transport may still be live.
+            if (OwnsSegmentDisplay)
                 _displayManager?.Clear();
             _itmDisplay?.Stop();
             _itmWasRunning = false;
             _itmStatusSnapshot = null;   // don't show a stale ITM row while disconnected
-            // Reset one-shot latches so a reconnect starts clean: errors can log again
-            // and the legacy page can re-blank when the mode is "None".
+            // Reset one-shot latches so a reconnect starts clean: errors can log again,
+            // and a hand-off blank still due is tried straight away. A display already
+            // handed off stays released.
             _itmErrorLogged = false;
-            _legacyBlanked = false;
+            _handOffDeclinedAtMs = null;
         }
+
+        // Whether teardown may blank the 7-segment display: not in mode "None",
+        // and not once it has been handed off to the firmware or another application.
+        private bool OwnsSegmentDisplay =>
+            _displaySettings.DisplayMode != DisplaySettings.ModeNone && !_segmentDisplayReleased;
 
         /// <summary>
         /// Darkens this device on the plugin's way out, while its transport is
@@ -756,9 +785,9 @@ namespace FanaBridge.Devices
         /// <summary>
         /// Drives the 7-segment gear/speed display (the legacy page on ITM wheels),
         /// honouring mode "None": any other mode runs the display driver each frame;
-        /// "None" blanks the display once on the transition — retried until the write
-        /// is accepted — and then never writes again, leaving the display free for
-        /// the firmware or another application.
+        /// "None" blanks the display once on the transition — retried about once a
+        /// second until the write is accepted — and then never writes again, leaving
+        /// the display free for the firmware or another application.
         /// </summary>
         private void UpdateSegmentDisplay(FanatecPlugin plugin, GameData data, bool displayTest)
         {
@@ -774,7 +803,8 @@ namespace FanaBridge.Devices
                 }
                 if (!displayTest)
                     _displayManager?.Update(data);
-                _legacyBlanked = false;
+                _segmentDisplayReleased = false;
+                _handOffDeclinedAtMs = null;
             }
             else
             {
@@ -789,17 +819,27 @@ namespace FanaBridge.Devices
         /// </summary>
         private void HandOffSegmentDisplay(FanatecPlugin plugin, bool displayTest)
         {
-            if (_displayManager == null || _legacyBlanked || displayTest)
+            if (_displayManager == null || _segmentDisplayReleased || displayTest)
                 return;
 
-            // Only latch when the blanking write was accepted, so a transient
-            // transport failure gets retried instead of leaving the display frozen
-            // on its last value.
-            _legacyBlanked = _displayManager.Clear();
+            // A declined blank is retried, so a transient transport failure doesn't
+            // leave the display frozen on its last value, but paced so a transport
+            // that keeps refusing isn't written every frame.
+            long now = NowMs();
+            if (_handOffDeclinedAtMs.HasValue && now - _handOffDeclinedAtMs.Value < HandOffRetryMs)
+                return;
+
+            if (!_displayManager.Clear())
+            {
+                _handOffDeclinedAtMs = now;
+                return;
+            }
+
             // The accepted blank hands the display off: release ownership so
             // shutdown cleanup won't blank another application's content later.
-            if (_legacyBlanked)
-                plugin.Display?.Release();
+            _segmentDisplayReleased = true;
+            _handOffDeclinedAtMs = null;
+            plugin.Display?.Release();
         }
 
         public override void End()
@@ -813,9 +853,10 @@ namespace FanaBridge.Devices
             try { PluginResolver()?.UnregisterDeviceInstance(this); }
             catch (Exception ex) { LogCleanupFailure("unregistering the device", ex); }
 
-            // Mode "None" means the display isn't ours — the exit blank would stomp
-            // whatever the firmware or another application has on it.
-            if (_displaySettings.DisplayMode != DisplaySettings.ModeNone)
+            // Mode "None", or a display already handed off, means the display isn't
+            // ours — the exit blank would stomp whatever the firmware or another
+            // application has on it.
+            if (OwnsSegmentDisplay)
             {
                 try { _displayManager?.Clear(); }
                 catch (Exception ex) { LogCleanupFailure("clearing the display", ex); }
