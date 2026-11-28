@@ -995,7 +995,7 @@ namespace FanaBridge.Core.Devices
         {
             PublishSnapshot(
                 (previous, _) =>
-                    (previous.Connected || previous.HasIdentity || previous.WheelDetected || !previous.IdentityStable)
+                    previous.Connected
                         ? WheelbaseSnapshot.CreateDisconnected(
                             connectionEpoch: previous.ConnectionEpoch + 1,
                             attachmentEpoch: previous.AttachmentEpoch + 1,
