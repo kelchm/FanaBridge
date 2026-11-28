@@ -191,6 +191,42 @@ namespace FanaBridge.Tests.Plugin.Devices
             Assert.False(plugin.Display.HasWritten);
         }
 
+        // ── A frame racing an attachment change ───────────────────────────
+
+        [Fact]
+        public void AWheelChangeAfterTheFrameTookItsSnapshot_SkipsTheFrame()
+        {
+            var gt3 = RegisteredConfig("CSLSWGT3");
+            var plugin = AttachedPlugin(WheelFrame("CSLSWGT3"), out var wheelbase, out var transport, out var clock,
+                withDisplayEncoder: true);
+            var host = new FakeLedModuleHost();
+            var inst = new FanatecWheelDeviceInstance(gt3, null, host) { PluginResolver = () => plugin };
+            inst.SetSettings(new JObject { ["wheelType"] = "CSLSWGT3", ["displayMode"] = "Gear" }, isDefault: false);
+            var data = RunningData("3");
+            inst.DataUpdate(null, ref data);
+            Assert.NotEmpty(DisplayFrames(transport));
+            int displays = host.DisplayCount;
+            int hotSwaps = host.HotSwapCount;
+
+            // A different wheel commits after the frame decided it is attached, and
+            // before it takes the output gate.
+            int armed = 1;
+            host.OnSetStatus = () =>
+            {
+                if (Interlocked.Exchange(ref armed, 0) == 1)
+                    Commit(wheelbase, transport, clock, WheelFrame("PSWBMW"));
+            };
+            transport.Col01Sent.Clear();
+            data = RunningData("4");
+            inst.DataUpdate(null, ref data);
+
+            // Nothing from the GT3's frame reaches the new wheel.
+            Assert.Equal(0, armed);
+            Assert.Empty(DisplayFrames(transport));
+            Assert.Equal(displays, host.DisplayCount);
+            Assert.Equal(hotSwaps, host.HotSwapCount);
+        }
+
         // ── A refresh racing an attachment change ─────────────────────────
 
         [Fact]

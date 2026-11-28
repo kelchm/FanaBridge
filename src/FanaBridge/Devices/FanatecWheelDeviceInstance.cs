@@ -482,9 +482,23 @@ namespace FanaBridge.Devices
                 if (!ReferenceEquals(PluginResolver(), currentPlugin))
                     return;
 
+                // The attachment moved since the top of the frame (a wheel change,
+                // a refresh, a settling edge): what this frame decided describes the
+                // previous one, which may be another wheel. Skip it; the next frame
+                // starts from the new attachment.
+                if (AttachmentMoved(currentPlugin, attachment))
+                    return;
+
                 DriveHardware(currentPlugin, attachment, ref data);
             }
         }
+
+        /// <summary>
+        /// Whether the wheelbase has published a different attachment snapshot
+        /// than the one the frame took.
+        /// </summary>
+        private static bool AttachmentMoved(FanatecPlugin plugin, AttachmentSnapshot attachment) =>
+            !ReferenceEquals(plugin.Wheelbase?.Attachment, attachment);
 
         /// <summary>
         /// One frame of display/ITM/LED output, entirely from the frame's
@@ -540,6 +554,7 @@ namespace FanaBridge.Devices
             {
                 _itmDisplay.Stop();
                 _itmDisplay = null;
+                _itmStatusSnapshot = null;
                 _itmWasRunning = false;
             }
 
@@ -551,6 +566,7 @@ namespace FanaBridge.Devices
                 {
                     _itmDisplay.Stop();
                     _itmDisplay = null;
+                    _itmStatusSnapshot = null;
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name +
                         "]: ITM display id changed (" + _itmDeviceId + " → " +
@@ -558,6 +574,11 @@ namespace FanaBridge.Devices
                 }
                 if (_itmDisplay == null)
                 {
+                    // Drop any status snapshot cached from a previous controller before the
+                    // new driver is visible, so the Device Status row never pairs it with the
+                    // old controller's description (a plugin-generation rebind or a
+                    // display-id change rebuilds the driver here).
+                    _itmStatusSnapshot = null;
                     _itmDeviceId = caps.ItmDeviceId;
                     _itmDisplay = new ItmDisplayDriver(plugin.Itm,
                         log: msg => SimHub.Logging.Current.Info("FanaBridge: " + msg),
@@ -565,10 +586,6 @@ namespace FanaBridge.Devices
                     // Baseline the wheel-change counter at creation — the driver is starting
                     // cold anyway, so changes before this point are already accounted for.
                     _itmWheelChangeCount = plugin.Wheelbase?.WheelChangeCount ?? 0;
-                    // Drop any status snapshot cached from a disposed generation's controller,
-                    // so the Device Status row never shows the old controller's description
-                    // (a plugin-generation rebind or a display-id change rebuilds the driver here).
-                    _itmStatusSnapshot = null;
                     SimHub.Logging.Current.Info(
                         "FanatecWheelDeviceInstance[" + _config.Capabilities.Name + "]: Created ITM display driver");
                 }
@@ -668,6 +685,12 @@ namespace FanaBridge.Devices
             // LEDs). Use the per-descriptor resolution, not the global caps — a
             // non-matching device resolves to its own registration profile
             // and so never hot-swaps to the connected wheel's profile.
+            //
+            // Checked again first: SimHub builds the LED driver from whatever is
+            // published when it asks, so an attachment that moved during the
+            // display work above is left to the next frame.
+            if (AttachmentMoved(plugin, attachment))
+                return;
             _ledHost.HotSwapIfNeeded(caps);
 
             // Settings the module could not fully take leave it partially

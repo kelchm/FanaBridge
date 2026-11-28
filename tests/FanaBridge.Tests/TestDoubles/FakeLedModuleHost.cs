@@ -104,6 +104,8 @@ namespace FanaBridge.Tests.TestDoubles
         /// <summary>Optional hooks so a test can observe or block these calls.</summary>
         public Action? OnDisplay { get; set; }
         public Action? OnStopDriving { get; set; }
+        /// <summary>Runs on the frame thread after the device has taken its attachment snapshot.</summary>
+        public Action? OnSetStatus { get; set; }
 
         public void Display()
         {
@@ -134,6 +136,7 @@ namespace FanaBridge.Tests.TestDoubles
         {
             CanDrive = canDrive;
             ReportedConnected = connected;
+            OnSetStatus?.Invoke();
         }
         /// <summary>The capabilities the device last offered for a hot-swap.</summary>
         public WheelCapabilities? LastHotSwapCaps { get; private set; }
