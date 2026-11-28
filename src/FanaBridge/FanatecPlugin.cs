@@ -166,14 +166,21 @@ namespace FanaBridge
         public bool IsDeviceConnected => _wheelbase?.Snapshot.Connected == true;
 
         /// <summary>
+        /// When disconnected in <paramref name="snap"/>, a short reason for it
+        /// (the latest connect-attempt failure, else the latest runtime disconnect
+        /// reason); null while connected.
+        /// </summary>
+        internal string GetStatusDetail(WheelbaseSnapshot snap) =>
+            snap?.Connected == true
+                ? null
+                : (_wheelbase?.LastConnectError ?? _connectionMonitor?.LastDisconnectReason);
+
+        /// <summary>
         /// When disconnected, a short reason for it (the latest connect-attempt
         /// failure, else the latest runtime disconnect reason); null while
         /// connected. Surfaced on the Status row and in the diagnostics capture.
         /// </summary>
-        public string StatusDetail =>
-            IsDeviceConnected
-                ? null
-                : (_wheelbase?.LastConnectError ?? _connectionMonitor?.LastDisconnectReason);
+        public string StatusDetail => GetStatusDetail(_wheelbase?.Snapshot);
 
         /// <summary>Name of the connected device (for UI binding).</summary>
         public string DeviceName => _wheelbase?.ProductName ?? "Not connected";
@@ -381,28 +388,31 @@ namespace FanaBridge
                 log: msg => SimHub.Logging.Current.Warn("FanaBridge: " + msg));
 
         /// <summary>
+        /// The ITM display's lifecycle status line evaluated against a captured
+        /// <paramref name="snap"/>, or null when disconnected or not driving ITM.
+        /// </summary>
+        internal string GetItmStatus(WheelbaseSnapshot snap)
+        {
+            if (snap == null || !snap.Connected) return null;
+            lock (_deviceInstancesLock)
+            {
+                foreach (var inst in _deviceInstances)
+                {
+                    var s = inst.ItmStatusDescription;   // a volatile string read — cannot throw
+                    if (s != null) return s;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
         /// The ITM display's lifecycle status line (e.g. "Synced — page 1, 6 params",
         /// "Unavailable — retry in 30 s") from the connected instance driving an ITM
         /// display, or null when none is. Shown in the Device Status panel. The value is a
         /// snapshot string the owning DataUpdate thread published, so this reads it (a
         /// volatile field) without touching live state-machine fields off-thread.
         /// </summary>
-        public string ItmStatus
-        {
-            get
-            {
-                if (!IsDeviceConnected) return null;
-                lock (_deviceInstancesLock)
-                {
-                    foreach (var inst in _deviceInstances)
-                    {
-                        var s = inst.ItmStatusDescription;   // a volatile string read — cannot throw
-                        if (s != null) return s;
-                    }
-                }
-                return null;
-            }
-        }
+        public string ItmStatus => GetItmStatus(_wheelbase?.Snapshot);
 
         /// <summary>
         /// A warning line when the Fanatec app/service is running alongside FanaBridge
@@ -867,6 +877,11 @@ namespace FanaBridge
         /// </summary>
         public string BuildDiagnosticsReport()
         {
+            // Capture one view for the entire diagnostics report so Control
+            // Mapper resolution, ITM status, status detail, and the system
+            // report all describe the same snapshot.
+            var view = CaptureView();
+
             // Build the read-only Control Mapper snapshot first so it can be embedded
             // inside the report's code fence as a trailing feature section (not dangling
             // after it). It lets a user confirm, on their own hardware, whether the stock
@@ -878,7 +893,7 @@ namespace FanaBridge
             try
             {
                 var bridge = _controlMapper.Bridge ?? new ControlMapperBridge();
-                controlMapperSection = bridge.DescribeResolution(PluginManager);
+                controlMapperSection = bridge.DescribeResolution(PluginManager, view);
             }
             catch (Exception ex)
             {
@@ -889,7 +904,7 @@ namespace FanaBridge
             // ITM display lifecycle state + co-driver detection — the flaky-display
             // context a report is usually filed about.
             string itmSection = null;
-            var itmStatus = ItmStatus;
+            var itmStatus = GetItmStatus(view.Snapshot);
             if (itmStatus != null)
             {
                 itmSection = "ITM display" + Environment.NewLine
@@ -897,11 +912,8 @@ namespace FanaBridge
                     + "  Co-driver: " + (ItmCoDriverWarning ?? "none detected (Fanatec app/service not running)");
             }
 
-            var wb = _wheelbase;
-            var snap = wb?.Snapshot;
-            bool connected = snap?.Connected == true;
             var report = DiagnosticsReport.Build(
-                wb, connected, StatusDetail, BuildIdentity.Full, controlMapperSection, itmSection);
+                view, GetStatusDetail(view.Snapshot), BuildIdentity.Full, controlMapperSection, itmSection);
 
             return report;
         }

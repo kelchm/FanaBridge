@@ -252,7 +252,12 @@ namespace FanaBridge.Core.Devices
         /// reading — not just committed changes — so a capture taken on a
         /// sitting-still unrecognized wheel still reflects the live frame.
         /// </summary>
-        public byte[] LastRawReport { get; private set; }
+        public byte[] LastRawReport
+        {
+            get => _lastRawReport;
+            private set => _lastRawReport = value;
+        }
+        private volatile byte[] _lastRawReport;
 
         /// <summary>
         /// Why the most recent connect attempt failed (no Fanatec device, no col03
@@ -260,7 +265,12 @@ namespace FanaBridge.Core.Devices
         /// Surfaced so a "device not detected" regression is diagnosable without
         /// opening the SimHub log.
         /// </summary>
-        public string LastConnectError { get; private set; }
+        public string LastConnectError
+        {
+            get => _lastConnectError;
+            private set => _lastConnectError = value;
+        }
+        private volatile string _lastConnectError;
 
         // De-dupes connect-failure logging: ConnectionMonitor retries every few seconds,
         // so a given failure is logged once (until it changes or a connect succeeds),

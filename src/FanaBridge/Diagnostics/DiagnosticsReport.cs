@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Text;
 using FanaBridge.Core.Devices;
+using FanaBridge.Core.Devices.Identity;
 using FanaBridge.Core.Diagnostics;
 using HidSharp;
 
@@ -28,8 +29,8 @@ namespace FanaBridge.Diagnostics
     /// </summary>
     public static class DiagnosticsReport
     {
-        public static string Build(
-            FanatecWheelbase wheelbase, bool connected, string statusDetail, string buildInfo,
+        internal static string Build(
+            PluginView view, string statusDetail, string buildInfo,
             string controlMapperSection = null, string itmSection = null)
         {
             var sb = new StringBuilder();
@@ -50,9 +51,9 @@ namespace FanaBridge.Diagnostics
             // listed above it; the verbose descriptor dump trails last).
             AppendInterfaceInventory(sb);
             sb.AppendLine();
-            AppendSystemReport(sb, wheelbase, connected, statusDetail);
+            AppendSystemReport(sb, view, statusDetail);
             sb.AppendLine();
-            AppendConverterProbe(sb, wheelbase, connected);
+            AppendConverterProbe(sb, view);
             sb.AppendLine();
             AppendInputProbe(sb);
             sb.AppendLine();
@@ -84,8 +85,10 @@ namespace FanaBridge.Diagnostics
         // handshake and dumps what the device volunteers on both surfaces (col01 records + the col03
         // FF 08 report) plus the SRM DE FA AD -> 0xDD channel, so a single report from an SRM Conversion
         // Kit user carries everything needed to identify it. Read-only; a genuine base answers no 0xDD.
-        private static void AppendConverterProbe(StringBuilder sb, FanatecWheelbase wb, bool connected)
+        private static void AppendConverterProbe(StringBuilder sb, PluginView view)
         {
+            var wb = view.Wheelbase;
+            bool connected = view.Snapshot?.Connected == true;
             sb.AppendLine("Converter identity probe (active engage — read-only):");
             if (!connected || wb?.Transport == null || !wb.Transport.IsConnected)
             {
@@ -401,20 +404,24 @@ namespace FanaBridge.Diagnostics
         }
 
         // ── FF 08 system report (identity + firmware, one payload) ───────
-        // The base/wheel/module codes, their wire bytes, and the firmware versions are
-        // ALL decoded from the single col03 FF 08 frame, so they are presented together:
-        // one component per line carrying its code, identity byte, and firmware.
-        private static void AppendSystemReport(
-            StringBuilder sb, FanatecWheelbase wb, bool connected, string statusDetail)
+        // The base/wheel/module codes and wire bytes come from the captured
+        // snapshot; the raw frame is the latest drained FF 08 reading (which
+        // may be ahead of the committed snapshot while a change is settling).
+        internal static void AppendSystemReport(
+            StringBuilder sb, PluginView view, string statusDetail)
         {
-            var snap = wb?.Snapshot;
-            bool isConnected = snap != null ? snap.Connected : connected;
+            AppendSystemReport(sb, view.Snapshot, view.Wheelbase?.LastRawReport, statusDetail);
+        }
+
+        internal static void AppendSystemReport(
+            StringBuilder sb, WheelbaseSnapshot snap, byte[] raw, string statusDetail)
+        {
+            bool isConnected = snap != null && snap.Connected;
             sb.AppendLine("FF 08 system report (col03 — identity + firmware):");
             sb.AppendLine(Kv("Connected", isConnected.ToString()));
             if (!string.IsNullOrEmpty(statusDetail))
                 sb.AppendLine(Kv("Detail", statusDetail));
 
-            byte[] raw = wb?.LastRawReport;
             if (!isConnected || snap == null || raw == null || raw.Length == 0)
             {
                 // A committed SRM converter identity has no FF 08 frame (it came from the DE FA
@@ -444,7 +451,10 @@ namespace FanaBridge.Diagnostics
             if (fw != null)
                 sb.AppendLine(Kv("SystemConfig", string.Format("0x{0:X4} ({1})",
                     fw.SystemConfig, fw.Extended ? "extended" : "legacy")));
-            sb.AppendLine(Kv("Raw", BytesToHex(raw)));
+            sb.AppendLine(Kv("Raw (latest)", BytesToHex(raw)));
+            string rawNote = DescribeRawFrameMismatch(raw, snap);
+            if (rawNote != null)
+                sb.AppendLine(Kv("Raw note", rawNote));
 
             sb.AppendLine(Row("Wheelbase", snap.BaseCode ?? "Unknown", 0x02, snap.BaseType, fw?.Wheelbase));
 
@@ -468,6 +478,24 @@ namespace FanaBridge.Diagnostics
             sb.AppendLine(Kv("Identifier", BuildIdentifier(snap) + (snap.IdentityStable ? "" : "  (settling)")));
             if (!string.IsNullOrEmpty(snap.DisplayName))
                 sb.AppendLine(new string(' ', 18) + "(\"" + snap.DisplayName + "\")");
+        }
+
+        /// <summary>
+        /// Compares the latest raw FF 08 frame's identity bytes (<c>0x18</c> and,
+        /// on hubs, <c>0x1F</c>) against the committed snapshot's wire codes and
+        /// returns a settling note when they differ; null when they match.
+        /// </summary>
+        internal static string DescribeRawFrameMismatch(byte[] raw, WheelbaseSnapshot snap)
+        {
+            if (snap == null || !FanatecIdentity.TryReadRawIdentityBytes(raw, out byte rawWire, out byte rawMod))
+                return null;
+
+            if (rawWire == snap.WheelWireCode && rawMod == snap.ModuleWireCode)
+                return null;
+
+            return string.Format(
+                "latest reading differs from committed snapshot (settling: [0x18]=0x{0:X2}, [0x1F]=0x{1:X2})",
+                rawWire, rawMod);
         }
 
         // "  Label:         value" — colon attached to the label, values aligned.
