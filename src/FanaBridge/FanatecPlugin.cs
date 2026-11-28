@@ -204,7 +204,9 @@ namespace FanaBridge
         /// Test hook: installs a wheelbase as this plugin's hardware core so
         /// DeviceInstance state/generation logic can run against an injected
         /// identity without a SimHub host. Production cores are built only by
-        /// InitializeCore.
+        /// InitializeCore. Also called by name, through reflection, from the
+        /// merged-artifact check in tests/FanaBridge.ArtifactSmoke: renaming it
+        /// or changing its parameters fails that CI step.
         /// </summary>
         internal void InstallWheelbaseForTest(FanatecWheelbase wheelbase, bool withDisplayEncoder = false)
         {

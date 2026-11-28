@@ -24,6 +24,7 @@ namespace FanaBridge.Tests.Contracts
             ("src/FanaBridge", "FanaBridge"),
             ("src/FanaBridge.Updater", "FanaBridge.Updater"),
             ("tests/FanaBridge.Tests", "FanaBridge.Tests"),
+            ("tests/FanaBridge.ArtifactSmoke", "FanaBridge.ArtifactSmoke"),
         };
 
         // Deliberate IDE0130 exceptions only. The scan matches actual #pragma

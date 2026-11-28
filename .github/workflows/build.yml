@@ -243,6 +243,19 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
+      - name: Check merged artifact
+        shell: pwsh
+        timeout-minutes: 5
+        env:
+          # Via env, not template expansion — see the Build step.
+          CONFIGURATION: ${{ inputs.configuration }}
+        run: |
+          # The tests above run against the separate development assemblies;
+          # this loads the merged DLL that ships, in its own process (#104).
+          & "tests\FanaBridge.ArtifactSmoke\bin\$env:CONFIGURATION\FanaBridge.ArtifactSmoke.exe" `
+            "src\FanaBridge\bin\$env:CONFIGURATION\merged\FanaBridge.dll" `
+            "$env:RUNNER_TEMP\simhub-install"
+
       - name: Package artifact
         id: package
         shell: pwsh
