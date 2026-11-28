@@ -48,7 +48,7 @@ That is what makes the overlap SimHub allows safe. Two update threads either sid
 
 `FinalizePlugin` does not take a turn, because a turn may be stuck on a late update thread. It **retires** the core instead. Retiring publishes a final disconnected snapshot and marks the core retired under the state lock, then closes the transport for good under the transport write lock. From then on no publish changes the snapshot and no connect leaves a stream open. A turn still in progress finishes without effect: its connect is refused, its publishes are dropped, and its reads see closed queues. A retired core never comes back; a re-enabled plugin is a new plugin object with a new core.
 
-**Not yet (step 1):** nothing fences connection work. An update call that outlives its two-second wait can reconnect a wheelbase that `FinalizePlugin` has disposed, and after a manager restart two update threads can drain the same identity stream.
+**Not yet (step 1b):** nothing fences connection work. An update call that outlives its two-second wait can reconnect a wheelbase that `FinalizePlugin` has disposed, and after a manager restart two update threads can drain the same identity stream.
 
 ## State
 
@@ -64,7 +64,7 @@ Each core publishes one immutable `WheelbaseSnapshot` through a single volatile 
 - the **attachment epoch**, a counter that changes whenever output ownership has to be established again: at every connect and disconnect, when an SRM kit is identified, and at the end of every settle;
 - the public wheel-change count.
 
-**Not yet (step 1):** `FanatecWheelbase` holds identity, stability and capabilities as separate properties, written one at a time. **Not yet (step 4):** there are no epochs.
+**Not yet (step 4):** the snapshot carries both epochs, but nothing consumes them yet, and the connection epoch does not yet number a transport session.
 
 ### Published connection and live transport health
 
@@ -82,21 +82,34 @@ The single-value properties on `FanatecWheelbase` forward to the snapshot, apart
 
 SimHub reads each `FanaBridge.*` property through its own delegate, so two properties can come from adjacent snapshots. That is accepted; see the [review floor](#review-floor).
 
-**Not yet (step 1):** the device attachment check, `ResolveCapsFor`, LED driver construction, the restart notice's comparison of live and registered capabilities, the Control Mapper variant provider, the settings page and the diagnostics report each read several properties in turn.
+### Decisions
+
+A **decision** is everything from the first state a piece of code reads to the last effect it has because of that state: a hardware write, a write to stored settings, a prompt, a value handed to the host. These rules apply on every thread, including the plugin update thread's own readers.
+
+1. **One view.** A decision takes the plugin object once, and that plugin's snapshot once, at its entry point. That pair is its **view**. Everything it uses afterwards, including the encoders and the wheelbase, it reaches through the view. Helpers take the view or values from it as parameters. A helper that reads the live plugin or snapshot itself is an entry point and is called once per decision.
+2. **A view does not cross cores.** Nothing pairs one plugin object's snapshot with another's encoders, wheelbase or settings.
+3. **A decision that waits keeps its subject.** When a decision spans time (a page rendered and clicked later, an open dialog, a frame SimHub calls back into), the subject it acts on is the one in the view it started with, carried with the control, the dialog or the frame. The code that finishes the decision does not look up the current wheel again to find out what it is acting on.
+4. **A late effect is valid for its subject or it is refused.** Either the effect names its subject and is right whatever is attached now, such as an override stored under the attachment key the picker showed. Or it is checked where the actors meet, which for output is the gate, and refused when stale. A second read on the reader's own thread is not such a check.
+5. **A write keyed by attachment takes its key and its value from one view.** This covers the override map and the Control Mapper name.
+6. **The update thread's readers get no exemption.** Control Mapper reconcile runs on the plugin update thread outside the connection turn. It follows rule 1 and does not rely on being the thread that publishes.
+
+**Not yet (step 4):** a device frame still re-reads the plugin singleton inside its own output lock to guard against plugin teardown, and the wizard and display test check connection flags before writing directly to the encoders instead of presenting a hold at the gate.
 
 ### How state changes
 
 Every change is one function from the previous snapshot and the current inputs to the next snapshot, run start to finish under the wheelbase's **state lock**. That covers connecting, disconnecting, the start of a settle, the end of a settle, an SRM kit being identified, a capability refresh, and retiring the core. Because the previous snapshot and the inputs are read under the same lock that publishes the result, two changes cannot interleave and neither can overwrite the other with a stale result. There is no compare-and-retry and no posted request. Once the core is retired, the function returns the retired snapshot whatever it is asked.
 
+The wheelbase has one publish function. It takes the lock, checks the retired mark, hands the previous snapshot and the override map to the transition, and stores the result. It is the only place the snapshot field is assigned and the only place the override map is read. Within a tick, the plugin update thread publishes a change as soon as it knows it: a changed identity reading is published as unstable straight after the identity drain, before the ITM and SRM drains.
+
 The connection turn makes every change except two: the capability refresh, which the UI thread makes synchronously after a profile edit and whose result it reads straight afterwards, and retirement, which `FinalizePlugin` makes.
 
 Only the connection turn changes either epoch. A capability refresh never does.
 
-**Not yet (step 1):** there is no state lock. The identity commit on the plugin update thread and `RefreshCapabilities` on the UI thread can interleave, and either can publish over the other.
+**Not yet (step 1b):** the publish function does not check a retired mark yet; retirement arrives with the connection turn.
 
 ### Inputs
 
-Capability resolution runs under the state lock, so it must be pure: memory only, no callbacks. Its inputs are immutable.
+Capability resolution runs under the state lock, so it must be pure: memory only, with no events, host callbacks, or delegates that came from outside the wheelbase (injected, stored in a field or passed in); local LINQ predicates under the lock are fine. Its inputs are immutable.
 
 - **Profile overrides** are an immutable map. An edit builds a new map and swaps the reference; nobody changes a map another thread may be reading.
 - **The profile catalog** is the profile store's own immutable snapshot. It is loaded before the first state change, and a reload swaps it whole. File I/O happens outside the lock.
@@ -106,8 +119,6 @@ The catalog and the overrides are swapped separately. Between a reload and the o
 
 Hub and module composition ([#16](https://github.com/kelchm/FanaBridge/issues/16)) replaces the resolution function. It inherits the same rule.
 
-**Not yet (step 1):** the override map is a plain dictionary changed in place on the UI thread and read through a callback on the plugin update thread. Resolution logs, and on first use loads profiles from disk.
-
 ### Events
 
 `WheelChanged` is raised after an identity commit that changed the attachment, after an SRM kit is identified, and after a capability refresh. A settle that ends where it began raises nothing. The connection events are raised on connect and disconnect, and `StateChanged` after any of them.
@@ -116,13 +127,13 @@ Events are raised after the state lock is released, with no FanaBridge lock held
 
 Events carry no state. A handler reads the snapshot again. Events raised by different threads can arrive in either order, so a handler must not work out what happened from the event alone. WPF handlers dispatch to the UI thread.
 
-**Not yet (step 1):** `WheelChanged` passes the wheelbase, and handlers read its properties one at a time. **Not yet (step 4):** the plugin's `WheelChanged` handler also marks the LED encoders dirty; the gate takes that over at a new epoch.
+**Not yet (step 4):** the plugin's `WheelChanged` handler also marks the LED encoders dirty; the gate takes that over at a new epoch.
 
 ## Locks
 
 | Lock | Guards | Allowed while holding | Never while holding |
 |------|--------|-----------------------|---------------------|
-| **State lock** (wheelbase) | Computing and publishing the next snapshot. The retired mark. | Reading inputs, resolving capabilities in memory, allocating. | HID or disk I/O, logging, events, delegates, waits, any other lock. |
+| **State lock** (wheelbase) | Computing and publishing the next snapshot. The retired mark. | Reading inputs, resolving capabilities in memory, allocating. | HID or disk I/O, logging, events, host callbacks, and delegates that came from outside the wheelbase (injected, stored in a field or passed in), waits, any other lock. |
 | **ITM staging lock** (wheelbase) | The staged ITM reports and the epoch they belong to. | List operations. | Anything else, logging included. |
 | **Device frame lock** (one per device instance) | That instance's drivers and frame state. One frame, or `End`, at a time. | Everything a frame does, including the output gate. | Another instance's frame lock. Waiting on the UI thread. |
 | **Output gate** (core) | Admission and one whole output operation. Channel owners, holds, lit records, pending cleanup, output revisions. | Encoder calls and the HID writes of that one operation. The ITM staging lock. Logging. | Waiting on a task, a thread, an event or a timer. Elicited reads (tuning, diagnostics). Events and host callbacks. UI dispatch. |
@@ -151,7 +162,7 @@ The waits below come from timeouts in the code. They are estimates of the usual 
 - Disconnecting joins the reader thread for up to a second while holding the transport write lock.
 - A `WheelChanged` handler that re-enumerates Control Mapper waits on the UI thread for as long as the UI thread is busy.
 
-**Not yet:** the ITM encoder's buffer is unlocked (step 4). There is no output gate in Core (step 4). Each device instance's lock covers only the drawing part of a frame and orders it against plugin teardown only (step 2 widens it to the whole frame and `End`). The wheelbase logs a warning while holding the ITM staging lock (step 1).
+**Not yet:** the ITM encoder's buffer is unlocked (step 4). There is no output gate in Core (step 4). Each device instance's lock covers only the drawing part of a frame and orders it against plugin teardown only (step 2 widens it to the whole frame and `End`).
 
 ## Hardware output
 
@@ -306,6 +317,8 @@ The col03 reader thread routes ITM reports to their queue. The plugin update thr
 
 Before a new epoch's snapshot is published, the plugin update thread flushes the raw queue as well as the staging buffer, and restamps the buffer with the new epoch. A report that was queued under the old epoch can then never be staged under the new one.
 
+Staged input is cleared exactly where its consumer's restart signal changes: on a committed identity change until step 4, on every new attachment epoch from step 4. A stage does not land one without the other.
+
 The device that owns the ITM channel collects staged reports by presenting its lease. Collecting is an ordinary ITM operation at the gate: the core is open, the snapshot is connected and stable, the epochs match, no hold has the channel, and the channel is free or already this device's. The first valid lease to collect or write in an epoch owns the channel, so ownership is settled before anything is consumed.
 
 Admission is not the last check. The plugin update thread does not hold the gate when it flushes, restamps and publishes a new epoch, so it can do all three after the admission point and before the gate reaches the staging buffer, and by then the buffer may hold the next epoch's reports. So under the staging lock, before it takes or clears anything, the gate compares the buffer's epoch stamp with the attachment epoch the collection was admitted under. If they are equal it takes the batch. If they differ it takes nothing, clears nothing and leaves the stamp alone: those reports belong to whoever owns the channel in the buffer's epoch. Either way the gate releases both locks before the device's lifecycle processes anything.
@@ -316,15 +329,13 @@ Only the owning device's update thread changes the ITM lifecycle. The lifecycle 
 
 This fences what the host has queued. A push already on the wire when the wheel changes carries nothing that says which wheel sent it; see [Known limits](#known-limits).
 
-**Not yet (step 4):** collecting staged reports takes no lease, so an outgoing device can consume the incoming wheel's reports. The staging buffer is cleared after the new identity is already visible, and the raw queue is not flushed at all, so a report queued by the old wheel can be staged for the new one. The lifecycle adopts handles from any push in any state. Devices detect a wheel change by polling a counter.
+**Not yet (step 4):** collecting staged reports takes no lease, so an outgoing device can consume the incoming wheel's reports. The staging buffer is cleared before publish on committed identity changes only (not on unchanged settles) and is not epoch-stamped, and the raw queue is not flushed at all, so a report queued by the old wheel can be staged for the new one. The lifecycle adopts handles from any push in any state. Devices detect a wheel change by polling a counter.
 
 ## Transitions
 
 ### Connect
 
 The connection turn takes the next connection epoch, opens the transport's streams as that session, reads the first identity, and publishes a connected snapshot in that connection epoch and a new attachment epoch. If that first reading is still settling, the snapshot is unstable and shows no wheel until the settle ends.
-
-**Not yet (step 1):** between connecting and the first update tick, the wheelbase reports a stable identity while the first reading is still settling.
 
 ### Wheel swap or module hot-plug
 
@@ -354,8 +365,6 @@ When the attachment's last profile is deleted the capabilities are empty. The de
 The connection turn publishes a disconnected snapshot in a new connection epoch and a new attachment epoch, which revokes every lease and hold. At its next entry the gate sees a new connection epoch and drops every hold, owner, lit record and pending cleanup, whether or not a connect has followed. The turn then closes the transport: report queues first, then the streams under the write lock, with a bounded join of the reader thread. The ITM staging buffer is cleared. Events follow. There is nothing to blank.
 
 A reconnect requested from the UI is posted and carried out by the connection turn, because it opens and closes HID streams. It disconnects and connects within one tick, so the gate may see only the result: a later connection epoch. A disconnect that is not followed by a connect shows the gate a later connection epoch too.
-
-**Not yet (step 1):** the transport is closed first and the state is reset afterwards, so a frame in flight can still attempt a write at a closing stream.
 
 ### Plugin manager restart
 
@@ -387,7 +396,7 @@ The guarantee is this: after `FinalizePlugin`, no write is admitted, and every c
 
 The close waits for nothing but the gate, and through it for the transport write lock.
 
-**Not yet (step 4):** `FinalizePlugin` asks each device to blank itself, running that device's drivers on the finalising thread. A device's `End` blanks outside any gate. Until then, teardown is as [Device Settings Lifecycle](device-settings-lifecycle.md#teardown-ordering) describes. **Not yet (step 1):** the core is disposed without being retired, so a late update call can reopen the transport afterwards.
+**Not yet (step 4):** `FinalizePlugin` asks each device to blank itself, running that device's drivers on the finalising thread. A device's `End` blanks outside any gate. Until then, teardown is as [Device Settings Lifecycle](device-settings-lifecycle.md#teardown-ordering) describes. **Not yet (step 1b):** the core is disposed without being retired, so a late update call can reopen the transport afterwards.
 
 ## Review floor
 
@@ -446,17 +455,7 @@ Against `main`. Each row is removed by the step that closes it.
 
 | Gap | Closed by |
 |-----|-----------|
-| Identity, stability and capabilities are separate properties, written one at a time and read separately. | Step 1 |
-| No state lock: an identity commit and a capability refresh can interleave and overwrite each other. | Step 1 |
-| The override map is changed in place on the UI thread and read through a callback on the plugin update thread. | Step 1 |
-| Connection, product id and product name are outside the snapshot; Control Mapper reads them apart from the wheel identity. | Step 1 |
-| Capability resolution logs, and can load profiles from disk, on the path that will run under the state lock. | Step 1 |
-| LED driver construction and the restart notice resolve capabilities separately from the read that decided to use them. | Step 1 |
-| After connecting, the identity reads as stable while the first reading is still settling. | Step 1 |
-| A disconnect closes the transport before the state says disconnected. | Step 1 |
-| `WheelChanged` passes the wheelbase, and handlers read its properties one at a time. | Step 1 |
-| The wheelbase logs while holding the ITM staging lock. | Step 1 |
-| Nothing fences connection work: a late update call can reconnect a disposed wheelbase, and two update threads can overlap after a manager restart. | Step 1 |
+| Nothing fences connection work or retires the core: a late update call can reconnect a disposed wheelbase, and two update threads can overlap after a manager restart. | Step 1b |
 | The LED driver writes from a thread-pool task, remembers a frame before it is accepted, and waits up to two seconds for the task on clear and dispose. | Step 2 |
 | The settings-change handler updates a live display driver from the UI thread. | Step 2 |
 | A device's lock covers only the drawing part of a frame; its `End` and its stop-driving path run outside it. | Step 2 |
@@ -464,10 +463,11 @@ Against `main`. Each row is removed by the step that closes it.
 | A channel a device's capabilities drop is not blanked. Step 3 stops the writes to it and leaves its last frame. | Step 4 |
 | The LED manager cannot tell "no profile" from "nothing seen yet". The LED colour notice reads capabilities once. | Step 3 |
 | No output gate in Core. Encoders are public on the plugin, and every writer decides for itself whether it may write. | Step 4 |
-| No epochs. Writes are not checked against the attachment they were computed for, and multi-report operations are not ordered against transitions. | Step 4 |
+| Both epochs are on the snapshot, but nothing consumes them yet and the connection epoch does not yet number a transport session. Writes are not checked against the attachment they were computed for, and multi-report operations are not ordered against transitions. | Step 4 |
+| A device frame re-reads the plugin singleton inside its own output lock to guard against teardown, and the wizard and display test check connection flags before writing directly to encoders instead of presenting a hold at the gate. | Step 4 |
 | A send is not tied to the connection it was meant for: an operation can continue onto the streams of a later connection. | Step 4 |
 | A device that loses its attachment blanks unconditionally, possibly onto different hardware. Blank retries are latches held by each device. | Step 4 |
-| Staged ITM reports are collected without a lease and cleared after the new identity is visible. The raw ITM queue is not flushed at a transition. The ITM encoder's buffer is unlocked. | Step 4 |
+| Staged ITM reports are collected without a lease, are not epoch-stamped, and are cleared only on committed identity changes. The raw ITM queue is not flushed at a transition. The ITM encoder's buffer is unlocked. | Step 4 |
 | The ITM lifecycle adopts handles from any push, including one that arrived before its bring-up began. | Step 4 |
 | Teardown runs each device's drivers on the finalising thread; a device's `End` blanks outside any gate; "lit" is a latch on the display encoder plus a flag per device. | Step 4 |
 | The wizard and the display test write from the UI thread, a timer thread and the thread pool with no token, and are released before their workers stop. | Step 5 |
@@ -476,7 +476,8 @@ Against `main`. Each row is removed by the step that closes it.
 
 ## Steps
 
-1. **State snapshot, state lock and connection turn.** One immutable snapshot including the connection, published under a leaf state lock; copy-on-write overrides; pure resolution; the disconnected snapshot published before the transport closes; connection work fenced by the turn and by retirement. Revises [#147](https://github.com/kelchm/FanaBridge/pull/147). Part of [#137](https://github.com/kelchm/FanaBridge/issues/137).
+1a. **State snapshot and state lock.** One immutable snapshot including the connection and both epochs, published through one publish function under a leaf state lock; copy-on-write overrides; pure resolution; the disconnected snapshot published before the transport closes; instability published before the ITM and SRM drains; single-view readers across device frames, LED driver construction, settings, diagnostics and Control Mapper ([#147](https://github.com/kelchm/FanaBridge/pull/147)). Part of [#137](https://github.com/kelchm/FanaBridge/issues/137).
+1b. **Connection turn and retirement.** Connection work fenced by the core's connection turn so overlapping update threads after a manager restart cannot race, and core retirement in `FinalizePlugin` so a late update call cannot publish or reopen the transport afterwards. Part of [#137](https://github.com/kelchm/FanaBridge/issues/137).
 2. **Synchronous LED driver.** LED frames are written on the device's update thread, and nothing but that device's frames and `End` touches its drivers.
 3. **Empty capabilities.** A device whose attachment has no profile, or fewer channels, stops driving instead of falling back. The step removes writes and adds none. Part of [#137](https://github.com/kelchm/FanaBridge/issues/137).
 4. **Output gate.** Leases, both epochs, whole-operation admission, sends bound to their connection, lit records and pending cleanup, epoch-checked ITM input, teardown through the gate, and the encoders off the plugin's public surface. A channel a device's capabilities drop is released, which blanks it. The wizard and the display test write through the gate from here on, with holds that have no token yet. Fixes [#137](https://github.com/kelchm/FanaBridge/issues/137).
