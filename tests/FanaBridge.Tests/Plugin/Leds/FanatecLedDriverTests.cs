@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Threading;
 using BA63Driver.Mapper;
 using FanaBridge.Core.Devices.Profiles;
 using FanaBridge.Core.Leds;
@@ -30,8 +31,24 @@ namespace FanaBridge.Tests.Plugin.Leds
             public bool IsConnected { get; set; } = true;
             public int Col03MaxInputReportLength => 64;
 
-            public bool SendCol01(byte[] data) { lock (_lock) { _col01.Add((byte[])data.Clone()); } return true; }
-            public bool SendCol03(byte[] data) { lock (_lock) { _col03.Add((byte[])data.Clone()); } return true; }
+            // The next N writes (either interface) are recorded but report failure,
+            // as the real transport does when a HID write throws.
+            public int FailNext { get { lock (_lock) { return _failNext; } } set { lock (_lock) { _failNext = value; } } }
+            private int _failNext;
+
+            public bool SendCol01(byte[] data) => Record(_col01, data);
+            public bool SendCol03(byte[] data) => Record(_col03, data);
+
+            private bool Record(List<byte[]> log, byte[] data)
+            {
+                lock (_lock)
+                {
+                    log.Add((byte[])data.Clone());
+                    if (_failNext == 0) return true;
+                    _failNext--;
+                    return false;
+                }
+            }
             public IReportStream IdentityReports => FakeReportStream.Empty;
             public IReportStream ItmReports => FakeReportStream.Empty;
             public IReportStream SrmReports => FakeReportStream.Empty;
@@ -320,6 +337,127 @@ namespace FanaBridge.Tests.Plugin.Leds
                 var t = RunAllWhite(caps);
                 Assert.False(Col01Has(t, 0x06), "stripe preference (0x06) must not be sent");
             }
+        }
+
+        // ── Write-failure retry (#79) ────────────────────────────────────
+
+        [Theory]
+        [InlineData("revRgb", 9, false, 0x00)]          // col03
+        [InlineData("legacyRev3Bit", 9, true, 0x0A)]    // col01
+        public void SendLeds_IdenticalFrameAfterFailedWrite_IsRetried(
+            string channel, int count, bool col01, byte subcmd)
+        {
+            var caps = Caps((channel, count));
+            var transport = new RecordingTransport { FailNext = 1 };
+            var driver = BuildDriver(caps, transport);
+            driver.RetryInterval = TimeSpan.Zero;
+            var raw = new Color[caps.AllLedCount];
+            for (int i = 0; i < raw.Length; i++) raw[i] = Color.White;
+            var state = new LedDeviceState(new Color[0], new Color[0], new Color[0], new Color[0], raw);
+
+            int Writes() => col01 ? transport.Col01.Count(r => r[3] == subcmd)
+                                  : transport.Col03.Count(r => r[2] == subcmd);
+
+            // First frame's write fails without throwing.
+            Assert.True(driver.SendLeds(state, forceRefresh: true));
+
+            // Keep feeding the identical frame. Frames that land while the failed
+            // write is still in flight are dropped, so poll until the retry goes
+            // out; without the retry it never does and the deadline fails the test.
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (Writes() < 2 && DateTime.UtcNow < deadline)
+            {
+                Assert.True(driver.SendLeds(state, forceRefresh: false));
+                Thread.Sleep(1);
+            }
+            driver.Dispose();
+
+            Assert.Equal(2, Writes());
+        }
+
+        [Fact]
+        public void SendLeds_RetriesOfAnUnchangedFrame_AreThrottled_ButChangedFramesAreNot()
+        {
+            var caps = Caps(("revRgb", 9));
+            var transport = new RecordingTransport { FailNext = 1 };
+            var driver = BuildDriver(caps, transport);
+            driver.RetryInterval = TimeSpan.FromHours(1);
+
+            LedDeviceState Frame(Color c)
+            {
+                var raw = new Color[caps.AllLedCount];
+                for (int i = 0; i < raw.Length; i++) raw[i] = c;
+                return new LedDeviceState(new Color[0], new Color[0], new Color[0], new Color[0], raw);
+            }
+            int Writes() => transport.Col03.Count(r => r[2] == 0x00);
+            var white = Frame(Color.White);
+
+            Assert.True(driver.SendLeds(white, forceRefresh: true));   // fails
+            WaitForFailedWrite(driver, Writes);
+
+            // Identical frames inside the retry interval don't write again.
+            var until = DateTime.UtcNow + TimeSpan.FromMilliseconds(200);
+            while (DateTime.UtcNow < until)
+            {
+                Assert.True(driver.SendLeds(white, forceRefresh: false));
+                Thread.Sleep(1);
+            }
+            Assert.Equal(1, Writes());
+
+            // A changed frame goes out at once.
+            var red = Frame(Color.Red);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (Writes() < 2 && DateTime.UtcNow < deadline)
+            {
+                Assert.True(driver.SendLeds(red, forceRefresh: false));
+                Thread.Sleep(1);
+            }
+            driver.Dispose();
+
+            Assert.Equal(2, Writes());
+        }
+
+        [Fact]
+        public void SendLeds_RetriesAnUnchangedFrame_OnceTheRetryIntervalHasPassed()
+        {
+            var caps = Caps(("revRgb", 9));
+            var transport = new RecordingTransport { FailNext = 1 };
+            var driver = BuildDriver(caps, transport);
+            driver.RetryInterval = TimeSpan.FromMilliseconds(100);
+
+            var raw = new Color[caps.AllLedCount];
+            for (int i = 0; i < raw.Length; i++) raw[i] = Color.White;
+            var state = new LedDeviceState(new Color[0], new Color[0], new Color[0], new Color[0], raw);
+            int Writes() => transport.Col03.Count(r => r[2] == 0x00);
+
+            var sinceFirst = System.Diagnostics.Stopwatch.StartNew();
+            Assert.True(driver.SendLeds(state, forceRefresh: true));   // fails
+            WaitForFailedWrite(driver, Writes);
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (Writes() < 2 && DateTime.UtcNow < deadline)
+            {
+                Assert.True(driver.SendLeds(state, forceRefresh: false));
+                Thread.Sleep(1);
+            }
+            var elapsed = sinceFirst.Elapsed;
+            driver.Dispose();
+
+            Assert.Equal(2, Writes());
+            Assert.True(elapsed >= TimeSpan.FromMilliseconds(90),
+                "retried after " + elapsed.TotalMilliseconds + " ms, inside the 100 ms interval");
+        }
+
+        // Waits until the first write has failed and the driver has recorded
+        // it, so a test's timing window starts after the failure rather than
+        // racing the write task.
+        private static void WaitForFailedWrite(FanatecLedDriver driver, Func<int> writes)
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while ((writes() < 1 || !driver.RetryPending) && DateTime.UtcNow < deadline)
+                Thread.Sleep(1);
+            Assert.Equal(1, writes());
+            Assert.True(driver.RetryPending, "the failed write was never recorded");
         }
     }
 }

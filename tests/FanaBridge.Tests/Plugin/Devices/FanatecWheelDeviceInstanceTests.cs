@@ -1003,6 +1003,42 @@ namespace FanaBridge.Tests.Plugin.Devices
         }
 
         [Fact]
+        public void AttachedDeviceRegistrationCaps_AreTheAttachedDevicesOwn()
+        {
+            // #134: the restart notice compares the active profile with what the
+            // attached device's tabs were built from: that device's registration
+            // capabilities, not the live ones, and not another device's.
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            var other = InstanceFor("CSLSWGT3");
+            var attached = InstanceFor("PSWBMW");
+            plugin.RegisterDeviceInstance(other);
+            plugin.RegisterDeviceInstance(attached);
+
+            var registered = plugin.GetAttachedDeviceRegistrationCaps();
+
+            Assert.Same(attached.Config.Capabilities, registered);
+            Assert.NotSame(plugin.CurrentCapabilities, registered);
+        }
+
+        [Fact]
+        public void AttachedDeviceRegistrationCaps_AreNull_WhenTheAttachedDeviceIsNotAdded()
+        {
+            var plugin = PluginWithWheel("PSWBMW", out _);
+            plugin.RegisterDeviceInstance(InstanceFor("CSLSWGT3"));
+
+            Assert.Null(plugin.GetAttachedDeviceRegistrationCaps());
+        }
+
+        [Fact]
+        public void AttachedDeviceRegistrationCaps_AreNull_WithNoWheelAttached()
+        {
+            var plugin = PluginWithWheel(null, out _);
+            plugin.RegisterDeviceInstance(InstanceFor("PSWBMW"));
+
+            Assert.Null(plugin.GetAttachedDeviceRegistrationCaps());
+        }
+
+        [Fact]
         public void PluginGoneThenBack_KeepsLastBinding_WhileGone()
         {
             // The A → null → A sequence (plugin torn down mid-restart): with no

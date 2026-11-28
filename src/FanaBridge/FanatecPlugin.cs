@@ -265,6 +265,25 @@ namespace FanaBridge
             return null;
         }
 
+        /// <summary>
+        /// The registration capabilities of the added FanaBridge device for the
+        /// attached wheel or hub + module: what SimHub built that device's LED
+        /// editor, Screen and Tuning tabs from. Null when no added device is
+        /// attached, including while the identity is still settling.
+        /// </summary>
+        internal WheelCapabilities GetAttachedDeviceRegistrationCaps()
+        {
+            lock (_deviceInstancesLock)
+            {
+                foreach (var inst in _deviceInstances)
+                {
+                    if (FanatecWheelDeviceInstance.IsAttached(this, inst.Config))
+                        return inst.Config.Capabilities;
+                }
+            }
+            return null;
+        }
+
         // Detects the vendor's app/service running alongside FanaBridge — the same
         // display, no arbitration, so it's a warning the user needs to see instead of
         // chasing phantom ITM flicker. TTL-cached; edges are logged once.
