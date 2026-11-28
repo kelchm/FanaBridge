@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using FanaBridge.Core.Leds;
 using FanaBridge.Tests.TestDoubles;
 using FanaBridge.Core.Transport;
@@ -18,12 +19,17 @@ namespace FanaBridge.Tests.Core.Leds
             public List<byte[]> Col03Reports { get; } = new List<byte[]>();
             public int Col03MaxInputReportLength => 64;
 
+            // The next N col03 writes are recorded but report failure.
+            public int FailNext { get; set; }
+
             public bool SendCol01(byte[] data) => true;
 
             public bool SendCol03(byte[] data)
             {
                 Col03Reports.Add((byte[])data.Clone());
-                return true;
+                if (FailNext == 0) return true;
+                FailNext--;
+                return false;
             }
 
             public IReportStream IdentityReports => FakeReportStream.Empty;
@@ -164,6 +170,80 @@ namespace FanaBridge.Tests.Core.Leds
             t.Col03Reports.Clear();
             encoder.SetRevLedColors(colors);
             Assert.Empty(t.Col03Reports);       // flag consumed — back to dirty tracking
+        }
+
+        // ── Failed button writes ───────────────────────────────────────
+
+        [Fact]
+        public void SetButtonLedState_AfterAPartialWrite_ReturningToThePreviousStateResends()
+        {
+            // The color stage fails but the intensity commit still lands, so the
+            // wheel shows B's intensity. Going back to A must rewrite both rather
+            // than look unchanged against the last state that fully succeeded.
+            var t = new StubTransport();
+            var encoder = new LedEncoder(t);
+            var colorsA = new ushort[] { 0xF800 };
+            var colorsB = new ushort[] { 0x07E0 };
+            var intensitiesA = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
+            var intensitiesB = new byte[LedEncoder.INTENSITY_PAYLOAD_SIZE];
+            intensitiesA[0] = 2;
+            intensitiesB[0] = 5;
+
+            Assert.True(encoder.SetButtonLedState(colorsA, intensitiesA));
+            t.FailNext = 1;
+            Assert.False(encoder.SetButtonLedState(colorsB, intensitiesB));
+            Assert.Equal(5, LastReport(t, 0x03)[3]);   // B's intensity reached the wheel
+
+            t.Col03Reports.Clear();
+            Assert.True(encoder.SetButtonLedState(colorsA, intensitiesA));
+
+            Assert.Equal(2, LastReport(t, 0x03)[3]);
+            Assert.Contains(t.Col03Reports, r => r[2] == 0x02);
+        }
+
+        // ── Concurrent callers (#80) ───────────────────────────────────
+
+        [Fact]
+        public async Task ConcurrentClear_CannotRewriteReportWhileRefreshIsBeingSent()
+        {
+            // The refresh's write blocks inside the transport; a clear arrives
+            // meanwhile, as the driver's Clear() does when its wait on the
+            // refresh task times out. The clear must wait for the refresh rather
+            // than refill the shared report buffer under it.
+            var t = new GatedTransport { GateOnWrite = 1 };
+            var encoder = new LedEncoder(t);
+            var lit = Enumerable.Repeat((ushort)0xF800, 9).ToArray();
+
+            var refresh = Task.Run(() => encoder.SetRevLedColors(lit));
+            Assert.True(t.Entered.Wait(TimeSpan.FromSeconds(5)), "refresh never reached the transport");
+
+            // Unguarded, the clear finishes here having rewritten the buffer;
+            // guarded, it's blocked on the encoder lock.
+            bool cleared = false;
+            var clear = ContendedCall.StartAndWaitUntilBlockedOrDone(
+                () => cleared = encoder.SetRevLedColors(new ushort[9]), TimeSpan.FromSeconds(5));
+            bool clearRanDuringRefresh = !clear.IsAlive;
+
+            t.Release();
+            Assert.True(await refresh);
+            Assert.True(clear.Join(TimeSpan.FromSeconds(5)), "clear never finished");
+            Assert.True(cleared);
+
+            Assert.False(clearRanDuringRefresh, "clear ran while the refresh held the report buffer");
+
+            // The refresh's report reached the wire intact...
+            var sent = t.GatedWrite;
+            Assert.Equal(0x00, sent[2]);
+            for (int i = 0; i < lit.Length; i++)
+            {
+                Assert.Equal(0xF8, sent[3 + i * 2]);
+                Assert.Equal(0x00, sent[4 + i * 2]);
+            }
+
+            // ...and the clear still followed it.
+            var last = t.Writes.Last();
+            Assert.Equal(0x00, last[2]);
+            Assert.All(last.Skip(3), b => Assert.Equal(0, b));
         }
     }
 }

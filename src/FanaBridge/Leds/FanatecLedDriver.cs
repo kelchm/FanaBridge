@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Threading.Tasks;
 using BA63Driver.Base;
@@ -72,7 +73,25 @@ namespace FanaBridge.Leds
         // Async write state — mirrors the typical SimHub driver pattern.
         // SendLeds kicks off a Task.Run; if the previous write is still
         // in-flight the frame is dropped rather than blocking.
-        private Task _refreshTask;
+        private volatile Task _refreshTask;
+
+        // Set by the write task when any encoder call reports a failed write,
+        // read on the frame thread. The state comparer latches each frame before
+        // its write has finished, so without this an identical frame after a
+        // failure would be skipped and the LEDs left stale until telemetry moved.
+        private volatile bool _retryPending;
+
+        /// <summary>Whether the last write failed and a retry is due. For tests.</summary>
+        internal bool RetryPending => _retryPending;
+
+        // While _retryPending is set, an unchanged frame is resent at most this
+        // often. A channel that keeps failing would otherwise retry its USB write,
+        // and re-arm the transport's failure warning, on every frame. Changed
+        // frames are never held back. Settable for tests.
+        internal TimeSpan RetryInterval { get; set; } = TimeSpan.FromSeconds(1);
+
+        // Stopwatch timestamp of the last write scheduled, frame thread only.
+        private long _lastWriteTimestamp;
 
         public FanatecLedDriver(WheelCapabilities caps, LedEncoder leds, LegacyLedEncoder legacyLeds)
         {
@@ -173,16 +192,23 @@ namespace FanaBridge.Leds
             if (!IsConnected)
                 return false;
 
-            // Skip unchanged frames — avoid color conversion and USB I/O
-            if (!stateComparer.HasChanged(state) && !forceRefresh)
+            // Drop this frame if the previous write is still in flight. Checked
+            // first, so the retry flag below is always the finished write's
+            // result: the task records it before it clears _refreshTask.
+            var inFlight = _refreshTask;
+            if (inFlight != null && inFlight.Status != TaskStatus.RanToCompletion
+                                 && inFlight.Status != TaskStatus.Faulted)
                 return true;
 
-            // Drop this frame if the previous write is still in flight
-            if (_refreshTask != null)
+            // Skip unchanged frames — avoid color conversion and USB I/O
+            // ...unless the last write failed, in which case resend the same
+            // state, throttled to RetryInterval.
+            if (!stateComparer.HasChanged(state) && !forceRefresh)
             {
-                var t = _refreshTask;
-                if (t != null && t.Status != TaskStatus.RanToCompletion
-                              && t.Status != TaskStatus.Faulted)
+                if (!_retryPending)
+                    return true;
+                if (Stopwatch.GetTimestamp() - _lastWriteTimestamp
+                    < (long)(RetryInterval.TotalSeconds * Stopwatch.Frequency))
                     return true;
             }
 
@@ -288,26 +314,31 @@ namespace FanaBridge.Leds
             {
                 try
                 {
+                    // &= (not &&) so one failed channel doesn't skip the others.
+                    bool ok = true;
+
                     if (_caps.HasRevRgb)
-                        _leds.SetRevLedColors(revRgbColors);
+                        ok &= _leds.SetRevLedColors(revRgbColors);
 
                     if (_caps.HasFlagRgb)
-                        _leds.SetFlagLedColors(flagRgbColors);
+                        ok &= _leds.SetFlagLedColors(flagRgbColors);
 
                     if (sendButtonLeds)
-                        _leds.SetButtonLedState(buttonRgbBuf, intensities);
+                        ok &= _leds.SetButtonLedState(buttonRgbBuf, intensities);
 
                     if (sendLegacyRevOnOff && _legacyLeds != null)
-                        _legacyLeds.SetLegacyRevOnOff(legacyRevOnOffBuf);
+                        ok &= _legacyLeds.SetLegacyRevOnOff(legacyRevOnOffBuf);
 
                     if (sendLegacyRev3Bit && _legacyLeds != null)
-                        _legacyLeds.SetLegacyRev3Bit(legacyRev3BitBuf);
+                        ok &= _legacyLeds.SetLegacyRev3Bit(legacyRev3BitBuf);
 
                     if (sendLegacyFlag3Bit && _legacyLeds != null)
-                        _legacyLeds.SetLegacyFlag3Bit(legacyFlag3BitBuf);
+                        ok &= _legacyLeds.SetLegacyFlag3Bit(legacyFlag3BitBuf);
 
                     if (sendLegacyRevStripe && _legacyLeds != null)
-                        _legacyLeds.SetRevStripeColor(capturedRevStripeColor);
+                        ok &= _legacyLeds.SetRevStripeColor(capturedRevStripeColor);
+
+                    _retryPending = !ok;
                 }
                 catch (Exception ex)
                 {
@@ -320,6 +351,8 @@ namespace FanaBridge.Leds
                     _refreshTask = null;
                 }
             });
+
+            _lastWriteTimestamp = Stopwatch.GetTimestamp();
 
             // Advance to the other slot for the next frame
             _ping = 1 - ping;

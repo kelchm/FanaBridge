@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using FanaBridge.Core.Leds;
 using FanaBridge.Tests.TestDoubles;
 using FanaBridge.Core.Transport;
@@ -582,6 +583,43 @@ namespace FanaBridge.Tests.Core.Leds
             encoder.ForceDirty();
             encoder.SetLegacyRevOnOff(pattern);
             Assert.True(transport.Col01Reports.Count > countAfterFirst);
+        }
+
+        // ── Concurrent callers (#80) ───────────────────────────────────
+
+        [Fact]
+        public async Task ConcurrentClear_CannotRewriteReportWhileRefreshIsBeingSent()
+        {
+            // Write 1 latches a state so Clear() has something to zero; write 2 is
+            // the refresh, blocked inside the transport while Clear() arrives, as
+            // happens when the driver's wait on the refresh task times out.
+            var t = new GatedTransport { GateOnWrite = 2 };
+            var encoder = new LegacyLedEncoder(t);
+            var firstRed = new byte[27];
+            firstRed[0] = 1;
+            Assert.True(encoder.SetLegacyRev3Bit(firstRed));
+
+            var allWhite = Enumerable.Repeat((byte)1, 27).ToArray();
+            var refresh = Task.Run(() => encoder.SetLegacyRev3Bit(allWhite));
+            Assert.True(t.Entered.Wait(TimeSpan.FromSeconds(5)), "refresh never reached the transport");
+
+            // Unguarded, Clear() finishes here having rewritten the buffer;
+            // guarded, it's blocked on the encoder lock.
+            var clear = ContendedCall.StartAndWaitUntilBlockedOrDone(
+                () => encoder.Clear(), TimeSpan.FromSeconds(5));
+            bool clearRanDuringRefresh = !clear.IsAlive;
+
+            t.Release();
+            Assert.True(await refresh);
+            Assert.True(clear.Join(TimeSpan.FromSeconds(5)), "Clear() never finished");
+
+            Assert.False(clearRanDuringRefresh, "Clear() ran while the refresh held the report buffer");
+
+            // The refresh's report reached the wire intact: 27 lit bits = 0x07FFFFFF.
+            Assert.Equal(new byte[] { 0x01, 0xF8, 0x09, 0x0A, 0xFF, 0xFF, 0xFF, 0x07 }, t.GatedWrite);
+
+            // ...and the clear still followed it.
+            Assert.Equal(new byte[] { 0x01, 0xF8, 0x09, 0x0A, 0x00, 0x00, 0x00, 0x00 }, t.Writes.Last());
         }
     }
 }
