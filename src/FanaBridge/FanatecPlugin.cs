@@ -897,12 +897,20 @@ namespace FanaBridge
             return report;
         }
 
+        /// <summary>Test seam overriding settings persistence so UI tests do not write to disk.</summary>
+        internal Action SaveSettingsForTest;
+
         /// <summary>
         /// Persists the current <see cref="Settings"/> to SimHub's storage.
         /// Called from the settings UI when profile overrides change.
         /// </summary>
         public void SaveSettings()
         {
+            if (SaveSettingsForTest != null)
+            {
+                SaveSettingsForTest();
+                return;
+            }
             this.SaveCommonSettings("FanaBridgeSettings", Settings);
         }
 

@@ -72,6 +72,33 @@ namespace FanaBridge.Tests.Plugin.UI.Settings
         }
 
         [Fact]
+        public void ApplyPickerChoice_WritesToChoicesOwnAttachment_LeavingOtherAttachmentsUntouched()
+        {
+            var overrides = Overrides(("CSSWFORMV2", "my-formv2:User"));
+            var choice = new ProfilePickerChoice("PSWBMW", null, "my-bmw:User");
+
+            var next = ProfileOverrideRules.ApplyPickerChoice(
+                overrides, choice, Profile("PSWBMW", ProfileSource.BuiltIn));
+
+            Assert.Equal("my-bmw:User", next["PSWBMW"]);
+            Assert.Equal("my-formv2:User", next["CSSWFORMV2"]);
+            Assert.False(overrides.ContainsKey("PSWBMW"));
+        }
+
+        [Fact]
+        public void ApplyPickerChoice_WithoutMatchKey_ChangesNothing()
+        {
+            var overrides = Overrides(("CSSWFORMV2", "my-formv2:User"));
+            var choice = new ProfilePickerChoice(null, null, "x:User");
+
+            var next = ProfileOverrideRules.ApplyPickerChoice(overrides, choice, null);
+
+            Assert.Equal("my-formv2:User", next["CSSWFORMV2"]);
+            Assert.Single(next);
+            Assert.NotSame(overrides, next);
+        }
+
+        [Fact]
         public void WithOverride_PinsMatchKey_WithoutMutatingInput()
         {
             var overrides = Overrides(("CSSWFORMV3", "my-v3:User"));

@@ -1971,5 +1971,89 @@ namespace FanaBridge.Tests.Plugin.Devices
             Assert.True(prompted);
             Assert.Contains("LED count changed", promptReason);
         }
+
+        [Fact]
+        public void ProfilePicker_SelectionAfterWheelSwap_AppliesToRenderedAttachmentOnly()
+        {
+            // Render the picker for wheel A (PSWBMW), commit wheel B (CSSWFORMV2),
+            // then select an item in the picker. The override must be stored under
+            // A's match key and B's override must remain untouched — even if A is
+            // later disconnected before another click arrives.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-picker-a.json", "PSWBMW_PICKER_A", "PSWBMW", revLeds: 5);
+            profiles.Reload();
+
+            var t = new FakeTransport();
+            var clock = new Clock();
+            var wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);
+            Assert.True(wheelbase.AutoConnect());
+
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+            clock.T += 10;
+            wheelbase.UpdateIdentity();
+            clock.T += 250;
+            Assert.True(wheelbase.UpdateIdentity());
+
+            var plugin = new FanatecPlugin
+            {
+                Settings = new FanatecPluginSettings
+                {
+                    ProfileOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["CSSWFORMV2"] = "keep-formv2:User",
+                    },
+                },
+            };
+            int saves = 0;
+            plugin.SaveSettingsForTest = () => saves++;
+            plugin.InstallWheelbaseForTest(wheelbase, withDisplayEncoder: false);
+
+            RunOnSta(() =>
+            {
+                var control = new SettingsControl(plugin);
+                control.PromptRestartHandler = (_, __) => { };
+
+                // Render for A (PSWBMW).
+                control.UpdateStatus();
+                Assert.True(control.cboProfile.Items.Count >= 2);
+
+                int userIndex = -1;
+                int builtInIndex = -1;
+                for (int i = 0; i < control.cboProfile.Items.Count; i++)
+                {
+                    var tag = ((System.Windows.Controls.ComboBoxItem)control.cboProfile.Items[i]).Tag as ProfilePickerChoice;
+                    Assert.NotNull(tag);
+                    if (string.Equals(tag!.OverrideKey, "PSWBMW_PICKER_A:User", StringComparison.OrdinalIgnoreCase))
+                        userIndex = i;
+                    else if (string.Equals(tag.OverrideKey, "PSWBMW:BuiltIn", StringComparison.OrdinalIgnoreCase))
+                        builtInIndex = i;
+                }
+                Assert.True(userIndex >= 0, "Expected custom profile in picker");
+                Assert.True(builtInIndex >= 0, "Expected built-in profile in picker");
+
+                // Commit B (CSSWFORMV2) without re-rendering the picker.
+                t.Identity.Enqueue(Ff08(0x0C, WheelWire("CSSWFORMV2")));
+                clock.T += 10;
+                wheelbase.UpdateIdentity();
+                clock.T += 250;
+                Assert.True(wheelbase.UpdateIdentity());
+                Assert.Equal("CSSWFORMV2", wheelbase.WheelCode);
+
+                // Select A's custom profile while B is attached.
+                control.cboProfile.SelectedIndex = userIndex;
+
+                Assert.Equal("PSWBMW_PICKER_A:User", plugin.Settings.ProfileOverrides["PSWBMW"]);
+                Assert.Equal("keep-formv2:User", plugin.Settings.ProfileOverrides["CSSWFORMV2"]);
+                Assert.Equal(1, saves);
+
+                // Disconnect completely, then select A's built-in profile: still applies to A.
+                wheelbase.Disconnect();
+                control.cboProfile.SelectedIndex = builtInIndex;
+
+                Assert.False(plugin.Settings.ProfileOverrides.ContainsKey("PSWBMW"));
+                Assert.Equal("keep-formv2:User", plugin.Settings.ProfileOverrides["CSSWFORMV2"]);
+                Assert.Equal(2, saves);
+            });
+        }
     }
 }

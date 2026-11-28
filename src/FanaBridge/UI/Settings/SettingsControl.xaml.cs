@@ -337,7 +337,7 @@ namespace FanaBridge.UI.Settings
             Dispatcher.BeginInvoke(new Action(UpdateStatus));
         }
 
-        private void UpdateStatus()
+        internal void UpdateStatus()
         {
             if (Plugin == null) return;
 
@@ -667,7 +667,7 @@ namespace FanaBridge.UI.Settings
                     var item = new ComboBoxItem
                     {
                         Content = label,
-                        Tag = overrideKey,
+                        Tag = new ProfilePickerChoice(wheelCode, moduleCode, overrideKey),
                     };
                     cboProfile.Items.Add(item);
 
@@ -723,32 +723,20 @@ namespace FanaBridge.UI.Settings
             if (_suppressProfileChange || Plugin == null) return;
 
             var selected = cboProfile.SelectedItem as ComboBoxItem;
-            if (selected == null) return;
+            var choice = selected?.Tag as ProfilePickerChoice;
+            if (choice == null || string.IsNullOrEmpty(choice.MatchKey) || string.IsNullOrEmpty(choice.OverrideKey))
+                return;
 
-            string overrideKey = selected.Tag as string;
-            if (string.IsNullOrEmpty(overrideKey)) return;
-
-            // Build match key for current wheel from one snapshot
-            var wheelbase = Plugin.Wheelbase;
-            var snap = wheelbase?.Snapshot;
-            if (snap == null || !snap.WheelDetected) return;
-
-            string wheelCode = snap.WheelCode;
-            string moduleCode = snap.ModuleCode;
-            string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
-
-            // No match key (e.g. detected but unrecognized wheel, WheelCode null)
-            // means there is no identity to attach an override to — nothing to persist.
-            if (string.IsNullOrEmpty(matchKey)) return;
-
-            // Store an override only when the pick differs from what automatic
-            // resolution would choose (copy-on-write).
-            var nextOverrides = ProfileOverrideRules.ApplySelection(
-                Plugin.Settings.ProfileOverrides, matchKey, overrideKey,
-                WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null));
+            // Apply the selection to the attachment the picker was rendered for
+            // without re-reading the live snapshot: valid even if the wheel was
+            // swapped or disconnected before the click arrived.
+            var autoResolved = WheelProfileStore.FindByWheelType(
+                choice.WheelCode, choice.ModuleCode, overrideId: null);
+            var nextOverrides = ProfileOverrideRules.ApplyPickerChoice(
+                Plugin.Settings.ProfileOverrides, choice, autoResolved);
 
             Plugin.SetProfileOverrides(nextOverrides);
-            wheelbase.RefreshCapabilities();
+            Plugin.Wheelbase?.RefreshCapabilities();
             Plugin.SaveSettings();
 
             // Show restart notice if the device name changed from what SimHub registered
