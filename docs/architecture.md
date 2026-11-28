@@ -39,6 +39,15 @@ XAML `x:Class` values follow the same path rule and are checked by a contract te
 
 Domain folders and their matching namespaces are a **navigational taxonomy**, not directional boundaries. Cross-domain references within a project are expected (e.g. Devices ↔ Transport in Core). The only compiler-enforced directional boundaries are the assembly references: Core references nothing internal, Updater references nothing internal, and the plugin references both.
 
+## Threading model
+
+FanaBridge runs on threads it does not create: SimHub's shared plugin update thread, one update thread per device, the WPF UI thread and Control Mapper's own. Two rules hold across all of them, and [Threading Model](threading.md) is the full contract.
+
+- **State is one immutable snapshot.** The wheelbase publishes connection, identity, stability and capabilities together. A reader captures it once per decision and takes no lock. Every change is computed and published under one leaf lock, with no I/O, logging or callbacks inside it.
+- **Output goes through one gate.** Only the core's output gate calls the hardware encoders. Each write is one whole operation, checked against the attachment it was computed for and against whoever holds the channel.
+
+The code on `main` does not meet all of this yet. The contract marks each gap and the step that closes it.
+
 ## Test tree
 
 `tests/FanaBridge.Tests` mirrors the product projects:
