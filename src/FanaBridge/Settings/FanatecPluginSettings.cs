@@ -41,7 +41,7 @@ namespace FanaBridge.Settings
             set => _profileOverrides = CaseInsensitive(value);
         }
 
-        private Dictionary<string, string> _profileOverrides = CaseInsensitive(null);
+        private volatile Dictionary<string, string> _profileOverrides = CaseInsensitive(null);
 
         private static Dictionary<string, string> CaseInsensitive(IDictionary<string, string> source)
         {

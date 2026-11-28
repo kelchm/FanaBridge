@@ -1,5 +1,13 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using FanaBridge.ControlMapper;
+using FanaBridge.Core.Devices;
+using FanaBridge.Core.Devices.Identity;
+using FanaBridge.Core.Devices.Profiles;
+using FanaBridge.Core.Transport;
+using FanaBridge.Devices;
+using FanaBridge.Tests.TestDoubles;
 using SimHub.Plugins.OutputPlugins.ControlRemapper.Variants;
 using Xunit;
 
@@ -623,6 +631,152 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
             string report = bridge.DescribeResolution(pm);
 
             Assert.Contains("Recognize Individual Wheels", report);
+        }
+
+        private sealed class FakeTransport : IConnectableTransport
+        {
+            public bool Connected;
+            public FakeReportStream Identity { get; } = new FakeReportStream();
+            public bool Connect(int productId) { Connected = true; return true; }
+            public void Disconnect() => Connected = false;
+            public void Dispose() => Disconnect();
+            public bool IsConnected => Connected;
+            public bool IsDevicePresent => Connected;
+            public FanatecTransport.TransportConnectStatus LastConnectStatus =>
+                FanatecTransport.TransportConnectStatus.Connected;
+            public bool SendCol03(byte[] data) => true;
+            public bool SendCol01(byte[] data) => true;
+            public IReportStream IdentityReports => Identity;
+            public IReportStream ItmReports => FakeReportStream.Empty;
+            public IReportStream SrmReports => FakeReportStream.Empty;
+            public IReportStream TuningReports => FakeReportStream.Empty;
+            public int ReadCol01(byte[] buffer, int timeoutMs) => -1;
+            public int Col03MaxInputReportLength => 64;
+            public int Col01MaxInputReportLength => 34;
+            public IDisposable BeginBatch() => new NoOp();
+            private sealed class NoOp : IDisposable { public void Dispose() { } }
+        }
+
+        private sealed class FakeBus : IHidBusEnumerator
+        {
+            private readonly int _pid;
+            public FakeBus(int pid) => _pid = pid;
+            public IReadOnlyList<HidDeviceInfo> GetDevices(ushort vendorId) =>
+                new[] { new HidDeviceInfo(_pid, 64, 64, "ClubSport DD") };
+        }
+
+        private static byte[] WheelFrame(string wheelCode)
+        {
+            var b = new byte[64];
+            b[0] = 0xFF; b[1] = 0x08;
+            b[FanatecIdentity.OffBaseType] = 0x0C;
+            b[FanatecIdentity.OffWireCode] = FanatecDeviceTables.Wheels.First(kv => kv.Value == wheelCode).Key;
+            return b;
+        }
+
+        private static void CommitWheel(FanatecWheelbase wb, FakeTransport t, ref long clock, string wheelCode)
+        {
+            t.Identity.Enqueue(WheelFrame(wheelCode));
+            clock += 10;
+            wb.UpdateIdentity();
+            clock += 250;
+            Assert.True(wb.UpdateIdentity());
+        }
+
+        [Fact]
+        public void StampFriendlyNames_UsesOneViewThroughout_EvenWhenLiveWheelChanges()
+        {
+            var transport = new FakeTransport();
+            long clock = 0;
+            var wb = new FanatecWheelbase(transport, new FakeBus(0x0020), () => clock);
+            Assert.True(wb.AutoConnect());
+            CommitWheel(wb, transport, ref clock, "PSWBMW");
+
+            var plugin = new FanatecPlugin();
+            plugin.InstallWheelbaseForTest(wb, withDisplayEncoder: false);
+
+            // Register a renamed BMW device instance so GetConnectedWheelDisplayName(snap)
+            // supplies the target name for BMW while Formula V2 is unregistered.
+            var bmwProfile = WheelProfileStore.FindByWheelType("PSWBMW");
+            Assert.NotNull(bmwProfile);
+            var bmwInst = new FanatecWheelDeviceInstance(
+                new DeviceConfig { Profile = bmwProfile, Capabilities = new WheelCapabilities(bmwProfile) },
+                panels: null,
+                ledHost: new FakeLedModuleHost());
+            bmwInst.CustomName = "My Renamed BMW";
+            plugin.RegisterDeviceInstance(bmwInst);
+
+            var viewBmw = plugin.CaptureView();
+
+            // Swap the live wheelbase to Formula V2 before stamping with viewBmw.
+            CommitWheel(wb, transport, ref clock, "CSSWFORMV2");
+            Assert.Equal("CSSWFORMV2", wb.WheelCode);
+
+            var (bridge, pm, _, _) = NewSetup(stock: new FakeStockProvider("x"));
+            Assert.True(bridge.EnsureRegistered(pm));
+
+            var cm = (IFakeControlMapper)pm.Plugin!;
+            // Prior FanaBridge default name for BMW: must be recognized as ours from
+            // viewBmw (not the live Formula V2) and updated to the device's rename.
+            var bmwMapping = new FakeControllerDescription
+            {
+                VendorID = FanaBridgeVariantProvider.FanatecVendorId,
+                ProductId = 0x0020,
+                Variant = "FS_WHEEL_SWTYPE_PSWBMW",
+                CustomName = "Podium BMW M4 GT3",
+            };
+            var userNamedMapping = new FakeControllerDescription
+            {
+                VendorID = FanaBridgeVariantProvider.FanatecVendorId,
+                ProductId = 0x0020,
+                Variant = "FS_WHEEL_SWTYPE_PSWBMW",
+                CustomName = "User Typed Name",
+            };
+            var formMapping = new FakeControllerDescription
+            {
+                VendorID = FanaBridgeVariantProvider.FanatecVendorId,
+                ProductId = 0x0020,
+                Variant = "FS_WHEEL_SWTYPE_CSSWFORMV2",
+                CustomName = null,
+            };
+            cm.Settings.ControllerMappings.Add(new FakeControllerSourceMapping { ControllerDescription = bmwMapping });
+            cm.Settings.ControllerMappings.Add(new FakeControllerSourceMapping { ControllerDescription = userNamedMapping });
+            cm.Settings.ControllerMappings.Add(new FakeControllerSourceMapping { ControllerDescription = formMapping });
+
+            bridge.StampFriendlyNames(viewBmw);
+
+            Assert.Equal("My Renamed BMW", bmwMapping.CustomName);
+            Assert.Equal("User Typed Name", userNamedMapping.CustomName);
+            Assert.Null(formMapping.CustomName);
+        }
+
+        [Fact]
+        public void DescribeResolution_UsesOneViewForVariantFriendlyNameAndPid()
+        {
+            var transport = new FakeTransport();
+            long clock = 0;
+            var wb = new FanatecWheelbase(transport, new FakeBus(0x0020), () => clock);
+            Assert.True(wb.AutoConnect());
+            CommitWheel(wb, transport, ref clock, "PSWBMW");
+
+            var plugin = new FanatecPlugin();
+            plugin.InstallWheelbaseForTest(wb, withDisplayEncoder: false);
+
+            var viewBmw = plugin.CaptureView();
+
+            // Disconnect live wheelbase after capturing viewBmw.
+            wb.Disconnect();
+            Assert.False(wb.Snapshot.Connected);
+
+            var (bridge, pm, _, _) = NewSetup(stock: new FakeStockProvider("FS_WHEEL_SWTYPE_PSWBMW"));
+            Assert.True(bridge.EnsureRegistered(pm));
+
+            string report = bridge.DescribeResolution(pm, viewBmw);
+
+            Assert.Contains("FanaBridge would emit (id): FS_WHEEL_SWTYPE_PSWBMW", report);
+            Assert.Contains("Live wheel PID: 0x0020", report);
+            string expectedFriendly = FanaBridgeVariantProvider.ComputeFriendlyName(viewBmw.Snapshot)!;
+            Assert.Contains("Friendly name (-> CustomName): " + expectedFriendly, report);
         }
     }
 }

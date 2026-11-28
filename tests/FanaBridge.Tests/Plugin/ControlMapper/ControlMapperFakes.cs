@@ -127,6 +127,7 @@ namespace FanaBridge.Tests.Plugin.ControlMapper
         public int ProductId { get; set; }
         public string? ControllerName { get; set; }
         public string? Variant { get; set; }
+        public string? CustomName { get; set; }
     }
 
     /// <summary>Test double for ControllerSourceMapping (owns one description).</summary>

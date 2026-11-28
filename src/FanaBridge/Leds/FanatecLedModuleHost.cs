@@ -195,7 +195,18 @@ namespace FanaBridge.Leds
             }
         }
 
-        public void Display() => _module.Display();
+        public void Display(PluginView view)
+        {
+            _manager.BeginFrame(view);
+            try
+            {
+                _module.Display();
+            }
+            finally
+            {
+                _manager.EndFrame();
+            }
+        }
 
         public void SetStatus(bool canDrive, bool connected)
         {

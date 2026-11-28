@@ -1,3 +1,5 @@
+using FanaBridge.Core.Transport;
+
 namespace FanaBridge.Core.Devices.Identity
 {
     /// <summary>
@@ -43,6 +45,29 @@ namespace FanaBridge.Core.Devices.Identity
         /// </summary>
         public static string DecodeBaseCode(byte baseType)
             => FanatecDeviceTables.Wheelbases.TryGetValue(baseType, out var b) ? b : null;
+
+        /// <summary>
+        /// Reads the attachment wire byte (<c>0x18</c>) and effective module wire
+        /// byte (<c>0x1F</c>, masked to 0 when the attachment is not a hub) from a
+        /// raw <c>FF 08</c> system report frame.
+        /// </summary>
+        public static bool TryReadRawIdentityBytes(byte[] raw, out byte wire, out byte effectiveModule)
+        {
+            if (raw != null)
+            {
+                int sig = Col03FrameClassifier.FindIdentitySignature(raw, raw.Length);
+                if (sig >= 0)
+                {
+                    wire = raw[sig + OffWireCode];
+                    effectiveModule = IsHub(wire) ? raw[sig + OffModule] : (byte)0;
+                    return true;
+                }
+            }
+
+            wire = 0;
+            effectiveModule = 0;
+            return false;
+        }
 
         // ── Friendly display names (UI only) ──────────────────────────────
 

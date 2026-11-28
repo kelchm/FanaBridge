@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using FanaBridge;
 using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Identity;
@@ -12,6 +13,7 @@ using FanaBridge.Display;
 using FanaBridge.Leds;
 using FanaBridge.Settings;
 using FanaBridge.UI.Devices;
+using FanaBridge.UI.Settings;
 using FanaBridge.Tests.TestDoubles;
 using FanaBridge.Core.Transport;
 using GameReaderCommon;
@@ -117,7 +119,16 @@ namespace FanaBridge.Tests.Plugin.Devices
             var clock = new Clock();
             wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);
             if (overrideProfileId != null)
-                wheelbase.ProfileOverrideResolver = _ => overrideProfileId;
+            {
+                var matchKey = WheelProfileStore.MakeMatchKey(wheelCode, null);
+                if (!string.IsNullOrEmpty(matchKey))
+                {
+                    wheelbase.SetProfileOverrides(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [matchKey] = overrideProfileId,
+                    });
+                }
+            }
             Assert.True(wheelbase.AutoConnect());
 
             if (wheelCode != null)
@@ -482,10 +493,10 @@ namespace FanaBridge.Tests.Plugin.Devices
             var inst = InstanceWithHost("PSWBMW", host);
             var plugin = PluginWithWheel("PSWBMW", out _);
 
-            // Alive for the frame's first two reads (top-of-frame capture and
-            // the Enabled announcement), unpublished by the revalidation.
+            // Alive for the frame's top-of-frame capture, unpublished by the
+            // _outputGate revalidation.
             int calls = 0;
-            inst.PluginResolver = () => ++calls <= 2 ? plugin : null;
+            inst.PluginResolver = () => ++calls == 1 ? plugin : null;
 
             var data = new GameData();
             inst.DataUpdate(null, ref data);
@@ -840,7 +851,7 @@ namespace FanaBridge.Tests.Plugin.Devices
         }
 
         [Fact]
-        public void AttachedWheel_TransportDropped_IsScanning_AndNotFound()
+        public void AttachedWheel_TransportDropped_IsScanning_AndNotFound_AfterHeartbeatDisconnect()
         {
             var plugin = PluginWithWheel("PSWBMW", out var wheelbase, out var transport,
                 withDisplayEncoder: false);
@@ -849,9 +860,16 @@ namespace FanaBridge.Tests.Plugin.Devices
             var d = Detect(ConfigFor("PSWBMW"), () => plugin);
             Assert.True(Found(d));
 
+            // Dropping the underlying transport flips live transport health
+            // (IWheelbaseConnection.IsConnected) to false while the published
+            // snapshot stays connected until ConnectionMonitor's heartbeat
+            // calls Disconnect().
             transport.Connected = false;
-            Assert.Equal("PSWBMW", wheelbase.WheelCode);
+            Assert.False(wheelbase.IsConnected);
+            Assert.True(wheelbase.Snapshot.Connected);
 
+            wheelbase.Disconnect();
+            Assert.False(wheelbase.Snapshot.Connected);
             Assert.Equal(DeviceState.Scanning, inst.GetDeviceState());
             Assert.False(Found(d));
         }
@@ -1622,6 +1640,422 @@ namespace FanaBridge.Tests.Plugin.Devices
 
             var blank = Assert.Single(DisplayFrames(transport));
             Assert.Equal(SevenSegment.Blank, blank[5]);
+        }
+
+        // ── Stage 1a: single-snapshot reads, LED driver construction, and restart notice (#137) ──
+
+        [Fact]
+        public void SwapSettling_DeviceStateAndResolveCapsFor_FollowCommittedAndSettlingStates()
+        {
+            // Serial state-transition test (not concurrent race coverage): verifies
+            // GetDeviceState and ResolveCapsFor before, during, and after a swap settle.
+            var t = new FakeTransport();
+            var clock = new Clock();
+            var wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);
+            Assert.True(wheelbase.AutoConnect());
+
+            t.Identity.Enqueue(HubFrame("PHUB", "PBME"));
+            clock.T += 10;
+            wheelbase.UpdateIdentity();
+            clock.T += 250;
+            Assert.True(wheelbase.UpdateIdentity());
+
+            var plugin = new FanatecPlugin();
+            plugin.InstallWheelbaseForTest(wheelbase, withDisplayEncoder: false);
+
+            var hubProfile = WheelProfileStore.FindByWheelType("PHUB", "PBME");
+            var bmwProfile = WheelProfileStore.FindByWheelType("PSWBMW");
+            Assert.NotNull(hubProfile);
+            Assert.NotNull(bmwProfile);
+            var hubConfig = new DeviceConfig { Profile = hubProfile, Capabilities = new WheelCapabilities(hubProfile) };
+            var bmwConfig = new DeviceConfig { Profile = bmwProfile, Capabilities = new WheelCapabilities(bmwProfile) };
+
+            var hubInst = new FanatecWheelDeviceInstance(hubConfig);
+            var bmwInst = new FanatecWheelDeviceInstance(bmwConfig);
+            hubInst.PluginResolver = () => plugin;
+            bmwInst.PluginResolver = () => plugin;
+            Assert.Equal(DeviceState.Connected, hubInst.GetDeviceState());
+            Assert.Equal(DeviceState.Scanning, bmwInst.GetDeviceState());
+
+            // Start swap to PSWBMW: while settling, neither device reports Connected
+            // and PSWBMW never receives PHUB_PBME's live capabilities.
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+            clock.T += 10;
+            Assert.False(wheelbase.UpdateIdentity());
+
+            Assert.Equal(DeviceState.Scanning, hubInst.GetDeviceState());
+            Assert.Equal(DeviceState.Scanning, bmwInst.GetDeviceState());
+            Assert.Same(bmwConfig.Capabilities, plugin.ResolveCapsFor(bmwConfig));
+            Assert.Equal("PSWBMW", plugin.ResolveCapsFor(bmwConfig).Profile?.Id);
+
+            // After settle commits, PSWBMW is Connected and PHUB_PBME is Scanning.
+            clock.T += 250;
+            Assert.True(wheelbase.UpdateIdentity());
+            Assert.Equal(DeviceState.Scanning, hubInst.GetDeviceState());
+            Assert.Equal(DeviceState.Connected, bmwInst.GetDeviceState());
+            Assert.Same(wheelbase.CurrentCapabilities, plugin.ResolveCapsFor(bmwConfig));
+            Assert.Same(hubConfig.Capabilities, plugin.ResolveCapsFor(hubConfig));
+        }
+
+        [Fact]
+        public void LedManager_GetDriver_DuringFrame_UsesFrameSnapshotEvenIfWheelbaseChanges()
+        {
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-stage1a-led-driver.json", "PSWBMW_LED_TEST", "PSWBMW", revLeds: 5);
+            profiles.Reload();
+
+            var plugin = PluginWithWheel("PSWBMW", out var wheelbase, out _, withDisplayEncoder: false,
+                overrideProfileId: "PSWBMW_LED_TEST:User");
+            plugin.InstallLedEncodersForTest();
+
+            var bmwConfig = ConfigFor("PSWBMW");
+            var frameView = plugin.CaptureView();
+            Assert.Equal("PSWBMW_LED_TEST", frameView.Snapshot.Capabilities.Profile?.Id);
+
+            // Change the live wheelbase override after the frame captured frameView:
+            // live ResolveCapsFor now resolves to the built-in PSWBMW profile.
+            wheelbase.SetProfileOverrides(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PSWBMW"] = "PSWBMW:BuiltIn",
+            });
+            wheelbase.RefreshCapabilities();
+            Assert.Equal("PSWBMW", plugin.ResolveCapsFor(bmwConfig).Profile?.Id);
+
+            // When GetDriver() runs inside the frame that captured frameView, it must
+            // build the driver from frameView (5 LEDs) rather than re-reading the wheelbase.
+            var manager = new FanatecLedManager(bmwConfig, () => plugin);
+            try
+            {
+                manager.BeginFrame(frameView);
+                FanatecLedDriver? driver;
+                try
+                {
+                    driver = manager.GetDriver();
+                }
+                finally
+                {
+                    manager.EndFrame();
+                }
+
+                Assert.NotNull(driver);
+                try
+                {
+                    Assert.Equal("PSWBMW_LED_TEST", driver!.Capabilities.Profile?.Id);
+                    Assert.Equal(5, driver.Capabilities.AllLedCount);
+                    Assert.Same(plugin.Leds, driver.LedsEncoderForTest);
+                    Assert.Same(plugin.LegacyLeds, driver.LegacyLedsEncoderForTest);
+                }
+                finally
+                {
+                    driver!.Dispose();
+                }
+
+                // Outside a frame, GetDriver() captures one fresh view.
+                var liveDriver = manager.GetDriver();
+                Assert.NotNull(liveDriver);
+                try
+                {
+                    Assert.Equal("PSWBMW", liveDriver!.Capabilities.Profile?.Id);
+                }
+                finally
+                {
+                    liveDriver!.Dispose();
+                }
+            }
+            finally
+            {
+                manager.Dispose();
+            }
+        }
+
+        [Fact]
+        public void LedManager_GetDriver_DuringFrame_UsesViewPluginEncoders_NeverCrossesCores()
+        {
+            // Take a view from plugin A, then replace the resolver with plugin B.
+            // A driver built inside A's frame must use A's own encoders and never
+            // pair A's snapshot capabilities with B's encoders.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-view-core-a.json", "PSWBMW_CORE_A", "PSWBMW", revLeds: 5);
+            profiles.Reload();
+
+            var pluginA = PluginWithWheel("PSWBMW", out _, out _, withDisplayEncoder: false,
+                overrideProfileId: "PSWBMW_CORE_A:User");
+            pluginA.InstallLedEncodersForTest();
+
+            var pluginB = PluginWithWheel("PSWBMW", out _, out _, withDisplayEncoder: false);
+            pluginB.InstallLedEncodersForTest();
+
+            Assert.NotSame(pluginA.Leds, pluginB.Leds);
+            Assert.NotSame(pluginA.LegacyLeds, pluginB.LegacyLeds);
+
+            var bmwConfig = ConfigFor("PSWBMW");
+            var viewA = pluginA.CaptureView();
+
+            // Resolver already points at plugin B when A's frame asks for a driver.
+            var manager = new FanatecLedManager(bmwConfig, () => pluginB);
+            try
+            {
+                manager.BeginFrame(viewA);
+                FanatecLedDriver? driver;
+                try
+                {
+                    driver = manager.GetDriver();
+                }
+                finally
+                {
+                    manager.EndFrame();
+                }
+
+                Assert.NotNull(driver);
+                try
+                {
+                    Assert.Equal("PSWBMW_CORE_A", driver!.Capabilities.Profile?.Id);
+                    Assert.Equal(5, driver.Capabilities.AllLedCount);
+                    Assert.Same(pluginA.Leds, driver.LedsEncoderForTest);
+                    Assert.Same(pluginA.LegacyLeds, driver.LegacyLedsEncoderForTest);
+                    Assert.NotSame(pluginB.Leds, driver.LedsEncoderForTest);
+                    Assert.NotSame(pluginB.LegacyLeds, driver.LegacyLedsEncoderForTest);
+                }
+                finally
+                {
+                    driver!.Dispose();
+                }
+
+                // Outside a frame, GetDriver() captures one fresh view from plugin B.
+                var driverB = manager.GetDriver();
+                Assert.NotNull(driverB);
+                try
+                {
+                    Assert.Equal("PSWBMW", driverB!.Capabilities.Profile?.Id);
+                    Assert.Same(pluginB.Leds, driverB.LedsEncoderForTest);
+                    Assert.Same(pluginB.LegacyLeds, driverB.LegacyLedsEncoderForTest);
+                }
+                finally
+                {
+                    driverB!.Dispose();
+                }
+            }
+            finally
+            {
+                manager.Dispose();
+            }
+        }
+
+        [Fact]
+        public void DriveHardware_PassesTopOfFrameViewToLedHostDisplay()
+        {
+            var plugin = PluginWithWheel("PSWBMW", out var wheelbase, out _, withDisplayEncoder: false);
+            var ledHost = new FakeLedModuleHost("leds");
+            var inst = new FanatecWheelDeviceInstance(ConfigFor("PSWBMW"), panels: null, ledHost: ledHost);
+            inst.PluginResolver = () => plugin;
+
+            var expectedSnap = wheelbase.Snapshot;
+            var data = new GameData();
+            inst.DataUpdate(null, ref data);
+
+            Assert.Equal(1, ledHost.DisplayCount);
+            Assert.Same(plugin, ledHost.LastDisplayView.Plugin);
+            Assert.Same(wheelbase, ledHost.LastDisplayView.Wheelbase);
+            Assert.Same(expectedSnap, ledHost.LastDisplaySnapshot);
+        }
+
+        private static void RunOnSta(Action action)
+        {
+            Exception? failure = null;
+            var thread = new Thread(() =>
+            {
+                try { action(); }
+                catch (Exception ex) { failure = ex; }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+            if (failure != null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        [Fact]
+        public void UpdateRestartNotice_WheelSwapBetweenReads_NeverOpensModalRestartPrompt()
+        {
+            // #143 compared CurrentCapabilities with GetAttachedDeviceRegistrationCaps()
+            // in two separate reads. If a different wheel (with a different LED count)
+            // committed between those two reads, the mixed pair triggered the modal
+            // restart prompt even though neither wheel's tabs were stale.
+            var t = new FakeTransport();
+            var clock = new Clock();
+            var wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);
+            Assert.True(wheelbase.AutoConnect());
+
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+            clock.T += 10;
+            wheelbase.UpdateIdentity();
+            clock.T += 250;
+            Assert.True(wheelbase.UpdateIdentity());
+
+            var plugin = new FanatecPlugin { Settings = new FanatecPluginSettings() };
+            plugin.InstallWheelbaseForTest(wheelbase, withDisplayEncoder: false);
+
+            var bmwInst = InstanceFor("PSWBMW");      // has LEDs
+            var gt3Inst = InstanceFor("CSLSWGT3");    // 0 LEDs, basic display
+            plugin.RegisterDeviceInstance(bmwInst);
+            plugin.RegisterDeviceInstance(gt3Inst);
+
+            // Force a full swap commit to CSLSWGT3 right between the two reads
+            // UpdateRestartNotice used to make.
+            bool swapFired = false;
+            plugin.BetweenRestartNoticeReadsForTest = () =>
+            {
+                if (swapFired) return;
+                swapFired = true;
+                t.Identity.Enqueue(Ff08(0x0C, WheelWire("CSLSWGT3")));
+                clock.T += 10;
+                wheelbase.UpdateIdentity();
+                clock.T += 250;
+                Assert.True(wheelbase.UpdateIdentity());
+            };
+
+            bool prompted = false;
+            string? promptReason = null;
+
+            RunOnSta(() =>
+            {
+                var control = new SettingsControl(plugin);
+                control.PromptRestartHandler = (reason, _) =>
+                {
+                    prompted = true;
+                    promptReason = reason;
+                };
+
+                control.UpdateRestartNotice(prompt: true);
+            });
+
+            Assert.True(swapFired);
+            Assert.Equal("CSLSWGT3", wheelbase.WheelCode);
+            Assert.False(prompted, "Unexpected restart prompt: " + promptReason);
+        }
+
+        [Fact]
+        public void UpdateRestartNotice_AfterSynchronousOverrideRefresh_PromptsWhenLayoutChanges()
+        {
+            // Confirms the single-snapshot path still reads the freshly refreshed
+            // capabilities synchronously and prompts when the active profile's LED
+            // layout genuinely diverges from the attached device's registration.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-stage1a-restart.json", "PSWBMW_SMALL", "PSWBMW", revLeds: 4);
+            profiles.Reload();
+
+            var plugin = PluginWithWheel("PSWBMW", out var wheelbase, out _, withDisplayEncoder: false);
+            plugin.Settings = new FanatecPluginSettings();
+            var bmwInst = InstanceFor("PSWBMW");
+            plugin.RegisterDeviceInstance(bmwInst);
+
+            plugin.SetProfileOverrides(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PSWBMW"] = "PSWBMW_SMALL:User",
+            });
+            wheelbase.RefreshCapabilities();
+
+            bool prompted = false;
+            string? promptReason = null;
+
+            RunOnSta(() =>
+            {
+                var control = new SettingsControl(plugin);
+                control.PromptRestartHandler = (reason, _) =>
+                {
+                    prompted = true;
+                    promptReason = reason;
+                };
+
+                control.UpdateRestartNotice(prompt: true);
+            });
+
+            Assert.True(prompted);
+            Assert.Contains("LED count changed", promptReason);
+        }
+
+        [Fact]
+        public void ProfilePicker_SelectionAfterWheelSwap_AppliesToRenderedAttachmentOnly()
+        {
+            // Render the picker for wheel A (PSWBMW), commit wheel B (CSSWFORMV2),
+            // then select an item in the picker. The override must be stored under
+            // A's match key and B's override must remain untouched — even if A is
+            // later disconnected before another click arrives.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-picker-a.json", "PSWBMW_PICKER_A", "PSWBMW", revLeds: 5);
+            profiles.Reload();
+
+            var t = new FakeTransport();
+            var clock = new Clock();
+            var wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);
+            Assert.True(wheelbase.AutoConnect());
+
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+            clock.T += 10;
+            wheelbase.UpdateIdentity();
+            clock.T += 250;
+            Assert.True(wheelbase.UpdateIdentity());
+
+            var plugin = new FanatecPlugin
+            {
+                Settings = new FanatecPluginSettings
+                {
+                    ProfileOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["CSSWFORMV2"] = "keep-formv2:User",
+                    },
+                },
+            };
+            int saves = 0;
+            plugin.SaveSettingsForTest = () => saves++;
+            plugin.InstallWheelbaseForTest(wheelbase, withDisplayEncoder: false);
+
+            RunOnSta(() =>
+            {
+                var control = new SettingsControl(plugin);
+                control.PromptRestartHandler = (_, __) => { };
+
+                // Render for A (PSWBMW).
+                control.UpdateStatus();
+                Assert.True(control.cboProfile.Items.Count >= 2);
+
+                int userIndex = -1;
+                int builtInIndex = -1;
+                for (int i = 0; i < control.cboProfile.Items.Count; i++)
+                {
+                    var tag = ((System.Windows.Controls.ComboBoxItem)control.cboProfile.Items[i]).Tag as ProfilePickerChoice;
+                    Assert.NotNull(tag);
+                    if (string.Equals(tag!.OverrideKey, "PSWBMW_PICKER_A:User", StringComparison.OrdinalIgnoreCase))
+                        userIndex = i;
+                    else if (string.Equals(tag.OverrideKey, "PSWBMW:BuiltIn", StringComparison.OrdinalIgnoreCase))
+                        builtInIndex = i;
+                }
+                Assert.True(userIndex >= 0, "Expected custom profile in picker");
+                Assert.True(builtInIndex >= 0, "Expected built-in profile in picker");
+
+                // Commit B (CSSWFORMV2) without re-rendering the picker.
+                t.Identity.Enqueue(Ff08(0x0C, WheelWire("CSSWFORMV2")));
+                clock.T += 10;
+                wheelbase.UpdateIdentity();
+                clock.T += 250;
+                Assert.True(wheelbase.UpdateIdentity());
+                Assert.Equal("CSSWFORMV2", wheelbase.WheelCode);
+
+                // Select A's custom profile while B is attached.
+                control.cboProfile.SelectedIndex = userIndex;
+
+                Assert.Equal("PSWBMW_PICKER_A:User", plugin.Settings.ProfileOverrides["PSWBMW"]);
+                Assert.Equal("keep-formv2:User", plugin.Settings.ProfileOverrides["CSSWFORMV2"]);
+                Assert.Equal(1, saves);
+
+                // Disconnect completely, then select A's built-in profile: still applies to A.
+                wheelbase.Disconnect();
+                control.cboProfile.SelectedIndex = builtInIndex;
+
+                Assert.False(plugin.Settings.ProfileOverrides.ContainsKey("PSWBMW"));
+                Assert.Equal("keep-formv2:User", plugin.Settings.ProfileOverrides["CSSWFORMV2"]);
+                Assert.Equal(2, saves);
+            });
         }
     }
 }

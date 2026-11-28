@@ -1,4 +1,6 @@
 using System;
+using System.Threading;
+using FanaBridge.Core.Devices;
 using FanaBridge.Core.Devices.Profiles;
 using SimHub.Plugins.OutputPlugins.GraphicalDash.PSE;
 
@@ -48,6 +50,26 @@ namespace FanaBridge.Leds
         // unavailable/available transitions log once rather than per frame.
         private bool _noDriverReported;
 
+        // Plugin view captured by the owning device frame, scoped to one
+        // Display() call on that thread so GetDriver() triggered part-way
+        // through builds from the frame's plugin and snapshot instead of
+        // re-reading the singleton or pairing one core's snapshot with another
+        // core's encoders.
+        private PluginView _frameView;
+        private volatile int _frameViewThreadId;
+
+        internal void BeginFrame(PluginView view)
+        {
+            _frameView = view;
+            _frameViewThreadId = Thread.CurrentThread.ManagedThreadId;
+        }
+
+        internal void EndFrame()
+        {
+            _frameViewThreadId = 0;
+            _frameView = default;
+        }
+
         /// <summary>
         /// Keep asking for a driver forever. The base class otherwise stops
         /// after a handful of attempts, which for this late-bound manager would
@@ -84,17 +106,27 @@ namespace FanaBridge.Leds
         /// <summary>
         /// Called by the base class when a connection is needed. Builds a driver
         /// from the capabilities resolved for THIS descriptor (respecting any
-        /// user profile override) — never the raw global caps, which would build
-        /// a driver for whatever wheel is currently connected.
+        /// user profile override) — using the frame's captured view when called
+        /// during a device frame rather than re-reading the plugin or wheelbase.
         /// </summary>
         public override FanatecLedDriver GetDriver()
         {
+            if (_frameViewThreadId == Thread.CurrentThread.ManagedThreadId)
+                return GetDriver(_frameView);
+
+            return GetDriver(_pluginResolver()?.CaptureView() ?? default);
+        }
+
+        /// <summary>
+        /// Builds a driver from one consistent <see cref="PluginView"/>: both
+        /// the encoders and the snapshot come from that view, so a driver never
+        /// pairs one core's capabilities with another core's encoders.
+        /// </summary>
+        internal FanatecLedDriver GetDriver(PluginView view)
+        {
             try
             {
-                // Bind only to the current generation's encoders. Keeping the
-                // previous ones as a fallback would hand the driver a transport
-                // belonging to a disposed generation (issue #37).
-                var plugin = _pluginResolver();
+                var plugin = view.Plugin;
                 var leds = plugin?.Leds;
                 var legacyLeds = plugin?.LegacyLeds;
 
@@ -107,7 +139,7 @@ namespace FanaBridge.Leds
                     return null;
                 }
 
-                var caps = plugin.ResolveCapsFor(_config) ?? WheelCapabilities.None;
+                var caps = FanatecPlugin.ResolveCapsFor(_config, view.Snapshot) ?? WheelCapabilities.None;
                 var driver = new FanatecLedDriver(caps, leds, legacyLeds);
 
                 _lastDriverProfile = caps.Profile;

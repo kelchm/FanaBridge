@@ -30,6 +30,13 @@ namespace FanaBridge.UI.Settings
         private bool _restartPromptDismissed;
 
         /// <summary>
+        /// Profile capabilities last rendered into the profile section so the
+        /// Delete, Contribute, and Report Issue actions operate on the profile
+        /// the page showed rather than re-reading whatever is attached when clicked.
+        /// </summary>
+        private WheelCapabilities _displayedCaps;
+
+        /// <summary>
         /// DeviceTypeID the add-device prompt's button would add; null while
         /// the prompt is hidden or the add is blocked by a similar device.
         /// </summary>
@@ -141,18 +148,18 @@ namespace FanaBridge.UI.Settings
 
         // Connected: the wheelbase node carries the dot + base name; the wheel and
         // module nodes follow what's attached (module only on a hub that has one).
-        private void ShowConnectedChain(FanatecWheelbase wb)
+        private void ShowConnectedChain(WheelbaseSnapshot snap)
         {
             SetDot(LinkState.Connected);
-            txtBaseName.Text = ChainBaseText(wb);
+            txtBaseName.Text = ChainBaseText(snap);
             txtBaseCaption.Text = "Wheelbase";
             txtBaseCaption.ToolTip = null;
 
             connBaseWheel.Visibility = nodeWheel.Visibility = Visibility.Visible;
-            if (wb.WheelDetected)
+            if (snap.WheelDetected)
             {
-                txtWheelChain.Text = ChainAttachmentText(wb);
-                txtWheelKind.Text = wb.IsHub ? "Hub" : "Wheel";
+                txtWheelChain.Text = ChainAttachmentText(snap);
+                txtWheelKind.Text = snap.IsHub ? "Hub" : "Wheel";
                 txtWheelKind.Visibility = Visibility.Visible;
             }
             else
@@ -161,12 +168,12 @@ namespace FanaBridge.UI.Settings
                 txtWheelKind.Visibility = Visibility.Collapsed;
             }
 
-            bool showModule = wb.WheelDetected && wb.IsHub
-                && (wb.ModuleCode != null || wb.ModuleWireCode != 0);
+            bool showModule = snap.WheelDetected && snap.IsHub
+                && (snap.ModuleCode != null || snap.ModuleWireCode != 0);
             connWheelModule.Visibility = nodeModule.Visibility =
                 showModule ? Visibility.Visible : Visibility.Collapsed;
             if (showModule)
-                txtModuleChain.Text = ChainModuleText(wb);
+                txtModuleChain.Text = ChainModuleText(snap);
         }
 
         // Connecting / disconnected: only the wheelbase node shows — carrying the
@@ -251,22 +258,22 @@ namespace FanaBridge.UI.Settings
         }
 
         // friendly name → code → raw byte, so an unmapped device still shows.
-        private static string ChainBaseText(FanatecWheelbase wb)
-            => wb.BaseFriendlyName
-            ?? wb.BaseCode
-            ?? (wb.BaseType != 0 ? string.Format("Unknown Base (0x{0:X2})", wb.BaseType) : "Unknown Base");
+        private static string ChainBaseText(WheelbaseSnapshot snap)
+            => snap.BaseFriendlyName
+            ?? snap.BaseCode
+            ?? (snap.BaseType != 0 ? string.Format("Unknown Base (0x{0:X2})", snap.BaseType) : "Unknown Base");
 
-        private static string ChainAttachmentText(FanatecWheelbase wb)
-            => wb.AttachmentFriendlyName
-            ?? wb.WheelCode
-            ?? (wb.WheelWireCode == 0xFF
+        private static string ChainAttachmentText(WheelbaseSnapshot snap)
+            => snap.AttachmentFriendlyName
+            ?? snap.WheelCode
+            ?? (snap.WheelWireCode == 0xFF
                 ? "Unrecognized (0xFF)"
-                : string.Format("Unrecognized (0x{0:X2})", wb.WheelWireCode));
+                : string.Format("Unrecognized (0x{0:X2})", snap.WheelWireCode));
 
-        private static string ChainModuleText(FanatecWheelbase wb)
-            => wb.ModuleFriendlyName
-            ?? wb.ModuleCode
-            ?? string.Format("Unknown (0x{0:X2})", wb.ModuleWireCode);
+        private static string ChainModuleText(WheelbaseSnapshot snap)
+            => snap.ModuleFriendlyName
+            ?? snap.ModuleCode
+            ?? string.Format("Unknown (0x{0:X2})", snap.ModuleWireCode);
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
@@ -283,8 +290,9 @@ namespace FanaBridge.UI.Settings
                 };
                 _itmStatusTimer.Tick += (s, a) =>
                 {
-                    UpdateItmStatus();
-                    RefreshRestartNoticeIfStale();
+                    var snap = Plugin?.CaptureView().Snapshot;
+                    UpdateItmStatus(snap);
+                    RefreshRestartNoticeIfStale(snap);
                 };
             }
             _itmStatusTimer.Start();
@@ -311,7 +319,7 @@ namespace FanaBridge.UI.Settings
 
         // ITM display row + co-driver warning. Self-contained (hides itself when no ITM
         // display is being driven), safe on every connection state.
-        private void UpdateItmStatus()
+        private void UpdateItmStatus(WheelbaseSnapshot snap)
         {
             if (Plugin == null || panelItmStatus == null) return;
 
@@ -319,7 +327,7 @@ namespace FanaBridge.UI.Settings
             string warn = null;
             try
             {
-                itm = Plugin.ItmStatus;
+                itm = Plugin.GetItmStatus(snap);
                 warn = itm != null ? Plugin.ItmCoDriverWarning : null;
             }
             catch { }
@@ -337,9 +345,15 @@ namespace FanaBridge.UI.Settings
             Dispatcher.BeginInvoke(new Action(UpdateStatus));
         }
 
-        private void UpdateStatus()
+        internal void UpdateStatus()
         {
             if (Plugin == null) return;
+
+            // Capture one view for the entire page refresh so the add-device
+            // prompt, restart notice, ITM row, device chain, status detail,
+            // and profile picker all render from the same snapshot.
+            var view = Plugin.CaptureView();
+            var snap = view.Snapshot;
 
             // Independent of device connection (Control Mapper is configured with or
             // without a wheel attached), so it runs ahead of the connection returns.
@@ -347,27 +361,27 @@ namespace FanaBridge.UI.Settings
 
             // Also self-contained (hides itself while disconnected), so it runs
             // ahead of the early returns below and stays correct on every path.
-            UpdateAddDevicePrompt();
-            UpdateRestartNotice(prompt: false);
-            UpdateItmStatus();
+            UpdateAddDevicePrompt(snap);
+            UpdateRestartNotice(snap, prompt: false);
+            UpdateItmStatus(snap);
 
-            if (!Plugin.IsDeviceConnected)
+            if (snap == null || !snap.Connected)
             {
+                _displayedCaps = null;
                 ShowBaseOnly(LinkState.Disconnected, "Not Connected", null);
-                SetStatusDetail(Plugin.StatusDetail);
+                SetStatusDetail(Plugin.GetStatusDetail(snap));
                 txtCapabilities.Text = "—";
                 borderUnverifiedAlert.Visibility = Visibility.Collapsed;
                 UpdateProfilePicker(false, null, null, null);
                 return;
             }
 
-            var wheelbase = Plugin.Wheelbase;
-
             // Connected, but the FF 08 identity hasn't been committed yet (the base
             // is still being read). Show the transitional state rather than a
             // misleading "Unknown Base" flash.
-            if (!wheelbase.HasIdentity)
+            if (!snap.HasIdentity)
             {
+                _displayedCaps = null;
                 ShowBaseOnly(LinkState.Connecting, "Connecting…", null);
                 SetStatusDetail(null);
                 txtCapabilities.Text = "—";
@@ -376,11 +390,12 @@ namespace FanaBridge.UI.Settings
                 return;
             }
 
-            var caps = Plugin.CurrentCapabilities;
+            var caps = snap.Capabilities;
             bool identified = caps.Name != null;
+            _displayedCaps = identified ? caps : null;
 
             // The chain shows what's attached whether or not a profile matched.
-            ShowConnectedChain(wheelbase);
+            ShowConnectedChain(snap);
             SetStatusDetail(null);
 
             txtCapabilities.Text = identified ? FormatCapabilities(caps) : "—";
@@ -393,7 +408,7 @@ namespace FanaBridge.UI.Settings
             // Pass caps only when identified; an unrecognized-but-attached wheel
             // still shows the picker so the New Profile Wizard stays reachable.
             UpdateProfilePicker(
-                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode,
+                snap.WheelDetected, snap.WheelCode, snap.ModuleCode,
                 identified ? caps : null);
         }
 
@@ -409,13 +424,11 @@ namespace FanaBridge.UI.Settings
         // page is visible.
         // =====================================================================
 
-        private void UpdateAddDevicePrompt()
+        private void UpdateAddDevicePrompt(WheelbaseSnapshot snap)
         {
             _promptDeviceTypeId = null;
 
-            var wheelbase = Plugin?.Wheelbase;
-            if (wheelbase == null || !Plugin.IsDeviceConnected || !wheelbase.HasIdentity
-                || !wheelbase.WheelDetected)
+            if (snap == null || !snap.Connected || !snap.HasIdentity || !snap.WheelDetected)
             {
                 // Every way out of these states (connect/disconnect, identity
                 // commit) raises StateChanged, so no re-poll is needed.
@@ -424,7 +437,7 @@ namespace FanaBridge.UI.Settings
                 return;
             }
 
-            if (!wheelbase.IdentityStable)
+            if (!snap.IdentityStable)
             {
                 // The unstable→stable edge is silent when the identity settles
                 // back UNCHANGED (nothing commits, so no StateChanged) — re-poll
@@ -442,7 +455,7 @@ namespace FanaBridge.UI.Settings
                 WatchSimHubDevices(devices);
 
             var config = FanatecDevicesRegistry.FindConfigForAttachment(
-                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
+                snap.WheelDetected, snap.WheelCode, snap.ModuleCode);
 
             // Stay quiet when there is nothing addable: no matching registered
             // config, one whose profile has nothing to drive (an explicit pin to
@@ -530,8 +543,9 @@ namespace FanaBridge.UI.Settings
                 _promptRetryTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
                 _promptRetryTimer.Tick += (s, e) =>
                 {
-                    UpdateAddDevicePrompt();
-                    UpdateRestartNotice(prompt: false);
+                    var snap = Plugin?.CaptureView().Snapshot;
+                    UpdateAddDevicePrompt(snap);
+                    UpdateRestartNotice(snap, prompt: false);
                 };
             }
 
@@ -579,8 +593,9 @@ namespace FanaBridge.UI.Settings
         {
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                UpdateAddDevicePrompt();
-                UpdateRestartNotice(prompt: false);
+                var snap = Plugin?.CaptureView().Snapshot;
+                UpdateAddDevicePrompt(snap);
+                UpdateRestartNotice(snap, prompt: false);
             }));
         }
 
@@ -669,7 +684,7 @@ namespace FanaBridge.UI.Settings
                     var item = new ComboBoxItem
                     {
                         Content = label,
-                        Tag = overrideKey,
+                        Tag = new ProfilePickerChoice(wheelCode, moduleCode, overrideKey),
                     };
                     cboProfile.Items.Add(item);
 
@@ -725,32 +740,21 @@ namespace FanaBridge.UI.Settings
             if (_suppressProfileChange || Plugin == null) return;
 
             var selected = cboProfile.SelectedItem as ComboBoxItem;
-            if (selected == null) return;
+            var choice = selected?.Tag as ProfilePickerChoice;
+            if (choice == null || string.IsNullOrEmpty(choice.MatchKey) || string.IsNullOrEmpty(choice.OverrideKey))
+                return;
 
-            string overrideKey = selected.Tag as string;
-            if (string.IsNullOrEmpty(overrideKey)) return;
+            // Apply the selection to the attachment the picker was rendered for
+            // without re-reading the live snapshot: valid even if the wheel was
+            // swapped or disconnected before the click arrived.
+            var autoResolved = WheelProfileStore.FindByWheelType(
+                choice.WheelCode, choice.ModuleCode, overrideId: null);
+            var nextOverrides = ProfileOverrideRules.ApplyPickerChoice(
+                Plugin.Settings.ProfileOverrides, choice, autoResolved);
 
-            // Build match key for current wheel
-            var wheelbase = Plugin.Wheelbase;
-            if (!wheelbase.WheelDetected) return;
-
-            string wheelCode = wheelbase.WheelCode;
-            string moduleCode = wheelbase.ModuleCode;
-            string matchKey = WheelProfileStore.MakeMatchKey(wheelCode, moduleCode);
-
-            // No match key (e.g. detected but unrecognized wheel, WheelCode null)
-            // means there is no identity to attach an override to — nothing to persist.
-            if (string.IsNullOrEmpty(matchKey)) return;
-
-            // Store an override only when the pick differs from what automatic
-            // resolution would choose.
-            ProfileOverrideRules.ApplySelection(
-                Plugin.Settings.ProfileOverrides, matchKey, overrideKey,
-                WheelProfileStore.FindByWheelType(wheelCode, moduleCode, overrideId: null));
-
-            // Persist settings and re-resolve capabilities
+            Plugin.SetProfileOverrides(nextOverrides);
+            Plugin.Wheelbase?.RefreshCapabilities();
             Plugin.SaveSettings();
-            wheelbase.RefreshCapabilities();
 
             // Show restart notice if the device name changed from what SimHub registered
             UpdateRestartNotice(prompt: true);
@@ -767,6 +771,13 @@ namespace FanaBridge.UI.Settings
         private string _noticeAwaitingDeviceTypeId;
 
         /// <summary>
+        /// Test seam replacing the modal restart MessageBox in
+        /// <see cref="UpdateRestartNotice"/> so tests can assert whether a prompt
+        /// would open without showing UI.
+        /// </summary>
+        internal Action<string, string> PromptRestartHandler;
+
+        /// <summary>
         /// Shows the restart notice when the attached device's SimHub device
         /// can't reflect the active profile without a restart: its tabs or its
         /// name are stale, or SimHub hasn't loaded a device for the profile yet.
@@ -774,13 +785,33 @@ namespace FanaBridge.UI.Settings
         /// only after the user changed or created a profile, never for a
         /// passive refresh.
         /// </summary>
-        private void UpdateRestartNotice(bool prompt = false)
+        internal void UpdateRestartNotice(bool prompt = false)
         {
-            var caps = Plugin?.CurrentCapabilities;
+            WheelbaseSnapshot snap = null;
+            WheelCapabilities caps = null;
+            WheelCapabilities registered = null;
+            if (Plugin != null)
+                Plugin.GetRestartNoticeCapabilities(out snap, out caps, out registered);
 
-            // The baseline is the device instance's own registration
-            // capabilities, the ones SimHub built its tabs from.
-            var registered = Plugin?.GetAttachedDeviceRegistrationCaps();
+            UpdateRestartNotice(snap, caps, registered, prompt);
+        }
+
+        private void UpdateRestartNotice(WheelbaseSnapshot snap, bool prompt)
+        {
+            WheelCapabilities caps = null;
+            WheelCapabilities registered = null;
+            if (Plugin != null)
+                Plugin.GetRestartNoticeCapabilities(snap, out caps, out registered);
+
+            UpdateRestartNotice(snap, caps, registered, prompt);
+        }
+
+        private void UpdateRestartNotice(
+            WheelbaseSnapshot snap,
+            WheelCapabilities caps,
+            WheelCapabilities registered,
+            bool prompt)
+        {
             _noticeCaps = caps;
             _noticeRegistered = registered;
             _noticeAwaitingDeviceTypeId = null;
@@ -797,7 +828,7 @@ namespace FanaBridge.UI.Settings
                 // this profile's device to add yet, e.g. the first profile for
                 // a wheel, made in the wizard this session. Otherwise the
                 // add-device prompt covers it.
-                string awaiting = DeviceAwaitingRestart();
+                string awaiting = DeviceAwaitingRestart(snap);
                 if (awaiting == null)
                 {
                     txtRestartNotice.Visibility = Visibility.Collapsed;
@@ -807,7 +838,7 @@ namespace FanaBridge.UI.Settings
                 _noticeAwaitingDeviceTypeId = awaiting;
                 ShowRestartNotice("Restart SimHub to make a device for this profile available to add.");
                 if (prompt && !_restartPromptDismissed)
-                    PromptRestart(
+                    (PromptRestartHandler ?? PromptRestart)(
                         "This profile needs a new SimHub device",
                         "SimHub hasn't loaded it yet. Restarting SimHub makes it available to add.");
                 return;
@@ -818,7 +849,7 @@ namespace FanaBridge.UI.Settings
             {
                 ShowRestartNotice("Restart SimHub to update this device's name, LED editor, and Screen and Tuning tabs.");
                 if (prompt && !_restartPromptDismissed)
-                    PromptRestart(
+                    (PromptRestartHandler ?? PromptRestart)(
                         restartReason,
                         "SimHub builds this device's LED editor, Screen and Tuning tabs, and its name in the Devices list once, and only rebuilds them when it restarts.");
                 return;
@@ -842,15 +873,16 @@ namespace FanaBridge.UI.Settings
         /// changed since it last ran. Neither raises an event of its own when a
         /// device first registers with the plugin, so the status timer calls this.
         /// </summary>
-        private void RefreshRestartNoticeIfStale()
+        private void RefreshRestartNoticeIfStale(WheelbaseSnapshot snap)
         {
             if (Plugin == null)
                 return;
 
-            if (!ReferenceEquals(Plugin.CurrentCapabilities, _noticeCaps)
-                || !ReferenceEquals(Plugin.GetAttachedDeviceRegistrationCaps(), _noticeRegistered))
+            Plugin.GetRestartNoticeCapabilities(snap, out var caps, out var registered);
+            if (!ReferenceEquals(caps, _noticeCaps)
+                || !ReferenceEquals(registered, _noticeRegistered))
             {
-                UpdateRestartNotice(prompt: false);
+                UpdateRestartNotice(snap, caps, registered, prompt: false);
                 return;
             }
 
@@ -868,12 +900,13 @@ namespace FanaBridge.UI.Settings
         /// The DeviceTypeID of the attached wheel or hub + module's registered
         /// device config when SimHub doesn't have a descriptor for it yet, so it
         /// can't be added until SimHub reloads its device list; otherwise null.
+        /// Evaluated against the same <paramref name="snap"/> already captured by
+        /// <see cref="UpdateRestartNotice"/>.
         /// </summary>
-        private string DeviceAwaitingRestart()
+        private string DeviceAwaitingRestart(WheelbaseSnapshot snap)
         {
-            var wheelbase = Plugin?.Wheelbase;
-            if (wheelbase == null || !Plugin.IsDeviceConnected || !wheelbase.IdentityStable
-                || !wheelbase.WheelDetected)
+            if (Plugin == null || snap == null || !snap.Connected || !snap.IdentityStable
+                || !snap.WheelDetected)
                 return null;
 
             var devices = SimHubDevicesGateway.Resolve(Plugin.PluginManager);
@@ -881,7 +914,7 @@ namespace FanaBridge.UI.Settings
                 return null;
 
             var config = FanatecDevicesRegistry.FindConfigForAttachment(
-                wheelbase.WheelDetected, wheelbase.WheelCode, wheelbase.ModuleCode);
+                snap.WheelDetected, snap.WheelCode, snap.ModuleCode);
 
             return config?.Profile != null && !config.Profile.IsBare
                 && !SimHubDevicesGateway.HasDescriptor(devices, config.DeviceTypeId)
@@ -923,8 +956,8 @@ namespace FanaBridge.UI.Settings
 
         private void BtnDeleteProfile_Click(object sender, RoutedEventArgs e)
         {
-            var caps = Plugin?.CurrentCapabilities;
-            if (caps?.Profile == null || caps.ProfileSource != ProfileSource.User)
+            var caps = _displayedCaps;
+            if (Plugin == null || caps?.Profile == null || caps.ProfileSource != ProfileSource.User)
                 return;
 
             string profileId = caps.Profile.Id;
@@ -962,13 +995,14 @@ namespace FanaBridge.UI.Settings
                 return;
             }
 
-            // Remove the override that pointed at the deleted profile, if any.
-            ProfileOverrideRules.ClearAfterDelete(
-                Plugin.Settings.ProfileOverrides, matchKey, deletedOverrideKey);
+            // Remove the override that pointed at the deleted profile, if any (copy-on-write).
+            var nextOverrides = ProfileOverrideRules.ClearAfterDelete(
+                Plugin.Settings.ProfileOverrides, matchKey, deletedOverrideKey, out _);
 
             // Re-resolve and update UI
+            Plugin.SetProfileOverrides(nextOverrides);
+            wheelbase?.RefreshCapabilities();
             Plugin.SaveSettings();
-            wheelbase.RefreshCapabilities();
             UpdateRestartNotice(prompt: true);
             UpdateStatus();
         }
@@ -1042,7 +1076,7 @@ namespace FanaBridge.UI.Settings
 
         private void BtnContributeProfile_Click(object sender, RoutedEventArgs e)
         {
-            var caps = Plugin?.CurrentCapabilities;
+            var caps = _displayedCaps;
             if (caps?.Profile == null || caps.ProfileSource != ProfileSource.User)
                 return;
 
@@ -1076,7 +1110,7 @@ namespace FanaBridge.UI.Settings
 
         private void BtnReportIssue_Click(object sender, RoutedEventArgs e)
         {
-            var caps = Plugin?.CurrentCapabilities;
+            var caps = _displayedCaps;
             string profileId = caps?.Profile?.Id ?? "unknown";
             string title = Uri.EscapeDataString("Feedback: " + profileId + " profile");
             string label = Uri.EscapeDataString("wheel profile");
@@ -1125,7 +1159,8 @@ namespace FanaBridge.UI.Settings
 
         private void BtnCreateProfile_Click(object sender, RoutedEventArgs e)
         {
-            if (Plugin == null || !Plugin.IsDeviceConnected)
+            var view = Plugin?.CaptureView() ?? default;
+            if (!view.HasPlugin || view.Snapshot?.Connected != true)
             {
                 MessageBox.Show(
                     "Please connect a Fanatec device first.",
@@ -1135,7 +1170,7 @@ namespace FanaBridge.UI.Settings
                 return;
             }
 
-            var dialog = new WheelProfileWizardDialog(Plugin);
+            var dialog = new WheelProfileWizardDialog(view);
             dialog.Owner = Window.GetWindow(this);
             bool saved = dialog.ShowDialog() == true;
 

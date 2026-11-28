@@ -55,10 +55,15 @@ namespace FanaBridge.UI.Wizard
         // ─────────────────────────────────────────────────────────────────
 
         public WheelProfileWizardDialog(FanatecPlugin plugin)
+            : this(plugin != null ? plugin.CaptureView() : throw new ArgumentNullException(nameof(plugin)))
+        {
+        }
+
+        internal WheelProfileWizardDialog(PluginView view)
         {
             InitializeComponent();
 
-            _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
+            _plugin = view.Plugin ?? throw new ArgumentNullException(nameof(view));
 
             _panels = new Dictionary<WizardSection, UIElement>
             {
@@ -73,10 +78,10 @@ namespace FanaBridge.UI.Wizard
                 { WizardSection.Summary,              stepSummary },
             };
 
-            // Pre-populate identity from the wheelbase
-            var wheelbase = _plugin.Wheelbase;
-            _state.WheelType = wheelbase.WheelCode;
-            _state.ModuleType = wheelbase.ModuleCode;
+            // Pre-populate identity from the view captured when opening the wizard
+            var snap = view.Snapshot ?? Core.Devices.WheelbaseSnapshot.Empty;
+            _state.WheelType = snap.WheelCode;
+            _state.ModuleType = snap.ModuleCode;
 
             txtWizWheelType.Text = _state.WheelType ?? "Unknown";
             txtWizModuleType.Text = _state.ModuleType ?? "(none)";
@@ -1269,22 +1274,27 @@ namespace FanaBridge.UI.Wizard
                 // the settings UI should handle activation and override persistence.
                 WheelProfileStore.Reload();
 
+                bool overridesChanged = false;
                 string matchKey = WheelProfileStore.MakeMatchKey(
                     profile.Match?.WheelType, profile.Match?.ModuleType);
                 if (!string.IsNullOrEmpty(matchKey))
                 {
                     // This profile was just written to the user directory.
                     profile.Source = ProfileSource.User;
-                    _plugin.Settings.ProfileOverrides ??= new Dictionary<string, string>();
-                    _plugin.Settings.ProfileOverrides[matchKey] =
-                        WheelProfileStore.MakeOverrideKey(profile);
-                    _plugin.SaveSettings();
+                    var nextOverrides = Settings.ProfileOverrideRules.WithOverride(
+                        _plugin.Settings.ProfileOverrides, matchKey,
+                        WheelProfileStore.MakeOverrideKey(profile));
+                    _plugin.SetProfileOverrides(nextOverrides);
+                    overridesChanged = true;
                 }
 
                 // Re-resolve with the new override active.
                 // The settings UI handles restart prompting via UpdateRestartNotice()
                 // after this dialog closes.
                 _plugin.Wheelbase?.RefreshCapabilities();
+
+                if (overridesChanged)
+                    _plugin.SaveSettings();
 
                 DialogResult = true;
                 Close();
