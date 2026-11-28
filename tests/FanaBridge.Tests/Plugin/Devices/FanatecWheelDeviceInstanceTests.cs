@@ -1645,8 +1645,10 @@ namespace FanaBridge.Tests.Plugin.Devices
         // ── Stage 1a: single-snapshot reads, LED driver construction, and restart notice (#137) ──
 
         [Fact]
-        public void SwapSettling_ResolveCapsForAndDeviceState_NeverMixAttachments()
+        public void SwapSettling_DeviceStateAndResolveCapsFor_FollowCommittedAndSettlingStates()
         {
+            // Serial state-transition test (not concurrent race coverage): verifies
+            // GetDeviceState and ResolveCapsFor before, during, and after a swap settle.
             var t = new FakeTransport();
             var clock = new Clock();
             var wheelbase = new FanatecWheelbase(t, new FakeBus(), clock.Now);

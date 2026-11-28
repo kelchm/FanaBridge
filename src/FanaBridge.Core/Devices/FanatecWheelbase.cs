@@ -123,9 +123,29 @@ namespace FanaBridge.Core.Devices
         private IReadOnlyDictionary<string, string> _profileOverrides = EmptyOverrides;
 
         // Test hooks: let tests assert that logging and event callbacks never run
-        // while holding either leaf lock.
+        // while holding either leaf lock, and deterministically block contenders
+        // at _stateLock for forced-interleaving tests.
         internal bool IsStateLockHeldForTest => Monitor.IsEntered(_stateLock);
         internal bool IsItmLockHeldForTest => Monitor.IsEntered(_itmLock);
+
+        internal IDisposable HoldStateLockForTest()
+        {
+            Monitor.Enter(_stateLock);
+            return new StateLockRelease(_stateLock);
+        }
+
+        private sealed class StateLockRelease : IDisposable
+        {
+            private object _lock;
+            public StateLockRelease(object stateLock) => _lock = stateLock;
+
+            public void Dispose()
+            {
+                var l = Interlocked.Exchange(ref _lock, null);
+                if (l != null)
+                    Monitor.Exit(l);
+            }
+        }
 
         // ── Connection state ─────────────────────────────────────────────
 

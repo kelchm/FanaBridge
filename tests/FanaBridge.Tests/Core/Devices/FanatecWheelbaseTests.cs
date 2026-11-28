@@ -1264,9 +1264,131 @@ namespace FanaBridge.Tests.Core.Devices
             Assert.Equal(4, beforeReload.Capabilities.Profile.Leds.Count);
         }
 
-        [Fact]
-        public async Task ConcurrentCommitsRefreshesReloadsAndReaders_EverySnapshotIsSelfConsistentAndFinalMatchesInputs()
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void CommitAndRefresh_ForcedInterleavingAtStateLock_BothBlockAndConvergeToFinalInputs(bool commitFirst)
         {
+            // Deterministic race test: hold _stateLock on the test thread, launch
+            // both an identity commit and a capability refresh on dedicated threads,
+            // wait until both are blocked on _stateLock, verify the snapshot has not
+            // moved while the lock is held, then release and verify the final
+            // snapshot equals resolution of the final inputs in both start orders.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-interleave-bmw.json", "PSWBMW_INTERLEAVE", "PSWBMW", revLeds: 5, name: "BMW Interleave");
+            profiles.Write("fb137-interleave-hub.json", "PHUB_PBME_INTERLEAVE", "PHUB", moduleType: "PBME", revLeds: 6, name: "Hub Interleave");
+            profiles.Reload();
+
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+
+            // Commit PHUB + PBME with default built-in profile, then begin settling
+            // toward PSWBMW and advance the clock so the next UpdateIdentity commits.
+            CommitIdentity(wb, t, clock, Ff08(0x0C, HubWire("PHUB"), module: 0x01));
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+            clock.T += 10;
+            Assert.False(wb.UpdateIdentity());
+            Assert.False(wb.Snapshot.IdentityStable);
+            clock.T += 250;
+
+            // Install the final override map before taking _stateLock so both
+            // CommitIdentity and RefreshCapabilities contend on the exact publish
+            // lock rather than SetProfileOverrides.
+            wb.SetProfileOverrides(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PSWBMW"] = "PSWBMW_INTERLEAVE:User",
+                ["PHUB_PBME"] = "PHUB_PBME_INTERLEAVE:User",
+            });
+            WheelProfileStore.EnsureLoaded();
+
+            var before = wb.Snapshot;
+            Assert.Equal("PHUB", before.WheelCode);
+            Assert.Equal("PHUB_PBME", before.Capabilities.Profile?.Id);
+            Assert.False(before.IdentityStable);
+
+            Exception? commitError = null;
+            Exception? refreshError = null;
+            bool commitResult = false;
+            using var commitStarted = new ManualResetEventSlim(false);
+            using var refreshStarted = new ManualResetEventSlim(false);
+
+            var commitThread = new Thread(() =>
+            {
+                commitStarted.Set();
+                try { commitResult = wb.UpdateIdentity(); }
+                catch (Exception ex) { commitError = ex; }
+            })
+            { IsBackground = true, Name = "TestCommitThread" };
+
+            var refreshThread = new Thread(() =>
+            {
+                refreshStarted.Set();
+                try { wb.RefreshCapabilities(); }
+                catch (Exception ex) { refreshError = ex; }
+            })
+            { IsBackground = true, Name = "TestRefreshThread" };
+
+            using (wb.HoldStateLockForTest())
+            {
+                if (commitFirst)
+                {
+                    commitThread.Start();
+                    Assert.True(commitStarted.Wait(5000));
+                    Assert.True(
+                        SpinWait.SpinUntil(() => (commitThread.ThreadState & ThreadState.WaitSleepJoin) != 0, 5000),
+                        "Commit thread did not block on _stateLock");
+
+                    refreshThread.Start();
+                    Assert.True(refreshStarted.Wait(5000));
+                    Assert.True(
+                        SpinWait.SpinUntil(() => (refreshThread.ThreadState & ThreadState.WaitSleepJoin) != 0, 5000),
+                        "Refresh thread did not block on _stateLock");
+                }
+                else
+                {
+                    refreshThread.Start();
+                    Assert.True(refreshStarted.Wait(5000));
+                    Assert.True(
+                        SpinWait.SpinUntil(() => (refreshThread.ThreadState & ThreadState.WaitSleepJoin) != 0, 5000),
+                        "Refresh thread did not block on _stateLock");
+
+                    commitThread.Start();
+                    Assert.True(commitStarted.Wait(5000));
+                    Assert.True(
+                        SpinWait.SpinUntil(() => (commitThread.ThreadState & ThreadState.WaitSleepJoin) != 0, 5000),
+                        "Commit thread did not block on _stateLock");
+                }
+
+                // Neither writer may publish while _stateLock is held.
+                Assert.Same(before, wb.Snapshot);
+            }
+
+            Assert.True(commitThread.Join(5000), "Commit thread did not finish after releasing _stateLock");
+            Assert.True(refreshThread.Join(5000), "Refresh thread did not finish after releasing _stateLock");
+            Assert.Null(commitError);
+            Assert.Null(refreshError);
+            Assert.True(commitResult);
+
+            var finalSnap = wb.Snapshot;
+            Assert.True(finalSnap.Connected);
+            Assert.True(finalSnap.IdentityStable);
+            Assert.Equal("PSWBMW", finalSnap.WheelCode);
+            Assert.Null(finalSnap.ModuleCode);
+            Assert.Equal("PSWBMW_INTERLEAVE", finalSnap.Capabilities.Profile?.Id);
+            Assert.Equal(5, finalSnap.Capabilities.AllLedCount);
+            Assert.Equal(before.ConnectionEpoch, finalSnap.ConnectionEpoch);
+            Assert.Equal(before.AttachmentEpoch + 1, finalSnap.AttachmentEpoch);
+            Assert.Equal(before.WheelChangeCount + 1, finalSnap.WheelChangeCount);
+        }
+
+        [Fact]
+        public async Task ConcurrentCommitsRefreshesReloadsAndReaders_SmokeTest_EverySnapshotIsSelfConsistent()
+        {
+            // Multi-thread smoke test exercising concurrent commits, refreshes,
+            // profile reloads, and lock-free readers to check snapshot invariants.
+            // Deterministic commit/refresh interleaving coverage lives in
+            // CommitAndRefresh_ForcedInterleavingAtStateLock_BothBlockAndConvergeToFinalInputs.
             using var profiles = new TempUserProfiles();
             profiles.Write("fb137-stage1a-stress-a.json", "PSWBMW_STRESS_A", "PSWBMW", revLeds: 4, name: "BMW Stress A");
             profiles.Write("fb137-stage1a-stress-b.json", "PSWBMW_STRESS_B", "PSWBMW", revLeds: 7, name: "BMW Stress B");
@@ -1420,25 +1542,21 @@ namespace FanaBridge.Tests.Core.Devices
             start.Set();
             await Task.WhenAll(updateWriter, refreshWriter, reloadWriter);
 
-            // Converge to explicit final inputs and verify the final snapshot matches.
-            if (!wb.IsConnected)
-                Assert.True(wb.AutoConnect());
-            wb.SetProfileOverrides(overrideSets[2]); // PSWBMW -> PSWBMW_STRESS_B:User
-            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
-            wb.RefreshCapabilities();
-
             done.Set();
             await Task.WhenAll(reader1, reader2);
 
             Assert.Empty(violations);
             Assert.True(Interlocked.Read(ref observedCount) > 0);
 
+            // Check the untouched final snapshot left by the concurrent run.
             var finalSnap = wb.Snapshot;
-            Assert.True(finalSnap.Connected);
-            Assert.True(finalSnap.IdentityStable);
-            Assert.Equal("PSWBMW", finalSnap.WheelCode);
-            Assert.Equal("PSWBMW_STRESS_B", finalSnap.Capabilities.Profile?.Id);
-            Assert.Equal(7, finalSnap.Capabilities.AllLedCount);
+            if (finalSnap.Connected && finalSnap.WheelDetected)
+            {
+                var profile = finalSnap.Capabilities.Profile;
+                Assert.NotNull(profile);
+                Assert.Equal(finalSnap.WheelCode, profile!.Match?.WheelType, ignoreCase: true);
+                Assert.Equal(finalSnap.ModuleCode ?? "", profile.Match?.ModuleType ?? "", ignoreCase: true);
+            }
         }
     }
 }
