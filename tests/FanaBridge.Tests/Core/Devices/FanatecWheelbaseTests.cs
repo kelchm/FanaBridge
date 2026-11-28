@@ -24,6 +24,27 @@ namespace FanaBridge.Tests.Core.Devices
     {
         // ── Test doubles ─────────────────────────────────────────────────
 
+        private sealed class ObservingReportStream : IReportStream
+        {
+            private readonly IReportStream _inner;
+            private readonly Action _onTryRead;
+
+            public ObservingReportStream(IReportStream inner, Action onTryRead)
+            {
+                _inner = inner;
+                _onTryRead = onTryRead;
+            }
+
+            public int TryRead(byte[] buffer, int timeoutMs)
+            {
+                _onTryRead();
+                return _inner.TryRead(buffer, timeoutMs);
+            }
+
+            public void Flush() => _inner.Flush();
+            public IDisposable Tap(Action<byte[]> onFrame) => _inner.Tap(onFrame);
+        }
+
         private sealed class FakeTransport : IConnectableTransport
         {
             public bool ConnectResult = true;
@@ -31,6 +52,7 @@ namespace FanaBridge.Tests.Core.Devices
             public int DisconnectCount;
             public bool Connected;
             public Action? OnDisconnect;
+            public Action? OnItmTryRead;
 
             public FakeReportStream Identity { get; } = new FakeReportStream();
             public FakeReportStream Itm { get; } = new FakeReportStream();
@@ -74,7 +96,9 @@ namespace FanaBridge.Tests.Core.Devices
 
             public bool SendCol01(byte[] data) => true;
             public IReportStream IdentityReports => Identity;
-            public IReportStream ItmReports => Itm;
+            public IReportStream ItmReports => OnItmTryRead == null
+                ? (IReportStream)Itm
+                : new ObservingReportStream(Itm, OnItmTryRead);
             public IReportStream SrmReports => Srm;
             public IReportStream TuningReports => FakeReportStream.Empty;
             public int ReadCol01(byte[] buffer, int timeoutMs) => -1;
@@ -914,6 +938,29 @@ namespace FanaBridge.Tests.Core.Devices
             Assert.Equal(before.WheelChangeCount, after.WheelChangeCount);
             Assert.Equal("PSWBMW", after.WheelCode);
             Assert.Equal(0, wheelChanged);
+        }
+
+        [Fact]
+        public void ChangedIdentityReading_PublishesUnstableBeforeItmDrainInSameTick()
+        {
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+            Assert.True(wb.Snapshot.IdentityStable);
+
+            var observedStableDuringItmDrain = new List<bool>();
+            t.OnItmTryRead = () => observedStableDuringItmDrain.Add(wb.Snapshot.IdentityStable);
+
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("CSSWFORMV2")));
+            t.Itm.Enqueue(new byte[] { 0xFF, 0x05, 0x01, 0x02 });
+            clock.T += 10;
+
+            Assert.False(wb.UpdateIdentity());
+            Assert.NotEmpty(observedStableDuringItmDrain);
+            Assert.All(observedStableDuringItmDrain, stable => Assert.False(stable));
+            Assert.False(wb.Snapshot.IdentityStable);
+            Assert.Equal("PSWBMW", wb.Snapshot.WheelCode);
         }
 
         [Fact]

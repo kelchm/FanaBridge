@@ -507,9 +507,13 @@ namespace FanaBridge.Core.Devices
 
             // Drain this device's three input streams (the transport's reader thread
             // routes frames by signature). Lock-free: the wheelbase is the single
-            // owner of all three, and reads never touch the write lock.
+            // owner of all three, and reads never touch the write lock. Publish
+            // instability as soon as a changed identity reading is drained, before
+            // the ITM and SRM drains run.
             _drainNow = now;
             _reportReader.DrainIdentity(_transport, _ingest);
+            if (!_settler.IsStable)
+                PublishSettleStarted();
             DrainFamily(Transport.ItmReports, _bufferItm);
             DrainFamily(Transport.SrmReports, _ingestSrm);
 
@@ -530,11 +534,7 @@ namespace FanaBridge.Core.Devices
                 {
                     changed = CommitIdentity();
                 }
-                else if (!_settler.IsStable)
-                {
-                    PublishSettleStarted();
-                }
-                else if (!_snapshot.IdentityStable)
+                else if (_settler.IsStable && !_snapshot.IdentityStable)
                 {
                     CommitUnchangedSettle();
                 }
