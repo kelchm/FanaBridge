@@ -493,10 +493,10 @@ namespace FanaBridge.Tests.Plugin.Devices
             var inst = InstanceWithHost("PSWBMW", host);
             var plugin = PluginWithWheel("PSWBMW", out _);
 
-            // Alive for the frame's first two reads (top-of-frame capture and
-            // the Enabled announcement), unpublished by the revalidation.
+            // Alive for the frame's top-of-frame capture, unpublished by the
+            // _outputGate revalidation.
             int calls = 0;
-            inst.PluginResolver = () => ++calls <= 2 ? plugin : null;
+            inst.PluginResolver = () => ++calls == 1 ? plugin : null;
 
             var data = new GameData();
             inst.DataUpdate(null, ref data);

@@ -56,7 +56,7 @@ namespace FanaBridge.UI.Settings
             panelEnabled.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
 
             if (enabled)
-                SyncFromDevice();
+                SyncFromDevice(plugin);
         }
 
         /// <summary>
@@ -64,7 +64,7 @@ namespace FanaBridge.UI.Settings
         /// combo box to match.  Falls back to the persisted setting if the
         /// device cannot be read.
         /// </summary>
-        private void SyncFromDevice()
+        private void SyncFromDevice(FanatecPlugin plugin)
         {
             _suppressEvents = true;
             try
@@ -72,7 +72,7 @@ namespace FanaBridge.UI.Settings
                 string modeTag = null;
                 byte[] rawDump = null;
 
-                var tuning = FanatecPlugin.Instance?.Tuning;
+                var tuning = plugin?.Tuning;
                 if (tuning != null && tuning.IsConnected)
                 {
                     rawDump = tuning.ReadTuningStateRaw();
@@ -135,7 +135,7 @@ namespace FanaBridge.UI.Settings
 
         private void BtnRefresh_Click(object sender, RoutedEventArgs e)
         {
-            SyncFromDevice();
+            SyncFromDevice(FanatecPlugin.Instance);
         }
 
         private void CmbEncoderMode_SelectionChanged(object sender, SelectionChangedEventArgs e)

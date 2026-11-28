@@ -218,8 +218,8 @@ namespace FanaBridge.Devices
         /// </summary>
         internal WheelCapabilities ResolveCurrentCapabilities()
         {
-            var plugin = PluginResolver() ?? _boundPlugin;
-            return plugin == null ? WheelCapabilities.None : plugin.ResolveCapsFor(_config);
+            var view = (PluginResolver() ?? _boundPlugin)?.CaptureView() ?? default;
+            return view.HasPlugin ? FanatecPlugin.ResolveCapsFor(_config, view.Snapshot) : WheelCapabilities.None;
         }
 
 
@@ -282,10 +282,11 @@ namespace FanaBridge.Devices
             {
                 // Only WPF's toggle binding reaches this setter. A click the UI
                 // refuses to show must not rewrite the stored choice.
-                if (PluginResolver() != null)
+                bool hasPlugin = PluginResolver() != null;
+                if (hasPlugin)
                     base.Enabled = value;
 
-                AnnounceEnabled(force: true);   // declined or no-op clicks spring back
+                AnnounceEnabled(hasPlugin, force: true);   // declined or no-op clicks spring back
             }
         }
 
@@ -306,11 +307,13 @@ namespace FanaBridge.Devices
 
         /// <summary>
         /// Tells the UI to re-read <see cref="Enabled"/> when the answer has
-        /// moved (or unconditionally, when the user just acted on it).
+        /// moved (or unconditionally, when the user just acted on it). Takes
+        /// <paramref name="pluginPresent"/> from the caller's view rather than
+        /// re-reading <see cref="PluginResolver"/>.
         /// </summary>
-        private void AnnounceEnabled(bool force = false)
+        private void AnnounceEnabled(bool pluginPresent, bool force = false)
         {
-            int now = Enabled ? 1 : 0;
+            int now = (base.Enabled && pluginPresent) ? 1 : 0;
             if (System.Threading.Interlocked.Exchange(ref _announcedEnabled, now) == now && !force)
                 return;
 
@@ -432,7 +435,7 @@ namespace FanaBridge.Devices
             }
 
             // Nothing else tells the UI when plugin availability moves.
-            AnnounceEnabled();
+            AnnounceEnabled(view.HasPlugin);
 
             // SimHub calls DataUpdate regardless of the device's own switch —
             // honouring it is our job. ShouldBeRunning() is the SDK's gate and

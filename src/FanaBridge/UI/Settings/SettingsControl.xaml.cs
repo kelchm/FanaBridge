@@ -30,6 +30,13 @@ namespace FanaBridge.UI.Settings
         private bool _restartPromptDismissed;
 
         /// <summary>
+        /// Profile capabilities last rendered into the profile section so the
+        /// Delete, Contribute, and Report Issue actions operate on the profile
+        /// the page showed rather than re-reading whatever is attached when clicked.
+        /// </summary>
+        private WheelCapabilities _displayedCaps;
+
+        /// <summary>
         /// DeviceTypeID the add-device prompt's button would add; null while
         /// the prompt is hidden or the add is blocked by a similar device.
         /// </summary>
@@ -283,8 +290,9 @@ namespace FanaBridge.UI.Settings
                 };
                 _itmStatusTimer.Tick += (s, a) =>
                 {
-                    UpdateItmStatus();
-                    RefreshRestartNoticeIfStale();
+                    var snap = Plugin?.CaptureView().Snapshot;
+                    UpdateItmStatus(snap);
+                    RefreshRestartNoticeIfStale(snap);
                 };
             }
             _itmStatusTimer.Start();
@@ -311,7 +319,7 @@ namespace FanaBridge.UI.Settings
 
         // ITM display row + co-driver warning. Self-contained (hides itself when no ITM
         // display is being driven), safe on every connection state.
-        private void UpdateItmStatus()
+        private void UpdateItmStatus(WheelbaseSnapshot snap)
         {
             if (Plugin == null || panelItmStatus == null) return;
 
@@ -319,7 +327,7 @@ namespace FanaBridge.UI.Settings
             string warn = null;
             try
             {
-                itm = Plugin.ItmStatus;
+                itm = Plugin.GetItmStatus(snap);
                 warn = itm != null ? Plugin.ItmCoDriverWarning : null;
             }
             catch { }
@@ -341,21 +349,27 @@ namespace FanaBridge.UI.Settings
         {
             if (Plugin == null) return;
 
+            // Capture one view for the entire page refresh so the add-device
+            // prompt, restart notice, ITM row, device chain, status detail,
+            // and profile picker all render from the same snapshot.
+            var view = Plugin.CaptureView();
+            var snap = view.Snapshot;
+
             // Independent of device connection (Control Mapper is configured with or
             // without a wheel attached), so it runs ahead of the connection returns.
             UpdateControlMapperStatus();
 
             // Also self-contained (hides itself while disconnected), so it runs
             // ahead of the early returns below and stays correct on every path.
-            UpdateAddDevicePrompt();
-            UpdateRestartNotice(prompt: false);
-            UpdateItmStatus();
+            UpdateAddDevicePrompt(snap);
+            UpdateRestartNotice(snap, prompt: false);
+            UpdateItmStatus(snap);
 
-            var snap = Plugin.Wheelbase?.Snapshot;
             if (snap == null || !snap.Connected)
             {
+                _displayedCaps = null;
                 ShowBaseOnly(LinkState.Disconnected, "Not Connected", null);
-                SetStatusDetail(Plugin.StatusDetail);
+                SetStatusDetail(Plugin.GetStatusDetail(snap));
                 txtCapabilities.Text = "—";
                 borderUnverifiedAlert.Visibility = Visibility.Collapsed;
                 UpdateProfilePicker(false, null, null, null);
@@ -367,6 +381,7 @@ namespace FanaBridge.UI.Settings
             // misleading "Unknown Base" flash.
             if (!snap.HasIdentity)
             {
+                _displayedCaps = null;
                 ShowBaseOnly(LinkState.Connecting, "Connecting…", null);
                 SetStatusDetail(null);
                 txtCapabilities.Text = "—";
@@ -377,6 +392,7 @@ namespace FanaBridge.UI.Settings
 
             var caps = snap.Capabilities;
             bool identified = caps.Name != null;
+            _displayedCaps = identified ? caps : null;
 
             // The chain shows what's attached whether or not a profile matched.
             ShowConnectedChain(snap);
@@ -408,11 +424,10 @@ namespace FanaBridge.UI.Settings
         // page is visible.
         // =====================================================================
 
-        private void UpdateAddDevicePrompt()
+        private void UpdateAddDevicePrompt(WheelbaseSnapshot snap)
         {
             _promptDeviceTypeId = null;
 
-            var snap = Plugin?.Wheelbase?.Snapshot;
             if (snap == null || !snap.Connected || !snap.HasIdentity || !snap.WheelDetected)
             {
                 // Every way out of these states (connect/disconnect, identity
@@ -528,8 +543,9 @@ namespace FanaBridge.UI.Settings
                 _promptRetryTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
                 _promptRetryTimer.Tick += (s, e) =>
                 {
-                    UpdateAddDevicePrompt();
-                    UpdateRestartNotice(prompt: false);
+                    var snap = Plugin?.CaptureView().Snapshot;
+                    UpdateAddDevicePrompt(snap);
+                    UpdateRestartNotice(snap, prompt: false);
                 };
             }
 
@@ -577,8 +593,9 @@ namespace FanaBridge.UI.Settings
         {
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                UpdateAddDevicePrompt();
-                UpdateRestartNotice(prompt: false);
+                var snap = Plugin?.CaptureView().Snapshot;
+                UpdateAddDevicePrompt(snap);
+                UpdateRestartNotice(snap, prompt: false);
             }));
         }
 
@@ -776,6 +793,25 @@ namespace FanaBridge.UI.Settings
             if (Plugin != null)
                 Plugin.GetRestartNoticeCapabilities(out snap, out caps, out registered);
 
+            UpdateRestartNotice(snap, caps, registered, prompt);
+        }
+
+        private void UpdateRestartNotice(WheelbaseSnapshot snap, bool prompt)
+        {
+            WheelCapabilities caps = null;
+            WheelCapabilities registered = null;
+            if (Plugin != null)
+                Plugin.GetRestartNoticeCapabilities(snap, out caps, out registered);
+
+            UpdateRestartNotice(snap, caps, registered, prompt);
+        }
+
+        private void UpdateRestartNotice(
+            WheelbaseSnapshot snap,
+            WheelCapabilities caps,
+            WheelCapabilities registered,
+            bool prompt)
+        {
             _noticeCaps = caps;
             _noticeRegistered = registered;
             _noticeAwaitingDeviceTypeId = null;
@@ -837,16 +873,16 @@ namespace FanaBridge.UI.Settings
         /// changed since it last ran. Neither raises an event of its own when a
         /// device first registers with the plugin, so the status timer calls this.
         /// </summary>
-        private void RefreshRestartNoticeIfStale()
+        private void RefreshRestartNoticeIfStale(WheelbaseSnapshot snap)
         {
             if (Plugin == null)
                 return;
 
-            Plugin.GetRestartNoticeCapabilities(out _, out var caps, out var registered);
+            Plugin.GetRestartNoticeCapabilities(snap, out var caps, out var registered);
             if (!ReferenceEquals(caps, _noticeCaps)
                 || !ReferenceEquals(registered, _noticeRegistered))
             {
-                UpdateRestartNotice(prompt: false);
+                UpdateRestartNotice(snap, caps, registered, prompt: false);
                 return;
             }
 
@@ -920,8 +956,8 @@ namespace FanaBridge.UI.Settings
 
         private void BtnDeleteProfile_Click(object sender, RoutedEventArgs e)
         {
-            var caps = Plugin?.CurrentCapabilities;
-            if (caps?.Profile == null || caps.ProfileSource != ProfileSource.User)
+            var caps = _displayedCaps;
+            if (Plugin == null || caps?.Profile == null || caps.ProfileSource != ProfileSource.User)
                 return;
 
             string profileId = caps.Profile.Id;
@@ -1040,7 +1076,7 @@ namespace FanaBridge.UI.Settings
 
         private void BtnContributeProfile_Click(object sender, RoutedEventArgs e)
         {
-            var caps = Plugin?.CurrentCapabilities;
+            var caps = _displayedCaps;
             if (caps?.Profile == null || caps.ProfileSource != ProfileSource.User)
                 return;
 
@@ -1074,7 +1110,7 @@ namespace FanaBridge.UI.Settings
 
         private void BtnReportIssue_Click(object sender, RoutedEventArgs e)
         {
-            var caps = Plugin?.CurrentCapabilities;
+            var caps = _displayedCaps;
             string profileId = caps?.Profile?.Id ?? "unknown";
             string title = Uri.EscapeDataString("Feedback: " + profileId + " profile");
             string label = Uri.EscapeDataString("wheel profile");
@@ -1123,7 +1159,8 @@ namespace FanaBridge.UI.Settings
 
         private void BtnCreateProfile_Click(object sender, RoutedEventArgs e)
         {
-            if (Plugin == null || !Plugin.IsDeviceConnected)
+            var view = Plugin?.CaptureView() ?? default;
+            if (!view.HasPlugin || view.Snapshot?.Connected != true)
             {
                 MessageBox.Show(
                     "Please connect a Fanatec device first.",
@@ -1133,7 +1170,7 @@ namespace FanaBridge.UI.Settings
                 return;
             }
 
-            var dialog = new WheelProfileWizardDialog(Plugin);
+            var dialog = new WheelProfileWizardDialog(view);
             dialog.Owner = Window.GetWindow(this);
             bool saved = dialog.ShowDialog() == true;
 

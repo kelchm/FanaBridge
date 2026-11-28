@@ -365,6 +365,20 @@ namespace FanaBridge
         internal Action BetweenRestartNoticeReadsForTest;
 
         /// <summary>
+        /// Derives both the live capabilities and the attached added device's
+        /// registration capabilities from one pre-captured <paramref name="snapshot"/>.
+        /// </summary>
+        internal void GetRestartNoticeCapabilities(
+            WheelbaseSnapshot snapshot,
+            out WheelCapabilities liveCapabilities,
+            out WheelCapabilities registeredCapabilities)
+        {
+            liveCapabilities = snapshot?.Capabilities ?? WheelCapabilities.None;
+            BetweenRestartNoticeReadsForTest?.Invoke();
+            registeredCapabilities = GetAttachedDeviceRegistrationCaps(snapshot);
+        }
+
+        /// <summary>
         /// Captures one wheelbase snapshot and returns both the live capabilities
         /// and the attached added device's registration capabilities from that same
         /// snapshot, so the restart notice never pairs two different attachments.
@@ -375,9 +389,7 @@ namespace FanaBridge
             out WheelCapabilities registeredCapabilities)
         {
             snapshot = _wheelbase?.Snapshot;
-            liveCapabilities = snapshot?.Capabilities ?? WheelCapabilities.None;
-            BetweenRestartNoticeReadsForTest?.Invoke();
-            registeredCapabilities = GetAttachedDeviceRegistrationCaps(snapshot);
+            GetRestartNoticeCapabilities(snapshot, out liveCapabilities, out registeredCapabilities);
         }
 
         // Detects the vendor's app/service running alongside FanaBridge — the same

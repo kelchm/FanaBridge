@@ -55,10 +55,15 @@ namespace FanaBridge.UI.Wizard
         // ─────────────────────────────────────────────────────────────────
 
         public WheelProfileWizardDialog(FanatecPlugin plugin)
+            : this(plugin != null ? plugin.CaptureView() : throw new ArgumentNullException(nameof(plugin)))
+        {
+        }
+
+        internal WheelProfileWizardDialog(PluginView view)
         {
             InitializeComponent();
 
-            _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
+            _plugin = view.Plugin ?? throw new ArgumentNullException(nameof(view));
 
             _panels = new Dictionary<WizardSection, UIElement>
             {
@@ -73,8 +78,8 @@ namespace FanaBridge.UI.Wizard
                 { WizardSection.Summary,              stepSummary },
             };
 
-            // Pre-populate identity from one wheelbase snapshot
-            var snap = _plugin.Wheelbase.Snapshot;
+            // Pre-populate identity from the view captured when opening the wizard
+            var snap = view.Snapshot ?? Core.Devices.WheelbaseSnapshot.Empty;
             _state.WheelType = snap.WheelCode;
             _state.ModuleType = snap.ModuleCode;
 

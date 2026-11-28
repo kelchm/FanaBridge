@@ -38,7 +38,12 @@ namespace FanaBridge.Devices
         {
             SimHub.Logging.Current.Info("FanatecDevicesRegistry: GetDevices() called");
 
-            // At most one device per call, even if the attachment changes mid-loop.
+            // Capture one view at entry so every descriptor in this GetDevices
+            // pass sees the same attachment state (at most one device gets a USB ID).
+            WheelbaseSnapshot entrySnapshot = null;
+            try { entrySnapshot = resolvePlugin?.Invoke()?.CaptureView().Snapshot; }
+            catch (Exception) { }
+
             bool detected = false;
 
             foreach (var config in BuildConfigs())
@@ -63,7 +68,7 @@ namespace FanaBridge.Devices
                     IsDeprecated = false,
                 };
                 if (!detected)
-                    detected = ApplyDetection(descriptor, capturedConfig, resolvePlugin);
+                    detected = ApplyDetection(descriptor, capturedConfig, entrySnapshot, resolvePlugin);
                 yield return descriptor;
             }
         }
@@ -78,16 +83,23 @@ namespace FanaBridge.Devices
         internal static bool ApplyDetection(
             DeviceDescriptor descriptor, DeviceConfig config, Func<FanatecPlugin> resolvePlugin)
         {
-            int productId;
-            try
-            {
-                var snap = resolvePlugin()?.Wheelbase?.Snapshot;
-                if (!FanatecWheelDeviceInstance.IsAttached(snap, config))
-                    return false;
-                productId = snap.ProductId;
-            }
+            WheelbaseSnapshot snap;
+            try { snap = resolvePlugin?.Invoke()?.CaptureView().Snapshot; }
             catch (Exception) { return false; }
 
+            return ApplyDetection(descriptor, config, snap, resolvePlugin);
+        }
+
+        internal static bool ApplyDetection(
+            DeviceDescriptor descriptor,
+            DeviceConfig config,
+            WheelbaseSnapshot snap,
+            Func<FanatecPlugin> resolvePlugin)
+        {
+            if (!FanatecWheelDeviceInstance.IsAttached(snap, config))
+                return false;
+
+            int productId = snap.ProductId;
             if (productId <= 0)
                 return false;
 
