@@ -1707,10 +1707,10 @@ namespace FanaBridge.Tests.Plugin.Devices
             plugin.InstallLedEncodersForTest();
 
             var bmwConfig = ConfigFor("PSWBMW");
-            var frameSnap = wheelbase.Snapshot;
-            Assert.Equal("PSWBMW_LED_TEST", frameSnap.Capabilities.Profile?.Id);
+            var frameView = plugin.CaptureView();
+            Assert.Equal("PSWBMW_LED_TEST", frameView.Snapshot.Capabilities.Profile?.Id);
 
-            // Change the live wheelbase override after the frame captured frameSnap:
+            // Change the live wheelbase override after the frame captured frameView:
             // live ResolveCapsFor now resolves to the built-in PSWBMW profile.
             wheelbase.SetProfileOverrides(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -1719,12 +1719,12 @@ namespace FanaBridge.Tests.Plugin.Devices
             wheelbase.RefreshCapabilities();
             Assert.Equal("PSWBMW", plugin.ResolveCapsFor(bmwConfig).Profile?.Id);
 
-            // When GetDriver() runs inside the frame that captured frameSnap, it must
-            // build the driver from frameSnap (5 LEDs) rather than re-reading the wheelbase.
+            // When GetDriver() runs inside the frame that captured frameView, it must
+            // build the driver from frameView (5 LEDs) rather than re-reading the wheelbase.
             var manager = new FanatecLedManager(bmwConfig, () => plugin);
             try
             {
-                manager.BeginFrame(frameSnap);
+                manager.BeginFrame(frameView);
                 FanatecLedDriver? driver;
                 try
                 {
@@ -1740,13 +1740,15 @@ namespace FanaBridge.Tests.Plugin.Devices
                 {
                     Assert.Equal("PSWBMW_LED_TEST", driver!.Capabilities.Profile?.Id);
                     Assert.Equal(5, driver.Capabilities.AllLedCount);
+                    Assert.Same(plugin.Leds, driver.LedsEncoderForTest);
+                    Assert.Same(plugin.LegacyLeds, driver.LegacyLedsEncoderForTest);
                 }
                 finally
                 {
                     driver!.Dispose();
                 }
 
-                // Outside a frame, GetDriver() falls back to the current live snapshot.
+                // Outside a frame, GetDriver() captures one fresh view.
                 var liveDriver = manager.GetDriver();
                 Assert.NotNull(liveDriver);
                 try
@@ -1765,7 +1767,80 @@ namespace FanaBridge.Tests.Plugin.Devices
         }
 
         [Fact]
-        public void DriveHardware_PassesTopOfFrameSnapshotToLedHostDisplay()
+        public void LedManager_GetDriver_DuringFrame_UsesViewPluginEncoders_NeverCrossesCores()
+        {
+            // Take a view from plugin A, then replace the resolver with plugin B.
+            // A driver built inside A's frame must use A's own encoders and never
+            // pair A's snapshot capabilities with B's encoders.
+            using var profiles = new TempUserProfiles();
+            profiles.Write("fb137-view-core-a.json", "PSWBMW_CORE_A", "PSWBMW", revLeds: 5);
+            profiles.Reload();
+
+            var pluginA = PluginWithWheel("PSWBMW", out _, out _, withDisplayEncoder: false,
+                overrideProfileId: "PSWBMW_CORE_A:User");
+            pluginA.InstallLedEncodersForTest();
+
+            var pluginB = PluginWithWheel("PSWBMW", out _, out _, withDisplayEncoder: false);
+            pluginB.InstallLedEncodersForTest();
+
+            Assert.NotSame(pluginA.Leds, pluginB.Leds);
+            Assert.NotSame(pluginA.LegacyLeds, pluginB.LegacyLeds);
+
+            var bmwConfig = ConfigFor("PSWBMW");
+            var viewA = pluginA.CaptureView();
+
+            // Resolver already points at plugin B when A's frame asks for a driver.
+            var manager = new FanatecLedManager(bmwConfig, () => pluginB);
+            try
+            {
+                manager.BeginFrame(viewA);
+                FanatecLedDriver? driver;
+                try
+                {
+                    driver = manager.GetDriver();
+                }
+                finally
+                {
+                    manager.EndFrame();
+                }
+
+                Assert.NotNull(driver);
+                try
+                {
+                    Assert.Equal("PSWBMW_CORE_A", driver!.Capabilities.Profile?.Id);
+                    Assert.Equal(5, driver.Capabilities.AllLedCount);
+                    Assert.Same(pluginA.Leds, driver.LedsEncoderForTest);
+                    Assert.Same(pluginA.LegacyLeds, driver.LegacyLedsEncoderForTest);
+                    Assert.NotSame(pluginB.Leds, driver.LedsEncoderForTest);
+                    Assert.NotSame(pluginB.LegacyLeds, driver.LegacyLedsEncoderForTest);
+                }
+                finally
+                {
+                    driver!.Dispose();
+                }
+
+                // Outside a frame, GetDriver() captures one fresh view from plugin B.
+                var driverB = manager.GetDriver();
+                Assert.NotNull(driverB);
+                try
+                {
+                    Assert.Equal("PSWBMW", driverB!.Capabilities.Profile?.Id);
+                    Assert.Same(pluginB.Leds, driverB.LedsEncoderForTest);
+                    Assert.Same(pluginB.LegacyLeds, driverB.LegacyLedsEncoderForTest);
+                }
+                finally
+                {
+                    driverB!.Dispose();
+                }
+            }
+            finally
+            {
+                manager.Dispose();
+            }
+        }
+
+        [Fact]
+        public void DriveHardware_PassesTopOfFrameViewToLedHostDisplay()
         {
             var plugin = PluginWithWheel("PSWBMW", out var wheelbase, out _, withDisplayEncoder: false);
             var ledHost = new FakeLedModuleHost("leds");
@@ -1777,6 +1852,8 @@ namespace FanaBridge.Tests.Plugin.Devices
             inst.DataUpdate(null, ref data);
 
             Assert.Equal(1, ledHost.DisplayCount);
+            Assert.Same(plugin, ledHost.LastDisplayView.Plugin);
+            Assert.Same(wheelbase, ledHost.LastDisplayView.Wheelbase);
             Assert.Same(expectedSnap, ledHost.LastDisplaySnapshot);
         }
 

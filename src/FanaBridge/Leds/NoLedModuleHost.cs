@@ -22,7 +22,7 @@ namespace FanaBridge.Leds
 
         public void LoadDefaults() { }
 
-        public void Display(WheelbaseSnapshot snapshot) { }
+        public void Display(PluginView view) { }
 
         public void SetStatus(bool canDrive, bool connected) { }
 

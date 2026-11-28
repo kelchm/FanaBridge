@@ -156,6 +156,12 @@ namespace FanaBridge
         }
         private volatile bool _displayTestActive;
 
+        /// <summary>
+        /// Captures one consistent view of this plugin generation and its
+        /// wheelbase's current <see cref="WheelbaseSnapshot"/> for a decision.
+        /// </summary>
+        internal PluginView CaptureView() => PluginView.Capture(this);
+
         /// <summary>Whether the Fanatec device is currently connected (for UI binding).</summary>
         public bool IsDeviceConnected => _wheelbase?.Snapshot.Connected == true;
 

@@ -106,13 +106,16 @@ namespace FanaBridge.Tests.TestDoubles
         public Action? OnDisplay { get; set; }
         public Action? OnStopDriving { get; set; }
 
-        /// <summary>Snapshot passed into the most recent <see cref="Display"/> call.</summary>
-        public WheelbaseSnapshot? LastDisplaySnapshot { get; private set; }
+        /// <summary>View passed into the most recent <see cref="Display"/> call.</summary>
+        public PluginView LastDisplayView { get; private set; }
 
-        public void Display(WheelbaseSnapshot snapshot)
+        /// <summary>Snapshot passed into the most recent <see cref="Display"/> call.</summary>
+        public WheelbaseSnapshot? LastDisplaySnapshot => LastDisplayView.Snapshot;
+
+        public void Display(PluginView view)
         {
             DisplayCount++;
-            LastDisplaySnapshot = snapshot;
+            LastDisplayView = view;
             OnDisplay?.Invoke();
         }
 

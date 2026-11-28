@@ -411,10 +411,12 @@ namespace FanaBridge.Devices
 
         public override void DataUpdate(PluginManager pluginManager, ref GameData data)
         {
-            // Generation guard: if the plugin was replaced since our drivers were
-            // built, drop them so they rebuild against the current hardware core
-            // (see _boundPlugin). Must run before anything below touches them.
-            var currentPlugin = PluginResolver();
+            // Capture one view at the top of the frame: plugin generation,
+            // wheelbase, attachment check, display/ITM/LED capabilities,
+            // wheel-change counter, and any LED driver built during this frame
+            // all come from this copy.
+            var view = PluginResolver()?.CaptureView() ?? default;
+            var currentPlugin = view.Plugin;
             if (currentPlugin != null && _boundPlugin != null
                 && !ReferenceEquals(_boundPlugin, currentPlugin))
             {
@@ -437,10 +439,7 @@ namespace FanaBridge.Devices
             // reads the base Enabled (the user's real choice).
             bool switchedOn = ShouldBeRunning();
 
-            // Capture one snapshot at the top of the frame: attachment check,
-            // display/ITM/LED capabilities, wheel-change counter, and any LED
-            // driver built during this frame all use this copy.
-            var frameSnapshot = currentPlugin?.Wheelbase?.Snapshot;
+            var frameSnapshot = view.Snapshot;
             bool isConnected =
                 switchedOn && GetDeviceStateFor(frameSnapshot) == DeviceState.Connected;
 
@@ -481,17 +480,19 @@ namespace FanaBridge.Devices
                 if (!ReferenceEquals(PluginResolver(), currentPlugin))
                     return;
 
-                DriveHardware(currentPlugin, frameSnapshot, ref data);
+                DriveHardware(view, ref data);
             }
         }
 
         /// <summary>
         /// One frame of display/ITM/LED output, entirely from the frame's
-        /// captured generation and snapshot. Callers hold <see cref="_outputGate"/>.
+        /// captured plugin view. Callers hold <see cref="_outputGate"/>.
         /// </summary>
-        private void DriveHardware(FanatecPlugin plugin, WheelbaseSnapshot frameSnapshot, ref GameData data)
+        private void DriveHardware(PluginView view, ref GameData data)
         {
-            var device = plugin?.Transport;
+            var plugin = view.Plugin;
+            var frameSnapshot = view.Snapshot;
+            var device = view.Wheelbase?.Transport;
             if (device == null || !device.IsConnected)
                 return;
 
@@ -590,7 +591,7 @@ namespace FanaBridge.Devices
 
                     // Feed the firmware's pushed ITM subscription reports (col03-IN) to the
                     // driver so it follows the page the wheel button selects.
-                    plugin.Wheelbase?.DrainItmReports(_itmDisplay.OnSubscriptionReport);
+                    view.Wheelbase?.DrainItmReports(_itmDisplay.OnSubscriptionReport);
 
                     _itmDisplay.Update(data);
 
@@ -654,7 +655,7 @@ namespace FanaBridge.Devices
             // never chose. Output resumes once a later load or a reset makes it
             // trustworthy again -- the same condition that unblocks saving.
             if (!_settings.IsFaulted)
-                _ledHost.Display(frameSnapshot);
+                _ledHost.Display(view);
         }
 
         /// <summary>

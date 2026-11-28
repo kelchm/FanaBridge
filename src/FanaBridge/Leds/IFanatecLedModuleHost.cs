@@ -38,10 +38,11 @@ namespace FanaBridge.Leds
         void LoadDefaults();
 
         /// <summary>
-        /// Drives one frame of LED output against the frame's captured wheelbase
-        /// snapshot so any driver built during the frame uses that same snapshot.
+        /// Drives one frame of LED output against the frame's captured plugin
+        /// view so any driver built during the frame uses that same core's
+        /// encoders and snapshot.
         /// </summary>
-        void Display(WheelbaseSnapshot snapshot);
+        void Display(PluginView view);
 
         /// <summary>
         /// Drives the LEDs tab's connection badge: hidden while nothing can

@@ -195,9 +195,9 @@ namespace FanaBridge.Leds
             }
         }
 
-        public void Display(WheelbaseSnapshot snapshot)
+        public void Display(PluginView view)
         {
-            _manager.BeginFrame(snapshot);
+            _manager.BeginFrame(view);
             try
             {
                 _module.Display();

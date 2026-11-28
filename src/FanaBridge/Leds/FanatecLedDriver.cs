@@ -45,6 +45,8 @@ namespace FanaBridge.Leds
         private readonly PhysicalMapper _mapper;
         private readonly LedEncoder _leds;
         private readonly LegacyLedEncoder _legacyLeds;
+        internal LedEncoder LedsEncoderForTest => _leds;
+        internal LegacyLedEncoder LegacyLedsEncoderForTest => _legacyLeds;
 
         // Pre-built dispatch table: for each logical LED index, the channel
         // and hardware index to write to.  Built once from the profile.
