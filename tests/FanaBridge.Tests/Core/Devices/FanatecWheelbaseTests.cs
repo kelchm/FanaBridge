@@ -964,6 +964,47 @@ namespace FanaBridge.Tests.Core.Devices
         }
 
         [Fact]
+        public void UnchangedSettle_PreservesStagedItmReports()
+        {
+            // Until Stage 4 restarts ITM on every attachment epoch, an unchanged
+            // settle does not restart the ITM lifecycle and must not drop staged
+            // ITM subscription reports (Stage 4 flips both together).
+            var wb = Make(out var t, out var bus, out var clock);
+            bus.Devices.Add(new HidDeviceInfo(0x0020, 64, 64, "Base"));
+            Assert.True(wb.AutoConnect());
+            CommitIdentity(wb, t, clock, Ff08(0x0C, WheelWire("PSWBMW")));
+            var before = wb.Snapshot;
+
+            // Stage an ITM report, then flap out and settle back unchanged.
+            byte[] staged = new byte[] { 0xFF, 0x05, 0x01, 0x0A };
+            t.Itm.Enqueue(staged);
+            clock.T += 10;
+            Assert.False(wb.UpdateIdentity());
+
+            t.Identity.Enqueue(Ff08(0x0C, 0x00));
+            clock.T += 10;
+            Assert.False(wb.UpdateIdentity());
+            Assert.False(wb.Snapshot.IdentityStable);
+
+            t.Identity.Enqueue(Ff08(0x0C, WheelWire("PSWBMW")));
+            clock.T += 50;
+            Assert.False(wb.UpdateIdentity());
+
+            clock.T += 250;
+            Assert.False(wb.UpdateIdentity());
+
+            var after = wb.Snapshot;
+            Assert.True(after.IdentityStable);
+            Assert.Equal(before.AttachmentEpoch + 1, after.AttachmentEpoch);
+            Assert.Equal(before.WheelChangeCount, after.WheelChangeCount);
+
+            var drained = new List<byte[]>();
+            wb.DrainItmReports(drained.Add);
+            var report = Assert.Single(drained);
+            Assert.Equal(staged, report);
+        }
+
+        [Fact]
         public void Disconnect_PublishesDisconnectedSnapshotBeforeClosingTransport()
         {
             var wb = Make(out var t, out var bus, out var clock);

@@ -737,13 +737,12 @@ namespace FanaBridge.Core.Devices
 
         // End a settle window that reverted to the previously committed identity:
         // bump AttachmentEpoch and restore stability under _stateLock without
-        // bumping WheelChangeCount or raising WheelChanged.
+        // bumping WheelChangeCount or raising WheelChanged. Staged ITM reports
+        // stay put until Stage 4 moves the ITM lifecycle restart to every new
+        // attachment epoch.
         private void CommitUnchangedSettle()
         {
             WheelProfileStore.EnsureLoaded();
-
-            lock (_itmLock)
-                _itmReports.Clear();
 
             ResolutionOutcome resolution = default;
             bool published = false;
