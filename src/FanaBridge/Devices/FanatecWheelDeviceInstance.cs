@@ -145,6 +145,9 @@ namespace FanaBridge.Devices
         /// </summary>
         internal string ItmStatusDescription => _itmDisplay == null ? null : _itmStatusSnapshot;
 
+        /// <summary>The registration config this device was built from.</summary>
+        internal DeviceConfig Config => _config;
+
         public FanatecWheelDeviceInstance(DeviceConfig config)
             : this(config, null, null)
         {

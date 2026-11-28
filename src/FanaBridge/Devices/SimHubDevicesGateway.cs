@@ -23,9 +23,10 @@ namespace FanaBridge.Devices
 
         /// <summary>
         /// Whether SimHub registered a descriptor with this DeviceTypeID.
-        /// Descriptors are collected once at startup, so a profile created
-        /// this session has a config but no descriptor until SimHub restarts —
-        /// offering an add for it would silently do nothing.
+        /// SimHub collects descriptors at startup, and SimHub 9.13+ collects
+        /// them again whenever its Add device list opens. Until one of those
+        /// happens, a profile created this session has a config but no
+        /// descriptor, and offering an add for it would silently do nothing.
         /// </summary>
         public static bool HasDescriptor(DevicesPlugin devices, string deviceTypeId)
         {
